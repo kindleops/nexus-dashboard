@@ -25,6 +25,20 @@ type IconName =
   | 'list'
   | 'command'
   | 'maximize'
+  | 'inbox'
+  | 'stats'
+  | 'users'
+  | 'file-text'
+  | 'eye'
+  | 'play'
+  | 'pause'
+  | 'check'
+  | 'zap'
+  | 'trending-up'
+  | 'hash'
+  | 'star'
+  | 'archive'
+  | 'filter'
 
 interface IconProps extends SVGProps<SVGSVGElement> {
   name: IconName
@@ -202,6 +216,98 @@ export const Icon = ({ name, ...props }: IconProps) => {
       return (
         <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
           <path d="M4 14v6h6M20 10V4h-6M4 10V4h6M20 14v6h-6" {...commonProps} />
+        </svg>
+      )
+    case 'inbox':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M4 4h16v16H4z" {...commonProps} />
+          <path d="M4 14h4l2 2h4l2-2h4" {...commonProps} />
+        </svg>
+      )
+    case 'stats':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M18 20V10M12 20V4M6 20v-6" {...commonProps} />
+        </svg>
+      )
+    case 'users':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <circle cx="9" cy="7" r="3" {...commonProps} />
+          <path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2" {...commonProps} />
+          <circle cx="17" cy="7" r="2.5" {...commonProps} />
+          <path d="M21 21v-1.5a3 3 0 0 0-2-2.8" {...commonProps} />
+        </svg>
+      )
+    case 'file-text':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z" {...commonProps} />
+          <path d="M14 3v4h4M8 13h8M8 17h5" {...commonProps} />
+        </svg>
+      )
+    case 'eye':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" {...commonProps} />
+          <circle cx="12" cy="12" r="3" {...commonProps} />
+        </svg>
+      )
+    case 'play':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M6 4l14 8-14 8z" {...commonProps} />
+        </svg>
+      )
+    case 'pause':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M6 4h3v16H6zM15 4h3v16h-3z" {...commonProps} />
+        </svg>
+      )
+    case 'check':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M5 12l5 5L20 7" {...commonProps} />
+        </svg>
+      )
+    case 'zap':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M13 2L3 14h9l-1 8 10-12h-9z" {...commonProps} />
+        </svg>
+      )
+    case 'trending-up':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M23 6l-9.5 9.5-5-5L1 18" {...commonProps} />
+          <path d="M17 6h6v6" {...commonProps} />
+        </svg>
+      )
+    case 'hash':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M4 9h16M4 15h16M10 3l-2 18M16 3l-2 18" {...commonProps} />
+        </svg>
+      )
+    case 'star':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z" {...commonProps} />
+        </svg>
+      )
+    case 'archive':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M3 5h18v4H3zM5 9v10h14V9" {...commonProps} />
+          <path d="M10 13h4" {...commonProps} />
+        </svg>
+      )
+    case 'filter':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M3 4h18l-7 8.5V18l-4 2v-7.5z" {...commonProps} />
         </svg>
       )
   }

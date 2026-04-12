@@ -21,11 +21,22 @@ export type OwnerType =
   | 'tax-delinquent'
   | 'owner-occupied'
 export type AgentStatus = 'active' | 'watching' | 'queued'
-export type ActivityKind = 'system' | 'alert' | 'ai' | 'deal' | 'conversation'
+export type ActivityKind = 'system' | 'alert' | 'ai' | 'deal' | 'conversation' | 'autopilot'
 export type MessageDirection = 'outbound' | 'inbound'
 export type SystemHealthStatus = 'healthy' | 'warning' | 'degraded' | 'critical'
 export type MapMode = 'leads' | 'distress' | 'heat' | 'stage' | 'pressure' | 'closings'
 export type StageMomentum = 'stalling' | 'steady' | 'accelerating'
+
+// ─── New surface types ────────────────────────────────────────────────────
+
+export type InboxThreadStatus = 'unread' | 'read' | 'replied' | 'archived'
+export type InboxThreadPriority = 'urgent' | 'high' | 'normal' | 'low'
+export type BuyerIntent = 'active' | 'passive' | 'watching' | 'dormant'
+export type TitleStatus = 'clear' | 'review' | 'issue' | 'pending' | 'closed'
+export type ClosingPhase = 'title-ordered' | 'title-clear' | 'closing-scheduled' | 'closed' | 'post-close'
+export type AutopilotAction = 'escalate' | 'send' | 'pause' | 'match' | 'alert' | 'schedule'
+export type NotificationKind = 'autopilot' | 'alert' | 'deal' | 'system' | 'inbox'
+export type WatchlistType = 'market' | 'lead' | 'agent' | 'zip'
 
 export interface SystemHealthRecord {
   id: string
@@ -181,6 +192,96 @@ export interface CommandCenterReferenceDataset {
   activities: ActivityRecord[]
   mapLinks: MapLinkRecord[]
   systemHealth: SystemHealthRecord[]
+  inboxThreads: InboxThreadRecord[]
+  buyerProfiles: BuyerProfileRecord[]
+  titleRecords: TitleRecord[]
+  autopilotEvents: AutopilotEventRecord[]
+  notifications: NotificationRecord[]
+  watchlists: WatchlistRecord[]
+}
+
+export interface InboxThreadRecord {
+  id: string
+  leadId: string
+  marketId: string
+  ownerName: string
+  subject: string
+  preview: string
+  status: InboxThreadStatus
+  priority: InboxThreadPriority
+  sentiment: Sentiment
+  messageCount: number
+  lastMessageIso: string
+  unreadCount: number
+  aiDraft: string | null
+  labels: string[]
+}
+
+export interface BuyerProfileRecord {
+  id: string
+  name: string
+  marketIds: string[]
+  intent: BuyerIntent
+  budget: number
+  targetPropertyTypes: PropertyType[]
+  targetZips: string[]
+  matchScore: number
+  lastActivityIso: string
+  acquisitionsYTD: number
+  avgDaysToClose: number
+  preApproved: boolean
+  notes: string
+}
+
+export interface TitleRecord {
+  id: string
+  leadId: string
+  marketId: string
+  address: string
+  ownerName: string
+  status: TitleStatus
+  closingPhase: ClosingPhase
+  titleCompany: string
+  scheduledCloseIso: string | null
+  daysInPhase: number
+  earnestDeposit: number
+  purchasePrice: number
+  issues: string[]
+  lastUpdatedIso: string
+}
+
+export interface AutopilotEventRecord {
+  id: string
+  action: AutopilotAction
+  marketId: string
+  leadId: string | null
+  title: string
+  detail: string
+  confidence: number
+  approved: boolean
+  timestampIso: string
+}
+
+export interface NotificationRecord {
+  id: string
+  kind: NotificationKind
+  severity: AlertSeverity
+  title: string
+  detail: string
+  read: boolean
+  actionLabel: string | null
+  actionRoute: string | null
+  timestampIso: string
+}
+
+export interface WatchlistRecord {
+  id: string
+  type: WatchlistType
+  targetId: string
+  label: string
+  notes: string
+  addedIso: string
+  alertOnChange: boolean
 }
 
 export interface CommandCenterStore {
@@ -199,4 +300,16 @@ export interface CommandCenterStore {
   activityIdsByMarketId: Record<string, string[]>
   mapLinks: MapLinkRecord[]
   systemHealth: SystemHealthRecord[]
+  inboxThreadsById: Record<string, InboxThreadRecord>
+  inboxThreadIds: string[]
+  buyerProfilesById: Record<string, BuyerProfileRecord>
+  buyerProfileIds: string[]
+  titleRecordsById: Record<string, TitleRecord>
+  titleRecordIds: string[]
+  autopilotEventsById: Record<string, AutopilotEventRecord>
+  autopilotEventIds: string[]
+  notificationsById: Record<string, NotificationRecord>
+  notificationIds: string[]
+  watchlistsById: Record<string, WatchlistRecord>
+  watchlistIds: string[]
 }

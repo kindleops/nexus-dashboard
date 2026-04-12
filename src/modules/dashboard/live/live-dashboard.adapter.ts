@@ -139,7 +139,7 @@ export interface LiveActivity {
   id: string
   marketId: string
   marketLabel: string
-  kind: 'system' | 'alert' | 'ai' | 'deal' | 'conversation'
+  kind: 'system' | 'alert' | 'ai' | 'deal' | 'conversation' | 'autopilot'
   severity: 'critical' | 'warning' | 'info'
   title: string
   detail: string

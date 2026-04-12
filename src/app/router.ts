@@ -19,6 +19,11 @@ export const replaceRoutePath = (path: string) => {
   dispatchRouteChange()
 }
 
+export const pushRoutePath = (path: string) => {
+  window.history.pushState({}, '', path)
+  dispatchRouteChange()
+}
+
 export const useRoutePath = () => {
   const [path, setPath] = useState(() => normalizeRoutePath(window.location.pathname))
 
