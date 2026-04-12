@@ -1,5 +1,6 @@
 import { useDeferredValue, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import { NexusMap } from './NexusMap'
 import type {
   FilterOption,
   LiveAgent,
@@ -32,28 +33,8 @@ interface CommandItem {
   action: () => void
 }
 
-const mapBounds = {
-  west: -113,
-  east: -83,
-  north: 46,
-  south: 28,
-}
-
-const mapCanvas = {
-  width: 1000,
-  height: 560,
-}
-
 const classes = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
-
-const parseVB = (s: string) => {
-  const parts = s.trim().split(/\s+/).map(Number)
-  return { x: parts[0] ?? 0, y: parts[1] ?? 0, w: parts[2] ?? 1000, h: parts[3] ?? 560 }
-}
-
-const fmtVB = ({ x, y, w, h }: { x: number; y: number; w: number; h: number }) =>
-  `${x.toFixed(1)} ${y.toFixed(1)} ${w.toFixed(1)} ${h.toFixed(1)}`
 
 const groupByCategory = <T extends { category: string }>(items: T[]) => {
   const map = new Map<string, T[]>()
@@ -68,46 +49,6 @@ const groupByCategory = <T extends { category: string }>(items: T[]) => {
   return Array.from(map.entries()).map(([category, groups]) => ({ category, items: groups }))
 }
 
-// Animated SVG viewBox — smooth fly-to effect
-const useAnimatedViewBox = (target: string): string => {
-  const current = useRef(parseVB(target))
-  const rafRef = useRef<number>(0)
-  const [displayVB, setDisplayVB] = useState(target)
-
-  useEffect(() => {
-    const tgt = parseVB(target)
-    const tick = () => {
-      const c = current.current
-      const next = {
-        x: c.x + (tgt.x - c.x) * 0.13,
-        y: c.y + (tgt.y - c.y) * 0.13,
-        w: c.w + (tgt.w - c.w) * 0.13,
-        h: c.h + (tgt.h - c.h) * 0.13,
-      }
-      current.current = next
-      const dist =
-        Math.abs(next.x - tgt.x) +
-        Math.abs(next.y - tgt.y) +
-        Math.abs(next.w - tgt.w) +
-        Math.abs(next.h - tgt.h)
-      if (dist > 0.5) {
-        setDisplayVB(fmtVB(next))
-        rafRef.current = requestAnimationFrame(tick)
-      } else {
-        current.current = tgt
-        setDisplayVB(target)
-      }
-    }
-    cancelAnimationFrame(rafRef.current)
-    rafRef.current = requestAnimationFrame(tick)
-    return () => {
-      cancelAnimationFrame(rafRef.current)
-    }
-  }, [target])
-
-  return displayVB
-}
-
 const includesQuery = (query: string, ...values: Array<string | null | undefined>) => {
   if (!query) {
     return true
@@ -116,54 +57,11 @@ const includesQuery = (query: string, ...values: Array<string | null | undefined
   return values.some((value) => value?.toLowerCase().includes(query))
 }
 
-const projectPoint = (lat: number, lng: number) => {
-  const x = ((lng - mapBounds.west) / (mapBounds.east - mapBounds.west)) * mapCanvas.width
-  const y = ((mapBounds.north - lat) / (mapBounds.north - mapBounds.south)) * mapCanvas.height
-  return { x, y }
-}
-
-const buildLinkPath = (fromPoint: { x: number; y: number }, toPoint: { x: number; y: number }) => {
-  const midpointX = (fromPoint.x + toPoint.x) / 2
-  const midpointY = Math.min(fromPoint.y, toPoint.y) - Math.abs(toPoint.x - fromPoint.x) * 0.14 - 36
-  return `M ${fromPoint.x} ${fromPoint.y} Q ${midpointX} ${midpointY} ${toPoint.x} ${toPoint.y}`
-}
-
 const stageToneClass: Record<LiveLead['sentiment'], string> = {
   hot: 'is-hot',
   warm: 'is-warm',
   neutral: 'is-neutral',
   cold: 'is-cold',
-}
-
-const getMapModeSentiment = (lead: LiveLead, mode: MapMode): LiveLead['sentiment'] => {
-  switch (mode) {
-    case 'leads': return lead.sentiment
-    case 'distress': {
-      const m: Partial<Record<LiveLead['ownerType'], LiveLead['sentiment']>> = {
-        'tax-delinquent': 'hot', estate: 'warm', absentee: 'warm',
-        corporate: 'neutral', 'owner-occupied': 'cold',
-      }
-      return m[lead.ownerType] ?? 'neutral'
-    }
-    case 'heat':
-      return lead.urgencyScore >= 80 ? 'hot'
-        : lead.urgencyScore >= 60 ? 'warm'
-        : lead.urgencyScore >= 40 ? 'neutral' : 'cold'
-    case 'stage': {
-      const m: Partial<Record<LiveLead['pipelineStage'], LiveLead['sentiment']>> = {
-        'under-contract': 'hot', negotiating: 'hot',
-        responding: 'warm', contacted: 'neutral', new: 'cold',
-      }
-      return m[lead.pipelineStage] ?? 'neutral'
-    }
-    case 'pressure':
-      return lead.outboundAttempts >= 7 ? 'hot'
-        : lead.outboundAttempts >= 5 ? 'warm'
-        : lead.outboundAttempts >= 3 ? 'neutral' : 'cold'
-    case 'closings':
-      return lead.pipelineStage === 'under-contract' || lead.pipelineStage === 'negotiating'
-        ? 'hot' : 'cold'
-  }
 }
 
 const alertClass: Record<LiveAlert['severity'], string> = {
@@ -403,7 +301,6 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
   const selectedAgentLead =
     data.leads.find((lead) => lead.id === selectedAgent?.focusLeadId) ?? selectedLead
 
-  const visibleLeadPins = visibleLeads.slice(0, 8)
   const selectedMarketLeads = data.leads
     .filter((lead) => lead.marketId === selectedMarket?.id)
     .slice(0, 3)
@@ -535,11 +432,10 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
         ) : (
           <MapStage
             markets={visibleMarkets}
-            leads={visibleLeadPins}
+            leads={visibleLeads}
             selectedMarket={selectedMarket}
             selectedLead={selectedLead}
             selectedMarketLeads={selectedMarketLeads}
-            mapLinks={data.mapLinks}
             metrics={data.summaryMetrics}
             metricsCollapsed={metricsCollapsed}
             activeDrawer={activeDrawer}
@@ -972,7 +868,6 @@ const MapStage = ({
   selectedMarket,
   selectedLead,
   selectedMarketLeads,
-  mapLinks,
   metrics,
   metricsCollapsed,
   activeDrawer,
@@ -988,7 +883,6 @@ const MapStage = ({
   selectedMarket: LiveMarket | undefined
   selectedLead: LiveLead | undefined
   selectedMarketLeads: LiveLead[]
-  mapLinks: LiveDashboardModel['mapLinks']
   metrics: LiveDashboardModel['summaryMetrics']
   metricsCollapsed: boolean
   activeDrawer: DrawerType
@@ -998,27 +892,7 @@ const MapStage = ({
   onOpenMarket: (marketId: string) => void
   onOpenLead: (leadId: string) => void
   onSetMapMode: (mode: MapMode) => void
-}) => {
-  const marketPoints = Object.fromEntries(
-    markets.map((market) => [market.id, projectPoint(market.lat, market.lng)]),
-  )
-
-  // Fly-to viewBox: zoom in on selected lead when drawer opens, offset for drawer width
-  const mapViewTargetStr = useMemo(() => {
-    if (activeDrawer !== null && selectedLead != null) {
-      const p = projectPoint(selectedLead.lat, selectedLead.lng)
-      const zW = 620
-      const zH = 350
-      const x = Math.max(0, Math.min(1000 - zW, p.x - zW * 0.38))
-      const y = Math.max(0, Math.min(560 - zH, p.y - zH * 0.5))
-      return `${x} ${y} ${zW} ${zH}`
-    }
-    return '0 0 1000 560'
-  }, [activeDrawer, selectedLead])
-
-  const animatedViewBox = useAnimatedViewBox(mapViewTargetStr)
-
-  return (
+}) => (
     <section className="cc-map-stage" data-testid="map-canvas">
       <div className="cc-map-stage__controls">
         <span className="cc-live-pill">
@@ -1060,147 +934,17 @@ const MapStage = ({
       ) : null}
 
       <div className="cc-map">
-        <svg className="cc-map__art" viewBox={animatedViewBox} preserveAspectRatio="xMidYMid slice">
-          <defs>
-            <linearGradient id="map-grid-glow" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stopColor="rgba(72,213,255,0.18)" />
-              <stop offset="100%" stopColor="rgba(72,213,255,0)" />
-            </linearGradient>
-            <linearGradient id="landmass-fill" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stopColor="rgba(10, 23, 36, 0.94)" />
-              <stop offset="100%" stopColor="rgba(9, 15, 26, 0.68)" />
-            </linearGradient>
-            {/* Heatmap gradients \u2014 dark-mode optimised per sentiment */}
-            <radialGradient id="heat-hot" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#ef4444" stopOpacity="0.28" />
-              <stop offset="45%" stopColor="#ef4444" stopOpacity="0.12" />
-              <stop offset="100%" stopColor="#ef4444" stopOpacity="0" />
-            </radialGradient>
-            <radialGradient id="heat-warm" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.22" />
-              <stop offset="50%" stopColor="#f59e0b" stopOpacity="0.08" />
-              <stop offset="100%" stopColor="#f59e0b" stopOpacity="0" />
-            </radialGradient>
-            <radialGradient id="heat-neutral" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#5aa6ff" stopOpacity="0.18" />
-              <stop offset="55%" stopColor="#5aa6ff" stopOpacity="0.06" />
-              <stop offset="100%" stopColor="#5aa6ff" stopOpacity="0" />
-            </radialGradient>
-            <radialGradient id="heat-cold" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#6e92b4" stopOpacity="0.14" />
-              <stop offset="55%" stopColor="#6e92b4" stopOpacity="0.04" />
-              <stop offset="100%" stopColor="#6e92b4" stopOpacity="0" />
-            </radialGradient>
-          </defs>
-
-          {Array.from({ length: 8 }).map((_, index) => (
-            <line
-              key={`vertical-${index}`}
-              x1={120 + index * 100}
-              y1="20"
-              x2={120 + index * 100}
-              y2={mapCanvas.height - 20}
-              stroke="rgba(72, 213, 255, 0.06)"
-              strokeDasharray="5 9"
-            />
-          ))}
-
-          {Array.from({ length: 5 }).map((_, index) => (
-            <line
-              key={`horizontal-${index}`}
-              x1="50"
-              y1={90 + index * 86}
-              x2={mapCanvas.width - 50}
-              y2={90 + index * 86}
-              stroke="rgba(72, 213, 255, 0.05)"
-              strokeDasharray="5 9"
-            />
-          ))}
-
-          <path
-            d="M90 430 L110 350 L155 290 L190 215 L250 175 L335 130 L430 110 L560 120 L650 145 L760 155 L865 195 L925 248 L910 325 L888 375 L850 435 L780 470 L670 495 L520 500 L415 488 L295 470 L205 445 Z"
-            fill="url(#landmass-fill)"
-            stroke="rgba(94, 155, 199, 0.18)"
-            strokeWidth="1.4"
-          />
-
-          {/* Heatmap density layer \u2014 filtered leads */}
-          {leads.map((lead) => {
-            const point = projectPoint(lead.lat, lead.lng)
-            const r = lead.sentiment === 'hot' ? 88 : lead.sentiment === 'warm' ? 72 : 58
-            return (
-              <circle
-                key={`heat-${lead.id}`}
-                cx={point.x}
-                cy={point.y}
-                r={r}
-                fill={`url(#heat-${lead.sentiment})`}
-                className="cc-map__heat"
-              />
-            )
-          })}
-
-          {mapLinks.map((link) => {
-            const fromPoint = marketPoints[link.fromMarketId]
-            const toPoint = marketPoints[link.toMarketId]
-            if (!fromPoint || !toPoint) return null
-            return (
-              <path
-                key={link.id}
-                d={buildLinkPath(fromPoint, toPoint)}
-                className="cc-map__link"
-                strokeWidth={1 + link.volume / 18}
-              />
-            )
-          })}
-
-          {/* Lead pins — sentiment-classified with tiered pulse */}
-          {leads.map((lead) => {
-            const point = projectPoint(lead.lat, lead.lng)
-            const isSelected = selectedLead?.id === lead.id
-            const pinSentiment = getMapModeSentiment(lead, mapMode)
-
-            return (
-              <g
-                key={lead.id}
-                className={classes(
-                  'cc-map__lead',
-                  `marker-${pinSentiment}`,
-                  isSelected && 'is-selected',
-                )}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onOpenLead(lead.id)
-                }}
-              >
-                <circle cx={point.x} cy={point.y} r={isSelected ? 6.5 : 4.4} />
-                <circle cx={point.x} cy={point.y} r={isSelected ? 12 : 8.5} className="cc-map__lead-ring" />
-              </g>
-            )
-          })}
-
-          {markets.map((market) => {
-            const point = marketPoints[market.id]
-            const isSelected = market.id === selectedMarket?.id
-
-            return (
-              <g
-                key={market.id}
-                className={classes('cc-map__node', isSelected && 'is-selected')}
-                onClick={() => { onSelectMarket(market.id) }}
-              >
-                <circle cx={point.x} cy={point.y} r={isSelected ? 14 : 11} className="cc-map__node-glow" />
-                <circle cx={point.x} cy={point.y} r={isSelected ? 7.5 : 5.5} className="cc-map__node-core" />
-                <text x={point.x + 12} y={point.y - 12} className="cc-map__node-label">
-                  {market.name}
-                </text>
-                <text x={point.x + 12} y={point.y + 6} className="cc-map__node-subtitle">
-                  {market.scanLabel}
-                </text>
-              </g>
-            )
-          })}
-        </svg>
+        {/* ── Real MapLibre geographic property map ───────────────────────── */}
+        <NexusMap
+          leads={leads}
+          markets={markets}
+          selectedLeadId={selectedLead?.id}
+          selectedMarketId={selectedMarket?.id}
+          mapMode={mapMode}
+          activeDrawer={activeDrawer}
+          onOpenLead={onOpenLead}
+          onSelectMarket={onSelectMarket}
+        />
 
         {selectedMarket ? (
           <div className="cc-map__market-card">
@@ -1273,12 +1017,16 @@ const MapStage = ({
           ))}
         </div>
 
-        {/* Map attribution \u2014 repositioned bottom-right, above other overlays */}
-        <div className="cc-map__attribution">NEXUS Intelligence Map</div>
+        {/* Attribution — CARTO/OSM compliance */}
+        <div className="cc-map__attribution">
+          <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">© CARTO</a>
+          {' '}
+          <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OSM</a>
+          {' · '}NEXUS Intelligence Map
+        </div>
       </div>
     </section>
   )
-}
 
 const ActivityRail = ({
   alerts,

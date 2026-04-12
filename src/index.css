@@ -806,6 +806,7 @@ a {
   content: '';
   position: absolute;
   inset: 0;
+  z-index: 2;
   background:
     radial-gradient(circle at center, rgba(72, 213, 255, 0.08), transparent 58%),
     linear-gradient(135deg, rgba(72, 213, 255, 0.03), transparent 40%);
@@ -816,6 +817,7 @@ a {
   content: '';
   position: absolute;
   inset: -120px;
+  z-index: 3;
   background: conic-gradient(from 180deg, transparent, rgba(72, 213, 255, 0.08), transparent);
   animation: sweep 9s linear infinite;
   pointer-events: none;
@@ -892,7 +894,7 @@ a {
 .cc-map__lead-card,
 .cc-map__spotlights {
   position: absolute;
-  z-index: 1;
+  z-index: var(--z-map-overlay);
 }
 
 .cc-map__market-card,
@@ -2635,5 +2637,119 @@ a {
 .cc-mock-banner__detail code {
   font-family: var(--font-mono);
   color: rgba(255, 191, 94, 0.85);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   NEXUS MAP — MapLibre GL Container + Overlay Styles
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── MapLibre GL base overrides ─────────────────────────────────────────── */
+
+/* Fill the .cc-map container with a dark background while tiles load */
+.maplibregl-map {
+  background: rgba(7, 12, 22, 1) !important;
+}
+
+/* Match the parent .cc-map border-radius so the canvas corners clip cleanly */
+.maplibregl-canvas {
+  border-radius: inherit;
+}
+
+/* Compact attribution badge — dark NEXUS palette */
+.maplibregl-ctrl-attrib {
+  background: rgba(5, 10, 17, 0.78) !important;
+  color: rgba(145, 194, 232, 0.7) !important;
+  font-family: var(--font-mono) !important;
+  font-size: 0.58rem !important;
+  border-radius: 8px !important;
+  border: 1px solid rgba(72, 213, 255, 0.1) !important;
+}
+
+.maplibregl-ctrl-attrib a {
+  color: rgba(72, 213, 255, 0.6) !important;
+}
+
+/* Compact attribution toggle button */
+.maplibregl-ctrl-attrib-button {
+  background-color: rgba(72, 213, 255, 0.15) !important;
+  filter: none !important;
+}
+
+/* Hide the default logo — replaced by NEXUS brand */
+.maplibregl-ctrl-logo {
+  display: none !important;
+}
+
+/* ── NexusMap container ─────────────────────────────────────────────────── */
+
+/* Wrapper fills the .cc-map absolutely so overlay cards remain siblings */
+.cc-nexus-map-wrap {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+/* The actual MapLibre mount target */
+.cc-nexus-map {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+}
+
+/* ── Debug badge ────────────────────────────────────────────────────────── */
+
+.cc-map__debug {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  z-index: var(--z-map-overlay);
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.08em;
+  color: rgba(72, 213, 255, 0.42);
+  background: rgba(5, 10, 17, 0.62);
+  border: 1px solid rgba(72, 213, 255, 0.1);
+  border-radius: 6px;
+  padding: 2px 7px;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* ── Empty-state overlay ────────────────────────────────────────────────── */
+
+.cc-map__empty-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-map-overlay);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: var(--text-2);
+  background: rgba(5, 10, 17, 0.72);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+}
+
+.cc-map__empty-icon {
+  font-size: 2rem;
+  opacity: 0.35;
+}
+
+/* ── Attribution links ──────────────────────────────────────────────────── */
+
+.cc-map__attribution a {
+  color: var(--text-2);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+  pointer-events: all;
+}
+
+.cc-map__attribution a:hover {
+  color: var(--text-0);
 }
 
