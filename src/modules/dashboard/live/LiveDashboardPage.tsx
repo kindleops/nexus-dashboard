@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useEffectEvent, useState } from 'react'
+import { useDeferredValue, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type {
   FilterOption,
@@ -20,6 +20,15 @@ import {
 import { Icon } from '../../../shared/icons'
 
 type DrawerType = 'market' | 'lead' | 'agent' | null
+type LayoutMode = 'split' | 'map' | 'list'
+
+interface CommandItem {
+  id: string
+  label: string
+  hint?: string
+  category: string
+  action: () => void
+}
 
 const mapBounds = {
   west: -113,
@@ -35,6 +44,67 @@ const mapCanvas = {
 
 const classes = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
+
+const parseVB = (s: string) => {
+  const parts = s.trim().split(/\s+/).map(Number)
+  return { x: parts[0] ?? 0, y: parts[1] ?? 0, w: parts[2] ?? 1000, h: parts[3] ?? 560 }
+}
+
+const fmtVB = ({ x, y, w, h }: { x: number; y: number; w: number; h: number }) =>
+  `${x.toFixed(1)} ${y.toFixed(1)} ${w.toFixed(1)} ${h.toFixed(1)}`
+
+const groupByCategory = <T extends { category: string }>(items: T[]) => {
+  const map = new Map<string, T[]>()
+  for (const item of items) {
+    const existing = map.get(item.category)
+    if (existing) {
+      existing.push(item)
+    } else {
+      map.set(item.category, [item])
+    }
+  }
+  return Array.from(map.entries()).map(([category, groups]) => ({ category, items: groups }))
+}
+
+// Animated SVG viewBox — smooth fly-to effect
+const useAnimatedViewBox = (target: string): string => {
+  const current = useRef(parseVB(target))
+  const rafRef = useRef<number>(0)
+  const [displayVB, setDisplayVB] = useState(target)
+
+  useEffect(() => {
+    const tgt = parseVB(target)
+    const tick = () => {
+      const c = current.current
+      const next = {
+        x: c.x + (tgt.x - c.x) * 0.13,
+        y: c.y + (tgt.y - c.y) * 0.13,
+        w: c.w + (tgt.w - c.w) * 0.13,
+        h: c.h + (tgt.h - c.h) * 0.13,
+      }
+      current.current = next
+      const dist =
+        Math.abs(next.x - tgt.x) +
+        Math.abs(next.y - tgt.y) +
+        Math.abs(next.w - tgt.w) +
+        Math.abs(next.h - tgt.h)
+      if (dist > 0.5) {
+        setDisplayVB(fmtVB(next))
+        rafRef.current = requestAnimationFrame(tick)
+      } else {
+        current.current = tgt
+        setDisplayVB(target)
+      }
+    }
+    cancelAnimationFrame(rafRef.current)
+    rafRef.current = requestAnimationFrame(tick)
+    return () => {
+      cancelAnimationFrame(rafRef.current)
+    }
+  }, [target])
+
+  return displayVB
+}
 
 const includesQuery = (query: string, ...values: Array<string | null | undefined>) => {
   if (!query) {
@@ -93,6 +163,10 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
   const [selectedAgentId, setSelectedAgentId] = useState(data.defaults.agentId)
   const [dismissedAlertIds, setDismissedAlertIds] = useState<string[]>([])
   const [clock, setClock] = useState(() => new Date())
+  // New — layout, command palette
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>('split')
+  const [cmdOpen, setCmdOpen] = useState(false)
+  const [cmdQuery, setCmdQuery] = useState('')
 
   const visibleLeads = data.leads.filter((lead) => {
     const matchesMarket = marketScope === 'all' || lead.marketId === marketScope
@@ -170,12 +244,30 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
   }, [])
 
   const onKeyboardShortcut = useEffectEvent((event: KeyboardEvent) => {
+    // Cmd/Ctrl + K — Command Palette (works from any context)
+    if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
+      event.preventDefault()
+      setCmdOpen((curr) => !curr)
+      return
+    }
+
+    // Cmd/Ctrl + M — Map Focus Mode toggle
+    if ((event.metaKey || event.ctrlKey) && event.key === 'm') {
+      event.preventDefault()
+      setLayoutMode((curr) => (curr === 'map' ? 'split' : 'map'))
+      return
+    }
+
     const target = event.target
     if (
       target instanceof HTMLInputElement ||
       target instanceof HTMLTextAreaElement ||
       target instanceof HTMLSelectElement
     ) {
+      if (event.key === 'Escape' && cmdOpen) {
+        setCmdOpen(false)
+        setCmdQuery('')
+      }
       return
     }
 
@@ -188,7 +280,19 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
     }
 
     if (event.key === 'Escape') {
-      setActiveDrawer(null)
+      if (cmdOpen) {
+        setCmdOpen(false)
+        setCmdQuery('')
+        return
+      }
+      if (layoutMode === 'map') {
+        setLayoutMode('split')
+        return
+      }
+      if (activeDrawer) {
+        setActiveDrawer(null)
+        return
+      }
     }
   })
 
@@ -240,49 +344,88 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
     data.leads.find((lead) => lead.id === selectedAgent?.focusLeadId) ?? selectedLead
 
   const visibleLeadPins = visibleLeads.slice(0, 8)
-  const selectedMarketLeads = data.leads.filter((lead) => lead.marketId === selectedMarket?.id).slice(0, 3)
+  const selectedMarketLeads = data.leads
+    .filter((lead) => lead.marketId === selectedMarket?.id)
+    .slice(0, 3)
+
+  // Effective open states account for layout mode
+  const leftEffOpen = leftRailOpen && layoutMode !== 'map'
+  const rightEffOpen = rightRailOpen && layoutMode !== 'map'
+
+  // Command palette commands
+  const commands = useMemo<CommandItem[]>(
+    () => [
+      { id: 'view-intel', label: 'Toggle Intel Panel', hint: '[', category: 'View', action: () => setLeftRailOpen((c) => !c) },
+      { id: 'view-activity', label: 'Toggle Activity Panel', hint: ']', category: 'View', action: () => setRightRailOpen((c) => !c) },
+      { id: 'view-filters', label: 'Toggle Filters', category: 'View', action: () => setFiltersOpen((c) => !c) },
+      { id: 'view-kpi', label: 'Toggle KPI Bar', category: 'View', action: () => setMetricsCollapsed((c) => !c) },
+      { id: 'layout-split', label: 'Split View', hint: 'default', category: 'Layout', action: () => setLayoutMode('split') },
+      { id: 'layout-map', label: 'Map Focus Mode', hint: '⌘M', category: 'Layout', action: () => setLayoutMode('map') },
+      { id: 'layout-list', label: 'List View', category: 'Layout', action: () => setLayoutMode('list') },
+      { id: 'filter-all', label: 'Clear All Filters', hint: 'reset', category: 'Filter', action: () => { setSentiment('all'); setPropertyType('all'); setStage('all'); setMarketScope('all') } },
+      { id: 'filter-hot', label: 'Filter: Hot Leads', hint: 'sentiment', category: 'Filter', action: () => setSentiment('hot') },
+      { id: 'filter-warm', label: 'Filter: Warm Leads', hint: 'sentiment', category: 'Filter', action: () => setSentiment('warm') },
+      { id: 'filter-cold', label: 'Filter: Cold Leads', hint: 'sentiment', category: 'Filter', action: () => setSentiment('cold') },
+      ...data.markets.map((market) => ({
+        id: `market-${market.id}`,
+        label: `Market: ${market.name}`,
+        hint: market.scanLabel,
+        category: 'Markets',
+        action: () => { setSelectedMarketId(market.id); setActiveDrawer('market') },
+      })),
+      ...visibleLeads.slice(0, 10).map((lead) => ({
+        id: `lead-${lead.id}`,
+        label: `Lead: ${lead.ownerName}`,
+        hint: lead.sentiment,
+        category: 'Leads',
+        action: () => { setSelectedLeadId(lead.id); setActiveDrawer('lead') },
+      })),
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data.markets, visibleLeads],
+  )
 
   return (
-    <div className="cc-shell" data-testid="dashboard-root">
+    <div
+      className={classes(
+        'cc-shell',
+        layoutMode === 'map' && 'cc-shell--map-focus',
+        layoutMode !== 'split' && `cc-shell--layout-${layoutMode}`,
+      )}
+      data-testid="dashboard-root"
+    >
       <DashboardHeader
         appName={data.appName}
         query={query}
         setQuery={setQuery}
         liveClock={clock}
         healthLabel={data.healthLabel}
-        leftRailOpen={leftRailOpen}
-        rightRailOpen={rightRailOpen}
-        onToggleLeftRail={() => {
-          setLeftRailOpen((current) => !current)
-        }}
-        onToggleRightRail={() => {
-          setRightRailOpen((current) => !current)
-        }}
+        leftRailOpen={leftEffOpen}
+        rightRailOpen={rightEffOpen}
+        layoutMode={layoutMode}
+        onToggleLeftRail={() => { setLeftRailOpen((current) => !current) }}
+        onToggleRightRail={() => { setRightRailOpen((current) => !current) }}
+        onSetLayoutMode={setLayoutMode}
+        onOpenCmd={() => { setCmdOpen(true) }}
       />
 
       <div className="cc-workspace">
-        {leftRailOpen ? (
+        {/* Left rail wrap — always rendered, CSS-animated collapse */}
+        <div
+          className={classes('cc-rail-wrap cc-rail-wrap--left', !leftEffOpen && 'is-collapsed')}
+          aria-hidden={!leftEffOpen}
+        >
           <IntelligenceRail
             data={data}
             filtersOpen={filtersOpen}
-            onToggleFilters={() => {
-              setFiltersOpen((current) => !current)
-            }}
+            onToggleFilters={() => { setFiltersOpen((current) => !current) }}
             selectedMarketId={selectedMarket?.id ?? ''}
             selectedAgentId={selectedAgent?.id ?? ''}
             visibleMarkets={visibleMarkets}
             visibleAgents={visibleAgents}
-            onSelectMarket={(marketId) => {
-              setSelectedMarketId(marketId)
-            }}
-            onOpenMarket={(marketId) => {
-              setSelectedMarketId(marketId)
-              setActiveDrawer('market')
-            }}
-            onOpenAgent={(agentId) => {
-              setSelectedAgentId(agentId)
-              setActiveDrawer('agent')
-            }}
+            onSelectMarket={(marketId) => { setSelectedMarketId(marketId) }}
+            onOpenMarket={(marketId) => { setSelectedMarketId(marketId); setActiveDrawer('market') }}
+            onOpenAgent={(agentId) => { setSelectedAgentId(agentId); setActiveDrawer('agent') }}
             marketScope={marketScope}
             propertyType={propertyType}
             sentiment={sentiment}
@@ -294,86 +437,76 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
             setStage={setStage}
             setOwnerType={setOwnerType}
           />
-        ) : null}
+        </div>
 
-        <MapStage
-          markets={visibleMarkets}
-          leads={visibleLeadPins}
-          selectedMarket={selectedMarket}
-          selectedLead={selectedLead}
-          selectedMarketLeads={selectedMarketLeads}
-          mapLinks={data.mapLinks}
-          metrics={data.summaryMetrics}
-          metricsCollapsed={metricsCollapsed}
-          onToggleMetrics={() => {
-            setMetricsCollapsed((current) => !current)
-          }}
-          onSelectMarket={(marketId) => {
-            setSelectedMarketId(marketId)
-          }}
-          onOpenMarket={(marketId) => {
-            setSelectedMarketId(marketId)
-            setActiveDrawer('market')
-          }}
-          onOpenLead={(leadId) => {
-            setSelectedLeadId(leadId)
-            setActiveDrawer('lead')
-          }}
-        />
+        {layoutMode === 'list' ? (
+          <LeadListTable
+            leads={visibleLeads}
+            selectedLeadId={resolvedSelectedLeadId}
+            onOpenLead={(leadId) => { setSelectedLeadId(leadId); setActiveDrawer('lead') }}
+          />
+        ) : (
+          <MapStage
+            markets={visibleMarkets}
+            leads={visibleLeadPins}
+            selectedMarket={selectedMarket}
+            selectedLead={selectedLead}
+            selectedMarketLeads={selectedMarketLeads}
+            mapLinks={data.mapLinks}
+            metrics={data.summaryMetrics}
+            metricsCollapsed={metricsCollapsed}
+            activeDrawer={activeDrawer}
+            onToggleMetrics={() => { setMetricsCollapsed((current) => !current) }}
+            onSelectMarket={(marketId) => { setSelectedMarketId(marketId) }}
+            onOpenMarket={(marketId) => { setSelectedMarketId(marketId); setActiveDrawer('market') }}
+            onOpenLead={(leadId) => { setSelectedLeadId(leadId); setActiveDrawer('lead') }}
+          />
+        )}
 
-        {rightRailOpen ? (
+        {/* Right rail wrap — always rendered, CSS-animated collapse */}
+        <div
+          className={classes('cc-rail-wrap cc-rail-wrap--right', !rightEffOpen && 'is-collapsed')}
+          aria-hidden={!rightEffOpen}
+        >
           <ActivityRail
             alerts={visibleAlerts}
             timeline={visibleTimeline}
             selectedLead={selectedLead}
-            onAcknowledgeAlert={(alertId) => {
-              setDismissedAlertIds((current) => [...current, alertId])
-            }}
-            onOpenLead={(leadId) => {
-              setSelectedLeadId(leadId)
-              setActiveDrawer('lead')
-            }}
+            onAcknowledgeAlert={(alertId) => { setDismissedAlertIds((current) => [...current, alertId]) }}
+            onOpenLead={(leadId) => { setSelectedLeadId(leadId); setActiveDrawer('lead') }}
           />
-        ) : null}
+        </div>
 
         <button
-          className="cc-rail-toggle cc-rail-toggle--left"
+          className={classes('cc-rail-toggle cc-rail-toggle--left', !leftEffOpen && 'is-closed')}
           type="button"
           data-testid="toggle-left-rail"
-          style={{ left: leftRailOpen ? '310px' : '8px' }}
-          onClick={() => {
-            setLeftRailOpen((current) => !current)
-          }}
+          onClick={() => { setLeftRailOpen((current) => !current) }}
         >
           <Icon
-            className={classes('cc-rail-toggle__icon', leftRailOpen && 'is-open')}
+            className={classes('cc-rail-toggle__icon', leftEffOpen && 'is-open')}
             name="chevron-right"
           />
         </button>
 
         <button
-          className="cc-rail-toggle cc-rail-toggle--right"
+          className={classes('cc-rail-toggle cc-rail-toggle--right', !rightEffOpen && 'is-closed')}
           type="button"
           data-testid="toggle-right-rail"
-          style={{ right: rightRailOpen ? '330px' : '8px' }}
-          onClick={() => {
-            setRightRailOpen((current) => !current)
-          }}
+          onClick={() => { setRightRailOpen((current) => !current) }}
         >
           <Icon
-            className={classes('cc-rail-toggle__icon', rightRailOpen && 'is-open-right')}
+            className={classes('cc-rail-toggle__icon', rightEffOpen && 'is-open-right')}
             name="chevron-right"
           />
         </button>
       </div>
 
-      <CommandHintBar activeDrawer={activeDrawer} />
+      <CommandHintBar activeDrawer={activeDrawer} layoutMode={layoutMode} />
 
       <DrawerOverlay
         activeDrawer={activeDrawer}
-        onClose={() => {
-          setActiveDrawer(null)
-        }}
+        onClose={() => { setActiveDrawer(null) }}
       >
         {activeDrawer === 'market' && selectedMarket ? (
           <MarketDrawer market={selectedMarket} />
@@ -383,6 +516,15 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
           <AgentDrawer agent={selectedAgent} lead={selectedAgentLead} />
         ) : null}
       </DrawerOverlay>
+
+      {cmdOpen ? (
+        <CommandPalette
+          query={cmdQuery}
+          onQueryChange={setCmdQuery}
+          commands={commands}
+          onClose={() => { setCmdOpen(false); setCmdQuery('') }}
+        />
+      ) : null}
     </div>
   )
 }
@@ -405,8 +547,11 @@ const DashboardHeader = ({
   healthLabel: string
   leftRailOpen: boolean
   rightRailOpen: boolean
+  layoutMode: LayoutMode
   onToggleLeftRail: () => void
   onToggleRightRail: () => void
+  onSetLayoutMode: (mode: LayoutMode) => void
+  onOpenCmd: () => void
 }) => (
   <header className="cc-header">
     <div className="cc-header__brand">
@@ -449,20 +594,47 @@ const DashboardHeader = ({
         <Icon className="cc-clock__icon" name="clock" />
         {formatClockTime(liveClock)} CT
       </div>
+
+      {/* Layout mode toggles */}
       <button
-        className="cc-icon-button cc-icon-button--mobile"
+        className={classes('cc-icon-button', layoutMode === 'split' && 'is-active')}
         type="button"
-        onClick={onToggleLeftRail}
+        title="Split View"
+        onClick={() => onSetLayoutMode('split')}
       >
+        <Icon className="cc-icon-button__icon" name="layout-split" />
+      </button>
+      <button
+        className={classes('cc-icon-button', layoutMode === 'map' && 'is-active')}
+        type="button"
+        title="Map Focus (⌘M)"
+        onClick={() => onSetLayoutMode(layoutMode === 'map' ? 'split' : 'map')}
+      >
+        <Icon className="cc-icon-button__icon" name="maximize" />
+      </button>
+      <button
+        className={classes('cc-icon-button', layoutMode === 'list' && 'is-active')}
+        type="button"
+        title="List View"
+        onClick={() => onSetLayoutMode(layoutMode === 'list' ? 'split' : 'list')}
+      >
+        <Icon className="cc-icon-button__icon" name="list" />
+      </button>
+
+      {/* Command palette shortcut */}
+      <button className="cc-cmd-trigger" type="button" title="Command Palette (⌘K)" onClick={onOpenCmd}>
+        <Icon className="cc-cmd-trigger__icon" name="command" />
+        <span>⌘K</span>
+      </button>
+
+      {/* Mobile toggles */}
+      <button className="cc-icon-button cc-icon-button--mobile" type="button" onClick={onToggleLeftRail}>
         {leftRailOpen ? 'Hide Intel' : 'Show Intel'}
       </button>
-      <button
-        className="cc-icon-button cc-icon-button--mobile"
-        type="button"
-        onClick={onToggleRightRail}
-      >
+      <button className="cc-icon-button cc-icon-button--mobile" type="button" onClick={onToggleRightRail}>
         {rightRailOpen ? 'Hide Activity' : 'Show Activity'}
       </button>
+
       <button className="cc-icon-button" type="button" data-testid="button-alerts">
         <Icon className="cc-icon-button__icon" name="bell" />
       </button>
@@ -708,6 +880,7 @@ const MapStage = ({
   mapLinks,
   metrics,
   metricsCollapsed,
+  activeDrawer,
   onToggleMetrics,
   onSelectMarket,
   onOpenMarket,
@@ -721,6 +894,7 @@ const MapStage = ({
   mapLinks: LiveDashboardModel['mapLinks']
   metrics: LiveDashboardModel['summaryMetrics']
   metricsCollapsed: boolean
+  activeDrawer: DrawerType
   onToggleMetrics: () => void
   onSelectMarket: (marketId: string) => void
   onOpenMarket: (marketId: string) => void
@@ -729,6 +903,21 @@ const MapStage = ({
   const marketPoints = Object.fromEntries(
     markets.map((market) => [market.id, projectPoint(market.lat, market.lng)]),
   )
+
+  // Fly-to viewBox: zoom in on selected lead when drawer opens, offset for drawer width
+  const mapViewTargetStr = useMemo(() => {
+    if (activeDrawer !== null && selectedLead != null) {
+      const p = projectPoint(selectedLead.lat, selectedLead.lng)
+      const zW = 620
+      const zH = 350
+      const x = Math.max(0, Math.min(1000 - zW, p.x - zW * 0.38))
+      const y = Math.max(0, Math.min(560 - zH, p.y - zH * 0.5))
+      return `${x} ${y} ${zW} ${zH}`
+    }
+    return '0 0 1000 560'
+  }, [activeDrawer, selectedLead])
+
+  const animatedViewBox = useAnimatedViewBox(mapViewTargetStr)
 
   return (
     <section className="cc-map-stage" data-testid="map-canvas">
@@ -760,7 +949,7 @@ const MapStage = ({
       ) : null}
 
       <div className="cc-map">
-        <svg className="cc-map__art" viewBox={`0 0 ${mapCanvas.width} ${mapCanvas.height}`}>
+        <svg className="cc-map__art" viewBox={animatedViewBox} preserveAspectRatio="xMidYMid slice">
           <defs>
             <linearGradient id="map-grid-glow" x1="0" y1="0" x2="1" y2="1">
               <stop offset="0%" stopColor="rgba(72,213,255,0.18)" />
@@ -770,6 +959,27 @@ const MapStage = ({
               <stop offset="0%" stopColor="rgba(10, 23, 36, 0.94)" />
               <stop offset="100%" stopColor="rgba(9, 15, 26, 0.68)" />
             </linearGradient>
+            {/* Heatmap gradients \u2014 dark-mode optimised per sentiment */}
+            <radialGradient id="heat-hot" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#ef4444" stopOpacity="0.28" />
+              <stop offset="45%" stopColor="#ef4444" stopOpacity="0.12" />
+              <stop offset="100%" stopColor="#ef4444" stopOpacity="0" />
+            </radialGradient>
+            <radialGradient id="heat-warm" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.22" />
+              <stop offset="50%" stopColor="#f59e0b" stopOpacity="0.08" />
+              <stop offset="100%" stopColor="#f59e0b" stopOpacity="0" />
+            </radialGradient>
+            <radialGradient id="heat-neutral" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#5aa6ff" stopOpacity="0.18" />
+              <stop offset="55%" stopColor="#5aa6ff" stopOpacity="0.06" />
+              <stop offset="100%" stopColor="#5aa6ff" stopOpacity="0" />
+            </radialGradient>
+            <radialGradient id="heat-cold" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#6e92b4" stopOpacity="0.14" />
+              <stop offset="55%" stopColor="#6e92b4" stopOpacity="0.04" />
+              <stop offset="100%" stopColor="#6e92b4" stopOpacity="0" />
+            </radialGradient>
           </defs>
 
           {Array.from({ length: 8 }).map((_, index) => (
@@ -803,13 +1013,26 @@ const MapStage = ({
             strokeWidth="1.4"
           />
 
+          {/* Heatmap density layer \u2014 filtered leads */}
+          {leads.map((lead) => {
+            const point = projectPoint(lead.lat, lead.lng)
+            const r = lead.sentiment === 'hot' ? 88 : lead.sentiment === 'warm' ? 72 : 58
+            return (
+              <circle
+                key={`heat-${lead.id}`}
+                cx={point.x}
+                cy={point.y}
+                r={r}
+                fill={`url(#heat-${lead.sentiment})`}
+                className="cc-map__heat"
+              />
+            )
+          })}
+
           {mapLinks.map((link) => {
             const fromPoint = marketPoints[link.fromMarketId]
             const toPoint = marketPoints[link.toMarketId]
-            if (!fromPoint || !toPoint) {
-              return null
-            }
-
+            if (!fromPoint || !toPoint) return null
             return (
               <path
                 key={link.id}
@@ -820,6 +1043,7 @@ const MapStage = ({
             )
           })}
 
+          {/* Lead pins \u2014 sentiment-classified with tiered pulse */}
           {leads.map((lead) => {
             const point = projectPoint(lead.lat, lead.lng)
             const isSelected = selectedLead?.id === lead.id
@@ -827,8 +1051,13 @@ const MapStage = ({
             return (
               <g
                 key={lead.id}
-                className={classes('cc-map__lead', isSelected && 'is-selected')}
-                onClick={() => {
+                className={classes(
+                  'cc-map__lead',
+                  `marker-${lead.sentiment}`,
+                  isSelected && 'is-selected',
+                )}
+                onClick={(e) => {
+                  e.stopPropagation()
                   onOpenLead(lead.id)
                 }}
               >
@@ -846,9 +1075,7 @@ const MapStage = ({
               <g
                 key={market.id}
                 className={classes('cc-map__node', isSelected && 'is-selected')}
-                onClick={() => {
-                  onSelectMarket(market.id)
-                }}
+                onClick={() => { onSelectMarket(market.id) }}
               >
                 <circle cx={point.x} cy={point.y} r={isSelected ? 14 : 11} className="cc-map__node-glow" />
                 <circle cx={point.x} cy={point.y} r={isSelected ? 7.5 : 5.5} className="cc-map__node-core" />
@@ -873,9 +1100,7 @@ const MapStage = ({
               <button
                 className="cc-inline-button"
                 type="button"
-                onClick={() => {
-                  onOpenMarket(selectedMarket.id)
-                }}
+                onClick={() => { onOpenMarket(selectedMarket.id) }}
               >
                 Open
               </button>
@@ -893,9 +1118,7 @@ const MapStage = ({
           <button
             className="cc-map__lead-card"
             type="button"
-            onClick={() => {
-              onOpenLead(selectedLead.id)
-            }}
+            onClick={() => { onOpenLead(selectedLead.id) }}
           >
             <div className="cc-map__lead-card-header">
               <span className={classes('cc-sentiment-pill', stageToneClass[selectedLead.sentiment])}>
@@ -918,9 +1141,7 @@ const MapStage = ({
               key={lead.id}
               className="cc-spotlight-card"
               type="button"
-              onClick={() => {
-                onOpenLead(lead.id)
-              }}
+              onClick={() => { onOpenLead(lead.id) }}
             >
               <span className="cc-panel__eyebrow">{lead.marketLabel}</span>
               <strong>{lead.ownerName}</strong>
@@ -928,6 +1149,9 @@ const MapStage = ({
             </button>
           ))}
         </div>
+
+        {/* Map attribution \u2014 repositioned bottom-right, above other overlays */}
+        <div className="cc-map__attribution">NEXUS Intelligence Map</div>
       </div>
     </section>
   )
@@ -1329,8 +1553,156 @@ const AgentDrawer = ({ agent, lead }: { agent: LiveAgent; lead: LiveLead }) => (
   </div>
 )
 
-const CommandHintBar = ({ activeDrawer }: { activeDrawer: DrawerType }) => (
+const LeadListTable = ({
+  leads,
+  selectedLeadId,
+  onOpenLead,
+}: {
+  leads: LiveLead[]
+  selectedLeadId: string | null
+  onOpenLead: (leadId: string) => void
+}) => (
+  <section className="cc-list-stage">
+    <div className="cc-list-stage__header">
+      <span className="cc-panel__eyebrow">ALL LEADS</span>
+      <span className="cc-panel__eyebrow">{leads.length} results</span>
+    </div>
+    <div className="cc-table-card cc-lead-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Sentiment</th>
+            <th>Owner / Market</th>
+            <th>Address</th>
+            <th>Stage</th>
+            <th>Value</th>
+            <th>Intent</th>
+            <th>Days</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {leads.map((lead) => (
+            <tr
+              key={lead.id}
+              className={classes('cc-lead-table__row', lead.id === selectedLeadId && 'is-selected')}
+            >
+              <td>
+                <span className={classes('cc-sentiment-pill', stageToneClass[lead.sentiment])}>
+                  {lead.sentiment.toUpperCase()}
+                </span>
+              </td>
+              <td>
+                <strong>{lead.ownerName}</strong>
+                <br />
+                <span className="cc-muted">{lead.marketLabel}</span>
+              </td>
+              <td className="cc-muted">{lead.address}</td>
+              <td>{lead.currentStage}</td>
+              <td>{formatCurrency(lead.offerAmount)}</td>
+              <td className="cc-muted">{lead.currentIntent}</td>
+              <td className="cc-muted">{lead.pipelineDays}d</td>
+              <td>
+                <button
+                  className="cc-inline-button"
+                  type="button"
+                  onClick={() => { onOpenLead(lead.id) }}
+                >
+                  Open
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </section>
+)
+
+const CommandPalette = ({
+  query,
+  onQueryChange,
+  commands,
+  onClose,
+}: {
+  query: string
+  onQueryChange: (q: string) => void
+  commands: CommandItem[]
+  onClose: () => void
+}) => {
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
+
+  const filtered = query.trim()
+    ? commands.filter(
+        (c) =>
+          c.label.toLowerCase().includes(query.toLowerCase()) ||
+          c.hint?.toLowerCase().includes(query.toLowerCase()),
+      )
+    : commands
+
+  const grouped = groupByCategory(filtered)
+
+  return (
+    /* eslint-disable-next-line jsx-a11y/click-events-have-key-events */
+    <div className="cc-cmd" role="dialog" aria-modal aria-label="Command palette" onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="cc-cmd__panel">
+        <div className="cc-cmd__search">
+          <Icon name="command" className="cc-cmd__search-icon" />
+          <input
+            ref={inputRef}
+            className="cc-cmd__input"
+            type="text"
+            placeholder="Search commands…"
+            value={query}
+            onChange={(e) => { onQueryChange(e.target.value) }}
+          />
+          <kbd className="cc-cmd__esc-badge">ESC</kbd>
+        </div>
+        <div className="cc-cmd__results" role="listbox">
+          {grouped.size === 0 ? (
+            <div className="cc-cmd__empty">No commands match "{query}"</div>
+          ) : (
+            Array.from(grouped.entries()).map(([category, items]) => (
+              <div key={category} className="cc-cmd__group">
+                <span className="cc-cmd__group-label">{category}</span>
+                {items.map((item) => (
+                  <button
+                    key={item.id}
+                    className="cc-cmd__item"
+                    type="button"
+                    role="option"
+                    aria-selected={false}
+                    onClick={() => { item.action(); onClose() }}
+                  >
+                    <span className="cc-cmd__item-label">{item.label}</span>
+                    {item.hint ? <span className="cc-cmd__hint">{item.hint}</span> : null}
+                  </button>
+                ))}
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const CommandHintBar = ({
+  activeDrawer,
+  layoutMode,
+}: {
+  activeDrawer: DrawerType
+  layoutMode: LayoutMode
+}) => (
   <div className="cc-hint-bar">
+    <span>⌘K</span>
+    <span>commands</span>
+    <span>⌘M</span>
+    <span>{layoutMode === 'map' ? 'exit map focus' : 'map focus'}</span>
     <span>[</span>
     <span>toggle intel</span>
     <span>]</span>

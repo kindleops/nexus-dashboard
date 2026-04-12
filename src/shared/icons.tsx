@@ -20,6 +20,11 @@ type IconName =
   | 'layers'
   | 'bolt'
   | 'close'
+  | 'map'
+  | 'layout-split'
+  | 'list'
+  | 'command'
+  | 'maximize'
 
 interface IconProps extends SVGProps<SVGSVGElement> {
   name: IconName
@@ -165,6 +170,38 @@ export const Icon = ({ name, ...props }: IconProps) => {
       return (
         <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
           <path d="M6 6 18 18M18 6 6 18" {...commonProps} />
+        </svg>
+      )
+    case 'map':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M9 4 3 7v13l6-3M9 4l6 3M9 4v13M15 7l6-3v13l-6 3M15 7v13" {...commonProps} />
+        </svg>
+      )
+    case 'layout-split':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <rect x="3" y="4" width="18" height="16" rx="2" {...commonProps} />
+          <path d="M12 4v16" {...commonProps} />
+        </svg>
+      )
+    case 'list':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" {...commonProps} />
+        </svg>
+      )
+    case 'command':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M9 5H7a2 2 0 0 0 0 4h2V7a2 2 0 0 0-2-2zM9 19H7a2 2 0 0 1 0-4h2v2a2 2 0 0 1-2 2zM15 5h2a2 2 0 0 1 0 4h-2V7a2 2 0 0 1 2-2zM15 19h2a2 2 0 0 0 0-4h-2v2a2 2 0 0 0 2 2z" {...commonProps} />
+          <rect x="9" y="9" width="6" height="6" {...commonProps} />
+        </svg>
+      )
+    case 'maximize':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M4 14v6h6M20 10V4h-6M4 10V4h6M20 14v6h-6" {...commonProps} />
         </svg>
       )
   }
