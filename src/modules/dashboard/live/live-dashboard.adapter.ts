@@ -156,6 +156,13 @@ export interface LiveMapLink {
 export interface LiveDashboardModel {
   generatedAtIso: string
   appName: string
+  /** 'live' when backed by the real-estate-automation API; 'mock' for reference data */
+  dataSource?: 'live' | 'mock'
+  /** Present when the live fetch partially failed and mock data was substituted */
+  degraded?: {
+    reason: string
+    partial: string[]
+  }
   summaryMetrics: SummaryMetric[]
   markets: LiveMarket[]
   leads: LiveLead[]
@@ -391,6 +398,7 @@ export const adaptLiveDashboardModel = (store: CommandCenterStore): LiveDashboar
   return {
     generatedAtIso: new Date().toISOString(),
     appName: 'NEXUS',
+    dataSource: 'mock' as const,
     summaryMetrics: [
       {
         id: 'total-outbound',

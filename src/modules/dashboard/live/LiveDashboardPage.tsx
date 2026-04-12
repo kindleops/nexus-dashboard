@@ -476,6 +476,18 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
         onOpenCmd={() => { setCmdOpen(true) }}
       />
 
+      {data.degraded ? (
+        <div className="cc-degraded-banner" role="alert">
+          <span className="cc-degraded-banner__label">DEGRADED</span>
+          <span className="cc-degraded-banner__reason">{data.degraded.reason}</span>
+        </div>
+      ) : data.dataSource === 'mock' ? (
+        <div className="cc-mock-banner" role="status">
+          <span className="cc-mock-banner__label">MOCK DATA</span>
+          <span className="cc-mock-banner__detail">Set <code>VITE_NEXUS_API_URL</code> to connect to live operations.</span>
+        </div>
+      ) : null}
+
       <HealthStrip items={data.systemHealth} />
 
       <div className="cc-workspace">

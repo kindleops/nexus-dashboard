@@ -2582,3 +2582,58 @@ a {
 .cc-hint-bar {
   gap: 6px;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   DATA SOURCE BANNERS
+   Degrade gracefully: show a slim banner above the HealthStrip when the
+   live API is unavailable or when mock data is active.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.cc-degraded-banner,
+.cc-mock-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 20px;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  border-bottom: 1px solid transparent;
+  position: relative;
+  z-index: 10;
+}
+
+.cc-degraded-banner {
+  background: rgba(255, 45, 85, 0.06);
+  border-color: rgba(255, 45, 85, 0.22);
+  color: var(--tone-danger);
+}
+
+.cc-mock-banner {
+  background: rgba(255, 191, 94, 0.04);
+  border-color: rgba(255, 191, 94, 0.14);
+  color: rgba(255, 191, 94, 0.60);
+}
+
+.cc-degraded-banner__label,
+.cc-mock-banner__label {
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  flex-shrink: 0;
+}
+
+.cc-degraded-banner__reason,
+.cc-mock-banner__detail {
+  opacity: 0.75;
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cc-mock-banner__detail code {
+  font-family: var(--font-mono);
+  color: rgba(255, 191, 94, 0.85);
+}
+
