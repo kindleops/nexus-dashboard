@@ -1,4 +1,12 @@
-import type { CommandCenterStore, OwnerType, PipelineStage, PropertyType, Sentiment } from '../../../domain/types'
+import type { CommandCenterStore, OwnerType, PipelineStage, PropertyType, Sentiment, OperationalRisk, AlertPriority, StageMomentum } from '../../../domain/types'
+
+export interface SystemHealthItem {
+  id: string
+  label: string
+  status: 'healthy' | 'warning' | 'degraded' | 'critical'
+  value?: string
+  detail?: string
+}
 
 export interface FilterOption {
   value: string
@@ -51,6 +59,8 @@ export interface LiveMarket {
   lastSweepIso: string
   propertyIds: string[]
   alertCount: number
+  operationalRisk: OperationalRisk
+  capacityStrain: number
 }
 
 export interface LiveLead {
@@ -76,6 +86,14 @@ export interface LiveLead {
   lastOutboundIso: string
   lastInboundIso: string | null
   aiSummary: string
+  heatFactors: string[]
+  urgencyScore: number
+  opportunityScore: number
+  actionConfidence: number
+  conversationTemperature: number
+  stageMomentum: StageMomentum
+  riskSummary: string
+  riskFlags: string[]
   objectionsDetected: string[]
   recommendedAction: string
   messages: {
@@ -109,6 +127,7 @@ export interface LiveAlert {
   marketId: string
   marketLabel: string
   severity: 'critical' | 'warning' | 'info'
+  priority: AlertPriority
   title: string
   detail: string
   metricLabel: string
@@ -144,6 +163,7 @@ export interface LiveDashboardModel {
   alerts: LiveAlert[]
   timeline: LiveActivity[]
   mapLinks: LiveMapLink[]
+  systemHealth: SystemHealthItem[]
   filters: {
     propertyTypes: FilterOption[]
     sentiments: FilterOption[]
@@ -242,6 +262,8 @@ export const adaptLiveDashboardModel = (store: CommandCenterStore): LiveDashboar
       lastSweepIso: market.lastSweepIso,
       propertyIds: store.propertyIdsByMarketId[market.id] ?? [],
       alertCount: (store.alertIdsByMarketId[market.id] ?? []).length,
+      operationalRisk: market.operationalRisk,
+      capacityStrain: market.capacityStrain,
     }
   })
 
@@ -272,6 +294,14 @@ export const adaptLiveDashboardModel = (store: CommandCenterStore): LiveDashboar
       lastOutboundIso: lead.lastOutboundIso,
       lastInboundIso: lead.lastInboundIso,
       aiSummary: lead.aiSummary,
+      heatFactors: lead.heatFactors,
+      urgencyScore: lead.urgencyScore,
+      opportunityScore: lead.opportunityScore,
+      actionConfidence: lead.actionConfidence,
+      conversationTemperature: lead.conversationTemperature,
+      stageMomentum: lead.stageMomentum,
+      riskSummary: lead.riskSummary,
+      riskFlags: lead.riskFlags,
       objectionsDetected: lead.objectionsDetected,
       recommendedAction: lead.recommendedAction,
       messages: lead.messages,
@@ -310,6 +340,7 @@ export const adaptLiveDashboardModel = (store: CommandCenterStore): LiveDashboar
       marketId: alert.marketId,
       marketLabel: market.label,
       severity: alert.severity,
+      priority: alert.priority,
       title: alert.title,
       detail: alert.detail,
       metricLabel: alert.metricLabel,
@@ -348,6 +379,14 @@ export const adaptLiveDashboardModel = (store: CommandCenterStore): LiveDashboar
   const positiveRate =
     markets.reduce((sum, market) => sum + market.positiveRate, 0) / markets.length
   const highestAlert = alerts.find((alert) => alert.severity === 'critical') ?? alerts[0]
+
+  const systemHealth: SystemHealthItem[] = store.systemHealth.map((item) => ({
+    id: item.id,
+    label: item.label,
+    status: item.status,
+    value: item.value,
+    detail: item.detail,
+  }))
 
   return {
     generatedAtIso: new Date().toISOString(),
@@ -418,6 +457,7 @@ export const adaptLiveDashboardModel = (store: CommandCenterStore): LiveDashboar
     alerts,
     timeline,
     mapLinks: store.mapLinks,
+    systemHealth,
     filters: {
       propertyTypes: buildFilterOptions(leads.map((lead) => lead.propertyType)),
       sentiments: buildFilterOptions(leads.map((lead) => lead.sentiment)),

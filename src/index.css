@@ -784,7 +784,7 @@ a {
 }
 
 .cc-map-stage__controls {
-  justify-content: flex-end;
+  justify-content: space-between;
 }
 
 .cc-map {
@@ -2119,3 +2119,345 @@ a {
   text-transform: uppercase;
   opacity: 0.7;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   INTELLIGENCE LAYER — Premium signal components
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Health Strip ────────────────────────────────────────────────── */
+.cc-health-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 20px;
+  background: rgba(5, 14, 24, 0.72);
+  border-bottom: 1px solid rgba(72, 213, 255, 0.06);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.cc-health-node {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px 3px 6px;
+  border-radius: 3px;
+  border: 1px solid rgba(145, 194, 232, 0.08);
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.06em;
+  color: rgba(145, 194, 232, 0.6);
+  background: rgba(145, 194, 232, 0.03);
+  transition: border-color 0.2s;
+}
+
+.cc-health-node__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.cc-health-node__label {
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.cc-health-node__value {
+  opacity: 0.7;
+  margin-left: 2px;
+}
+
+.cc-health-node.is-healthy  { color: var(--tone-success); border-color: rgba(34, 197, 94, 0.18); }
+.cc-health-node.is-warning  { color: var(--tone-warning); border-color: rgba(245, 158, 11, 0.22); }
+.cc-health-node.is-degraded { color: var(--tone-danger);  border-color: rgba(239, 68, 68, 0.22); }
+.cc-health-node.is-critical {
+  color: #ff2d55;
+  border-color: rgba(255, 45, 85, 0.35);
+  animation: cc-pulse-critical 1.4s ease-in-out infinite;
+}
+
+@keyframes cc-pulse-critical {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; }
+}
+
+/* ── Urgency Bar ─────────────────────────────────────────────────── */
+.cc-urgency-bar {
+  margin-bottom: 10px;
+}
+
+.cc-urgency-bar__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 5px;
+}
+
+.cc-urgency-bar__label {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  color: rgba(145, 194, 232, 0.55);
+}
+
+.cc-urgency-bar__score {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}
+
+.cc-urgency-bar__track {
+  height: 3px;
+  background: rgba(145, 194, 232, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.cc-urgency-bar__fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.5s ease;
+  background: rgba(145, 194, 232, 0.35);
+}
+
+.cc-urgency-bar.is-warning .cc-urgency-bar__fill { background: var(--tone-warning); }
+.cc-urgency-bar.is-critical .cc-urgency-bar__fill {
+  background: var(--tone-danger);
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
+}
+.cc-urgency-bar.is-critical .cc-urgency-bar__score { color: var(--tone-danger); }
+.cc-urgency-bar.is-warning  .cc-urgency-bar__score { color: var(--tone-warning); }
+
+/* ── Heat Factors ───────────────────────────────────────────────── */
+.cc-heat-factors {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.cc-heat-factors__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font-size: 0.72rem;
+  color: rgba(145, 194, 232, 0.72);
+  line-height: 1.4;
+}
+
+.cc-heat-factors__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--tone-warning);
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+
+/* ── NBA Card ───────────────────────────────────────────────────── */
+.cc-nba-card {
+  background: linear-gradient(135deg, rgba(72, 213, 255, 0.05), rgba(90, 166, 255, 0.04));
+  border: 1px solid rgba(72, 213, 255, 0.14);
+  border-radius: 4px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.cc-nba-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 7px;
+  gap: 6px;
+}
+
+.cc-nba-card__text {
+  font-size: 0.75rem;
+  color: var(--text-primary);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.cc-nba-badge {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+
+.cc-nba-badge.is-high   { background: rgba(34, 197, 94, 0.15); color: var(--tone-success); }
+.cc-nba-badge.is-medium { background: rgba(245, 158, 11, 0.12); color: var(--tone-warning); }
+
+/* ── Risk Flags ─────────────────────────────────────────────────── */
+.cc-risk-flags {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.cc-risk-flags__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font-size: 0.72rem;
+  color: rgba(239, 68, 68, 0.82);
+  line-height: 1.4;
+}
+
+.cc-risk-flags__icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--tone-danger);
+}
+
+/* ── Map Mode Selector ──────────────────────────────────────────── */
+.cc-map-mode-selector {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+}
+
+.cc-map-mode-pill {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 7px;
+  border-radius: 2px;
+  border: 1px solid rgba(145, 194, 232, 0.14);
+  background: transparent;
+  color: rgba(145, 194, 232, 0.45);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.cc-map-mode-pill:hover {
+  color: rgba(145, 194, 232, 0.85);
+  border-color: rgba(145, 194, 232, 0.3);
+}
+
+.cc-map-mode-pill.is-active {
+  color: var(--accent-cyan);
+  border-color: rgba(72, 213, 255, 0.4);
+  background: rgba(72, 213, 255, 0.07);
+}
+
+/* ── Battlefield View ───────────────────────────────────────────── */
+.cc-battlefield {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  padding: 20px;
+  gap: 16px;
+}
+
+.cc-battlefield__header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(72, 213, 255, 0.1);
+}
+
+.cc-battlefield__count {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: rgba(145, 194, 232, 0.5);
+  letter-spacing: 0.06em;
+}
+
+.cc-battlefield__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 10px;
+}
+
+.cc-battlefield-card {
+  background: rgba(145, 194, 232, 0.04);
+  border: 1px solid rgba(145, 194, 232, 0.1);
+  border-radius: 5px;
+  padding: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.18s, background 0.18s, transform 0.12s;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cc-battlefield-card:hover {
+  border-color: rgba(72, 213, 255, 0.28);
+  background: rgba(72, 213, 255, 0.05);
+  transform: translateY(-1px);
+}
+
+.cc-battlefield-card.is-selected {
+  border-color: rgba(72, 213, 255, 0.5);
+  background: rgba(72, 213, 255, 0.07);
+}
+
+.cc-battlefield-card.is-hot   { border-left: 3px solid var(--tone-danger); }
+.cc-battlefield-card.is-warm  { border-left: 3px solid var(--tone-warning); }
+.cc-battlefield-card.is-neutral { border-left: 3px solid rgba(90, 166, 255, 0.5); }
+.cc-battlefield-card.is-cold  { border-left: 3px solid rgba(145, 194, 232, 0.25); }
+
+.cc-battlefield-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.cc-battlefield-card__score {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.cc-battlefield-card__name {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.cc-battlefield-card__address {
+  font-size: 0.68rem;
+  color: rgba(145, 194, 232, 0.55);
+  font-family: var(--font-mono);
+}
+
+.cc-battlefield-card__why {
+  font-size: 0.68rem;
+  color: var(--tone-warning);
+  font-style: italic;
+  line-height: 1.3;
+}
+
+.cc-battlefield-card__meta {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  color: rgba(145, 194, 232, 0.45);
+  padding-top: 4px;
+  border-top: 1px solid rgba(145, 194, 232, 0.06);
+}
+
+/* Battlefield layout — hide rails */
+.cc-shell--layout-battlefield .cc-rail-wrap { display: none; }
+.cc-shell--layout-battlefield .cc-rail-toggle { display: none; }
+.cc-shell--layout-battlefield .cc-workspace { grid-template-columns: 1fr; }

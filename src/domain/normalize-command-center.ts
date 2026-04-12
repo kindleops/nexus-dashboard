@@ -41,6 +41,7 @@ export const normalizeCommandCenterData = (
   activityIds: dataset.activities.map((activity) => activity.id),
   activityIdsByMarketId: groupIdsByMarket<ActivityRecord>(dataset.activities),
   mapLinks: dataset.mapLinks,
+  systemHealth: dataset.systemHealth,
 })
 
 let commandCenterStore: CommandCenterStore | null = null

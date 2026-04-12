@@ -23,6 +23,18 @@ export type OwnerType =
 export type AgentStatus = 'active' | 'watching' | 'queued'
 export type ActivityKind = 'system' | 'alert' | 'ai' | 'deal' | 'conversation'
 export type MessageDirection = 'outbound' | 'inbound'
+export type SystemHealthStatus = 'healthy' | 'warning' | 'degraded' | 'critical'
+export type MapMode = 'leads' | 'distress' | 'heat' | 'stage' | 'pressure' | 'closings'
+export type StageMomentum = 'stalling' | 'steady' | 'accelerating'
+
+export interface SystemHealthRecord {
+  id: string
+  label: string
+  status: SystemHealthStatus
+  value?: string
+  detail?: string
+  lastUpdatedIso: string
+}
 
 export interface TopZipRecord {
   zip: string
@@ -37,6 +49,9 @@ export interface PipelineDistributionRecord {
   negotiating: number
   underContract: number
 }
+
+export type OperationalRisk = 'elevated' | 'moderate' | 'nominal'
+export type AlertPriority = 'P0' | 'P1' | 'P2' | 'P3'
 
 export interface MarketRecord {
   id: string
@@ -67,6 +82,8 @@ export interface MarketRecord {
   topZips: TopZipRecord[]
   pipelineDistribution: PipelineDistributionRecord
   lastSweepIso: string
+  operationalRisk: OperationalRisk
+  capacityStrain: number
 }
 
 export interface LeadMessageRecord {
@@ -99,6 +116,14 @@ export interface PropertyLeadRecord {
   lastOutboundIso: string
   lastInboundIso: string | null
   aiSummary: string
+  heatFactors: string[]
+  urgencyScore: number
+  opportunityScore: number
+  actionConfidence: number
+  conversationTemperature: number
+  stageMomentum: StageMomentum
+  riskSummary: string
+  riskFlags: string[]
   objectionsDetected: string[]
   recommendedAction: string
   messages: LeadMessageRecord[]
@@ -123,6 +148,7 @@ export interface AlertRecord {
   id: string
   marketId: string
   severity: AlertSeverity
+  priority: AlertPriority
   title: string
   detail: string
   metricLabel: string
@@ -154,6 +180,7 @@ export interface CommandCenterReferenceDataset {
   alerts: AlertRecord[]
   activities: ActivityRecord[]
   mapLinks: MapLinkRecord[]
+  systemHealth: SystemHealthRecord[]
 }
 
 export interface CommandCenterStore {
@@ -171,4 +198,5 @@ export interface CommandCenterStore {
   activityIds: string[]
   activityIdsByMarketId: Record<string, string[]>
   mapLinks: MapLinkRecord[]
+  systemHealth: SystemHealthRecord[]
 }

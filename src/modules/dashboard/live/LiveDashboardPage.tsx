@@ -7,6 +7,7 @@ import type {
   LiveDashboardModel,
   LiveLead,
   LiveMarket,
+  SystemHealthItem,
 } from './live-dashboard.adapter'
 import {
   formatClockTime,
@@ -20,7 +21,8 @@ import {
 import { Icon } from '../../../shared/icons'
 
 type DrawerType = 'market' | 'lead' | 'agent' | null
-type LayoutMode = 'split' | 'map' | 'list'
+type LayoutMode = 'split' | 'map' | 'list' | 'battlefield'
+type MapMode = 'leads' | 'distress' | 'heat' | 'stage' | 'pressure' | 'closings'
 
 interface CommandItem {
   id: string
@@ -133,16 +135,66 @@ const stageToneClass: Record<LiveLead['sentiment'], string> = {
   cold: 'is-cold',
 }
 
+const getMapModeSentiment = (lead: LiveLead, mode: MapMode): LiveLead['sentiment'] => {
+  switch (mode) {
+    case 'leads': return lead.sentiment
+    case 'distress': {
+      const m: Partial<Record<LiveLead['ownerType'], LiveLead['sentiment']>> = {
+        'tax-delinquent': 'hot', estate: 'warm', absentee: 'warm',
+        corporate: 'neutral', 'owner-occupied': 'cold',
+      }
+      return m[lead.ownerType] ?? 'neutral'
+    }
+    case 'heat':
+      return lead.urgencyScore >= 80 ? 'hot'
+        : lead.urgencyScore >= 60 ? 'warm'
+        : lead.urgencyScore >= 40 ? 'neutral' : 'cold'
+    case 'stage': {
+      const m: Partial<Record<LiveLead['pipelineStage'], LiveLead['sentiment']>> = {
+        'under-contract': 'hot', negotiating: 'hot',
+        responding: 'warm', contacted: 'neutral', new: 'cold',
+      }
+      return m[lead.pipelineStage] ?? 'neutral'
+    }
+    case 'pressure':
+      return lead.outboundAttempts >= 7 ? 'hot'
+        : lead.outboundAttempts >= 5 ? 'warm'
+        : lead.outboundAttempts >= 3 ? 'neutral' : 'cold'
+    case 'closings':
+      return lead.pipelineStage === 'under-contract' || lead.pipelineStage === 'negotiating'
+        ? 'hot' : 'cold'
+  }
+}
+
 const alertClass: Record<LiveAlert['severity'], string> = {
   critical: 'is-critical',
   warning: 'is-warning',
   info: 'is-info',
 }
 
+const alertPriorityLabel: Record<'P0' | 'P1' | 'P2' | 'P3', string> = {
+  P0: 'IMMEDIATE',
+  P1: 'URGENT',
+  P2: 'ELEVATED',
+  P3: 'MONITOR',
+}
+
 const marketStatusLabel: Record<LiveMarket['campaignStatus'], string> = {
   live: 'LIVE',
   warning: 'WATCH',
   paused: 'PAUSED',
+}
+
+const operationalRiskClass: Record<LiveMarket['operationalRisk'], string> = {
+  elevated: 'is-elevated',
+  moderate: 'is-moderate',
+  nominal: 'is-nominal',
+}
+
+const operationalRiskLabel: Record<LiveMarket['operationalRisk'], string> = {
+  elevated: 'RISK ELEVATED',
+  moderate: 'RISK MODERATE',
+  nominal: 'NOMINAL',
 }
 
 export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
@@ -163,8 +215,9 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
   const [selectedAgentId, setSelectedAgentId] = useState(data.defaults.agentId)
   const [dismissedAlertIds, setDismissedAlertIds] = useState<string[]>([])
   const [clock, setClock] = useState(() => new Date())
-  // New — layout, command palette
+  // New — layout, map mode, command palette
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('split')
+  const [mapMode, setMapMode] = useState<MapMode>('leads')
   const [cmdOpen, setCmdOpen] = useState(false)
   const [cmdQuery, setCmdQuery] = useState('')
 
@@ -258,6 +311,13 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
       return
     }
 
+    // Cmd/Ctrl + B — Battlefield Mode toggle
+    if ((event.metaKey || event.ctrlKey) && event.key === 'b') {
+      event.preventDefault()
+      setLayoutMode((curr) => (curr === 'battlefield' ? 'split' : 'battlefield'))
+      return
+    }
+
     const target = event.target
     if (
       target instanceof HTMLInputElement ||
@@ -285,7 +345,7 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
         setCmdQuery('')
         return
       }
-      if (layoutMode === 'map') {
+      if (layoutMode === 'map' || layoutMode === 'battlefield') {
         setLayoutMode('split')
         return
       }
@@ -349,8 +409,8 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
     .slice(0, 3)
 
   // Effective open states account for layout mode
-  const leftEffOpen = leftRailOpen && layoutMode !== 'map'
-  const rightEffOpen = rightRailOpen && layoutMode !== 'map'
+  const leftEffOpen = leftRailOpen && layoutMode !== 'map' && layoutMode !== 'battlefield'
+  const rightEffOpen = rightRailOpen && layoutMode !== 'map' && layoutMode !== 'battlefield'
 
   // Command palette commands
   const commands = useMemo<CommandItem[]>(
@@ -362,6 +422,13 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
       { id: 'layout-split', label: 'Split View', hint: 'default', category: 'Layout', action: () => setLayoutMode('split') },
       { id: 'layout-map', label: 'Map Focus Mode', hint: '⌘M', category: 'Layout', action: () => setLayoutMode('map') },
       { id: 'layout-list', label: 'List View', category: 'Layout', action: () => setLayoutMode('list') },
+      { id: 'layout-battlefield', label: 'Battlefield Mode', hint: '⌘B', category: 'Layout', action: () => setLayoutMode('battlefield') },
+      { id: 'map-leads', label: 'Map: Leads', category: 'Map', action: () => setMapMode('leads') },
+      { id: 'map-distress', label: 'Map: Distress Layer', category: 'Map', action: () => setMapMode('distress') },
+      { id: 'map-heat', label: 'Map: Urgency Heat', category: 'Map', action: () => setMapMode('heat') },
+      { id: 'map-stage', label: 'Map: Pipeline Stage', category: 'Map', action: () => setMapMode('stage') },
+      { id: 'map-pressure', label: 'Map: Outbound Pressure', category: 'Map', action: () => setMapMode('pressure') },
+      { id: 'map-closings', label: 'Map: Closings Only', category: 'Map', action: () => setMapMode('closings') },
       { id: 'filter-all', label: 'Clear All Filters', hint: 'reset', category: 'Filter', action: () => { setSentiment('all'); setPropertyType('all'); setStage('all'); setMarketScope('all') } },
       { id: 'filter-hot', label: 'Filter: Hot Leads', hint: 'sentiment', category: 'Filter', action: () => setSentiment('hot') },
       { id: 'filter-warm', label: 'Filter: Warm Leads', hint: 'sentiment', category: 'Filter', action: () => setSentiment('warm') },
@@ -409,6 +476,8 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
         onOpenCmd={() => { setCmdOpen(true) }}
       />
 
+      <HealthStrip items={data.systemHealth} />
+
       <div className="cc-workspace">
         {/* Left rail wrap — always rendered, CSS-animated collapse */}
         <div
@@ -445,6 +514,12 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
             selectedLeadId={resolvedSelectedLeadId}
             onOpenLead={(leadId) => { setSelectedLeadId(leadId); setActiveDrawer('lead') }}
           />
+        ) : layoutMode === 'battlefield' ? (
+          <BattlefieldView
+            leads={visibleLeads}
+            selectedLeadId={resolvedSelectedLeadId}
+            onOpenLead={(leadId) => { setSelectedLeadId(leadId); setActiveDrawer('lead') }}
+          />
         ) : (
           <MapStage
             markets={visibleMarkets}
@@ -456,10 +531,12 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
             metrics={data.summaryMetrics}
             metricsCollapsed={metricsCollapsed}
             activeDrawer={activeDrawer}
+            mapMode={mapMode}
             onToggleMetrics={() => { setMetricsCollapsed((current) => !current) }}
             onSelectMarket={(marketId) => { setSelectedMarketId(marketId) }}
             onOpenMarket={(marketId) => { setSelectedMarketId(marketId); setActiveDrawer('market') }}
             onOpenLead={(leadId) => { setSelectedLeadId(leadId); setActiveDrawer('lead') }}
+            onSetMapMode={setMapMode}
           />
         )}
 
@@ -537,8 +614,11 @@ const DashboardHeader = ({
   healthLabel,
   leftRailOpen,
   rightRailOpen,
+  layoutMode,
   onToggleLeftRail,
   onToggleRightRail,
+  onSetLayoutMode,
+  onOpenCmd,
 }: {
   appName: string
   query: string
@@ -824,6 +904,9 @@ const IntelligenceRail = ({
             </div>
             <div className="cc-market-card__footer">
               <span>{formatCurrency(market.pipelineValue)}</span>
+              <span className={classes('cc-op-badge', operationalRiskClass[market.operationalRisk])}>
+                {operationalRiskLabel[market.operationalRisk]}
+              </span>
               <span>{market.alertCount} alerts</span>
             </div>
           </article>
@@ -881,10 +964,12 @@ const MapStage = ({
   metrics,
   metricsCollapsed,
   activeDrawer,
+  mapMode,
   onToggleMetrics,
   onSelectMarket,
   onOpenMarket,
   onOpenLead,
+  onSetMapMode,
 }: {
   markets: LiveMarket[]
   leads: LiveLead[]
@@ -895,10 +980,12 @@ const MapStage = ({
   metrics: LiveDashboardModel['summaryMetrics']
   metricsCollapsed: boolean
   activeDrawer: DrawerType
+  mapMode: MapMode
   onToggleMetrics: () => void
   onSelectMarket: (marketId: string) => void
   onOpenMarket: (marketId: string) => void
   onOpenLead: (leadId: string) => void
+  onSetMapMode: (mode: MapMode) => void
 }) => {
   const marketPoints = Object.fromEntries(
     markets.map((market) => [market.id, projectPoint(market.lat, market.lng)]),
@@ -934,6 +1021,18 @@ const MapStage = ({
         >
           {metricsCollapsed ? 'Show KPI' : 'Hide KPI'}
         </button>
+        <div className="cc-map-mode-selector" role="group" aria-label="Map intelligence mode">
+          {(['leads', 'distress', 'heat', 'stage', 'pressure', 'closings'] as MapMode[]).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              className={classes('cc-map-mode-pill', mapMode === mode && 'is-active')}
+              onClick={() => onSetMapMode(mode)}
+            >
+              {mode}
+            </button>
+          ))}
+        </div>
       </div>
 
       {!metricsCollapsed ? (
@@ -1043,17 +1142,18 @@ const MapStage = ({
             )
           })}
 
-          {/* Lead pins \u2014 sentiment-classified with tiered pulse */}
+          {/* Lead pins — sentiment-classified with tiered pulse */}
           {leads.map((lead) => {
             const point = projectPoint(lead.lat, lead.lng)
             const isSelected = selectedLead?.id === lead.id
+            const pinSentiment = getMapModeSentiment(lead, mapMode)
 
             return (
               <g
                 key={lead.id}
                 className={classes(
                   'cc-map__lead',
-                  `marker-${lead.sentiment}`,
+                  `marker-${pinSentiment}`,
                   isSelected && 'is-selected',
                 )}
                 onClick={(e) => {
@@ -1143,9 +1243,17 @@ const MapStage = ({
               type="button"
               onClick={() => { onOpenLead(lead.id) }}
             >
-              <span className="cc-panel__eyebrow">{lead.marketLabel}</span>
+              <div className="cc-spotlight-card__header">
+                <span className={classes('cc-sentiment-pill', stageToneClass[lead.sentiment])}>
+                  {lead.sentiment.toUpperCase()}
+                </span>
+                <span className="cc-spotlight-card__urgency">{lead.urgencyScore}</span>
+              </div>
               <strong>{lead.ownerName}</strong>
               <span>{lead.currentIntent}</span>
+              {lead.heatFactors[0] ? (
+                <span className="cc-spotlight-card__signal">{lead.heatFactors[0]}</span>
+              ) : null}
             </button>
           ))}
         </div>
@@ -1192,7 +1300,10 @@ const ActivityRail = ({
             <article key={alert.id} className={classes('cc-alert-card', alertClass[alert.severity])}>
               <div className="cc-alert-card__header">
                 <div>
-                  <span className="cc-alert-card__market">{alert.marketLabel}</span>
+                  <div className="cc-alert-card__meta">
+                    <span className={classes('cc-priority-badge', `is-${alert.priority.toLowerCase()}`)}>{alert.priority}</span>
+                    <span className="cc-alert-card__market">{alert.marketLabel}</span>
+                  </div>
                   <strong>{alert.title}</strong>
                 </div>
                 <button
@@ -1210,6 +1321,7 @@ const ActivityRail = ({
                 <span>
                   {alert.metricLabel}: {alert.metricValue}
                 </span>
+                <span className="cc-alert-card__priority-label">{alertPriorityLabel[alert.priority]}</span>
                 <span>{formatRelativeTime(alert.timestampIso)}</span>
               </div>
             </article>
@@ -1251,8 +1363,14 @@ const ActivityRail = ({
             <span className="cc-panel__eyebrow">Lead Spotlight</span>
             <h3>{selectedLead.ownerName}</h3>
           </div>
+          <span className={classes('cc-sentiment-pill', stageToneClass[selectedLead.sentiment])}>
+            {selectedLead.sentiment.toUpperCase()}
+          </span>
         </div>
+        <UrgencyBar score={selectedLead.urgencyScore} />
+        <HeatFactors factors={selectedLead.heatFactors} />
         <p className="cc-spotlight-summary">{selectedLead.aiSummary}</p>
+        <NBACard action={selectedLead.recommendedAction} />
         <div className="cc-spotlight-metrics">
           <span>{formatCurrency(selectedLead.estimatedValue)} est. value</span>
           <span>{formatStageLabel(selectedLead.pipelineStage)}</span>
@@ -1413,6 +1531,12 @@ const LeadDrawer = ({ lead }: { lead: LiveLead }) => (
     </div>
 
     <section className="cc-drawer-section">
+      <SectionHeading label="Signal Profile" />
+      <UrgencyBar score={lead.urgencyScore} />
+      <HeatFactors factors={lead.heatFactors} />
+    </section>
+
+    <section className="cc-drawer-section">
       <SectionHeading label="AI Intelligence" />
       <div className="cc-ai-summary">
         <div className="cc-ai-summary__label">
@@ -1447,8 +1571,16 @@ const LeadDrawer = ({ lead }: { lead: LiveLead }) => (
       </div>
     </section>
 
+    {lead.riskFlags.length > 0 ? (
+      <section className="cc-drawer-section">
+        <SectionHeading label="Risk Flags" />
+        <RiskFlags flags={lead.riskFlags} />
+      </section>
+    ) : null}
+
     <section className="cc-drawer-section">
-      <SectionHeading label="Quick Actions" />
+      <SectionHeading label="Next Best Action" />
+      <NBACard action={lead.recommendedAction} />
       <div className="cc-action-row">
         <button className="cc-primary-button" type="button" data-testid="button-send-followup">
           <Icon className="cc-primary-button__icon" name="send" />
@@ -1598,7 +1730,7 @@ const LeadListTable = ({
                 <span className="cc-muted">{lead.marketLabel}</span>
               </td>
               <td className="cc-muted">{lead.address}</td>
-              <td>{lead.currentStage}</td>
+              <td>{formatStageLabel(lead.pipelineStage)}</td>
               <td>{formatCurrency(lead.offerAmount)}</td>
               <td className="cc-muted">{lead.currentIntent}</td>
               <td className="cc-muted">{lead.pipelineDays}d</td>
@@ -1816,5 +1948,122 @@ const BarStrip = ({ values }: { values: number[] }) => {
         />
       ))}
     </div>
+  )
+}
+
+const UrgencyBar = ({ score }: { score: number }) => {
+  const tone = score >= 80 ? 'critical' : score >= 60 ? 'warning' : 'nominal'
+  return (
+    <div className={classes('cc-urgency-bar', `is-${tone}`)}>
+      <div className="cc-urgency-bar__header">
+        <span className="cc-urgency-bar__label">URGENCY</span>
+        <strong className="cc-urgency-bar__score">{score}</strong>
+      </div>
+      <div className="cc-urgency-bar__track">
+        <div className="cc-urgency-bar__fill" style={{ width: `${score}%` }} />
+      </div>
+    </div>
+  )
+}
+
+const HeatFactors = ({ factors }: { factors: string[] }) => (
+  <ul className="cc-heat-factors">
+    {factors.map((factor) => (
+      <li key={factor} className="cc-heat-factors__item">
+        <span className="cc-heat-factors__dot" />
+        <span>{factor}</span>
+      </li>
+    ))}
+  </ul>
+)
+
+const NBACard = ({ action, confidence }: { action: string; confidence?: number }) => (
+  <div className="cc-nba-card">
+    <div className="cc-nba-card__header">
+      <span className="cc-eyebrow">RECOMMENDED ACTION</span>
+      {confidence !== undefined ? (
+        <span className={classes('cc-nba-badge', confidence >= 80 ? 'is-high' : 'is-medium')}>
+          {confidence}% confidence
+        </span>
+      ) : null}
+    </div>
+    <p className="cc-nba-card__text">{action}</p>
+  </div>
+)
+
+const RiskFlags = ({ flags }: { flags: string[] }) => (
+  <ul className="cc-risk-flags">
+    {flags.map((flag) => (
+      <li key={flag} className="cc-risk-flags__item">
+        <Icon className="cc-risk-flags__icon" name="alert" />
+        <span>{flag}</span>
+      </li>
+    ))}
+  </ul>
+)
+
+const HealthStrip = ({ items }: { items: SystemHealthItem[] }) => (
+  <div className="cc-health-strip" role="status" aria-label="System health">
+    {items.map((item) => (
+      <div key={item.id} className={classes('cc-health-node', `is-${item.status}`)}>
+        <span className="cc-health-node__dot" />
+        <span className="cc-health-node__label">{item.label}</span>
+        {item.value ? <span className="cc-health-node__value">{item.value}</span> : null}
+      </div>
+    ))}
+  </div>
+)
+
+const BattlefieldView = ({
+  leads,
+  selectedLeadId,
+  onOpenLead,
+}: {
+  leads: LiveLead[]
+  selectedLeadId: string
+  onOpenLead: (leadId: string) => void
+}) => {
+  const priorityLeads = leads
+    .filter((lead) => lead.urgencyScore >= 40 || lead.sentiment === 'hot')
+    .sort((a, b) => b.urgencyScore - a.urgencyScore)
+    .slice(0, 12)
+
+  return (
+    <section className="cc-battlefield" data-testid="battlefield-view">
+      <div className="cc-battlefield__header">
+        <span className="cc-eyebrow">PRIORITY BATTLEFIELD</span>
+        <span className="cc-battlefield__count">{priorityLeads.length} active targets</span>
+      </div>
+      <div className="cc-battlefield__grid">
+        {priorityLeads.map((lead) => (
+          <button
+            key={lead.id}
+            type="button"
+            className={classes(
+              'cc-battlefield-card',
+              `is-${lead.sentiment}`,
+              lead.id === selectedLeadId && 'is-selected',
+            )}
+            onClick={() => onOpenLead(lead.id)}
+          >
+            <div className="cc-battlefield-card__header">
+              <span className={classes('cc-sentiment-pill', stageToneClass[lead.sentiment])}>
+                {lead.sentiment.toUpperCase()}
+              </span>
+              <strong className="cc-battlefield-card__score">{lead.urgencyScore}</strong>
+            </div>
+            <div className="cc-battlefield-card__name">{lead.ownerName}</div>
+            <div className="cc-battlefield-card__address">{lead.address}</div>
+            {lead.heatFactors[0] ? (
+              <div className="cc-battlefield-card__why">{lead.heatFactors[0]}</div>
+            ) : null}
+            <div className="cc-battlefield-card__meta">
+              <span>{formatStageLabel(lead.pipelineStage)}</span>
+              <span>{formatCurrency(lead.offerAmount)}</span>
+            </div>
+          </button>
+        ))}
+      </div>
+    </section>
   )
 }
