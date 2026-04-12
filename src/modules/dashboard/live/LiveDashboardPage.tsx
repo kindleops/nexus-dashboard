@@ -1215,7 +1215,7 @@ const ActivityRail = ({
             </article>
           ))
         ) : (
-          <div className="cc-empty-state">No active alerts inside the current live scope.</div>
+          <div className="cc-empty-state cc-empty-state--ok">All clear — no active alerts.</div>
         )}
       </div>
     </section>
@@ -1413,6 +1413,17 @@ const LeadDrawer = ({ lead }: { lead: LiveLead }) => (
     </div>
 
     <section className="cc-drawer-section">
+      <SectionHeading label="AI Intelligence" />
+      <div className="cc-ai-summary">
+        <div className="cc-ai-summary__label">
+          <Icon className="cc-ai-summary__icon" name="spark" />
+          AI Analysis
+        </div>
+        <p>{lead.aiSummary}</p>
+      </div>
+    </section>
+
+    <section className="cc-drawer-section">
       <SectionHeading label="Property Stats" />
       <div className="cc-stat-grid">
         <DrawerStat label="Outbound Attempts" value={`${lead.outboundAttempts}`} />
@@ -1424,17 +1435,6 @@ const LeadDrawer = ({ lead }: { lead: LiveLead }) => (
         <DrawerStat label="Est. Value" value={formatCurrency(lead.estimatedValue)} />
         <DrawerStat label="Offer Amount" value={formatCurrency(lead.offerAmount)} />
         <DrawerStat label="Days in Pipeline" value={`${lead.pipelineDays}`} />
-      </div>
-    </section>
-
-    <section className="cc-drawer-section">
-      <SectionHeading label="AI Summary" />
-      <div className="cc-ai-summary">
-        <div className="cc-ai-summary__label">
-          <Icon className="cc-ai-summary__icon" name="spark" />
-          AI Analysis
-        </div>
-        <p>{lead.aiSummary}</p>
       </div>
     </section>
 
@@ -1663,10 +1663,10 @@ const CommandPalette = ({
           <kbd className="cc-cmd__esc-badge">ESC</kbd>
         </div>
         <div className="cc-cmd__results" role="listbox">
-          {grouped.size === 0 ? (
+          {grouped.length === 0 ? (
             <div className="cc-cmd__empty">No commands match "{query}"</div>
           ) : (
-            Array.from(grouped.entries()).map(([category, items]) => (
+            grouped.map(({ category, items }) => (
               <div key={category} className="cc-cmd__group">
                 <span className="cc-cmd__group-label">{category}</span>
                 {items.map((item) => (
