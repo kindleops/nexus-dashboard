@@ -1247,7 +1247,10 @@ const MapStage = ({
                 <span className={classes('cc-sentiment-pill', stageToneClass[lead.sentiment])}>
                   {lead.sentiment.toUpperCase()}
                 </span>
-                <span className="cc-spotlight-card__urgency">{lead.urgencyScore}</span>
+                <span className="cc-spotlight-card__urgency">
+                  <span className="cc-spotlight-card__urg-label">URG</span>
+                  {lead.urgencyScore}
+                </span>
               </div>
               <strong>{lead.ownerName}</strong>
               <span>{lead.currentIntent}</span>
@@ -1291,7 +1294,7 @@ const ActivityRail = ({
       <div className="cc-panel__header">
         <div>
           <span className="cc-panel__eyebrow">Alerts</span>
-          <h3>Acknowledge</h3>
+          <h3>Active</h3>
         </div>
       </div>
       <div className="cc-alert-list">
@@ -1321,7 +1324,7 @@ const ActivityRail = ({
                 <span>
                   {alert.metricLabel}: {alert.metricValue}
                 </span>
-                <span className="cc-alert-card__priority-label">{alertPriorityLabel[alert.priority]}</span>
+                <span>{alertPriorityLabel[alert.priority]}</span>
                 <span>{formatRelativeTime(alert.timestampIso)}</span>
               </div>
             </article>
@@ -1382,7 +1385,7 @@ const ActivityRail = ({
             onOpenLead(selectedLead.id)
           }}
         >
-          Open lead dossier
+          Full Dossier
           <Icon className="cc-primary-button__icon" name="arrow-up-right" />
         </button>
       </section>
@@ -1834,13 +1837,15 @@ const CommandHintBar = ({
     <span>⌘K</span>
     <span>commands</span>
     <span>⌘M</span>
-    <span>{layoutMode === 'map' ? 'exit map focus' : 'map focus'}</span>
+    <span>{layoutMode === 'map' ? 'exit map' : 'map focus'}</span>
+    <span>⌘B</span>
+    <span>{layoutMode === 'battlefield' ? 'exit battlefield' : 'battlefield'}</span>
     <span>[</span>
-    <span>toggle intel</span>
+    <span>intel</span>
     <span>]</span>
-    <span>toggle activity</span>
+    <span>activity</span>
     <span>ESC</span>
-    <span>{activeDrawer ? 'close drawer' : 'dismiss focus'}</span>
+    <span>{activeDrawer ? 'close drawer' : layoutMode !== 'split' ? 'exit mode' : 'dismiss'}</span>
     <span>/dashboard/live</span>
   </div>
 )
@@ -1980,7 +1985,7 @@ const HeatFactors = ({ factors }: { factors: string[] }) => (
 const NBACard = ({ action, confidence }: { action: string; confidence?: number }) => (
   <div className="cc-nba-card">
     <div className="cc-nba-card__header">
-      <span className="cc-eyebrow">RECOMMENDED ACTION</span>
+      <span className="cc-eyebrow">NEXT ACTION</span>
       {confidence !== undefined ? (
         <span className={classes('cc-nba-badge', confidence >= 80 ? 'is-high' : 'is-medium')}>
           {confidence}% confidence
@@ -2032,7 +2037,7 @@ const BattlefieldView = ({
     <section className="cc-battlefield" data-testid="battlefield-view">
       <div className="cc-battlefield__header">
         <span className="cc-eyebrow">PRIORITY BATTLEFIELD</span>
-        <span className="cc-battlefield__count">{priorityLeads.length} active targets</span>
+        <span className="cc-battlefield__count">{priorityLeads.length} leads in play</span>
       </div>
       <div className="cc-battlefield__grid">
         {priorityLeads.map((lead) => (
