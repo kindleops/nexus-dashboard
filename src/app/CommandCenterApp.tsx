@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useMemo, useState } from 'react'
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { pushRoutePath, replaceRoutePath, useRoutePath } from './router'
 import { resolveRoute } from './routes'
 import { useCommandGrammar, type CommandBinding } from '../shared/command-grammar'
@@ -29,20 +29,31 @@ interface NavItem {
   label: string
   icon: NavIconName
   shortcut: string
+  room: string
 }
 
 const navItems: NavItem[] = [
-  { path: '/dashboard/live', label: 'Command Center', icon: 'radar', shortcut: 'g h' },
-  { path: '/inbox', label: 'Inbox', icon: 'inbox', shortcut: 'g i' },
-  { path: '/alerts', label: 'Alerts', icon: 'alert', shortcut: 'g a' },
-  { path: '/stats', label: 'Intelligence', icon: 'stats', shortcut: 'g s' },
-  { path: '/markets', label: 'Markets', icon: 'map', shortcut: 'g m' },
-  { path: '/buyer', label: 'Buyers', icon: 'users', shortcut: 'g b' },
-  { path: '/title', label: 'Title & Closing', icon: 'file-text', shortcut: 'g t' },
-  { path: '/watchlists', label: 'Watchlists', icon: 'star', shortcut: 'g w' },
-  { path: '/notifications', label: 'Notifications', icon: 'bell', shortcut: 'g n' },
-  { path: '/settings', label: 'Settings', icon: 'settings', shortcut: 'g d' },
+  { path: '/dashboard/live', label: 'Home', icon: 'radar', shortcut: 'H', room: 'Command Floor' },
+  { path: '/inbox', label: 'Inbox', icon: 'inbox', shortcut: 'I', room: 'Comms Deck' },
+  { path: '/alerts', label: 'Alerts', icon: 'alert', shortcut: 'A', room: 'Threat Board' },
+  { path: '/stats', label: 'Intelligence', icon: 'stats', shortcut: 'G', room: 'Strategy Room' },
+  { path: '/markets', label: 'Markets', icon: 'map', shortcut: 'M', room: 'Operations Room' },
+  { path: '/buyer', label: 'Buyers', icon: 'users', shortcut: 'B', room: 'Capital Deployment' },
+  { path: '/title', label: 'Title', icon: 'file-text', shortcut: 'T', room: 'Execution Room' },
+  { path: '/watchlists', label: 'Watchlists', icon: 'star', shortcut: 'W', room: 'Tracked Targets' },
+  { path: '/notifications', label: 'Notifications', icon: 'bell', shortcut: 'N', room: 'Event Stream' },
+  { path: '/settings', label: 'Settings', icon: 'settings', shortcut: 'S', room: 'Control Layer' },
 ]
+
+// ── Global Command Palette ─────────────────────────────────────────────────
+
+interface GlobalCommand {
+  id: string
+  label: string
+  hint?: string
+  category: string
+  action: () => void
+}
 
 // ── Component ──────────────────────────────────────────────────────────────
 
@@ -53,27 +64,101 @@ export const CommandCenterApp = () => {
     ...initialState,
     path: route.path,
   })
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
+  const [cmdOpen, setCmdOpen] = useState(false)
+  const [cmdQuery, setCmdQuery] = useState('')
+  const [cmdFocus, setCmdFocus] = useState(0)
+  const cmdInputRef = useRef<HTMLInputElement>(null)
 
-  // Command grammar bindings
+  // Command grammar bindings — single-key navigation
   const bindings = useMemo<CommandBinding[]>(() => [
     ...navItems.map((item) => ({
       keys: item.shortcut,
-      seq: item.shortcut.split(' '),
+      seq: [item.shortcut.toLowerCase()],
       label: item.label,
       category: 'Navigation',
       action: () => pushRoutePath(item.path),
     })),
-    {
-      keys: '?',
-      seq: ['?'],
-      label: 'Toggle keyboard hints',
-      category: 'System',
-      action: () => pushRoutePath('/settings'),
-    },
   ], [])
 
   const grammarState = useCommandGrammar(bindings)
+
+  // Global commands for palette
+  const globalCommands = useMemo<GlobalCommand[]>(() => [
+    ...navItems.map((item) => ({
+      id: `go-${item.path}`,
+      label: `Go to ${item.label}`,
+      hint: item.shortcut,
+      category: 'Navigation',
+      action: () => pushRoutePath(item.path),
+    })),
+    { id: 'focus-dallas', label: 'Focus Dallas', category: 'Markets', action: () => pushRoutePath('/markets') },
+    { id: 'focus-houston', label: 'Focus Houston', category: 'Markets', action: () => pushRoutePath('/markets') },
+    { id: 'focus-phoenix', label: 'Focus Phoenix', category: 'Markets', action: () => pushRoutePath('/markets') },
+    { id: 'focus-minneapolis', label: 'Focus Minneapolis', category: 'Markets', action: () => pushRoutePath('/markets') },
+    { id: 'show-heatmap', label: 'Show Heatmap', category: 'Map Modes', action: () => pushRoutePath('/dashboard/live') },
+    { id: 'show-lead-temp', label: 'Show Lead Temperature', category: 'Map Modes', action: () => pushRoutePath('/dashboard/live') },
+    { id: 'show-pressure', label: 'Show Market Pressure', category: 'Map Modes', action: () => pushRoutePath('/dashboard/live') },
+    { id: 'show-buyer-demand', label: 'Show Buyer Demand', category: 'Map Modes', action: () => pushRoutePath('/dashboard/live') },
+    { id: 'enter-battlefield', label: 'Enter Battlefield', category: 'Views', action: () => pushRoutePath('/dashboard/live') },
+  ], [])
+
+  const filteredCommands = cmdQuery.trim()
+    ? globalCommands.filter(
+        (c) =>
+          c.label.toLowerCase().includes(cmdQuery.toLowerCase()) ||
+          c.hint?.toLowerCase().includes(cmdQuery.toLowerCase()) ||
+          c.category.toLowerCase().includes(cmdQuery.toLowerCase()),
+      )
+    : globalCommands
+
+  const groupedCommands = useMemo(() => {
+    const map = new Map<string, GlobalCommand[]>()
+    for (const cmd of filteredCommands) {
+      const existing = map.get(cmd.category)
+      if (existing) existing.push(cmd)
+      else map.set(cmd.category, [cmd])
+    }
+    return Array.from(map.entries()).map(([category, items]) => ({ category, items }))
+  }, [filteredCommands])
+
+  const flatCommands = groupedCommands.flatMap((g) => g.items)
+
+  const openCmd = useCallback(() => {
+    setCmdOpen(true)
+    setCmdQuery('')
+    setCmdFocus(0)
+    setTimeout(() => cmdInputRef.current?.focus(), 50)
+  }, [])
+
+  const closeCmd = useCallback(() => {
+    setCmdOpen(false)
+    setCmdQuery('')
+    setCmdFocus(0)
+  }, [])
+
+  // Global keyboard — ⌘K, /, Escape
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        if (cmdOpen) closeCmd()
+        else openCmd()
+        return
+      }
+      if (e.key === 'Escape' && cmdOpen) {
+        closeCmd()
+        return
+      }
+      // / opens palette when not in an input
+      const tag = (e.target as HTMLElement)?.tagName
+      if (e.key === '/' && !cmdOpen && tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
+        e.preventDefault()
+        openCmd()
+      }
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [cmdOpen, openCmd, closeCmd])
 
   useEffect(() => {
     document.title = route.title
@@ -102,6 +187,27 @@ export const CommandCenterApp = () => {
   }, [route])
 
   const isRouteLoading = routeState.path !== route.path || routeState.status === 'loading'
+
+  // Current active nav
+  const activeNav = navItems.find((n) => n.path === route.path)
+
+  // Palette key nav
+  const onCmdKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setCmdFocus((i) => Math.min(i + 1, flatCommands.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setCmdFocus((i) => Math.max(i - 1, 0))
+    } else if (e.key === 'Enter' && flatCommands[cmdFocus]) {
+      e.preventDefault()
+      flatCommands[cmdFocus].action()
+      closeCmd()
+    }
+  }
+
+  // Reset focus on search
+  useEffect(() => { setCmdFocus(0) }, [cmdQuery])
 
   // ── Loading State ──────────────────────────────────────────────────────
 
@@ -138,50 +244,112 @@ export const CommandCenterApp = () => {
     )
   }
 
-  // ── Ready State ────────────────────────────────────────────────────────
+  // ── Ready State — Command-First Layout ─────────────────────────────────
+
+  let cmdItemIdx = -1
 
   return (
     <div className="nx-os">
-      {/* Sidebar */}
-      <nav
-        className={`nx-sidebar ${sidebarCollapsed ? 'nx-sidebar--collapsed' : ''}`}
-        onMouseEnter={() => setSidebarCollapsed(false)}
-        onMouseLeave={() => setSidebarCollapsed(true)}
-      >
-        <div className="nx-sidebar__brand">
-          <span className="nx-sidebar__logo">N</span>
-          {!sidebarCollapsed && <span className="nx-sidebar__title">NEXUS</span>}
+      {/* Minimal bottom dock — only visible on non-Home surfaces */}
+      {route.path !== '/dashboard/live' && (
+        <nav className="nx-dock" aria-label="Navigation dock">
+          <button
+            type="button"
+            className="nx-dock__home"
+            onClick={() => pushRoutePath('/dashboard/live')}
+            title="Home (H)"
+          >
+            <Icon name="radar" className="nx-dock__icon" />
+          </button>
+          <div className="nx-dock__divider" />
+          {navItems.filter(n => n.path !== '/dashboard/live' && n.path !== '/settings').map((item) => (
+            <button
+              key={item.path}
+              type="button"
+              className={`nx-dock__item ${route.path === item.path ? 'is-active' : ''}`}
+              onClick={() => pushRoutePath(item.path)}
+              title={`${item.label} (${item.shortcut})`}
+            >
+              <Icon name={item.icon} className="nx-dock__icon" />
+            </button>
+          ))}
+          <div className="nx-dock__spacer" />
+          <button
+            type="button"
+            className="nx-dock__cmd"
+            onClick={openCmd}
+            title="Command Palette (⌘K)"
+          >
+            <Icon name="command" className="nx-dock__icon" />
+          </button>
+        </nav>
+      )}
+
+      {/* Room label — non-Home surfaces */}
+      {route.path !== '/dashboard/live' && activeNav && (
+        <div className="nx-room-label">
+          <span className="nx-room-label__name">{activeNav.room}</span>
         </div>
+      )}
 
-        <ul className="nx-sidebar__nav">
-          {navItems.map((item) => {
-            const isActive = route.path === item.path
-            return (
-              <li key={item.path}>
-                <button
-                  type="button"
-                  className={`nx-sidebar__link ${isActive ? 'nx-sidebar__link--active' : ''}`}
-                  onClick={() => pushRoutePath(item.path)}
-                  title={sidebarCollapsed ? item.label : undefined}
-                >
-                  <Icon name={item.icon} className="nx-sidebar__icon" />
-                  {!sidebarCollapsed && (
-                    <>
-                      <span className="nx-sidebar__label">{item.label}</span>
-                      <kbd className="nx-sidebar__shortcut">{item.shortcut}</kbd>
-                    </>
-                  )}
-                </button>
-              </li>
-            )
-          })}
-        </ul>
-      </nav>
-
-      {/* Main content */}
-      <main className="app-root">
+      {/* Main content — full bleed */}
+      <main className="nx-stage">
         {route.render(routeState.data)}
       </main>
+
+      {/* Command Palette */}
+      {cmdOpen && (
+        <div
+          className="nx-cmd-overlay"
+          role="dialog"
+          aria-modal
+          aria-label="Command palette"
+          onClick={(e) => { if (e.target === e.currentTarget) closeCmd() }}
+        >
+          <div className="nx-cmd" onKeyDown={onCmdKeyDown}>
+            <div className="nx-cmd__bar">
+              <span className="nx-cmd__prompt">&gt;</span>
+              <input
+                ref={cmdInputRef}
+                className="nx-cmd__input"
+                type="text"
+                placeholder="Type a command…"
+                value={cmdQuery}
+                onChange={(e) => setCmdQuery(e.target.value)}
+              />
+              <kbd className="nx-cmd__esc">ESC</kbd>
+            </div>
+            <div className="nx-cmd__results" role="listbox">
+              {groupedCommands.length === 0 ? (
+                <div className="nx-cmd__empty">No results for "{cmdQuery}"</div>
+              ) : (
+                groupedCommands.map(({ category, items }) => (
+                  <div key={category} className="nx-cmd__group">
+                    <span className="nx-cmd__group-label">{category}</span>
+                    {items.map((cmd) => {
+                      cmdItemIdx++
+                      const isFocused = cmdItemIdx === cmdFocus
+                      return (
+                        <button
+                          key={cmd.id}
+                          className={`nx-cmd__item ${isFocused ? 'is-focused' : ''}`}
+                          type="button"
+                          role="option"
+                          aria-selected={isFocused}
+                          onClick={() => { cmd.action(); closeCmd() }}
+                        >
+                          <span className="nx-cmd__item-label">{cmd.label}</span>
+                          {cmd.hint ? <span className="nx-cmd__item-hint">{cmd.hint}</span> : null}
+                        </button>
+                      )
+                    })}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Grammar pending indicator */}
       {grammarState.pending && (

@@ -1,8 +1,9 @@
-import { useDeferredValue, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
+import { useDeferredValue, useEffect, useEffectEvent, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { NexusMap } from './NexusMap'
 import type {
   FilterOption,
+  LiveActivity,
   LiveAgent,
   LiveAlert,
   LiveDashboardModel,
@@ -25,29 +26,8 @@ type DrawerType = 'market' | 'lead' | 'agent' | null
 type LayoutMode = 'split' | 'map' | 'list' | 'battlefield'
 type MapMode = 'leads' | 'distress' | 'heat' | 'stage' | 'pressure' | 'closings'
 
-interface CommandItem {
-  id: string
-  label: string
-  hint?: string
-  category: string
-  action: () => void
-}
-
 const classes = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
-
-const groupByCategory = <T extends { category: string }>(items: T[]) => {
-  const map = new Map<string, T[]>()
-  for (const item of items) {
-    const existing = map.get(item.category)
-    if (existing) {
-      existing.push(item)
-    } else {
-      map.set(item.category, [item])
-    }
-  }
-  return Array.from(map.entries()).map(([category, groups]) => ({ category, items: groups }))
-}
 
 const includesQuery = (query: string, ...values: Array<string | null | undefined>) => {
   if (!query) {
@@ -113,11 +93,10 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
   const [selectedAgentId, setSelectedAgentId] = useState(data.defaults.agentId)
   const [dismissedAlertIds, setDismissedAlertIds] = useState<string[]>([])
   const [clock, setClock] = useState(() => new Date())
-  // New — layout, map mode, command palette
+  // New — layout, map mode, replay
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('split')
   const [mapMode, setMapMode] = useState<MapMode>('leads')
-  const [cmdOpen, setCmdOpen] = useState(false)
-  const [cmdQuery, setCmdQuery] = useState('')
+  const [replayActive, setReplayActive] = useState(false)
 
   const visibleLeads = data.leads.filter((lead) => {
     const matchesMarket = marketScope === 'all' || lead.marketId === marketScope
@@ -195,13 +174,6 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
   }, [])
 
   const onKeyboardShortcut = useEffectEvent((event: KeyboardEvent) => {
-    // Cmd/Ctrl + K — Command Palette (works from any context)
-    if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
-      event.preventDefault()
-      setCmdOpen((curr) => !curr)
-      return
-    }
-
     // Cmd/Ctrl + M — Map Focus Mode toggle
     if ((event.metaKey || event.ctrlKey) && event.key === 'm') {
       event.preventDefault()
@@ -216,16 +188,19 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
       return
     }
 
+    // Cmd/Ctrl + R — Replay Mode toggle
+    if ((event.metaKey || event.ctrlKey) && event.key === 'r') {
+      event.preventDefault()
+      setReplayActive((curr) => !curr)
+      return
+    }
+
     const target = event.target
     if (
       target instanceof HTMLInputElement ||
       target instanceof HTMLTextAreaElement ||
       target instanceof HTMLSelectElement
     ) {
-      if (event.key === 'Escape' && cmdOpen) {
-        setCmdOpen(false)
-        setCmdQuery('')
-      }
       return
     }
 
@@ -238,11 +213,6 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
     }
 
     if (event.key === 'Escape') {
-      if (cmdOpen) {
-        setCmdOpen(false)
-        setCmdQuery('')
-        return
-      }
       if (layoutMode === 'map' || layoutMode === 'battlefield') {
         setLayoutMode('split')
         return
@@ -309,46 +279,6 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
   const leftEffOpen = leftRailOpen && layoutMode !== 'map' && layoutMode !== 'battlefield'
   const rightEffOpen = rightRailOpen && layoutMode !== 'map' && layoutMode !== 'battlefield'
 
-  // Command palette commands
-  const commands = useMemo<CommandItem[]>(
-    () => [
-      { id: 'view-intel', label: 'Toggle Intel Panel', hint: '[', category: 'View', action: () => setLeftRailOpen((c) => !c) },
-      { id: 'view-activity', label: 'Toggle Activity Panel', hint: ']', category: 'View', action: () => setRightRailOpen((c) => !c) },
-      { id: 'view-filters', label: 'Toggle Filters', category: 'View', action: () => setFiltersOpen((c) => !c) },
-      { id: 'view-kpi', label: 'Toggle KPI Bar', category: 'View', action: () => setMetricsCollapsed((c) => !c) },
-      { id: 'layout-split', label: 'Split View', hint: 'default', category: 'Layout', action: () => setLayoutMode('split') },
-      { id: 'layout-map', label: 'Map Focus Mode', hint: '⌘M', category: 'Layout', action: () => setLayoutMode('map') },
-      { id: 'layout-list', label: 'List View', category: 'Layout', action: () => setLayoutMode('list') },
-      { id: 'layout-battlefield', label: 'Battlefield Mode', hint: '⌘B', category: 'Layout', action: () => setLayoutMode('battlefield') },
-      { id: 'map-leads', label: 'Map: Leads', category: 'Map', action: () => setMapMode('leads') },
-      { id: 'map-distress', label: 'Map: Distress Layer', category: 'Map', action: () => setMapMode('distress') },
-      { id: 'map-heat', label: 'Map: Urgency Heat', category: 'Map', action: () => setMapMode('heat') },
-      { id: 'map-stage', label: 'Map: Pipeline Stage', category: 'Map', action: () => setMapMode('stage') },
-      { id: 'map-pressure', label: 'Map: Outbound Pressure', category: 'Map', action: () => setMapMode('pressure') },
-      { id: 'map-closings', label: 'Map: Closings Only', category: 'Map', action: () => setMapMode('closings') },
-      { id: 'filter-all', label: 'Clear All Filters', hint: 'reset', category: 'Filter', action: () => { setSentiment('all'); setPropertyType('all'); setStage('all'); setMarketScope('all') } },
-      { id: 'filter-hot', label: 'Filter: Hot Leads', hint: 'sentiment', category: 'Filter', action: () => setSentiment('hot') },
-      { id: 'filter-warm', label: 'Filter: Warm Leads', hint: 'sentiment', category: 'Filter', action: () => setSentiment('warm') },
-      { id: 'filter-cold', label: 'Filter: Cold Leads', hint: 'sentiment', category: 'Filter', action: () => setSentiment('cold') },
-      ...data.markets.map((market) => ({
-        id: `market-${market.id}`,
-        label: `Market: ${market.name}`,
-        hint: market.scanLabel,
-        category: 'Markets',
-        action: () => { setSelectedMarketId(market.id); setActiveDrawer('market') },
-      })),
-      ...visibleLeads.slice(0, 10).map((lead) => ({
-        id: `lead-${lead.id}`,
-        label: `Lead: ${lead.ownerName}`,
-        hint: lead.sentiment,
-        category: 'Leads',
-        action: () => { setSelectedLeadId(lead.id); setActiveDrawer('lead') },
-      })),
-    ],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [data.markets, visibleLeads],
-  )
-
   return (
     <div
       className={classes(
@@ -370,7 +300,6 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
         onToggleLeftRail={() => { setLeftRailOpen((current) => !current) }}
         onToggleRightRail={() => { setRightRailOpen((current) => !current) }}
         onSetLayoutMode={setLayoutMode}
-        onOpenCmd={() => { setCmdOpen(true) }}
       />
 
       {data.degraded ? (
@@ -487,6 +416,36 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
         </button>
       </div>
 
+      <TimelineRail events={visibleTimeline} />
+
+      {/* Replay mode overlay */}
+      {replayActive && (
+        <div className="cc-replay-bar">
+          <Icon name="clock" className="cc-replay-bar__icon" />
+          <span className="cc-replay-bar__label">REPLAY MODE</span>
+          <span className="cc-replay-bar__time">−24h</span>
+          <div className="cc-replay-bar__track">
+            <div className="cc-replay-bar__fill" style={{ width: '35%' }} />
+            <div className="cc-replay-bar__head" style={{ left: '35%' }} />
+          </div>
+          <span className="cc-replay-bar__time">NOW</span>
+          <button
+            type="button"
+            className="cc-replay-bar__exit"
+            onClick={() => setReplayActive(false)}
+          >
+            Exit Replay
+          </button>
+        </div>
+      )}
+
+      {/* Autopilot trail indicator — always visible on Home */}
+      <div className="cc-autopilot-trail">
+        <div className="cc-autopilot-trail__dot" />
+        <span className="cc-autopilot-trail__label">Autopilot Active</span>
+        <span className="cc-autopilot-trail__count">{data.agents.filter(a => a.activityLabel?.includes('active') || a.activityLabel?.includes('scanning')).length} agents scanning</span>
+      </div>
+
       <CommandHintBar activeDrawer={activeDrawer} layoutMode={layoutMode} />
 
       <DrawerOverlay
@@ -501,15 +460,6 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
           <AgentDrawer agent={selectedAgent} lead={selectedAgentLead} />
         ) : null}
       </DrawerOverlay>
-
-      {cmdOpen ? (
-        <CommandPalette
-          query={cmdQuery}
-          onQueryChange={setCmdQuery}
-          commands={commands}
-          onClose={() => { setCmdOpen(false); setCmdQuery('') }}
-        />
-      ) : null}
     </div>
   )
 }
@@ -526,7 +476,6 @@ const DashboardHeader = ({
   onToggleLeftRail,
   onToggleRightRail,
   onSetLayoutMode,
-  onOpenCmd,
 }: {
   appName: string
   query: string
@@ -539,7 +488,6 @@ const DashboardHeader = ({
   onToggleLeftRail: () => void
   onToggleRightRail: () => void
   onSetLayoutMode: (mode: LayoutMode) => void
-  onOpenCmd: () => void
 }) => (
   <header className="cc-header">
     <div className="cc-header__brand">
@@ -607,12 +555,6 @@ const DashboardHeader = ({
         onClick={() => onSetLayoutMode(layoutMode === 'list' ? 'split' : 'list')}
       >
         <Icon className="cc-icon-button__icon" name="list" />
-      </button>
-
-      {/* Command palette shortcut */}
-      <button className="cc-cmd-trigger" type="button" title="Command Palette (⌘K)" onClick={onOpenCmd}>
-        <Icon className="cc-cmd-trigger__icon" name="command" />
-        <span>⌘K</span>
       </button>
 
       {/* Mobile toggles */}
@@ -1514,78 +1456,6 @@ const LeadListTable = ({
   </section>
 )
 
-const CommandPalette = ({
-  query,
-  onQueryChange,
-  commands,
-  onClose,
-}: {
-  query: string
-  onQueryChange: (q: string) => void
-  commands: CommandItem[]
-  onClose: () => void
-}) => {
-  const inputRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    inputRef.current?.focus()
-  }, [])
-
-  const filtered = query.trim()
-    ? commands.filter(
-        (c) =>
-          c.label.toLowerCase().includes(query.toLowerCase()) ||
-          c.hint?.toLowerCase().includes(query.toLowerCase()),
-      )
-    : commands
-
-  const grouped = groupByCategory(filtered)
-
-  return (
-    /* eslint-disable-next-line jsx-a11y/click-events-have-key-events */
-    <div className="cc-cmd" role="dialog" aria-modal aria-label="Command palette" onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="cc-cmd__panel">
-        <div className="cc-cmd__search">
-          <Icon name="command" className="cc-cmd__search-icon" />
-          <input
-            ref={inputRef}
-            className="cc-cmd__input"
-            type="text"
-            placeholder="Search commands…"
-            value={query}
-            onChange={(e) => { onQueryChange(e.target.value) }}
-          />
-          <kbd className="cc-cmd__esc-badge">ESC</kbd>
-        </div>
-        <div className="cc-cmd__results" role="listbox">
-          {grouped.length === 0 ? (
-            <div className="cc-cmd__empty">No commands match "{query}"</div>
-          ) : (
-            grouped.map(({ category, items }) => (
-              <div key={category} className="cc-cmd__group">
-                <span className="cc-cmd__group-label">{category}</span>
-                {items.map((item) => (
-                  <button
-                    key={item.id}
-                    className="cc-cmd__item"
-                    type="button"
-                    role="option"
-                    aria-selected={false}
-                    onClick={() => { item.action(); onClose() }}
-                  >
-                    <span className="cc-cmd__item-label">{item.label}</span>
-                    {item.hint ? <span className="cc-cmd__hint">{item.hint}</span> : null}
-                  </button>
-                ))}
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 const CommandHintBar = ({
   activeDrawer,
   layoutMode,
@@ -1609,6 +1479,34 @@ const CommandHintBar = ({
     <span>/dashboard/live</span>
   </div>
 )
+
+const timelineKindIcon: Record<string, string> = {
+  system: 'activity',
+  alert: 'alert',
+  ai: 'radar',
+  deal: 'trending-up',
+  conversation: 'inbox',
+  autopilot: 'command',
+}
+
+const TimelineRail = ({ events }: { events: LiveActivity[] }) => {
+  const railRef = useRef<HTMLDivElement>(null)
+  const recent = events.slice(0, 30)
+
+  return (
+    <div className="cc-timeline-rail">
+      <div className="cc-timeline-rail__track" ref={railRef}>
+        {recent.map((evt) => (
+          <div key={evt.id} className={classes('cc-timeline-rail__event', `is-${evt.severity}`)}>
+            <Icon name={(timelineKindIcon[evt.kind] ?? 'activity') as Parameters<typeof Icon>[0]['name']} className="cc-timeline-rail__icon" />
+            <span className="cc-timeline-rail__label">{evt.title}</span>
+            <span className="cc-timeline-rail__time">{formatRelativeTime(evt.timestampIso)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 const MetricReadout = ({ label, value }: { label: string; value: string }) => (
   <div className="cc-metric-readout">

@@ -168,10 +168,10 @@ const MAP_STYLE_URL: string =
 
 const PIN_COLOR_EXPR: ExpressionSpecification = [
   'match', ['get', 'pinTier'],
-  'hot',     '#ef4444',
-  'warm',    '#f59e0b',
-  'neutral', '#48d5ff',
-  /* default (cold) */ '#6e92b4',
+  'hot',     '#d4404c',
+  'warm',    '#d89530',
+  'neutral', '#38d0f0',
+  /* default (cold) */ '#4e6e88',
 ]
 
 // ─── Component ────────────────────────────────────────────────────────────
@@ -268,7 +268,7 @@ export const NexusMap = ({
       })
 
       // ── Heatmap ─────────────────────────────────────────────────
-      // Always-on density layer using urgencyScore as weight.
+      // Premium density layer: deep navy → electric cyan → amber → red
       // Transitions from pure density at low zoom to individual dots at z ≥ 11.
       map.addLayer({
         id: 'leads-heat',
@@ -282,22 +282,23 @@ export const NexusMap = ({
           ],
           'heatmap-intensity': [
             'interpolate', ['linear'],
-            ['zoom'], 3, 0.4, 10, 2.0,
+            ['zoom'], 3, 0.5, 10, 2.2,
           ],
           'heatmap-color': [
             'interpolate', ['linear'], ['heatmap-density'],
             0,    'rgba(0,0,0,0)',
-            0.12, 'rgba(72,213,255,0.10)',
-            0.30, 'rgba(90,166,255,0.42)',
-            0.55, 'rgba(245,158,11,0.62)',
-            0.75, 'rgba(239,68,68,0.80)',
-            1.0,  'rgba(239,68,68,0.96)',
+            0.08, 'rgba(12,24,60,0.20)',
+            0.20, 'rgba(20,80,140,0.40)',
+            0.35, 'rgba(56,208,240,0.55)',
+            0.55, 'rgba(216,149,48,0.70)',
+            0.75, 'rgba(212,64,76,0.85)',
+            1.0,  'rgba(220,40,60,0.96)',
           ],
           'heatmap-radius': [
             'interpolate', ['linear'],
-            ['zoom'], 3, 14, 10, 44,
+            ['zoom'], 3, 16, 10, 48,
           ],
-          'heatmap-opacity': 0.62,
+          'heatmap-opacity': 0.68,
         },
       })
 
@@ -346,13 +347,48 @@ export const NexusMap = ({
         filter: ['!', ['has', 'point_count']],
         paint: {
           'circle-radius': [
-            'case', ['==', ['get', 'selected'], 1], 20, 13,
+            'case', ['==', ['get', 'selected'], 1], 22, 14,
           ],
-          'circle-blur': 0.82,
+          'circle-blur': 0.9,
           'circle-opacity': [
-            'case', ['==', ['get', 'selected'], 1], 0.45, 0.16,
+            'case', ['==', ['get', 'selected'], 1], 0.50, 0.18,
           ],
           'circle-color': PIN_COLOR_EXPR,
+        },
+      })
+
+      // Activity pulse ring — visible on hot pins for live activity feel
+      map.addLayer({
+        id: 'leads-pulse-ring',
+        type: 'circle',
+        source: 'leads',
+        filter: ['all',
+          ['!', ['has', 'point_count']],
+          ['in', ['get', 'pinTier'], ['literal', ['hot', 'warm']]],
+        ],
+        paint: {
+          'circle-radius': [
+            'match', ['get', 'pinTier'],
+            'hot', 18,
+            'warm', 14,
+            10,
+          ],
+          'circle-blur': 0.6,
+          'circle-opacity': [
+            'match', ['get', 'pinTier'],
+            'hot', 0.22,
+            'warm', 0.12,
+            0,
+          ],
+          'circle-color': PIN_COLOR_EXPR,
+          'circle-stroke-width': 1.5,
+          'circle-stroke-color': PIN_COLOR_EXPR,
+          'circle-stroke-opacity': [
+            'match', ['get', 'pinTier'],
+            'hot', 0.35,
+            'warm', 0.18,
+            0,
+          ],
         },
       })
 
@@ -389,7 +425,7 @@ export const NexusMap = ({
           'circle-radius': [
             'case', ['==', ['get', 'selected'], 1], 38, 28,
           ],
-          'circle-color': '#48d5ff',
+          'circle-color': '#38d0f0',
           'circle-opacity': [
             'case', ['==', ['get', 'selected'], 1], 0.13, 0.06,
           ],
@@ -406,12 +442,12 @@ export const NexusMap = ({
           'circle-radius': [
             'case', ['==', ['get', 'selected'], 1], 11, 7,
           ],
-          'circle-color': '#48d5ff',
+          'circle-color': '#38d0f0',
           'circle-stroke-width': 2,
           'circle-stroke-color': [
             'case', ['==', ['get', 'selected'], 1],
             '#ffffff',
-            'rgba(72,213,255,0.50)',
+            'rgba(56,208,240,0.50)',
           ],
           'circle-opacity': [
             'case', ['==', ['get', 'selected'], 1], 1.0, 0.85,
@@ -434,8 +470,8 @@ export const NexusMap = ({
           'text-allow-overlap': false,
         },
         paint: {
-          'text-color': '#9ed4f2',
-          'text-halo-color': 'rgba(5,10,17,0.92)',
+          'text-color': '#8ac8e0',
+          'text-halo-color': 'rgba(3,4,8,0.94)',
           'text-halo-width': 2,
         },
       })
@@ -484,6 +520,34 @@ export const NexusMap = ({
       }
 
       mapReadyRef.current = true
+
+      // ── Live pulse animation — pulsing hot pins ─────────────────
+      let pulseFrame = 0
+      const animatePulse = () => {
+        if (!mapReadyRef.current) return
+        pulseFrame = (pulseFrame + 1) % 120
+        const t = pulseFrame / 120    // 0→1 over ~2s at 60fps
+        const scale = 1 + t * 1.8     // 1→2.8x
+        const opacity = 0.25 * (1 - t) // fade out
+        try {
+          map.setPaintProperty('leads-pulse-ring', 'circle-radius', [
+            'match', ['get', 'pinTier'],
+            'hot', 10 + scale * 8,
+            'warm', 8 + scale * 5,
+            6,
+          ])
+          map.setPaintProperty('leads-pulse-ring', 'circle-opacity', [
+            'match', ['get', 'pinTier'],
+            'hot', opacity,
+            'warm', opacity * 0.5,
+            0,
+          ])
+        } catch {
+          // Layer may have been removed during cleanup
+        }
+        requestAnimationFrame(animatePulse)
+      }
+      requestAnimationFrame(animatePulse)
     })
 
     return () => {
