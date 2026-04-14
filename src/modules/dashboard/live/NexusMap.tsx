@@ -251,7 +251,7 @@ const EVENT_COLOR: Record<string, string> = {
   system:       '#d89530',  // amber
 }
 
-const PULSE_DURATION = 2400  // ms
+const PULSE_DURATION = 3200  // ms — slower, more cinematic ring expansion
 
 // ─── Paint expressions ────────────────────────────────────────────────────
 
@@ -329,7 +329,7 @@ export const NexusMap = ({
       renderWorldCopies: false,
       pitchWithRotate: false,
       dragRotate: false,
-      fadeDuration: 200,
+      fadeDuration: 350,  // smoother tile/feature transitions
     })
 
     mapRef.current = map
@@ -383,12 +383,12 @@ export const NexusMap = ({
           ],
           'heatmap-color': buildHeatColorExpr(),
           'heatmap-radius': [
-            'interpolate', ['linear'],
-            ['zoom'], 3, 28, 6, 48, 10, 72,
+            'interpolate', ['exponential', 1.5],
+            ['zoom'], 3, 32, 6, 52, 10, 80,
           ],
           'heatmap-opacity': [
             'interpolate', ['linear'],
-            ['zoom'], 3, 0.72, 10, 0.58,
+            ['zoom'], 3, 0.78, 10, 0.52,
           ],
         },
       })
@@ -607,7 +607,7 @@ export const NexusMap = ({
         const coords = feature.geometry.coordinates as [number, number]
         const source = map.getSource('leads') as maplibregl.GeoJSONSource
         void source.getClusterExpansionZoom(clusterId).then((zoom) => {
-          map.easeTo({ center: coords, zoom: zoom + 0.5, duration: 500 })
+          map.easeTo({ center: coords, zoom: zoom + 0.5, duration: 700 })
         })
       })
 
@@ -641,30 +641,32 @@ export const NexusMap = ({
         if (!mapReadyRef.current) return
         const now = performance.now()
 
-        // Pin pulse — runs on frame count
-        pulseFrame = (pulseFrame + 1) % 120
-        const t = pulseFrame / 120
-        const scale = 1 + t * 1.8
-        const opacity = 0.25 * (1 - t)
+        // Pin pulse — smoother sinusoidal expansion cycle
+        pulseFrame = (pulseFrame + 1) % 150
+        const t = pulseFrame / 150
+        // Sine-based easing: smooth rise and fall
+        const wave = Math.sin(t * Math.PI)
+        const scale = 1 + wave * 2.2
+        const opacity = 0.28 * (1 - t * 0.8)
         try {
           map.setPaintProperty('leads-pulse-ring', 'circle-radius', [
             'match', ['get', 'pinTier'],
-            'hot', 10 + scale * 8,
-            'warm', 8 + scale * 5,
+            'hot', 10 + scale * 9,
+            'warm', 8 + scale * 6,
             6,
           ])
           map.setPaintProperty('leads-pulse-ring', 'circle-opacity', [
             'match', ['get', 'pinTier'],
             'hot', opacity,
-            'warm', opacity * 0.5,
+            'warm', opacity * 0.45,
             0,
           ])
         } catch {
           // Layer may have been removed during cleanup
         }
 
-        // Event pulse rendering — throttled to every 50ms
-        if (now - lastPulseTime > 50) {
+        // Event pulse rendering — throttled to 33ms (~30fps) for smooth rings
+        if (now - lastPulseTime > 33) {
           lastPulseTime = now
           const activePulses = eventPulsesRef.current
           if (activePulses.length > 0) {
@@ -673,7 +675,7 @@ export const NexusMap = ({
                 const elapsed = now - p.startTime
                 const progress = Math.min(elapsed / p.duration, 1)
                 if (progress >= 1) return null
-                const eased = 1 - Math.pow(1 - progress, 3) // ease-out cubic
+                const eased = 1 - Math.pow(1 - progress, 4) // ease-out quartic — slower start, cinematic tail
                 return {
                   type: 'Feature' as const,
                   geometry: {
@@ -681,9 +683,9 @@ export const NexusMap = ({
                     coordinates: [p.lng, p.lat],
                   },
                   properties: {
-                    radius: 8 + eased * 40,
+                    radius: 6 + eased * 52,
                     color: p.color,
-                    opacity: 0.35 * (1 - progress),
+                    opacity: 0.40 * Math.pow(1 - progress, 1.5),
                   },
                 }
               })
@@ -747,7 +749,7 @@ export const NexusMap = ({
       // Offset left: shifts map center so the lead pin appears right-of-center,
       // leaving clear space for the right-side drawer
       offset: [-200, 20],
-      duration: 950,
+      duration: 1200,
       essential: true,
     })
   }, [activeDrawer, selectedLeadId, leads])

@@ -87,6 +87,7 @@ function playTone(
   attack: number,
   decay: number,
   volume: number,
+  freqEnd?: number,  // optional end frequency for pitch slides
 ): void {
   const osc = ctx.createOscillator()
   const env = ctx.createGain()
@@ -96,9 +97,15 @@ function playTone(
   env.connect(dest)
 
   const now = ctx.currentTime + startOffset
-  env.gain.setValueAtTime(0, now)
-  env.gain.linearRampToValueAtTime(volume, now + attack)
-  env.gain.linearRampToValueAtTime(0, now + duration - decay)
+  env.gain.setValueAtTime(0.0001, now)
+  env.gain.exponentialRampToValueAtTime(Math.max(volume, 0.0001), now + attack)
+  env.gain.exponentialRampToValueAtTime(0.0001, now + duration - decay * 0.5)
+
+  // Optional frequency slide for organic feel
+  if (freqEnd !== undefined) {
+    osc.frequency.setValueAtTime(freq, now)
+    osc.frequency.exponentialRampToValueAtTime(freqEnd, now + duration * 0.8)
+  }
 
   osc.start(now)
   osc.stop(now + duration)
@@ -109,32 +116,35 @@ function playTone(
 type SoundComposer = (ctx: AudioContext, gain: GainNode) => void
 
 const compositions: Record<SoundEvent, SoundComposer> = {
-  // Cyan — warm glass ping, ascending dyad
+  // Cyan — warm glass ping, ascending dyad with harmonic shimmer
   'inbound-reply': (ctx, g) => {
-    playTone(ctx, g, 880, 'sine', 0, 0.18, 0.005, 0.08, 0.4)
-    playTone(ctx, g, 1320, 'sine', 0.04, 0.14, 0.005, 0.06, 0.25)
-    playTone(ctx, g, 1760, 'sine', 0.08, 0.10, 0.005, 0.04, 0.12)
+    playTone(ctx, g, 880, 'sine', 0, 0.20, 0.005, 0.08, 0.38, 920)
+    playTone(ctx, g, 1320, 'sine', 0.04, 0.16, 0.005, 0.06, 0.22, 1380)
+    playTone(ctx, g, 1760, 'sine', 0.08, 0.12, 0.005, 0.04, 0.10, 1820)
+    playTone(ctx, g, 2640, 'sine', 0.10, 0.08, 0.003, 0.03, 0.04)
   },
 
-  // Red — urgent descending sting
+  // Red — urgent descending sting with growl
   'hot-lead-escalation': (ctx, g) => {
-    playTone(ctx, g, 660, 'sawtooth', 0, 0.12, 0.002, 0.05, 0.3)
-    playTone(ctx, g, 440, 'sawtooth', 0.06, 0.16, 0.002, 0.08, 0.35)
-    playTone(ctx, g, 880, 'sine', 0, 0.20, 0.005, 0.10, 0.15)
+    playTone(ctx, g, 660, 'sawtooth', 0, 0.14, 0.002, 0.05, 0.28, 580)
+    playTone(ctx, g, 440, 'sawtooth', 0.06, 0.18, 0.002, 0.08, 0.32, 380)
+    playTone(ctx, g, 880, 'sine', 0, 0.22, 0.005, 0.10, 0.13, 840)
   },
 
-  // Red — sharp double-tap alert
+  // Red — sharp double-tap alert with metallic ring
   'alert-triggered': (ctx, g) => {
-    playTone(ctx, g, 520, 'square', 0, 0.06, 0.001, 0.02, 0.25)
-    playTone(ctx, g, 520, 'square', 0.10, 0.06, 0.001, 0.02, 0.25)
-    playTone(ctx, g, 780, 'sine', 0.02, 0.15, 0.005, 0.06, 0.12)
+    playTone(ctx, g, 520, 'square', 0, 0.06, 0.001, 0.02, 0.22)
+    playTone(ctx, g, 520, 'square', 0.10, 0.06, 0.001, 0.02, 0.22)
+    playTone(ctx, g, 780, 'sine', 0.02, 0.16, 0.005, 0.06, 0.10, 820)
+    playTone(ctx, g, 1560, 'sine', 0.03, 0.10, 0.003, 0.04, 0.05)
   },
 
-  // Green — warm resolution chime
+  // Green — warm resolution chime with shimmer tail
   'title-clear': (ctx, g) => {
-    playTone(ctx, g, 660, 'sine', 0, 0.25, 0.01, 0.12, 0.35)
-    playTone(ctx, g, 990, 'sine', 0.06, 0.20, 0.01, 0.10, 0.25)
-    playTone(ctx, g, 1320, 'sine', 0.12, 0.18, 0.01, 0.08, 0.18)
+    playTone(ctx, g, 660, 'sine', 0, 0.28, 0.01, 0.12, 0.32, 680)
+    playTone(ctx, g, 990, 'sine', 0.06, 0.22, 0.01, 0.10, 0.22, 1010)
+    playTone(ctx, g, 1320, 'sine', 0.12, 0.20, 0.01, 0.08, 0.16, 1350)
+    playTone(ctx, g, 1980, 'sine', 0.18, 0.14, 0.008, 0.06, 0.06)
   },
 
   // Green — success tone, ascending triad
@@ -144,17 +154,19 @@ const compositions: Record<SoundEvent, SoundComposer> = {
     playTone(ctx, g, 660, 'sine', 0.16, 0.22, 0.008, 0.10, 0.30)
   },
 
-  // Cyan — discovery pulse
+  // Cyan — discovery pulse with rising shimmer
   'buyer-match': (ctx, g) => {
-    playTone(ctx, g, 740, 'sine', 0, 0.15, 0.005, 0.06, 0.30)
-    playTone(ctx, g, 932, 'triangle', 0.05, 0.12, 0.005, 0.05, 0.20)
+    playTone(ctx, g, 740, 'sine', 0, 0.18, 0.005, 0.06, 0.28, 780)
+    playTone(ctx, g, 932, 'triangle', 0.05, 0.14, 0.005, 0.05, 0.18, 960)
+    playTone(ctx, g, 1480, 'sine', 0.08, 0.10, 0.004, 0.04, 0.06)
   },
 
-  // Purple — soft AI process cue
+  // Purple — soft AI process cue with resonant tail
   'ai-response': (ctx, g) => {
-    playTone(ctx, g, 392, 'sine', 0, 0.30, 0.02, 0.15, 0.20)
-    playTone(ctx, g, 523, 'sine', 0.10, 0.25, 0.02, 0.12, 0.15)
-    playTone(ctx, g, 784, 'triangle', 0.15, 0.18, 0.01, 0.08, 0.08)
+    playTone(ctx, g, 392, 'sine', 0, 0.32, 0.02, 0.15, 0.18, 410)
+    playTone(ctx, g, 523, 'sine', 0.10, 0.28, 0.02, 0.12, 0.14, 540)
+    playTone(ctx, g, 784, 'triangle', 0.15, 0.20, 0.01, 0.08, 0.07, 800)
+    playTone(ctx, g, 1046, 'sine', 0.20, 0.14, 0.008, 0.06, 0.03)
   },
 
   // Purple — ambient command blip
@@ -181,15 +193,16 @@ const compositions: Record<SoundEvent, SoundComposer> = {
     playTone(ctx, g, 1047, 'sine', 0.08, 0.16, 0.008, 0.06, 0.20)
   },
 
-  // UI — glass tap
+  // UI — glass tap with sparkle
   'ui-tap': (ctx, g) => {
-    playTone(ctx, g, 2400, 'sine', 0, 0.04, 0.001, 0.015, 0.12)
+    playTone(ctx, g, 2400, 'sine', 0, 0.05, 0.001, 0.015, 0.10, 2600)
+    playTone(ctx, g, 4800, 'sine', 0.005, 0.03, 0.001, 0.01, 0.03)
   },
 
-  // UI — soft confirmation click
+  // UI — soft confirmation click with chime
   'ui-confirm': (ctx, g) => {
-    playTone(ctx, g, 1200, 'sine', 0, 0.06, 0.002, 0.025, 0.15)
-    playTone(ctx, g, 1600, 'sine', 0.02, 0.05, 0.002, 0.02, 0.10)
+    playTone(ctx, g, 1200, 'sine', 0, 0.07, 0.002, 0.025, 0.13, 1260)
+    playTone(ctx, g, 1600, 'sine', 0.02, 0.06, 0.002, 0.02, 0.09, 1660)
   },
 
   // UI — muted error
