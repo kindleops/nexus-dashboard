@@ -7,6 +7,7 @@ import { AICopilot, type CopilotContext } from '../shared/AICopilot'
 import { BriefingPanel, buildBriefingDigest, type BriefingDigest } from '../shared/BriefingPanel'
 import { NotificationToasts, NotificationCenter, useNotificationCount } from '../shared/NotificationToast'
 import { playSound } from '../shared/sounds'
+import { applyThemeToDOM, subscribeSettings } from '../shared/settings'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -79,6 +80,21 @@ export const CommandCenterApp = () => {
   const [briefingDigest, setBriefingDigest] = useState<BriefingDigest | null>(null)
   const [notifCenterOpen, setNotifCenterOpen] = useState(false)
   const notifCount = useNotificationCount()
+
+  // ── Theme system — apply on mount + subscribe to changes ──
+  useEffect(() => {
+    applyThemeToDOM()
+    return subscribeSettings(() => applyThemeToDOM())
+  }, [])
+
+  // ── Room transition sound ──
+  const prevPathRef = useRef(route.path)
+  useEffect(() => {
+    if (prevPathRef.current !== route.path) {
+      playSound('room-enter')
+      prevPathRef.current = route.path
+    }
+  }, [route.path])
 
   // Command grammar bindings — single-key navigation
   const bindings = useMemo<CommandBinding[]>(() => [

@@ -5,14 +5,22 @@ import {
   updateSetting,
   subscribeSettings,
   resetSettings,
+  applyThemeToDOM,
+  THEME_PRESETS,
+  ACCENT_PALETTES,
   type NexusSettings,
   type MapTheme,
   type HeatPalette,
   type PulsePalette,
   type SoundProfile,
   type DensityMode,
+  type NexusTheme,
+  type AccentPalette,
+  type GreetingStyle,
+  type CopilotInitiative,
+  type CopilotVerbosity,
 } from '../../shared/settings'
-import { previewSound, type SoundEvent } from '../../shared/sounds'
+import { previewSound, playSound, type SoundEvent } from '../../shared/sounds'
 
 const classes = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
@@ -74,6 +82,18 @@ const LAYER_TOGGLES: { key: keyof NexusSettings; label: string }[] = [
   { key: 'layerContracts', label: 'Contracts' },
 ]
 
+const NEXUS_THEMES: { value: NexusTheme; label: string }[] = Object.values(THEME_PRESETS).map(t => ({ value: t.id, label: t.label }))
+const ACCENT_OPTIONS: { value: AccentPalette; label: string; color: string }[] = (Object.entries(ACCENT_PALETTES) as [AccentPalette, { primary: string; glow: string }][]).map(([k, v]) => ({ value: k, label: k.charAt(0).toUpperCase() + k.slice(1), color: v.primary }))
+const GREETING_STYLES: { value: GreetingStyle; label: string }[] = [
+  { value: 'formal', label: 'Formal' }, { value: 'casual', label: 'Casual' }, { value: 'minimal', label: 'Minimal' }, { value: 'cinematic', label: 'Cinematic' },
+]
+const COPILOT_INITIATIVE: { value: CopilotInitiative; label: string }[] = [
+  { value: 'proactive', label: 'Proactive' }, { value: 'balanced', label: 'Balanced' }, { value: 'on-demand', label: 'On-Demand' },
+]
+const COPILOT_VERBOSITY: { value: CopilotVerbosity; label: string }[] = [
+  { value: 'concise', label: 'Concise' }, { value: 'detailed', label: 'Detailed' },
+]
+
 export const SettingsPage = () => {
   const [s, setS] = useState(loadSettings)
 
@@ -91,6 +111,17 @@ export const SettingsPage = () => {
     updateSetting(key, value as any)
   }
 
+  const setTheme = (theme: NexusTheme) => {
+    updateSetting('nexusTheme', theme)
+    applyThemeToDOM()
+    playSound('theme-switch')
+  }
+
+  const setAccent = (accent: AccentPalette) => {
+    updateSetting('accentPalette', accent)
+    applyThemeToDOM()
+  }
+
   return (
     <div className="nx-settings">
       <header className="nx-surface-header">
@@ -106,6 +137,114 @@ export const SettingsPage = () => {
       </header>
 
       <div className="nx-settings__body">
+        {/* ── Operator Personalization ─────────────────────────── */}
+        <section className="nx-settings__group">
+          <h2><Icon name="users" className="nx-settings__group-icon" /> Operator</h2>
+          <div className="nx-settings__list">
+            <div className="nx-setting-row">
+              <div className="nx-setting-row__info"><strong>Operator Name</strong><p>Your name for greetings</p></div>
+              <div className="nx-setting-row__control">
+                <input type="text" className="nx-text-input" placeholder="Operator" value={s.operatorName} onChange={e => updateSetting('operatorName', e.target.value)} />
+              </div>
+            </div>
+            <div className="nx-setting-row">
+              <div className="nx-setting-row__info"><strong>Operator Title</strong><p>Your role label</p></div>
+              <div className="nx-setting-row__control">
+                <input type="text" className="nx-text-input" placeholder="Operator" value={s.operatorTitle} onChange={e => updateSetting('operatorTitle', e.target.value)} />
+              </div>
+            </div>
+            <div className="nx-setting-row">
+              <div className="nx-setting-row__info"><strong>Assistant Name</strong><p>AI copilot display name</p></div>
+              <div className="nx-setting-row__control">
+                <input type="text" className="nx-text-input" placeholder="NEXUS" value={s.assistantName} onChange={e => updateSetting('assistantName', e.target.value)} />
+              </div>
+            </div>
+            <div className="nx-setting-row">
+              <div className="nx-setting-row__info"><strong>Greeting Style</strong><p>Copilot greeting tone</p></div>
+              <div className="nx-setting-row__control">
+                <div className="nx-segmented">
+                  {GREETING_STYLES.map(g => (
+                    <button key={g.value} type="button" className={classes('nx-segmented__btn', s.greetingStyle === g.value && 'is-active')} onClick={() => setSelect('greetingStyle', g.value)}>{g.label}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ── Theme ────────────────────────────────────────────── */}
+        <section className="nx-settings__group">
+          <h2><Icon name="palette" className="nx-settings__group-icon" /> Theme</h2>
+          <div className="nx-settings__list">
+            <div className="nx-setting-row nx-setting-row--stack">
+              <div className="nx-setting-row__info"><strong>NEXUS Theme</strong><p>Command center color scheme</p></div>
+              <div className="nx-theme-grid">
+                {NEXUS_THEMES.map(t => {
+                  const tokens = THEME_PRESETS[t.value]
+                  return (
+                    <button key={t.value} type="button" className={classes('nx-theme-swatch', s.nexusTheme === t.value && 'is-active')} onClick={() => setTheme(t.value)}>
+                      <div className="nx-theme-swatch__preview" style={{ background: tokens.bg }}>
+                        <div className="nx-theme-swatch__accent" style={{ background: tokens.accent }} />
+                      </div>
+                      <span className="nx-theme-swatch__label">{t.label}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+            <div className="nx-setting-row nx-setting-row--stack">
+              <div className="nx-setting-row__info"><strong>Accent Palette</strong><p>Primary accent color</p></div>
+              <div className="nx-accent-row">
+                {ACCENT_OPTIONS.map(a => (
+                  <button key={a.value} type="button" className={classes('nx-accent-chip', s.accentPalette === a.value && 'is-active')} onClick={() => setAccent(a.value)} title={a.label}>
+                    <span className="nx-accent-chip__dot" style={{ background: a.color }} />
+                    <span className="nx-accent-chip__label">{a.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ── AI Copilot Config ────────────────────────────────── */}
+        <section className="nx-settings__group">
+          <h2><Icon name="spark" className="nx-settings__group-icon" /> AI Copilot</h2>
+          <div className="nx-settings__list">
+            <div className="nx-setting-row">
+              <div className="nx-setting-row__info"><strong>Copilot Enabled</strong><p>AI intelligence companion</p></div>
+              <button type="button" className={classes('nx-toggle', s.copilotEnabled && 'is-on')} onClick={() => toggle('copilotEnabled')} role="switch" aria-checked={s.copilotEnabled}><span className="nx-toggle__thumb" /></button>
+            </div>
+            <div className="nx-setting-row">
+              <div className="nx-setting-row__info"><strong>Initiative Level</strong><p>How proactively the copilot surfaces insights</p></div>
+              <div className="nx-setting-row__control">
+                <div className="nx-segmented">
+                  {COPILOT_INITIATIVE.map(ci => (
+                    <button key={ci.value} type="button" className={classes('nx-segmented__btn', s.copilotInitiative === ci.value && 'is-active')} onClick={() => setSelect('copilotInitiative', ci.value)}>{ci.label}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="nx-setting-row">
+              <div className="nx-setting-row__info"><strong>Verbosity</strong><p>Response detail level</p></div>
+              <div className="nx-setting-row__control">
+                <div className="nx-segmented">
+                  {COPILOT_VERBOSITY.map(cv => (
+                    <button key={cv.value} type="button" className={classes('nx-segmented__btn', s.copilotVerbosity === cv.value && 'is-active')} onClick={() => setSelect('copilotVerbosity', cv.value)}>{cv.label}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="nx-setting-row">
+              <div className="nx-setting-row__info"><strong>Auto-Open</strong><p>Open copilot on surface change</p></div>
+              <button type="button" className={classes('nx-toggle', s.copilotAutoOpen && 'is-on')} onClick={() => toggle('copilotAutoOpen')} role="switch" aria-checked={s.copilotAutoOpen}><span className="nx-toggle__thumb" /></button>
+            </div>
+            <div className="nx-setting-row">
+              <div className="nx-setting-row__info"><strong>Copilot Sound</strong><p>Audio cues for AI events</p></div>
+              <button type="button" className={classes('nx-toggle', s.copilotSoundEnabled && 'is-on')} onClick={() => toggle('copilotSoundEnabled')} role="switch" aria-checked={s.copilotSoundEnabled}><span className="nx-toggle__thumb" /></button>
+            </div>
+          </div>
+        </section>
+
         {/* ── Map ──────────────────────────────────────────────── */}
         <section className="nx-settings__group">
           <h2><Icon name="map" className="nx-settings__group-icon" /> Map</h2>
@@ -218,9 +357,40 @@ export const SettingsPage = () => {
           </div>
         </section>
 
+        {/* ── Map Advanced ─────────────────────────────────────── */}
+        <section className="nx-settings__group">
+          <h2><Icon name="map" className="nx-settings__group-icon" /> Map Advanced</h2>
+          <div className="nx-settings__list">
+            <div className="nx-setting-row">
+              <div className="nx-setting-row__info"><strong>Map Brightness</strong><p>Basemap brightness ({s.mapBrightness.toFixed(1)})</p></div>
+              <div className="nx-setting-row__control">
+                <input type="range" className="nx-range" min={0.5} max={1.5} step={0.1} value={s.mapBrightness} onChange={e => setRange('mapBrightness', parseFloat(e.target.value))} />
+              </div>
+            </div>
+            <div className="nx-setting-row">
+              <div className="nx-setting-row__info"><strong>Atmospheric Intensity</strong><p>Glow and atmosphere ({(s.atmosphericIntensity * 100).toFixed(0)}%)</p></div>
+              <div className="nx-setting-row__control">
+                <input type="range" className="nx-range" min={0} max={1} step={0.05} value={s.atmosphericIntensity} onChange={e => setRange('atmosphericIntensity', parseFloat(e.target.value))} />
+              </div>
+            </div>
+            <div className="nx-setting-row">
+              <div className="nx-setting-row__info"><strong>Glow Intensity</strong><p>Marker glow strength ({(s.glowIntensity * 100).toFixed(0)}%)</p></div>
+              <div className="nx-setting-row__control">
+                <input type="range" className="nx-range" min={0} max={1} step={0.05} value={s.glowIntensity} onChange={e => setRange('glowIntensity', parseFloat(e.target.value))} />
+              </div>
+            </div>
+            <div className="nx-setting-row">
+              <div className="nx-setting-row__info"><strong>Label Density</strong><p>Map label frequency ({(s.labelDensity * 100).toFixed(0)}%)</p></div>
+              <div className="nx-setting-row__control">
+                <input type="range" className="nx-range" min={0} max={1} step={0.1} value={s.labelDensity} onChange={e => setRange('labelDensity', parseFloat(e.target.value))} />
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* ── Sound ────────────────────────────────────────────── */}
         <section className="nx-settings__group">
-          <h2><Icon name="activity" className="nx-settings__group-icon" /> Sound</h2>
+          <h2><Icon name="volume" className="nx-settings__group-icon" /> Sound</h2>
           <div className="nx-settings__list">
             <div className="nx-setting-row">
               <div className="nx-setting-row__info"><strong>Sound Enabled</strong><p>Master audio toggle</p></div>

@@ -31,6 +31,14 @@ export type SoundEvent =
   | 'briefing-open'
   | 'split-open'
   | 'toast-arrive'
+  | 'voice-start'
+  | 'voice-stop'
+  | 'command-accept'
+  | 'command-complete'
+  | 'theme-switch'
+  | 'ambient-hum'
+  | 'room-enter'
+  | 'action-route'
 
 export interface SoundDefinition {
   id: SoundEvent
@@ -60,6 +68,14 @@ export const SOUND_LIBRARY: SoundDefinition[] = [
   { id: 'briefing-open',        label: 'Briefing Open',         category: 'System',         settingsKey: 'briefingSoundEnabled' },
   { id: 'split-open',           label: 'Split View Open',       category: 'Interface',      settingsKey: null },
   { id: 'toast-arrive',         label: 'Toast Notification',    category: 'System',         settingsKey: 'notificationSoundEnabled' },
+  { id: 'voice-start',          label: 'Voice Activated',       category: 'AI',             settingsKey: 'copilotSoundEnabled' },
+  { id: 'voice-stop',           label: 'Voice Deactivated',     category: 'AI',             settingsKey: 'copilotSoundEnabled' },
+  { id: 'command-accept',       label: 'Command Accepted',      category: 'System',         settingsKey: null },
+  { id: 'command-complete',     label: 'Command Completed',     category: 'System',         settingsKey: null },
+  { id: 'theme-switch',         label: 'Theme Switch',          category: 'Interface',      settingsKey: null },
+  { id: 'ambient-hum',          label: 'Ambient Hum',           category: 'Interface',      settingsKey: null },
+  { id: 'room-enter',           label: 'Room Enter',            category: 'Interface',      settingsKey: null },
+  { id: 'action-route',         label: 'Action Route',          category: 'AI',             settingsKey: null },
 ]
 
 // ── Audio Context (lazy singleton) ────────────────────────────────────────
@@ -243,6 +259,58 @@ const compositions: Record<SoundEvent, SoundComposer> = {
   'toast-arrive': (ctx, g) => {
     playTone(ctx, g, 1047, 'sine', 0, 0.10, 0.003, 0.04, 0.20, 1100)
     playTone(ctx, g, 1568, 'sine', 0.04, 0.08, 0.003, 0.03, 0.12)
+  },
+
+  // Voice — activation chime, ascending warmth
+  'voice-start': (ctx, g) => {
+    playTone(ctx, g, 440, 'sine', 0, 0.18, 0.005, 0.08, 0.20, 520)
+    playTone(ctx, g, 660, 'sine', 0.06, 0.14, 0.005, 0.06, 0.15, 740)
+    playTone(ctx, g, 880, 'triangle', 0.12, 0.12, 0.005, 0.05, 0.08, 940)
+  },
+
+  // Voice — deactivation, descending close
+  'voice-stop': (ctx, g) => {
+    playTone(ctx, g, 660, 'sine', 0, 0.12, 0.003, 0.05, 0.15, 520)
+    playTone(ctx, g, 440, 'sine', 0.04, 0.10, 0.003, 0.04, 0.10, 360)
+  },
+
+  // Command — crisp acceptance tick
+  'command-accept': (ctx, g) => {
+    playTone(ctx, g, 1400, 'sine', 0, 0.04, 0.001, 0.01, 0.16, 1500)
+    playTone(ctx, g, 2100, 'sine', 0.015, 0.03, 0.001, 0.01, 0.06)
+  },
+
+  // Command — completion resolution
+  'command-complete': (ctx, g) => {
+    playTone(ctx, g, 880, 'sine', 0, 0.15, 0.005, 0.06, 0.22, 920)
+    playTone(ctx, g, 1320, 'sine', 0.05, 0.12, 0.005, 0.05, 0.14, 1380)
+    playTone(ctx, g, 1760, 'sine', 0.10, 0.10, 0.005, 0.04, 0.06)
+  },
+
+  // Theme — deep tonal shift
+  'theme-switch': (ctx, g) => {
+    playTone(ctx, g, 200, 'sine', 0, 0.25, 0.01, 0.12, 0.12, 240)
+    playTone(ctx, g, 400, 'sine', 0.08, 0.20, 0.01, 0.08, 0.08, 420)
+    playTone(ctx, g, 600, 'triangle', 0.14, 0.14, 0.008, 0.06, 0.04)
+  },
+
+  // Ambient — low continuous hum (short burst)
+  'ambient-hum': (ctx, g) => {
+    playTone(ctx, g, 110, 'sine', 0, 0.40, 0.05, 0.20, 0.06, 115)
+    playTone(ctx, g, 220, 'sine', 0.10, 0.30, 0.04, 0.15, 0.03, 225)
+  },
+
+  // Room — surface transition whoosh
+  'room-enter': (ctx, g) => {
+    playTone(ctx, g, 2400, 'sine', 0, 0.06, 0.001, 0.02, 0.06, 1600)
+    playTone(ctx, g, 800, 'sine', 0.02, 0.10, 0.005, 0.04, 0.10, 900)
+  },
+
+  // Action — routing progress tone
+  'action-route': (ctx, g) => {
+    playTone(ctx, g, 600, 'triangle', 0, 0.06, 0.002, 0.02, 0.12)
+    playTone(ctx, g, 800, 'triangle', 0.08, 0.06, 0.002, 0.02, 0.12)
+    playTone(ctx, g, 1000, 'sine', 0.16, 0.08, 0.003, 0.03, 0.08)
   },
 }
 

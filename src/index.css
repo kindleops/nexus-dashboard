@@ -8448,3 +8448,431 @@ h4 {
   transition: all 150ms;
 }
 .nx-secondary-button:hover { background: rgba(255, 255, 255, 0.08); color: #e8eaf0; }
+
+/* ═════════════════════════════════════════════════════════════════════════
+   Phase 5 — Copilot, Theme, Settings, Motion
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* ── AI Copilot Panel ──────────────────────────────────────────────────── */
+
+.nx-copilot {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 380px;
+  background: var(--nx-surface, #10131c);
+  border-left: 1px solid var(--nx-border, rgba(255,255,255,0.06));
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  animation: copilot-slide-in 400ms var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1)) both;
+}
+
+@keyframes copilot-slide-in {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+
+.nx-copilot__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--nx-border, rgba(255,255,255,0.06));
+  flex-shrink: 0;
+}
+
+.nx-copilot__title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.nx-copilot__status-orb {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--nx-accent, #38d0f0);
+  box-shadow: 0 0 8px var(--nx-accent-glow, rgba(56,208,240,0.25));
+  flex-shrink: 0;
+  transition: all 400ms;
+}
+
+.nx-copilot__status-orb.is-greeting  { background: #38d0f0; animation: orb-pulse 1.5s ease infinite; }
+.nx-copilot__status-orb.is-ready     { background: #38d0f0; }
+.nx-copilot__status-orb.is-listening  { background: #38d0f0; animation: orb-pulse 1s ease infinite; }
+.nx-copilot__status-orb.is-analyzing  { background: #9966ff; animation: orb-pulse 0.8s ease infinite; }
+.nx-copilot__status-orb.is-searching  { background: #9966ff; animation: orb-pulse 0.6s ease infinite; }
+.nx-copilot__status-orb.is-thinking   { background: #9966ff; animation: orb-pulse 0.8s ease infinite; }
+.nx-copilot__status-orb.is-drafting   { background: #2cb87a; animation: orb-pulse 0.8s ease infinite; }
+.nx-copilot__status-orb.is-routing    { background: #d89530; animation: orb-pulse 0.6s ease infinite; }
+.nx-copilot__status-orb.is-sending    { background: #d89530; animation: orb-pulse 0.5s ease infinite; }
+.nx-copilot__status-orb.is-confirming { background: #2cb87a; animation: orb-pulse 0.6s ease infinite; }
+.nx-copilot__status-orb.is-completed  { background: #2cb87a; }
+.nx-copilot__status-orb.is-waiting    { background: rgba(255,255,255,0.35); }
+.nx-copilot__status-orb.is-voice      { background: #38d0f0; animation: orb-pulse 0.5s ease infinite; }
+
+@keyframes orb-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(1.3); opacity: 0.7; }
+}
+
+.nx-copilot__title-text { display: flex; flex-direction: column; gap: 2px; }
+.nx-copilot__title { font-size: 14px; font-weight: 700; color: var(--nx-text-primary, #e8eaf0); margin: 0; letter-spacing: 0.04em; }
+.nx-copilot__state { font-size: 11px; color: var(--nx-text-muted, rgba(255,255,255,0.30)); font-family: var(--font-mono, 'IBM Plex Mono', monospace); }
+
+.nx-copilot__close {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px;
+  color: rgba(255,255,255,0.40);
+  cursor: pointer;
+  transition: all 150ms;
+}
+.nx-copilot__close:hover { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.70); }
+.nx-copilot__close-icon { width: 14px; height: 14px; }
+
+/* ── Voice Orb ─────────────────────────────────────────────────────────── */
+
+.nx-copilot__orb-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px 0 12px;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.nx-copilot__orb-canvas {
+  display: block;
+  border-radius: 50%;
+}
+
+.nx-copilot__voice-btn {
+  position: absolute;
+  bottom: 8px;
+  right: calc(50% - 52px);
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.10);
+  color: rgba(255,255,255,0.50);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 200ms;
+}
+.nx-copilot__voice-btn:hover { background: rgba(255,255,255,0.10); color: rgba(255,255,255,0.80); }
+.nx-copilot__voice-btn.is-active { background: rgba(56,208,240,0.15); border-color: rgba(56,208,240,0.30); color: #38d0f0; }
+.nx-copilot__voice-icon { width: 14px; height: 14px; }
+
+/* ── Greeting ──────────────────────────────────────────────────────────── */
+
+.nx-copilot__greeting {
+  padding: 0 20px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nx-copilot__greeting-line {
+  font-size: 13px;
+  color: var(--nx-text-secondary, rgba(255,255,255,0.55));
+  line-height: 1.5;
+  margin: 0;
+  opacity: 0;
+  animation: greeting-fade-in 400ms var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1)) forwards;
+}
+
+.nx-copilot__greeting-line:first-child {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--nx-text-primary, #e8eaf0);
+}
+
+.nx-copilot__greeting-line.is-latest {
+  color: var(--nx-text-primary, #e8eaf0);
+}
+
+@keyframes greeting-fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Thinking Indicator ────────────────────────────────────────────────── */
+
+.nx-copilot__thinking {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 20px;
+}
+
+.nx-copilot__thinking-dots {
+  display: flex;
+  gap: 4px;
+}
+
+.nx-copilot__thinking-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--nx-accent, #38d0f0);
+  animation: thinking-bounce 1.2s ease-in-out infinite;
+}
+
+.nx-copilot__thinking-dots span:nth-child(2) { animation-delay: 0.15s; }
+.nx-copilot__thinking-dots span:nth-child(3) { animation-delay: 0.30s; }
+
+@keyframes thinking-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30%           { transform: translateY(-6px); opacity: 1; }
+}
+
+.nx-copilot__thinking-label {
+  font-size: 12px;
+  color: var(--nx-text-muted, rgba(255,255,255,0.30));
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+}
+
+/* ── Suggestions ───────────────────────────────────────────────────────── */
+
+.nx-copilot__suggestions {
+  padding: 8px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.nx-copilot-card {
+  padding: 14px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--nx-border, rgba(255,255,255,0.06));
+  border-radius: 12px;
+  transition: all 200ms;
+  animation: card-enter 350ms var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1)) both;
+}
+
+.nx-copilot-card:nth-child(2) { animation-delay: 60ms; }
+.nx-copilot-card:nth-child(3) { animation-delay: 120ms; }
+.nx-copilot-card:nth-child(4) { animation-delay: 180ms; }
+
+@keyframes card-enter {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.nx-copilot-card:hover { background: rgba(255,255,255,0.04); }
+
+.nx-copilot-card.is-action  { border-color: rgba(56,208,240,0.12); }
+.nx-copilot-card.is-insight { border-color: rgba(153,102,255,0.12); }
+.nx-copilot-card.is-warning { border-color: rgba(216,149,48,0.12); }
+.nx-copilot-card.is-brief   { border-color: rgba(44,184,122,0.12); }
+
+.nx-copilot-card.is-executing { opacity: 0.6; pointer-events: none; }
+
+.nx-copilot-card__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.nx-copilot-card__icon { width: 16px; height: 16px; flex-shrink: 0; }
+.nx-copilot-card.is-action  .nx-copilot-card__icon { color: #38d0f0; }
+.nx-copilot-card.is-insight .nx-copilot-card__icon { color: #9966ff; }
+.nx-copilot-card.is-warning .nx-copilot-card__icon { color: #d89530; }
+.nx-copilot-card.is-brief   .nx-copilot-card__icon { color: #2cb87a; }
+
+.nx-copilot-card__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--nx-text-primary, #e8eaf0);
+  flex: 1;
+}
+
+.nx-copilot-card__confidence {
+  font-size: 11px;
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  color: var(--nx-text-muted, rgba(255,255,255,0.30));
+}
+
+.nx-copilot-card__detail {
+  font-size: 12px;
+  color: var(--nx-text-secondary, rgba(255,255,255,0.55));
+  line-height: 1.55;
+  margin: 0;
+}
+
+.nx-copilot-card__action {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--nx-accent, #38d0f0);
+  background: rgba(56,208,240,0.06);
+  border: 1px solid rgba(56,208,240,0.15);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 150ms;
+}
+.nx-copilot-card__action:hover { background: rgba(56,208,240,0.12); }
+.nx-copilot-card__action:disabled { opacity: 0.5; pointer-events: none; }
+
+/* ── Transcript ────────────────────────────────────────────────────────── */
+
+.nx-copilot__transcript {
+  padding: 12px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border-top: 1px solid var(--nx-border, rgba(255,255,255,0.06));
+  margin-top: auto;
+}
+
+.nx-copilot__transcript-label {
+  font-size: 9px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--nx-text-muted, rgba(255,255,255,0.30));
+  margin-bottom: 6px;
+}
+
+.nx-copilot__transcript-line {
+  font-size: 11px;
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  color: rgba(255,255,255,0.28);
+  line-height: 1.6;
+}
+
+/* ── Settings — Text Input ─────────────────────────────────────────────── */
+
+.nx-text-input {
+  width: 100%;
+  max-width: 240px;
+  padding: 7px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--nx-text-primary, #e8eaf0);
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--nx-border, rgba(255,255,255,0.08));
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 150ms, background 150ms;
+}
+.nx-text-input:focus { border-color: var(--nx-accent, #38d0f0); background: rgba(255,255,255,0.06); }
+.nx-text-input::placeholder { color: rgba(255,255,255,0.25); }
+
+/* ── Settings — Theme Grid ─────────────────────────────────────────────── */
+
+.nx-setting-row--stack {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.nx-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  width: 100%;
+}
+
+.nx-theme-swatch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  background: rgba(255,255,255,0.02);
+  border: 2px solid transparent;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 200ms;
+}
+.nx-theme-swatch:hover { background: rgba(255,255,255,0.04); }
+.nx-theme-swatch.is-active { border-color: var(--nx-accent, #38d0f0); background: rgba(56,208,240,0.04); }
+
+.nx-theme-swatch__preview {
+  width: 100%;
+  height: 40px;
+  border-radius: 8px;
+  position: relative;
+  overflow: hidden;
+}
+
+.nx-theme-swatch__accent {
+  position: absolute;
+  bottom: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 20px;
+  height: 4px;
+  border-radius: 2px;
+}
+
+.nx-theme-swatch__label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--nx-text-secondary, rgba(255,255,255,0.55));
+  text-align: center;
+}
+
+/* ── Settings — Accent Palette Row ─────────────────────────────────────── */
+
+.nx-accent-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+
+.nx-accent-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: rgba(255,255,255,0.03);
+  border: 2px solid transparent;
+  border-radius: 20px;
+  cursor: pointer;
+  transition: all 200ms;
+}
+.nx-accent-chip:hover { background: rgba(255,255,255,0.06); }
+.nx-accent-chip.is-active { border-color: var(--nx-accent, #38d0f0); }
+
+.nx-accent-chip__dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.nx-accent-chip__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--nx-text-secondary, rgba(255,255,255,0.55));
+}
+
+/* ── Room Enter Transition ─────────────────────────────────────────────── */
+
+.nx-stage {
+  animation: stage-enter 500ms var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1)) both;
+}
+
+@keyframes stage-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

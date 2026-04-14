@@ -42,6 +42,12 @@ type IconName =
   | 'flag'
   | 'brain'
   | 'briefing'
+  | 'mic'
+  | 'palette'
+  | 'grid'
+  | 'drag'
+  | 'volume'
+  | 'moon'
 
 interface IconProps extends SVGProps<SVGSVGElement> {
   name: IconName
@@ -332,6 +338,57 @@ export const Icon = ({ name, ...props }: IconProps) => {
         <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
           <path d="M4 4h16v16H4z" {...commonProps} />
           <path d="M8 8h8M8 12h6M8 16h4" {...commonProps} />
+        </svg>
+      )
+    case 'mic':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <rect x="9" y="2" width="6" height="12" rx="3" {...commonProps} />
+          <path d="M5 10a7 7 0 0 0 14 0" {...commonProps} />
+          <path d="M12 17v4M8 21h8" {...commonProps} />
+        </svg>
+      )
+    case 'palette':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <circle cx="12" cy="12" r="9" {...commonProps} />
+          <circle cx="8" cy="10" r="1.5" fill="currentColor" />
+          <circle cx="12" cy="7" r="1.5" fill="currentColor" />
+          <circle cx="16" cy="10" r="1.5" fill="currentColor" />
+          <circle cx="9" cy="15" r="1.5" fill="currentColor" />
+        </svg>
+      )
+    case 'grid':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <rect x="3" y="3" width="7" height="7" rx="1" {...commonProps} />
+          <rect x="14" y="3" width="7" height="7" rx="1" {...commonProps} />
+          <rect x="3" y="14" width="7" height="7" rx="1" {...commonProps} />
+          <rect x="14" y="14" width="7" height="7" rx="1" {...commonProps} />
+        </svg>
+      )
+    case 'drag':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <circle cx="9" cy="6" r="1.5" fill="currentColor" />
+          <circle cx="15" cy="6" r="1.5" fill="currentColor" />
+          <circle cx="9" cy="12" r="1.5" fill="currentColor" />
+          <circle cx="15" cy="12" r="1.5" fill="currentColor" />
+          <circle cx="9" cy="18" r="1.5" fill="currentColor" />
+          <circle cx="15" cy="18" r="1.5" fill="currentColor" />
+        </svg>
+      )
+    case 'volume':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M11 5L6 9H2v6h4l5 4V5z" {...commonProps} />
+          <path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a9 9 0 0 1 0 14" {...commonProps} />
+        </svg>
+      )
+    case 'moon':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" {...commonProps} />
         </svg>
       )
   }
