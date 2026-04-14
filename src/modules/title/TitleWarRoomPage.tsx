@@ -21,12 +21,23 @@ const statusLabel: Record<TitleItem['status'], string> = {
   closed: 'CLOSED',
 }
 
+const statusIcon: Record<TitleItem['status'], string> = {
+  clear: 'check',
+  review: 'eye',
+  issue: 'alert',
+  pending: 'clock',
+  closed: 'archive',
+}
+
 export const TitleWarRoomPage = ({ data }: { data: TitleModel }) => {
   const [filterStatus, setFilterStatus] = useState<string>('all')
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const filtered = filterStatus === 'all'
     ? data.items
     : data.items.filter((t) => t.status === filterStatus)
+
+  const urgentCount = data.items.filter(t => t.status === 'issue' || (t.daysInPhase > 30 && t.status !== 'closed')).length
 
   return (
     <div className="nx-title">
@@ -38,9 +49,12 @@ export const TitleWarRoomPage = ({ data }: { data: TitleModel }) => {
         <div className="nx-surface-header__stats">
           <span className="nx-badge nx-badge--success">{data.clearCount} clear</span>
           {data.issueCount > 0 && (
-            <span className="nx-badge nx-badge--danger">{data.issueCount} issues</span>
+            <span className="nx-badge nx-badge--danger nx-badge--pulse">{data.issueCount} issues</span>
           )}
-          <span className="nx-badge nx-badge--warning">{data.pendingCount} pending</span>
+          {urgentCount > 0 && (
+            <span className="nx-badge nx-badge--warning">{urgentCount} urgent</span>
+          )}
+          <span className="nx-badge nx-badge--muted">{data.pendingCount} pending</span>
           <span className="nx-badge nx-badge--muted">{data.totalValue} total</span>
         </div>
       </header>
@@ -53,16 +67,26 @@ export const TitleWarRoomPage = ({ data }: { data: TitleModel }) => {
             className={classes('nx-filter-pill', filterStatus === status && 'is-active')}
             onClick={() => setFilterStatus(status)}
           >
-            {status === 'all' ? 'All' : status.charAt(0).toUpperCase() + status.slice(1)}
+            {status === 'all' ? `All (${data.items.length})` : `${status.charAt(0).toUpperCase() + status.slice(1)} (${data.items.filter(t => t.status === status).length})`}
           </button>
         ))}
       </div>
 
       <div className="nx-title__grid">
         {filtered.map((item) => (
-          <article key={item.id} className={classes('nx-title-card', statusClass[item.status])}>
+          <article
+            key={item.id}
+            className={classes(
+              'nx-title-card',
+              statusClass[item.status],
+              expandedId === item.id && 'is-expanded',
+              item.daysInPhase > 30 && item.status !== 'closed' && 'is-overdue',
+            )}
+            onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
+          >
             <div className="nx-title-card__header">
-              <div>
+              <div className="nx-title-card__header-left">
+                <Icon name={statusIcon[item.status] as any} className={classes('nx-title-card__status-icon', statusClass[item.status])} />
                 <span className={classes('nx-title-status', statusClass[item.status])}>
                   {statusLabel[item.status]}
                 </span>
@@ -85,7 +109,7 @@ export const TitleWarRoomPage = ({ data }: { data: TitleModel }) => {
               </div>
               <div className="nx-kpi-micro">
                 <span>Days</span>
-                <strong>{item.daysInPhase}</strong>
+                <strong className={item.daysInPhase > 30 ? 'nx-kpi-danger' : ''}>{item.daysInPhase}</strong>
               </div>
             </div>
 
@@ -103,7 +127,10 @@ export const TitleWarRoomPage = ({ data }: { data: TitleModel }) => {
 
             {item.issues.length > 0 && (
               <div className="nx-title-card__issues">
-                <h4>Issues ({item.issues.length})</h4>
+                <h4>
+                  <Icon name="alert" className="nx-issue-header-icon" />
+                  Issues ({item.issues.length})
+                </h4>
                 <ul>
                   {item.issues.map((issue) => (
                     <li key={issue}>
@@ -112,6 +139,27 @@ export const TitleWarRoomPage = ({ data }: { data: TitleModel }) => {
                     </li>
                   ))}
                 </ul>
+              </div>
+            )}
+
+            {expandedId === item.id && (
+              <div className="nx-title-card__expanded">
+                <div className="nx-title-card__expanded-actions">
+                  <button className="nx-action-button" type="button" onClick={(e) => e.stopPropagation()}>
+                    <Icon className="nx-action-button__icon" name="file-text" />
+                    View Title Report
+                  </button>
+                  <button className="nx-action-button nx-action-button--muted" type="button" onClick={(e) => e.stopPropagation()}>
+                    <Icon className="nx-action-button__icon" name="message" />
+                    Contact Agent
+                  </button>
+                  {item.status === 'issue' && (
+                    <button className="nx-action-button nx-action-button--danger" type="button" onClick={(e) => e.stopPropagation()}>
+                      <Icon className="nx-action-button__icon" name="alert" />
+                      Escalate
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 

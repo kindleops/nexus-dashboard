@@ -1,0 +1,235 @@
+/**
+ * NEXUS Sound Design System
+ *
+ * Premium micro-feedback audio using the Web Audio API.
+ * Zero external audio files — all sounds are synthesized for instant playback.
+ *
+ * Each sound is a short (40–400ms) layered oscillator composition that
+ * produces tactile, premium operator-grade audio cues.
+ */
+
+import { loadSettings } from './settings'
+
+// ── Types ─────────────────────────────────────────────────────────────────
+
+export type SoundEvent =
+  | 'inbound-reply'
+  | 'hot-lead-escalation'
+  | 'alert-triggered'
+  | 'title-clear'
+  | 'closing-scheduled'
+  | 'buyer-match'
+  | 'ai-response'
+  | 'autopilot-action'
+  | 'notification'
+  | 'queue-issue'
+  | 'contract-milestone'
+  | 'ui-tap'
+  | 'ui-confirm'
+  | 'ui-error'
+
+export interface SoundDefinition {
+  id: SoundEvent
+  label: string
+  category: string
+  settingsKey: string | null
+}
+
+// ── Sound Library ─────────────────────────────────────────────────────────
+
+export const SOUND_LIBRARY: SoundDefinition[] = [
+  { id: 'inbound-reply',       label: 'Inbound Reply',         category: 'Communication',  settingsKey: 'soundInboundReply' },
+  { id: 'hot-lead-escalation', label: 'Hot Lead Escalation',   category: 'Intelligence',   settingsKey: 'soundHotLeadEscalation' },
+  { id: 'alert-triggered',     label: 'Alert Triggered',       category: 'Alerts',         settingsKey: 'soundAlertTriggered' },
+  { id: 'title-clear',         label: 'Title Clear',           category: 'Deals',          settingsKey: 'soundTitleClear' },
+  { id: 'closing-scheduled',   label: 'Closing Scheduled',     category: 'Deals',          settingsKey: 'soundClosingScheduled' },
+  { id: 'buyer-match',         label: 'Buyer Match',           category: 'Intelligence',   settingsKey: 'soundBuyerMatch' },
+  { id: 'ai-response',         label: 'AI Response Completed', category: 'AI',             settingsKey: 'soundAiResponse' },
+  { id: 'autopilot-action',    label: 'Autopilot Executed',    category: 'AI',             settingsKey: 'soundAutopilotAction' },
+  { id: 'notification',        label: 'Notification',          category: 'System',         settingsKey: 'soundNotification' },
+  { id: 'queue-issue',         label: 'Queue Issue',           category: 'Alerts',         settingsKey: 'soundQueueIssue' },
+  { id: 'contract-milestone',  label: 'Contract Milestone',    category: 'Deals',          settingsKey: 'soundContractMilestone' },
+  { id: 'ui-tap',              label: 'Glass Tap',             category: 'Interface',      settingsKey: null },
+  { id: 'ui-confirm',          label: 'Soft Confirm',          category: 'Interface',      settingsKey: null },
+  { id: 'ui-error',            label: 'Muted Error',           category: 'Interface',      settingsKey: null },
+]
+
+// ── Audio Context (lazy singleton) ────────────────────────────────────────
+
+let _ctx: AudioContext | null = null
+
+function getAudioContext(): AudioContext {
+  if (!_ctx) {
+    _ctx = new AudioContext()
+  }
+  if (_ctx.state === 'suspended') {
+    void _ctx.resume()
+  }
+  return _ctx
+}
+
+// ── Synthesis helpers ─────────────────────────────────────────────────────
+
+function createGain(ctx: AudioContext, volume: number): GainNode {
+  const gain = ctx.createGain()
+  gain.gain.value = volume
+  gain.connect(ctx.destination)
+  return gain
+}
+
+function playTone(
+  ctx: AudioContext,
+  dest: GainNode,
+  freq: number,
+  type: OscillatorType,
+  startOffset: number,
+  duration: number,
+  attack: number,
+  decay: number,
+  volume: number,
+): void {
+  const osc = ctx.createOscillator()
+  const env = ctx.createGain()
+  osc.type = type
+  osc.frequency.value = freq
+  osc.connect(env)
+  env.connect(dest)
+
+  const now = ctx.currentTime + startOffset
+  env.gain.setValueAtTime(0, now)
+  env.gain.linearRampToValueAtTime(volume, now + attack)
+  env.gain.linearRampToValueAtTime(0, now + duration - decay)
+
+  osc.start(now)
+  osc.stop(now + duration)
+}
+
+// ── Sound compositions ────────────────────────────────────────────────────
+
+type SoundComposer = (ctx: AudioContext, gain: GainNode) => void
+
+const compositions: Record<SoundEvent, SoundComposer> = {
+  // Cyan — warm glass ping, ascending dyad
+  'inbound-reply': (ctx, g) => {
+    playTone(ctx, g, 880, 'sine', 0, 0.18, 0.005, 0.08, 0.4)
+    playTone(ctx, g, 1320, 'sine', 0.04, 0.14, 0.005, 0.06, 0.25)
+    playTone(ctx, g, 1760, 'sine', 0.08, 0.10, 0.005, 0.04, 0.12)
+  },
+
+  // Red — urgent descending sting
+  'hot-lead-escalation': (ctx, g) => {
+    playTone(ctx, g, 660, 'sawtooth', 0, 0.12, 0.002, 0.05, 0.3)
+    playTone(ctx, g, 440, 'sawtooth', 0.06, 0.16, 0.002, 0.08, 0.35)
+    playTone(ctx, g, 880, 'sine', 0, 0.20, 0.005, 0.10, 0.15)
+  },
+
+  // Red — sharp double-tap alert
+  'alert-triggered': (ctx, g) => {
+    playTone(ctx, g, 520, 'square', 0, 0.06, 0.001, 0.02, 0.25)
+    playTone(ctx, g, 520, 'square', 0.10, 0.06, 0.001, 0.02, 0.25)
+    playTone(ctx, g, 780, 'sine', 0.02, 0.15, 0.005, 0.06, 0.12)
+  },
+
+  // Green — warm resolution chime
+  'title-clear': (ctx, g) => {
+    playTone(ctx, g, 660, 'sine', 0, 0.25, 0.01, 0.12, 0.35)
+    playTone(ctx, g, 990, 'sine', 0.06, 0.20, 0.01, 0.10, 0.25)
+    playTone(ctx, g, 1320, 'sine', 0.12, 0.18, 0.01, 0.08, 0.18)
+  },
+
+  // Green — success tone, ascending triad
+  'closing-scheduled': (ctx, g) => {
+    playTone(ctx, g, 440, 'sine', 0, 0.20, 0.008, 0.10, 0.30)
+    playTone(ctx, g, 554, 'sine', 0.08, 0.18, 0.008, 0.08, 0.25)
+    playTone(ctx, g, 660, 'sine', 0.16, 0.22, 0.008, 0.10, 0.30)
+  },
+
+  // Cyan — discovery pulse
+  'buyer-match': (ctx, g) => {
+    playTone(ctx, g, 740, 'sine', 0, 0.15, 0.005, 0.06, 0.30)
+    playTone(ctx, g, 932, 'triangle', 0.05, 0.12, 0.005, 0.05, 0.20)
+  },
+
+  // Purple — soft AI process cue
+  'ai-response': (ctx, g) => {
+    playTone(ctx, g, 392, 'sine', 0, 0.30, 0.02, 0.15, 0.20)
+    playTone(ctx, g, 523, 'sine', 0.10, 0.25, 0.02, 0.12, 0.15)
+    playTone(ctx, g, 784, 'triangle', 0.15, 0.18, 0.01, 0.08, 0.08)
+  },
+
+  // Purple — ambient command blip
+  'autopilot-action': (ctx, g) => {
+    playTone(ctx, g, 600, 'triangle', 0, 0.08, 0.002, 0.03, 0.20)
+    playTone(ctx, g, 900, 'sine', 0.03, 0.12, 0.005, 0.05, 0.15)
+  },
+
+  // Neutral — subtle notification chime
+  'notification': (ctx, g) => {
+    playTone(ctx, g, 1047, 'sine', 0, 0.12, 0.005, 0.05, 0.25)
+    playTone(ctx, g, 1319, 'sine', 0.05, 0.10, 0.005, 0.04, 0.15)
+  },
+
+  // Amber — muted escalation cue
+  'queue-issue': (ctx, g) => {
+    playTone(ctx, g, 330, 'sawtooth', 0, 0.15, 0.003, 0.06, 0.18)
+    playTone(ctx, g, 277, 'sawtooth', 0.08, 0.15, 0.003, 0.06, 0.18)
+  },
+
+  // Green — contract milestone ding
+  'contract-milestone': (ctx, g) => {
+    playTone(ctx, g, 784, 'sine', 0, 0.20, 0.008, 0.10, 0.30)
+    playTone(ctx, g, 1047, 'sine', 0.08, 0.16, 0.008, 0.06, 0.20)
+  },
+
+  // UI — glass tap
+  'ui-tap': (ctx, g) => {
+    playTone(ctx, g, 2400, 'sine', 0, 0.04, 0.001, 0.015, 0.12)
+  },
+
+  // UI — soft confirmation click
+  'ui-confirm': (ctx, g) => {
+    playTone(ctx, g, 1200, 'sine', 0, 0.06, 0.002, 0.025, 0.15)
+    playTone(ctx, g, 1600, 'sine', 0.02, 0.05, 0.002, 0.02, 0.10)
+  },
+
+  // UI — muted error
+  'ui-error': (ctx, g) => {
+    playTone(ctx, g, 280, 'square', 0, 0.08, 0.001, 0.03, 0.15)
+    playTone(ctx, g, 220, 'square', 0.05, 0.10, 0.001, 0.04, 0.15)
+  },
+}
+
+// ── Public API ────────────────────────────────────────────────────────────
+
+/**
+ * Play a sound event if enabled in settings.
+ * Safe to call at any time — silently no-ops if sound is disabled
+ * or the specific event category is turned off.
+ */
+export function playSound(event: SoundEvent): void {
+  const settings = loadSettings()
+  if (!settings.soundEnabled) return
+
+  // Check per-event toggle
+  const def = SOUND_LIBRARY.find((s) => s.id === event)
+  if (def?.settingsKey) {
+    const key = def.settingsKey as keyof typeof settings
+    if (settings[key] === false) return
+  }
+
+  const ctx = getAudioContext()
+  const masterGain = createGain(ctx, settings.soundVolume)
+  const composer = compositions[event]
+  composer(ctx, masterGain)
+}
+
+/**
+ * Preview a sound at full volume, ignoring per-event toggles.
+ * Used in Settings to audition sounds.
+ */
+export function previewSound(event: SoundEvent): void {
+  const ctx = getAudioContext()
+  const masterGain = createGain(ctx, 0.6)
+  const composer = compositions[event]
+  composer(ctx, masterGain)
+}

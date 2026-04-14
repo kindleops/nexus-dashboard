@@ -12,8 +12,16 @@ const typeIcon: Record<WatchlistItem['type'], string> = {
   zip: 'hash',
 }
 
+const typeLabel: Record<WatchlistItem['type'], string> = {
+  market: 'MARKET',
+  lead: 'LEAD',
+  agent: 'AGENT',
+  zip: 'ZIP',
+}
+
 export const WatchlistsPage = ({ data }: { data: WatchlistsModel }) => {
   const [filterType, setFilterType] = useState<string>('all')
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const filtered = filterType === 'all'
     ? data.items
@@ -28,7 +36,9 @@ export const WatchlistsPage = ({ data }: { data: WatchlistsModel }) => {
         </div>
         <div className="nx-surface-header__stats">
           <span className="nx-badge nx-badge--primary">{data.totalCount} watching</span>
-          <span className="nx-badge nx-badge--warning">{data.alertingCount} alerting</span>
+          <span className={classes('nx-badge nx-badge--warning', data.alertingCount > 0 && 'nx-badge--pulse')}>
+            {data.alertingCount} alerting
+          </span>
         </div>
       </header>
 
@@ -40,17 +50,27 @@ export const WatchlistsPage = ({ data }: { data: WatchlistsModel }) => {
             className={classes('nx-filter-pill', filterType === type && 'is-active')}
             onClick={() => setFilterType(type)}
           >
-            {type === 'all' ? 'All' : type.charAt(0).toUpperCase() + type.slice(1) + 's'}
+            {type === 'all' ? `All (${data.items.length})` : `${type.charAt(0).toUpperCase() + type.slice(1)}s (${data.items.filter(i => i.type === type).length})`}
           </button>
         ))}
       </div>
 
       <div className="nx-watchlists__grid">
         {filtered.map((item) => (
-          <article key={item.id} className="nx-watch-card">
+          <article
+            key={item.id}
+            className={classes(
+              'nx-watch-card',
+              item.alertOnChange && 'is-alerting',
+              expandedId === item.id && 'is-expanded',
+            )}
+            onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
+          >
             <div className="nx-watch-card__header">
-              <Icon className="nx-watch-card__icon" name={typeIcon[item.type] as any} />
-              <span className="nx-watch-card__type">{item.type.toUpperCase()}</span>
+              <div className="nx-watch-card__header-left">
+                <Icon className="nx-watch-card__icon" name={typeIcon[item.type] as any} />
+                <span className="nx-watch-card__type">{typeLabel[item.type]}</span>
+              </div>
               {item.alertOnChange && (
                 <span className="nx-watch-card__alert">
                   <Icon className="nx-watch-alert-icon" name="bell" />
@@ -59,8 +79,23 @@ export const WatchlistsPage = ({ data }: { data: WatchlistsModel }) => {
               )}
             </div>
             <h3>{item.label}</h3>
-            <p className="nx-watch-card__notes">{item.notes}</p>
+            {item.notes && <p className="nx-watch-card__notes">{item.notes}</p>}
             <span className="nx-watch-card__added">Added {item.addedLabel}</span>
+
+            {expandedId === item.id && (
+              <div className="nx-watch-card__expanded">
+                <button className="nx-action-button" type="button" onClick={(e) => e.stopPropagation()}>
+                  <Icon className="nx-action-button__icon" name="eye" />
+                  View Details
+                </button>
+                <button className="nx-action-button nx-action-button--muted" type="button" onClick={(e) => e.stopPropagation()}>
+                  {item.alertOnChange ? 'Mute Alerts' : 'Enable Alerts'}
+                </button>
+                <button className="nx-action-button nx-action-button--danger" type="button" onClick={(e) => e.stopPropagation()}>
+                  Remove
+                </button>
+              </div>
+            )}
           </article>
         ))}
         {filtered.length === 0 && (

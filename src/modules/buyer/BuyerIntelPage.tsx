@@ -12,10 +12,22 @@ const intentClass: Record<BuyerProfile['intent'], string> = {
   dormant: 'is-dormant',
 }
 
+const intentIcon: Record<BuyerProfile['intent'], string> = {
+  active: 'zap',
+  passive: 'eye',
+  watching: 'clock',
+  dormant: 'pause',
+}
+
 export const BuyerIntelPage = ({ data }: { data: BuyerModel }) => {
   const [selectedId, setSelectedId] = useState<string | null>(data.buyers[0]?.id ?? null)
+  const [filterIntent, setFilterIntent] = useState<string>('all')
   const selected = data.buyers.find((b) => b.id === selectedId) ?? null
   const buyerMatches = data.matches.filter((m) => m.buyerId === selectedId)
+
+  const filtered = filterIntent === 'all'
+    ? data.buyers
+    : data.buyers.filter(b => b.intent === filterIntent)
 
   return (
     <div className="nx-buyer">
@@ -31,17 +43,37 @@ export const BuyerIntelPage = ({ data }: { data: BuyerModel }) => {
         </div>
       </header>
 
+      <div className="nx-buyer__filters">
+        {['all', 'active', 'passive', 'watching', 'dormant'].map((intent) => (
+          <button
+            key={intent}
+            type="button"
+            className={classes('nx-filter-pill', filterIntent === intent && 'is-active')}
+            onClick={() => setFilterIntent(intent)}
+          >
+            {intent === 'all' ? `All (${data.buyers.length})` : `${intent.charAt(0).toUpperCase() + intent.slice(1)} (${data.buyers.filter(b => b.intent === intent).length})`}
+          </button>
+        ))}
+      </div>
+
       <div className="nx-buyer__body">
         <aside className="nx-buyer__list">
-          {data.buyers.map((buyer) => (
+          {filtered.map((buyer) => (
             <button
               key={buyer.id}
               type="button"
-              className={classes('nx-buyer-row', selectedId === buyer.id && 'is-selected')}
+              className={classes(
+                'nx-buyer-row',
+                selectedId === buyer.id && 'is-selected',
+                buyer.intent === 'active' && 'is-hot-buyer',
+              )}
               onClick={() => setSelectedId(buyer.id)}
             >
               <div className="nx-buyer-row__top">
-                <strong>{buyer.name}</strong>
+                <div className="nx-buyer-row__name-wrap">
+                  <Icon name={intentIcon[buyer.intent] as any} className="nx-buyer-row__intent-icon" />
+                  <strong>{buyer.name}</strong>
+                </div>
                 <span className={classes('nx-intent-badge', intentClass[buyer.intent])}>
                   {buyer.intent.toUpperCase()}
                 </span>
@@ -64,15 +96,21 @@ export const BuyerIntelPage = ({ data }: { data: BuyerModel }) => {
           {selected ? (
             <div className="nx-buyer-detail">
               <div className="nx-buyer-detail__hero">
-                <h2>{selected.name}</h2>
-                <div className="nx-buyer-detail__tags">
-                  <span className={classes('nx-intent-badge', intentClass[selected.intent])}>
-                    {selected.intent.toUpperCase()}
-                  </span>
-                  {selected.preApproved && (
-                    <span className="nx-badge nx-badge--success">Pre-Approved</span>
-                  )}
+                <div className="nx-buyer-detail__hero-top">
+                  <h2>{selected.name}</h2>
+                  <div className="nx-buyer-detail__tags">
+                    <span className={classes('nx-intent-badge nx-intent-badge--lg', intentClass[selected.intent])}>
+                      <Icon name={intentIcon[selected.intent] as any} className="nx-intent-icon" />
+                      {selected.intent.toUpperCase()}
+                    </span>
+                    {selected.preApproved && (
+                      <span className="nx-badge nx-badge--success">Pre-Approved</span>
+                    )}
+                  </div>
                 </div>
+                <span className="nx-buyer-detail__activity">
+                  Last activity {selected.lastActivityLabel}
+                </span>
               </div>
 
               <div className="nx-buyer-detail__kpi-grid">
@@ -82,7 +120,7 @@ export const BuyerIntelPage = ({ data }: { data: BuyerModel }) => {
                 </div>
                 <div className="nx-kpi-mini">
                   <span>Match Score</span>
-                  <strong>{selected.matchScore}</strong>
+                  <strong className="nx-kpi-highlight">{selected.matchScore}</strong>
                 </div>
                 <div className="nx-kpi-mini">
                   <span>Acquisitions YTD</span>
@@ -98,7 +136,7 @@ export const BuyerIntelPage = ({ data }: { data: BuyerModel }) => {
                 <h3>Target Markets</h3>
                 <div className="nx-tag-row">
                   {selected.marketLabels.map((m) => (
-                    <span key={m} className="nx-tag">{m}</span>
+                    <span key={m} className="nx-tag nx-tag--interactive">{m}</span>
                   ))}
                 </div>
               </section>
@@ -121,10 +159,12 @@ export const BuyerIntelPage = ({ data }: { data: BuyerModel }) => {
                 </div>
               </section>
 
-              <section className="nx-buyer-detail__section">
-                <h3>Notes</h3>
-                <p className="nx-buyer-detail__notes">{selected.notes}</p>
-              </section>
+              {selected.notes && (
+                <section className="nx-buyer-detail__section">
+                  <h3>Notes</h3>
+                  <p className="nx-buyer-detail__notes">{selected.notes}</p>
+                </section>
+              )}
 
               {buyerMatches.length > 0 && (
                 <section className="nx-buyer-detail__section">
@@ -134,7 +174,9 @@ export const BuyerIntelPage = ({ data }: { data: BuyerModel }) => {
                       <div key={`${match.buyerId}-${match.leadId}`} className="nx-match-card">
                         <div className="nx-match-card__header">
                           <strong>{match.leadAddress}</strong>
-                          <span className="nx-match-score">{match.matchScore}%</span>
+                          <span className={classes('nx-match-score', match.matchScore >= 80 && 'is-high')}>
+                            {match.matchScore}%
+                          </span>
                         </div>
                         <div className="nx-match-card__meta">
                           <span>{match.leadOwnerName}</span>
@@ -147,10 +189,6 @@ export const BuyerIntelPage = ({ data }: { data: BuyerModel }) => {
                   </div>
                 </section>
               )}
-
-              <span className="nx-buyer-detail__activity">
-                Last activity {selected.lastActivityLabel}
-              </span>
             </div>
           ) : (
             <div className="nx-empty-state nx-empty-state--large">

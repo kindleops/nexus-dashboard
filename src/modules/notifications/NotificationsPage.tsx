@@ -14,6 +14,14 @@ const kindIcon: Record<NotificationItem['kind'], string> = {
   inbox: 'message',
 }
 
+const kindLabel: Record<NotificationItem['kind'], string> = {
+  autopilot: 'AUTOPILOT',
+  alert: 'ALERT',
+  deal: 'DEAL',
+  system: 'SYSTEM',
+  inbox: 'MESSAGE',
+}
+
 const severityClass: Record<NotificationItem['severity'], string> = {
   critical: 'is-critical',
   warning: 'is-warning',
@@ -24,6 +32,7 @@ export const NotificationsPage = ({ data }: { data: NotificationsModel }) => {
   const [readIds, setReadIds] = useState<string[]>(
     data.items.filter((i) => i.read).map((i) => i.id),
   )
+  const [filterKind, setFilterKind] = useState<string>('all')
 
   const markRead = (id: string) => {
     setReadIds((prev) => (prev.includes(id) ? prev : [...prev, id]))
@@ -33,16 +42,22 @@ export const NotificationsPage = ({ data }: { data: NotificationsModel }) => {
     setReadIds(data.items.map((i) => i.id))
   }
 
+  const filtered = filterKind === 'all'
+    ? data.items
+    : data.items.filter(i => i.kind === filterKind)
+
+  const unreadFiltered = filtered.filter(i => !readIds.includes(i.id)).length
+
   return (
     <div className="nx-notifications">
       <header className="nx-surface-header">
         <div className="nx-surface-header__title">
           <Icon className="nx-surface-icon" name="bell" />
-          <h1>Notifications</h1>
+          <h1>Event Stream</h1>
         </div>
         <div className="nx-surface-header__stats">
           <span className="nx-badge nx-badge--primary">
-            {data.unreadCount} unread
+            {unreadFiltered} unread
           </span>
           <button className="nx-inline-button" type="button" onClick={markAllRead}>
             Mark all read
@@ -50,8 +65,21 @@ export const NotificationsPage = ({ data }: { data: NotificationsModel }) => {
         </div>
       </header>
 
+      <div className="nx-notifications__filters">
+        {['all', 'alert', 'deal', 'autopilot', 'inbox', 'system'].map((kind) => (
+          <button
+            key={kind}
+            type="button"
+            className={classes('nx-filter-pill', filterKind === kind && 'is-active')}
+            onClick={() => setFilterKind(kind)}
+          >
+            {kind === 'all' ? `All (${data.items.length})` : `${kind.charAt(0).toUpperCase() + kind.slice(1)} (${data.items.filter(i => i.kind === kind).length})`}
+          </button>
+        ))}
+      </div>
+
       <div className="nx-notifications__list">
-        {data.items.map((item) => {
+        {filtered.map((item) => {
           const isRead = readIds.includes(item.id)
           return (
             <article
@@ -70,7 +98,10 @@ export const NotificationsPage = ({ data }: { data: NotificationsModel }) => {
               </div>
               <div className="nx-notif-card__body">
                 <div className="nx-notif-card__header">
-                  <strong>{item.title}</strong>
+                  <div className="nx-notif-card__title-row">
+                    <strong>{item.title}</strong>
+                    <span className="nx-notif-card__kind">{kindLabel[item.kind]}</span>
+                  </div>
                   <span className="nx-notif-card__time">{item.timestampLabel}</span>
                 </div>
                 <p>{item.detail}</p>
@@ -98,10 +129,11 @@ export const NotificationsPage = ({ data }: { data: NotificationsModel }) => {
                   )}
                 </div>
               </div>
+              {!isRead && <div className="nx-notif-card__unread-dot" />}
             </article>
           )
         })}
-        {data.items.length === 0 && (
+        {filtered.length === 0 && (
           <div className="nx-empty-state">
             <Icon className="nx-empty-icon" name="bell" />
             <p>No notifications</p>

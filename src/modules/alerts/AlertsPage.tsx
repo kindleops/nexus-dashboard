@@ -11,9 +11,16 @@ const severityClass: Record<AlertItem['severity'], string> = {
   info: 'is-info',
 }
 
+const severityIcon: Record<AlertItem['severity'], string> = {
+  critical: 'alert',
+  warning: 'alert',
+  info: 'activity',
+}
+
 export const AlertsPage = ({ data }: { data: AlertsModel }) => {
   const [filterSeverity, setFilterSeverity] = useState<string>('all')
   const [acknowledgedIds, setAcknowledgedIds] = useState<string[]>([])
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const filtered = data.alerts
     .filter((a) => filterSeverity === 'all' || a.severity === filterSeverity)
@@ -24,12 +31,13 @@ export const AlertsPage = ({ data }: { data: AlertsModel }) => {
       <header className="nx-surface-header">
         <div className="nx-surface-header__title">
           <Icon className="nx-surface-icon" name="alert" />
-          <h1>Alerts</h1>
+          <h1>Threat Board</h1>
         </div>
         <div className="nx-surface-header__stats">
-          <span className="nx-badge nx-badge--danger">{data.criticalCount} critical</span>
+          <span className="nx-badge nx-badge--danger nx-badge--pulse">{data.criticalCount} critical</span>
           <span className="nx-badge nx-badge--warning">{data.warningCount} warning</span>
           <span className="nx-badge nx-badge--muted">{data.infoCount} info</span>
+          <span className="nx-badge nx-badge--muted">{acknowledgedIds.length} ack'd</span>
         </div>
       </header>
 
@@ -41,36 +49,55 @@ export const AlertsPage = ({ data }: { data: AlertsModel }) => {
             className={classes('nx-filter-pill', filterSeverity === sev && 'is-active')}
             onClick={() => setFilterSeverity(sev)}
           >
-            {sev === 'all' ? 'All Alerts' : sev.charAt(0).toUpperCase() + sev.slice(1)}
+            {sev === 'all' ? `All (${data.alerts.filter(a => !acknowledgedIds.includes(a.id)).length})` : `${sev.charAt(0).toUpperCase() + sev.slice(1)} (${data.alerts.filter(a => a.severity === sev && !acknowledgedIds.includes(a.id)).length})`}
           </button>
         ))}
       </div>
 
       <div className="nx-alerts__grid">
         {filtered.map((alert) => (
-          <article key={alert.id} className={classes('nx-alert-card', severityClass[alert.severity])}>
+          <article
+            key={alert.id}
+            className={classes('nx-alert-card', severityClass[alert.severity], expandedId === alert.id && 'is-expanded')}
+            onClick={() => setExpandedId(expandedId === alert.id ? null : alert.id)}
+          >
             <div className="nx-alert-card__header">
-              <div className="nx-alert-card__meta">
+              <div className="nx-alert-card__lead">
+                <Icon name={severityIcon[alert.severity] as Parameters<typeof Icon>[0]['name']} className={classes('nx-alert-card__sev-icon', severityClass[alert.severity])} />
                 <span className={classes('nx-severity-badge', severityClass[alert.severity])}>
                   {alert.priority}
                 </span>
                 <span className="nx-alert-card__market">{alert.marketLabel}</span>
-                <span className="nx-alert-card__time">{alert.timestampLabel}</span>
               </div>
-              <button
-                className="nx-inline-button"
-                type="button"
-                onClick={() => setAcknowledgedIds((ids) => [...ids, alert.id])}
-              >
-                Acknowledge
-              </button>
+              <div className="nx-alert-card__header-right">
+                <span className="nx-alert-card__time">{alert.timestampLabel}</span>
+                <button
+                  className="nx-inline-button nx-inline-button--ack"
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setAcknowledgedIds((ids) => [...ids, alert.id]) }}
+                >
+                  Ack
+                </button>
+              </div>
             </div>
             <h3 className="nx-alert-card__title">{alert.title}</h3>
             <p className="nx-alert-card__detail">{alert.detail}</p>
             <div className="nx-alert-card__footer">
               <span className="nx-alert-card__metric">
-                {alert.metricLabel}: <strong>{alert.metricValue}</strong>
+                <span className="nx-alert-card__metric-label">{alert.metricLabel}</span>
+                <strong className="nx-alert-card__metric-value">{alert.metricValue}</strong>
               </span>
+              {expandedId === alert.id && (
+                <div className="nx-alert-card__expanded">
+                  <button className="nx-action-button" type="button" onClick={(e) => e.stopPropagation()}>
+                    <Icon className="nx-action-button__icon" name="target" />
+                    Investigate
+                  </button>
+                  <button className="nx-action-button nx-action-button--muted" type="button" onClick={(e) => { e.stopPropagation(); setAcknowledgedIds((ids) => [...ids, alert.id]) }}>
+                    Dismiss
+                  </button>
+                </div>
+              )}
             </div>
           </article>
         ))}
@@ -86,7 +113,7 @@ export const AlertsPage = ({ data }: { data: AlertsModel }) => {
         <h3>Affected Markets</h3>
         <div className="nx-tag-row">
           {data.affectedMarkets.map((market) => (
-            <span key={market} className="nx-tag">{market}</span>
+            <span key={market} className="nx-tag nx-tag--interactive">{market}</span>
           ))}
         </div>
       </section>

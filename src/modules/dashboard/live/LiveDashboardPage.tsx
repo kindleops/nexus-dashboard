@@ -279,186 +279,382 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
   const leftEffOpen = leftRailOpen && layoutMode !== 'map' && layoutMode !== 'battlefield'
   const rightEffOpen = rightRailOpen && layoutMode !== 'map' && layoutMode !== 'battlefield'
 
+  // Top priority alerts for right blade
+  const topAlerts = visibleAlerts
+    .filter(a => a.severity === 'critical' || a.severity === 'warning')
+    .slice(0, 3)
+
+  // ── Alternate layouts (list / battlefield) use legacy cc-* shell ────────
+  if (layoutMode === 'list' || layoutMode === 'battlefield') {
+    return (
+      <div className={classes('cc-shell', `cc-shell--layout-${layoutMode}`)} data-testid="dashboard-root">
+        <DashboardHeader
+          appName={data.appName}
+          query={query}
+          setQuery={setQuery}
+          liveClock={clock}
+          healthLabel={data.healthLabel}
+          leftRailOpen={leftEffOpen}
+          rightRailOpen={rightEffOpen}
+          layoutMode={layoutMode}
+          onToggleLeftRail={() => { setLeftRailOpen((current) => !current) }}
+          onToggleRightRail={() => { setRightRailOpen((current) => !current) }}
+          onSetLayoutMode={setLayoutMode}
+        />
+        <HealthStrip items={data.systemHealth} />
+        <div className="cc-workspace">
+          {layoutMode === 'list' ? (
+            <LeadListTable
+              leads={visibleLeads}
+              selectedLeadId={resolvedSelectedLeadId}
+              onOpenLead={(leadId) => { setSelectedLeadId(leadId); setActiveDrawer('lead') }}
+            />
+          ) : (
+            <BattlefieldView
+              leads={visibleLeads}
+              selectedLeadId={resolvedSelectedLeadId}
+              onOpenLead={(leadId) => { setSelectedLeadId(leadId); setActiveDrawer('lead') }}
+            />
+          )}
+        </div>
+        <DrawerOverlay activeDrawer={activeDrawer} onClose={() => { setActiveDrawer(null) }}>
+          {activeDrawer === 'market' && selectedMarket ? <MarketDrawer market={selectedMarket} /> : null}
+          {activeDrawer === 'lead' && selectedLead ? <LeadDrawer lead={selectedLead} /> : null}
+          {activeDrawer === 'agent' && selectedAgent && selectedAgentLead ? <AgentDrawer agent={selectedAgent} lead={selectedAgentLead} /> : null}
+        </DrawerOverlay>
+      </div>
+    )
+  }
+
+  // ── Home Command Floor — cinematic map-first scene ──────────────────────
   return (
-    <div
-      className={classes(
-        'cc-shell',
-        layoutMode === 'map' && 'cc-shell--map-focus',
-        layoutMode !== 'split' && `cc-shell--layout-${layoutMode}`,
-      )}
-      data-testid="dashboard-root"
-    >
-      <DashboardHeader
-        appName={data.appName}
-        query={query}
-        setQuery={setQuery}
-        liveClock={clock}
-        healthLabel={data.healthLabel}
-        leftRailOpen={leftEffOpen}
-        rightRailOpen={rightEffOpen}
-        layoutMode={layoutMode}
-        onToggleLeftRail={() => { setLeftRailOpen((current) => !current) }}
-        onToggleRightRail={() => { setRightRailOpen((current) => !current) }}
-        onSetLayoutMode={setLayoutMode}
-      />
-
-      {data.degraded ? (
-        <div className="cc-degraded-banner" role="alert">
-          <span className="cc-degraded-banner__label">DEGRADED</span>
-          <span className="cc-degraded-banner__reason">{data.degraded.reason}</span>
-        </div>
-      ) : data.dataSource === 'mock' ? (
-        <div className="cc-mock-banner" role="status">
-          <span className="cc-mock-banner__label">MOCK DATA</span>
-          <span className="cc-mock-banner__detail">Set <code>VITE_NEXUS_API_URL</code> to connect to live operations.</span>
-        </div>
-      ) : null}
-
-      <HealthStrip items={data.systemHealth} />
-
-      <div className="cc-workspace">
-        {/* Left rail wrap — always rendered, CSS-animated collapse */}
-        <div
-          className={classes('cc-rail-wrap cc-rail-wrap--left', !leftEffOpen && 'is-collapsed')}
-          aria-hidden={!leftEffOpen}
-        >
-          <IntelligenceRail
-            data={data}
-            filtersOpen={filtersOpen}
-            onToggleFilters={() => { setFiltersOpen((current) => !current) }}
-            selectedMarketId={selectedMarket?.id ?? ''}
-            selectedAgentId={selectedAgent?.id ?? ''}
-            visibleMarkets={visibleMarkets}
-            visibleAgents={visibleAgents}
-            onSelectMarket={(marketId) => { setSelectedMarketId(marketId) }}
-            onOpenMarket={(marketId) => { setSelectedMarketId(marketId); setActiveDrawer('market') }}
-            onOpenAgent={(agentId) => { setSelectedAgentId(agentId); setActiveDrawer('agent') }}
-            marketScope={marketScope}
-            propertyType={propertyType}
-            sentiment={sentiment}
-            stage={stage}
-            ownerType={ownerType}
-            setMarketScope={setMarketScope}
-            setPropertyType={setPropertyType}
-            setSentiment={setSentiment}
-            setStage={setStage}
-            setOwnerType={setOwnerType}
-          />
-        </div>
-
-        {layoutMode === 'list' ? (
-          <LeadListTable
-            leads={visibleLeads}
-            selectedLeadId={resolvedSelectedLeadId}
-            onOpenLead={(leadId) => { setSelectedLeadId(leadId); setActiveDrawer('lead') }}
-          />
-        ) : layoutMode === 'battlefield' ? (
-          <BattlefieldView
-            leads={visibleLeads}
-            selectedLeadId={resolvedSelectedLeadId}
-            onOpenLead={(leadId) => { setSelectedLeadId(leadId); setActiveDrawer('lead') }}
-          />
-        ) : (
-          <MapStage
-            markets={visibleMarkets}
-            leads={visibleLeads}
-            selectedMarket={selectedMarket}
-            selectedLead={selectedLead}
-            selectedMarketLeads={selectedMarketLeads}
-            metrics={data.summaryMetrics}
-            metricsCollapsed={metricsCollapsed}
-            activeDrawer={activeDrawer}
-            mapMode={mapMode}
-            onToggleMetrics={() => { setMetricsCollapsed((current) => !current) }}
-            onSelectMarket={(marketId) => { setSelectedMarketId(marketId) }}
-            onOpenMarket={(marketId) => { setSelectedMarketId(marketId); setActiveDrawer('market') }}
-            onOpenLead={(leadId) => { setSelectedLeadId(leadId); setActiveDrawer('lead') }}
-            onSetMapMode={setMapMode}
-          />
-        )}
-
-        {/* Right rail wrap — always rendered, CSS-animated collapse */}
-        <div
-          className={classes('cc-rail-wrap cc-rail-wrap--right', !rightEffOpen && 'is-collapsed')}
-          aria-hidden={!rightEffOpen}
-        >
-          <ActivityRail
-            alerts={visibleAlerts}
-            timeline={visibleTimeline}
-            selectedLead={selectedLead}
-            onAcknowledgeAlert={(alertId) => { setDismissedAlertIds((current) => [...current, alertId]) }}
-            onOpenLead={(leadId) => { setSelectedLeadId(leadId); setActiveDrawer('lead') }}
-          />
-        </div>
-
-        <button
-          className={classes('cc-rail-toggle cc-rail-toggle--left', !leftEffOpen && 'is-closed')}
-          type="button"
-          data-testid="toggle-left-rail"
-          onClick={() => { setLeftRailOpen((current) => !current) }}
-        >
-          <Icon
-            className={classes('cc-rail-toggle__icon', leftEffOpen && 'is-open')}
-            name="chevron-right"
-          />
-        </button>
-
-        <button
-          className={classes('cc-rail-toggle cc-rail-toggle--right', !rightEffOpen && 'is-closed')}
-          type="button"
-          data-testid="toggle-right-rail"
-          onClick={() => { setRightRailOpen((current) => !current) }}
-        >
-          <Icon
-            className={classes('cc-rail-toggle__icon', rightEffOpen && 'is-open-right')}
-            name="chevron-right"
-          />
-        </button>
+    <div className="hq" data-testid="dashboard-root">
+      {/* Full-bleed map — the emotional center */}
+      <div className="hq__map">
+        <NexusMap
+          leads={visibleLeads}
+          markets={visibleMarkets}
+          timeline={visibleTimeline}
+          selectedLeadId={selectedLead?.id}
+          selectedMarketId={selectedMarket?.id}
+          mapMode={mapMode}
+          activeDrawer={activeDrawer}
+          onOpenLead={(leadId) => { setSelectedLeadId(leadId); setActiveDrawer('lead') }}
+          onSelectMarket={(marketId) => { setSelectedMarketId(marketId) }}
+        />
       </div>
 
-      <TimelineRail events={visibleTimeline} />
-
-      {/* Replay mode overlay */}
-      {replayActive && (
-        <div className="cc-replay-bar">
-          <Icon name="clock" className="cc-replay-bar__icon" />
-          <span className="cc-replay-bar__label">REPLAY MODE</span>
-          <span className="cc-replay-bar__time">−24h</span>
-          <div className="cc-replay-bar__track">
-            <div className="cc-replay-bar__fill" style={{ width: '35%' }} />
-            <div className="cc-replay-bar__head" style={{ left: '35%' }} />
+      {/* Top Command Strip — thin, embedded, premium */}
+      <header className="hq__strip">
+        <div className="hq__strip-left">
+          <div className="hq__brand">
+            <Icon name="radar" className="hq__brand-icon" />
+            <span className="hq__brand-label">NEXUS</span>
           </div>
-          <span className="cc-replay-bar__time">NOW</span>
-          <button
-            type="button"
-            className="cc-replay-bar__exit"
-            onClick={() => setReplayActive(false)}
-          >
-            Exit Replay
-          </button>
+          <span className="hq__live">
+            <span className="hq__live-dot" />
+            LIVE
+          </span>
+          <span className="hq__health">{data.healthLabel}</span>
         </div>
+
+        <div className="hq__strip-center">
+          <Icon name="search" className="hq__search-icon" />
+          <input
+            className="hq__search"
+            type="search"
+            placeholder="Search…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+
+        <div className="hq__strip-right">
+          <span className="hq__clock">
+            <Icon name="clock" className="hq__clock-icon" />
+            {formatClockTime(clock)} CT
+          </span>
+          <div className="hq__modes">
+            <button
+              type="button"
+              className={classes('hq__mode-btn', layoutMode === 'map' && 'is-active')}
+              title="Map Focus (⌘M)"
+              onClick={() => setLayoutMode(layoutMode === 'map' ? 'split' : 'map')}
+            >
+              <Icon name="maximize" className="hq__mode-icon" />
+            </button>
+            <button
+              type="button"
+              className={classes('hq__mode-btn', layoutMode === 'list' && 'is-active')}
+              title="List View"
+              onClick={() => setLayoutMode('list')}
+            >
+              <Icon name="list" className="hq__mode-icon" />
+            </button>
+            <button
+              type="button"
+              className={classes('hq__mode-btn', layoutMode === 'battlefield' && 'is-active')}
+              title="Battlefield (⌘B)"
+              onClick={() => setLayoutMode('battlefield')}
+            >
+              <Icon name="command" className="hq__mode-icon" />
+            </button>
+          </div>
+          <div className="hq__map-modes">
+            {(['leads', 'heat', 'pressure', 'distress'] as MapMode[]).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                className={classes('hq__map-mode', mapMode === mode && 'is-active')}
+                onClick={() => setMapMode(mode)}
+              >
+                {mode}
+              </button>
+            ))}
+          </div>
+        </div>
+      </header>
+
+      {/* Left Intelligence Blade */}
+      {leftEffOpen && (
+        <aside className="hq__blade hq__blade--left">
+          <div className="hq__blade-header">
+            <span className="hq__blade-title">Intelligence</span>
+            <button type="button" className="hq__blade-close" onClick={() => setLeftRailOpen(false)}>
+              <Icon name="chevron-right" className="hq__blade-close-icon is-flip" />
+            </button>
+          </div>
+
+          {/* Scope */}
+          <div className="hq__scope">
+            <span className="hq__scope-label">SCOPE</span>
+            <select
+              className="hq__scope-select"
+              value={marketScope}
+              onChange={(e) => setMarketScope(e.target.value)}
+            >
+              <option value="all">All Markets</option>
+              {data.markets.map(m => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Key Metrics — 2×3 grid */}
+          <div className="hq__metrics hq__metrics--rich">
+            {data.summaryMetrics.slice(0, 6).map(m => (
+              <div key={m.id} className={classes('hq__metric', `is-${m.tone}`)}>
+                <span className="hq__metric-value">{m.value}</span>
+                <span className="hq__metric-label">{m.label}</span>
+                {m.detail && <span className="hq__metric-detail">{m.detail}</span>}
+              </div>
+            ))}
+          </div>
+
+          {/* Quick Stats Bar */}
+          <div className="hq__quick-stats">
+            <div className="hq__stat-pill">
+              <span className="hq__stat-pill-value">{visibleMarkets.length}</span>
+              <span className="hq__stat-pill-label">Markets</span>
+            </div>
+            <div className="hq__stat-pill is-hot">
+              <span className="hq__stat-pill-value">{visibleLeads.filter(l => l.sentiment === 'hot').length}</span>
+              <span className="hq__stat-pill-label">Hot</span>
+            </div>
+            <div className="hq__stat-pill is-warm">
+              <span className="hq__stat-pill-value">{visibleLeads.filter(l => l.sentiment === 'warm').length}</span>
+              <span className="hq__stat-pill-label">Warm</span>
+            </div>
+          </div>
+
+          {/* Selected Market Context */}
+          {selectedMarket && (
+            <div className="hq__context">
+              <div className="hq__context-header">
+                <span className="hq__context-eyebrow">{selectedMarket.label}</span>
+                <span className={classes('hq__context-status', `is-${selectedMarket.campaignStatus}`)}>
+                  {marketStatusLabel[selectedMarket.campaignStatus]}
+                </span>
+              </div>
+              <span className="hq__context-name">{selectedMarket.scanLabel}</span>
+              <div className="hq__context-stats">
+                <span>{formatCompactNumber(selectedMarket.outboundToday)} sent</span>
+                <span>{selectedMarket.hotLeads} hot</span>
+                <span>H{selectedMarket.healthScore}</span>
+              </div>
+              <div className="hq__context-capacity">
+                <div className="hq__capacity-bar">
+                  <div className="hq__capacity-fill" style={{ width: `${Math.min(selectedMarket.capacityStrain, 100)}%` }} />
+                </div>
+                <span className="hq__capacity-label">{selectedMarket.capacityStrain}% capacity</span>
+              </div>
+              <button
+                type="button"
+                className="hq__context-action"
+                onClick={() => { setSelectedMarketId(selectedMarket.id); setActiveDrawer('market') }}
+              >
+                Open Market
+              </button>
+            </div>
+          )}
+
+          {/* Agents Summary */}
+          <div className="hq__agents-summary">
+            <span className="hq__scope-label">AGENTS</span>
+            <div className="hq__agents-row">
+              <span className="hq__agents-count">{visibleAgents.filter(a => a.status === 'active').length} active</span>
+              <span className="hq__agents-handled">{visibleAgents.reduce((s, a) => s + a.handledToday, 0)} handled today</span>
+            </div>
+            {visibleAgents.slice(0, 3).map(agent => (
+              <button
+                key={agent.id}
+                type="button"
+                className={classes('hq__agent-mini', agent.id === selectedAgent?.id && 'is-selected')}
+                onClick={() => { setSelectedAgentId(agent.id); setActiveDrawer('agent') }}
+              >
+                <span className={classes('hq__agent-status-dot', agent.status === 'active' ? 'is-active' : 'is-idle')} />
+                <span className="hq__agent-name">{agent.name}</span>
+                <span className="hq__agent-load">{agent.handledToday}</span>
+              </button>
+            ))}
+          </div>
+        </aside>
       )}
 
-      {/* Autopilot trail indicator — always visible on Home */}
-      <div className="cc-autopilot-trail">
-        <div className="cc-autopilot-trail__dot" />
-        <span className="cc-autopilot-trail__label">Autopilot Active</span>
-        <span className="cc-autopilot-trail__count">{data.agents.filter(a => a.activityLabel?.includes('active') || a.activityLabel?.includes('scanning')).length} agents scanning</span>
+      {/* Left blade toggle (when closed) */}
+      {!leftEffOpen && (
+        <button type="button" className="hq__blade-toggle hq__blade-toggle--left" onClick={() => setLeftRailOpen(true)}>
+          <Icon name="chevron-right" className="hq__blade-toggle-icon" />
+        </button>
+      )}
+
+      {/* Right Activity Blade */}
+      {rightEffOpen && (
+        <aside className="hq__blade hq__blade--right">
+          <div className="hq__blade-header">
+            <span className="hq__blade-title">Activity</span>
+            <span className="hq__blade-count">{visibleAlerts.filter(a => a.severity === 'critical').length} critical</span>
+            <button type="button" className="hq__blade-close" onClick={() => setRightRailOpen(false)}>
+              <Icon name="chevron-right" className="hq__blade-close-icon" />
+            </button>
+          </div>
+
+          {/* Priority Alerts */}
+          {topAlerts.length > 0 && (
+            <div className="hq__alerts">
+              <span className="hq__scope-label">PRIORITY</span>
+              {topAlerts.map(alert => (
+                <div key={alert.id} className={classes('hq__alert', `is-${alert.severity}`)}>
+                  <div className="hq__alert-top">
+                    <span className="hq__alert-priority">{alert.priority}</span>
+                    <span className="hq__alert-market">{alert.marketLabel}</span>
+                    <span className="hq__alert-time">{formatRelativeTime(alert.timestampIso)}</span>
+                  </div>
+                  <span className="hq__alert-title">{alert.title}</span>
+                  {alert.detail && <span className="hq__alert-detail">{alert.detail}</span>}
+                  <div className="hq__alert-metric">
+                    <span>{alert.metricLabel}</span>
+                    <strong>{alert.metricValue}</strong>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Live Stream with kind icons */}
+          <div className="hq__stream">
+            <span className="hq__scope-label">LIVE STREAM</span>
+            {visibleTimeline.slice(0, 10).map(evt => (
+              <div key={evt.id} className={classes('hq__stream-event', `is-${evt.severity}`, `is-kind-${evt.kind}`)}>
+                <div className="hq__stream-icon-wrap">
+                  <Icon name={(timelineKindIcon[evt.kind] ?? 'activity') as Parameters<typeof Icon>[0]['name']} className="hq__stream-icon" />
+                </div>
+                <div className="hq__stream-body">
+                  <span className="hq__stream-title">{evt.title}</span>
+                  <div className="hq__stream-meta">
+                    <span className="hq__stream-market">{evt.marketLabel}</span>
+                    <span className="hq__stream-time">{formatRelativeTime(evt.timestampIso)}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Selected Lead Spotlight — enriched */}
+          {selectedLead && (
+            <div className="hq__spotlight">
+              <div className="hq__spotlight-header">
+                <span className={classes('hq__spotlight-sentiment', stageToneClass[selectedLead.sentiment])}>
+                  {selectedLead.sentiment.toUpperCase()}
+                </span>
+                <strong className="hq__spotlight-score">{selectedLead.urgencyScore}</strong>
+              </div>
+              <span className="hq__spotlight-name">{selectedLead.ownerName}</span>
+              <span className="hq__spotlight-address">{selectedLead.address}</span>
+              <span className="hq__spotlight-intent">{selectedLead.currentIntent}</span>
+              <div className="hq__spotlight-stats">
+                <span>{formatStageLabel(selectedLead.pipelineStage)}</span>
+                <span>{selectedLead.outboundAttempts} outbound</span>
+                <span>{selectedLead.daysSinceLastContact}d since contact</span>
+              </div>
+              <button
+                type="button"
+                className="hq__context-action"
+                onClick={() => { setSelectedLeadId(selectedLead.id); setActiveDrawer('lead') }}
+              >
+                Full Dossier
+              </button>
+            </div>
+          )}
+        </aside>
+      )}
+
+      {/* Right blade toggle (when closed) */}
+      {!rightEffOpen && (
+        <button type="button" className="hq__blade-toggle hq__blade-toggle--right" onClick={() => setRightRailOpen(true)}>
+          <Icon name="chevron-right" className="hq__blade-toggle-icon is-flip" />
+        </button>
+      )}
+
+      {/* Bottom Timeline Rail — enriched */}
+      <div className="hq__timeline">
+        <div className="hq__timeline-strip">
+          <span className="hq__timeline-now">NOW</span>
+        </div>
+        <div className="hq__timeline-track">
+          {visibleTimeline.slice(0, 40).map(evt => (
+            <button
+              type="button"
+              key={evt.id}
+              className={classes('hq__timeline-event', `is-${evt.severity}`, `is-kind-${evt.kind}`)}
+              onClick={() => {
+                const m = data.markets.find(mk => mk.id === evt.marketId);
+                if (m) { setSelectedMarketId(m.id); setActiveDrawer('market'); }
+              }}
+            >
+              <Icon name={(timelineKindIcon[evt.kind] ?? 'activity') as Parameters<typeof Icon>[0]['name']} className="hq__timeline-icon" />
+              <span className="hq__timeline-label">{evt.title}</span>
+              <div className="hq__timeline-sub">
+                <span className="hq__timeline-market">{evt.marketLabel}</span>
+                <span className="hq__timeline-time">{formatRelativeTime(evt.timestampIso)}</span>
+              </div>
+            </button>
+          ))}
+        </div>
       </div>
 
-      <CommandHintBar activeDrawer={activeDrawer} layoutMode={layoutMode} />
+      {/* Map attribution */}
+      <div className="hq__attribution">
+        <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">© CARTO</a>
+        {' '}
+        <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OSM</a>
+      </div>
 
-      <DrawerOverlay
-        activeDrawer={activeDrawer}
-        onClose={() => { setActiveDrawer(null) }}
-      >
-        {activeDrawer === 'market' && selectedMarket ? (
-          <MarketDrawer market={selectedMarket} />
-        ) : null}
+      {/* Drawer system — shared */}
+      <DrawerOverlay activeDrawer={activeDrawer} onClose={() => { setActiveDrawer(null) }}>
+        {activeDrawer === 'market' && selectedMarket ? <MarketDrawer market={selectedMarket} /> : null}
         {activeDrawer === 'lead' && selectedLead ? <LeadDrawer lead={selectedLead} /> : null}
-        {activeDrawer === 'agent' && selectedAgent && selectedAgentLead ? (
-          <AgentDrawer agent={selectedAgent} lead={selectedAgentLead} />
-        ) : null}
+        {activeDrawer === 'agent' && selectedAgent && selectedAgentLead ? <AgentDrawer agent={selectedAgent} lead={selectedAgentLead} /> : null}
       </DrawerOverlay>
     </div>
   )
@@ -880,6 +1076,7 @@ const MapStage = ({
         <NexusMap
           leads={leads}
           markets={markets}
+          timeline={[]}
           selectedLeadId={selectedLead?.id}
           selectedMarketId={selectedMarket?.id}
           mapMode={mapMode}
