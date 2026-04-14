@@ -73,6 +73,12 @@ export interface NexusSettings {
   copilotEnabled: boolean
   copilotAutoOpen: boolean
   copilotSoundEnabled: boolean
+  copilotMode: 'orb' | 'sidecar' | 'console'
+  copilotModel: string
+  actionPermission: string
+  voiceModeDefault: boolean
+  orbPlacement: 'dock' | 'corner'
+  copilotOpenOnRoomChange: boolean
 
   // Briefing Mode
   briefingAutoGenerate: boolean
@@ -149,6 +155,12 @@ export const DEFAULT_SETTINGS: NexusSettings = {
   copilotEnabled: true,
   copilotAutoOpen: false,
   copilotSoundEnabled: true,
+  copilotMode: 'sidecar',
+  copilotModel: 'nexus-balanced',
+  actionPermission: 'confirm-before',
+  voiceModeDefault: false,
+  orbPlacement: 'dock',
+  copilotOpenOnRoomChange: false,
   briefingAutoGenerate: true,
   briefingSoundEnabled: true,
   notificationsEnabled: true,

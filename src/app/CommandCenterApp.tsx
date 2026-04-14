@@ -3,7 +3,7 @@ import { pushRoutePath, replaceRoutePath, useRoutePath } from './router'
 import { resolveRoute } from './routes'
 import { useCommandGrammar, type CommandBinding } from '../shared/command-grammar'
 import { Icon } from '../shared/icons'
-import { AICopilot, type CopilotContext } from '../shared/AICopilot'
+import { CopilotShell, type CopilotContext } from '../shared/copilot'
 import { BriefingPanel, buildBriefingDigest, type BriefingDigest } from '../shared/BriefingPanel'
 import { NotificationToasts, NotificationCenter, useNotificationCount } from '../shared/NotificationToast'
 import { playSound } from '../shared/sounds'
@@ -169,6 +169,7 @@ export const CommandCenterApp = () => {
   // AI Copilot context — derived from current route
   const copilotContext = useMemo<CopilotContext>(() => ({
     surface: route.path,
+    roomPath: route.path,
   }), [route.path])
 
   // Briefing digest builder
@@ -450,15 +451,21 @@ export const CommandCenterApp = () => {
       {/* Global notification toasts */}
       <NotificationToasts />
 
-      {/* AI Copilot panel */}
-      <AICopilot
+      {/* AI Copilot — multimodal intelligence shell */}
+      <CopilotShell
         open={copilotOpen}
         context={copilotContext}
         onClose={() => setCopilotOpen(false)}
-        onAction={(actionId) => {
-          if (actionId === 'go-alerts') pushRoutePath('/alerts')
-          else if (actionId === 'focus-hot') pushRoutePath('/dashboard/live')
-          else if (actionId === 'batch-reply') pushRoutePath('/inbox')
+        onToggle={() => setCopilotOpen(p => { if (!p) playSound('copilot-wake'); return !p })}
+        onAction={(intent) => {
+          if (intent.domain === 'room' && intent.params.target) pushRoutePath(intent.params.target)
+          else if (intent.domain === 'map') pushRoutePath('/dashboard/live')
+          else if (intent.domain === 'inbox') pushRoutePath('/inbox')
+          else if (intent.domain === 'alerts') pushRoutePath('/alerts')
+          else if (intent.domain === 'markets') pushRoutePath('/markets')
+          else if (intent.domain === 'buyers') pushRoutePath('/buyer')
+          else if (intent.domain === 'title') pushRoutePath('/title')
+          else if (intent.domain === 'briefing') openBriefing()
         }}
       />
 
