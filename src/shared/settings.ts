@@ -59,6 +59,28 @@ export interface NexusSettings {
 
   // Surface
   animationsEnabled: boolean
+
+  // Split View
+  splitViewDefaultSize: 'narrow' | 'standard' | 'wide'
+  splitViewSoundEnabled: boolean
+
+  // AI Copilot
+  copilotEnabled: boolean
+  copilotAutoOpen: boolean
+  copilotSoundEnabled: boolean
+
+  // Briefing Mode
+  briefingAutoGenerate: boolean
+  briefingSoundEnabled: boolean
+
+  // Notifications
+  notificationsEnabled: boolean
+  notificationToastDuration: number  // ms, 3000–10000
+  notificationSoundEnabled: boolean
+  notificationMaxVisible: number     // 1–6
+
+  // Keyboard
+  keyboardShortcutsEnabled: boolean
 }
 
 // ── Defaults ──────────────────────────────────────────────────────────────
@@ -99,6 +121,18 @@ export const DEFAULT_SETTINGS: NexusSettings = {
   timelineDensity: 30,
   eventCategories: ['system', 'alert', 'ai', 'deal', 'conversation', 'autopilot'],
   animationsEnabled: true,
+  splitViewDefaultSize: 'standard',
+  splitViewSoundEnabled: true,
+  copilotEnabled: true,
+  copilotAutoOpen: false,
+  copilotSoundEnabled: true,
+  briefingAutoGenerate: true,
+  briefingSoundEnabled: true,
+  notificationsEnabled: true,
+  notificationToastDuration: 5000,
+  notificationSoundEnabled: true,
+  notificationMaxVisible: 4,
+  keyboardShortcutsEnabled: true,
 }
 
 // ── Storage ───────────────────────────────────────────────────────────────

@@ -2,6 +2,8 @@ import { useRef, useState } from 'react'
 import type { InboxModel, InboxThread } from './inbox.adapter'
 import { Icon } from '../../shared/icons'
 import { formatRelativeTime } from '../../shared/formatters'
+import { SplitView } from '../../shared/SplitView'
+import { emitNotification } from '../../shared/NotificationToast'
 
 const classes = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
@@ -41,6 +43,7 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
   const [searchQuery, setSearchQuery] = useState('')
   const [draftText, setDraftText] = useState('')
   const [showAiActions, setShowAiActions] = useState(false)
+  const [splitThread, setSplitThread] = useState<InboxThread | null>(null)
   const detailRef = useRef<HTMLDivElement>(null)
 
   const filtered = data.threads
@@ -225,6 +228,15 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
                     <Icon className="nx-action-button__icon" name="flag" />
                     Flag
                   </button>
+                  <button
+                    className="nx-action-button nx-action-button--accent"
+                    type="button"
+                    onClick={() => setSplitThread(selected)}
+                    title="Focus View (Enter)"
+                  >
+                    <Icon className="nx-action-button__icon" name="maximize" />
+                    Focus
+                  </button>
                 </div>
               </div>
 
@@ -327,7 +339,12 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
                       <Icon name="file-text" className="nx-compose-tool__icon" />
                     </button>
                   </div>
-                  <button type="button" className="nx-primary-button" disabled={!draftText.trim()}>
+                  <button type="button" className="nx-primary-button" disabled={!draftText.trim()} onClick={() => {
+                    if (draftText.trim()) {
+                      emitNotification({ title: 'Reply Sent', detail: `Response sent to ${selected.ownerName}`, severity: 'success', sound: 'ui-confirm' })
+                      setDraftText('')
+                    }
+                  }}>
                     <Icon className="nx-primary-button__icon" name="send" />
                     Send
                   </button>
@@ -370,6 +387,59 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
           )}
         </main>
       </div>
+
+      {/* Split View — Focus mode for thread detail */}
+      <SplitView
+        open={!!splitThread}
+        title={splitThread?.subject ?? ''}
+        subtitle={splitThread?.ownerName}
+        badge={
+          splitThread ? (
+            <span className={`nx-sentiment-pill ${sentimentClass[splitThread.sentiment]}`}>
+              {splitThread.sentiment.toUpperCase()}
+            </span>
+          ) : undefined
+        }
+        onClose={() => setSplitThread(null)}
+      >
+        {splitThread && (
+          <div className="nx-split-thread">
+            <div className="nx-split-thread__intel">
+              <Icon name="spark" className="nx-split-thread__icon" />
+              <span>
+                {splitThread.sentiment === 'hot'
+                  ? `High urgency thread — ${splitThread.ownerName} is actively engaged.`
+                  : splitThread.sentiment === 'warm'
+                  ? `Active interest — maintain momentum with ${splitThread.ownerName}.`
+                  : `Monitor thread for intent signals from ${splitThread.ownerName}.`}
+              </span>
+            </div>
+            <div className="nx-split-thread__message">
+              <strong>{splitThread.ownerName}</strong>
+              <p>{splitThread.preview}</p>
+              <span className="nx-split-thread__time">{splitThread.lastMessageLabel}</span>
+            </div>
+            {splitThread.aiDraft && (
+              <div className="nx-split-thread__draft">
+                <div className="nx-split-thread__draft-label">
+                  <Icon name="spark" className="nx-split-thread__draft-icon" />
+                  AI Draft Ready
+                </div>
+                <p>{splitThread.aiDraft}</p>
+                <button type="button" className="nx-primary-button">
+                  <Icon className="nx-primary-button__icon" name="send" />
+                  Send Draft
+                </button>
+              </div>
+            )}
+            <div className="nx-split-thread__meta">
+              <div className="nx-info-row"><span>Priority</span><strong>{splitThread.priority}</strong></div>
+              <div className="nx-info-row"><span>Messages</span><strong>{splitThread.messageCount}</strong></div>
+              <div className="nx-info-row"><span>Unread</span><strong>{splitThread.unreadCount}</strong></div>
+            </div>
+          </div>
+        )}
+      </SplitView>
     </div>
   )
 }

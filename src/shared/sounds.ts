@@ -27,6 +27,10 @@ export type SoundEvent =
   | 'ui-tap'
   | 'ui-confirm'
   | 'ui-error'
+  | 'copilot-wake'
+  | 'briefing-open'
+  | 'split-open'
+  | 'toast-arrive'
 
 export interface SoundDefinition {
   id: SoundEvent
@@ -52,6 +56,10 @@ export const SOUND_LIBRARY: SoundDefinition[] = [
   { id: 'ui-tap',              label: 'Glass Tap',             category: 'Interface',      settingsKey: null },
   { id: 'ui-confirm',          label: 'Soft Confirm',          category: 'Interface',      settingsKey: null },
   { id: 'ui-error',            label: 'Muted Error',           category: 'Interface',      settingsKey: null },
+  { id: 'copilot-wake',         label: 'Copilot Wake',          category: 'AI',             settingsKey: 'copilotSoundEnabled' },
+  { id: 'briefing-open',        label: 'Briefing Open',         category: 'System',         settingsKey: 'briefingSoundEnabled' },
+  { id: 'split-open',           label: 'Split View Open',       category: 'Interface',      settingsKey: null },
+  { id: 'toast-arrive',         label: 'Toast Notification',    category: 'System',         settingsKey: 'notificationSoundEnabled' },
 ]
 
 // ── Audio Context (lazy singleton) ────────────────────────────────────────
@@ -209,6 +217,32 @@ const compositions: Record<SoundEvent, SoundComposer> = {
   'ui-error': (ctx, g) => {
     playTone(ctx, g, 280, 'square', 0, 0.08, 0.001, 0.03, 0.15)
     playTone(ctx, g, 220, 'square', 0.05, 0.10, 0.001, 0.04, 0.15)
+  },
+
+  // AI — copilot activation hum, ascending resonance
+  'copilot-wake': (ctx, g) => {
+    playTone(ctx, g, 220, 'sine', 0, 0.35, 0.02, 0.15, 0.15, 330)
+    playTone(ctx, g, 440, 'sine', 0.10, 0.28, 0.02, 0.12, 0.10, 520)
+    playTone(ctx, g, 660, 'triangle', 0.18, 0.20, 0.01, 0.08, 0.06, 720)
+  },
+
+  // System — briefing panel arrival, deep tone
+  'briefing-open': (ctx, g) => {
+    playTone(ctx, g, 180, 'sine', 0, 0.30, 0.01, 0.15, 0.20, 200)
+    playTone(ctx, g, 360, 'sine', 0.08, 0.22, 0.01, 0.10, 0.12, 380)
+    playTone(ctx, g, 540, 'sine', 0.15, 0.16, 0.008, 0.06, 0.06)
+  },
+
+  // Interface — split view slide, soft whoosh
+  'split-open': (ctx, g) => {
+    playTone(ctx, g, 1800, 'sine', 0, 0.08, 0.002, 0.03, 0.08, 1200)
+    playTone(ctx, g, 3600, 'sine', 0.01, 0.05, 0.002, 0.02, 0.03, 2400)
+  },
+
+  // System — toast notification ping
+  'toast-arrive': (ctx, g) => {
+    playTone(ctx, g, 1047, 'sine', 0, 0.10, 0.003, 0.04, 0.20, 1100)
+    playTone(ctx, g, 1568, 'sine', 0.04, 0.08, 0.003, 0.03, 0.12)
   },
 }
 

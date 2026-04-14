@@ -39,6 +39,9 @@ type IconName =
   | 'star'
   | 'archive'
   | 'filter'
+  | 'flag'
+  | 'brain'
+  | 'briefing'
 
 interface IconProps extends SVGProps<SVGSVGElement> {
   name: IconName
@@ -308,6 +311,27 @@ export const Icon = ({ name, ...props }: IconProps) => {
       return (
         <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
           <path d="M3 4h18l-7 8.5V18l-4 2v-7.5z" {...commonProps} />
+        </svg>
+      )
+    case 'flag':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" {...commonProps} />
+          <path d="M4 22V15" {...commonProps} />
+        </svg>
+      )
+    case 'brain':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M12 2a5 5 0 0 0-4.5 7.2A4 4 0 0 0 5 13a4 4 0 0 0 2.5 3.7A3.5 3.5 0 0 0 11 20h2a3.5 3.5 0 0 0 3.5-3.3A4 4 0 0 0 19 13a4 4 0 0 0-2.5-3.8A5 5 0 0 0 12 2z" {...commonProps} />
+          <path d="M12 2v18" {...commonProps} opacity="0.4" />
+        </svg>
+      )
+    case 'briefing':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M4 4h16v16H4z" {...commonProps} />
+          <path d="M8 8h8M8 12h6M8 16h4" {...commonProps} />
         </svg>
       )
   }

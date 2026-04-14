@@ -21,6 +21,8 @@ import {
   formatStageLabel,
 } from '../../../shared/formatters'
 import { Icon } from '../../../shared/icons'
+import { SplitView } from '../../../shared/SplitView'
+import { emitNotification } from '../../../shared/NotificationToast'
 
 type DrawerType = 'market' | 'lead' | 'agent' | null
 type LayoutMode = 'split' | 'map' | 'list' | 'battlefield'
@@ -97,6 +99,7 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('split')
   const [mapMode, setMapMode] = useState<MapMode>('leads')
   const [replayActive, setReplayActive] = useState(false)
+  const [splitLeadId, setSplitLeadId] = useState<string | null>(null)
 
   const visibleLeads = data.leads.filter((lead) => {
     const matchesMarket = marketScope === 'all' || lead.marketId === marketScope
@@ -401,7 +404,7 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
             </button>
           </div>
           <div className="hq__map-modes">
-            {(['leads', 'heat', 'pressure', 'distress'] as MapMode[]).map((mode) => (
+            {(['leads', 'heat', 'pressure', 'distress', 'stage', 'closings'] as MapMode[]).map((mode) => (
               <button
                 key={mode}
                 type="button"
@@ -604,6 +607,13 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
               >
                 Full Dossier
               </button>
+              <button
+                type="button"
+                className="hq__context-action hq__context-action--focus"
+                onClick={() => setSplitLeadId(selectedLead.id)}
+              >
+                Focus View
+              </button>
             </div>
           )}
         </aside>
@@ -656,6 +666,72 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
         {activeDrawer === 'lead' && selectedLead ? <LeadDrawer lead={selectedLead} /> : null}
         {activeDrawer === 'agent' && selectedAgent && selectedAgentLead ? <AgentDrawer agent={selectedAgent} lead={selectedAgentLead} /> : null}
       </DrawerOverlay>
+
+      {/* Split View — lead focus mode */}
+      <SplitView
+        open={!!splitLeadId}
+        title={data.leads.find(l => l.id === splitLeadId)?.ownerName ?? 'Lead Detail'}
+        subtitle={data.leads.find(l => l.id === splitLeadId)?.address}
+        badge={(() => {
+          const lead = data.leads.find(l => l.id === splitLeadId)
+          return lead ? (
+            <span className={classes('hq__spotlight-sentiment', stageToneClass[lead.sentiment])}>
+              {lead.sentiment.toUpperCase()}
+            </span>
+          ) : undefined
+        })()}
+        onClose={() => setSplitLeadId(null)}
+      >
+        {(() => {
+          const lead = data.leads.find(l => l.id === splitLeadId)
+          if (!lead) return null
+          return (
+            <div className="nx-split-lead">
+              <div className="nx-split-lead__urgency">
+                <span className="nx-split-lead__urgency-label">URGENCY</span>
+                <strong>{lead.urgencyScore}</strong>
+                <div className="nx-split-lead__urgency-bar">
+                  <div className="nx-split-lead__urgency-fill" style={{ width: `${lead.urgencyScore}%` }} />
+                </div>
+              </div>
+              <div className="nx-split-lead__factors">
+                {lead.heatFactors.map(f => (
+                  <span key={f} className="nx-split-lead__factor">{f}</span>
+                ))}
+              </div>
+              <div className="nx-split-lead__ai">
+                <Icon name="spark" className="nx-split-lead__ai-icon" />
+                <p>{lead.aiSummary}</p>
+              </div>
+              <div className="nx-split-lead__stats">
+                <div className="nx-info-row"><span>Pipeline Stage</span><strong>{formatStageLabel(lead.pipelineStage)}</strong></div>
+                <div className="nx-info-row"><span>Est. Value</span><strong>{formatCurrency(lead.estimatedValue)}</strong></div>
+                <div className="nx-info-row"><span>Outbound</span><strong>{lead.outboundAttempts}</strong></div>
+                <div className="nx-info-row"><span>Days in Pipeline</span><strong>{lead.pipelineDays}</strong></div>
+              </div>
+              <div className="nx-split-lead__nba">
+                <span className="nx-split-lead__nba-label">NEXT ACTION</span>
+                <p>{lead.recommendedAction}</p>
+              </div>
+              <div className="nx-split-lead__actions">
+                <button className="nx-primary-button" type="button" onClick={() => {
+                  emitNotification({ title: 'Follow-up Sent', detail: `Outbound to ${lead.ownerName}`, severity: 'success' })
+                }}>
+                  <Icon className="nx-primary-button__icon" name="send" />
+                  Send Follow-up
+                </button>
+                <button className="nx-secondary-button" type="button" onClick={() => {
+                  setSelectedLeadId(lead.id)
+                  setActiveDrawer('lead')
+                  setSplitLeadId(null)
+                }}>
+                  Full Dossier
+                </button>
+              </div>
+            </div>
+          )
+        })()}
+      </SplitView>
     </div>
   )
 }

@@ -3,6 +3,10 @@ import { pushRoutePath, replaceRoutePath, useRoutePath } from './router'
 import { resolveRoute } from './routes'
 import { useCommandGrammar, type CommandBinding } from '../shared/command-grammar'
 import { Icon } from '../shared/icons'
+import { AICopilot, type CopilotContext } from '../shared/AICopilot'
+import { BriefingPanel, buildBriefingDigest, type BriefingDigest } from '../shared/BriefingPanel'
+import { NotificationToasts, NotificationCenter, useNotificationCount } from '../shared/NotificationToast'
+import { playSound } from '../shared/sounds'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -69,6 +73,13 @@ export const CommandCenterApp = () => {
   const [cmdFocus, setCmdFocus] = useState(0)
   const cmdInputRef = useRef<HTMLInputElement>(null)
 
+  // New Phase 4 systems
+  const [copilotOpen, setCopilotOpen] = useState(false)
+  const [briefingOpen, setBriefingOpen] = useState(false)
+  const [briefingDigest, setBriefingDigest] = useState<BriefingDigest | null>(null)
+  const [notifCenterOpen, setNotifCenterOpen] = useState(false)
+  const notifCount = useNotificationCount()
+
   // Command grammar bindings — single-key navigation
   const bindings = useMemo<CommandBinding[]>(() => [
     ...navItems.map((item) => ({
@@ -100,6 +111,9 @@ export const CommandCenterApp = () => {
     { id: 'show-pressure', label: 'Show Market Pressure', category: 'Map Modes', action: () => pushRoutePath('/dashboard/live') },
     { id: 'show-buyer-demand', label: 'Show Buyer Demand', category: 'Map Modes', action: () => pushRoutePath('/dashboard/live') },
     { id: 'enter-battlefield', label: 'Enter Battlefield', category: 'Views', action: () => pushRoutePath('/dashboard/live') },
+    { id: 'open-copilot', label: 'Open AI Copilot', hint: '⌘J', category: 'AI', action: () => setCopilotOpen(true) },
+    { id: 'open-briefing', label: 'Operator Briefing', hint: '⌘.', category: 'AI', action: () => openBriefing() },
+    { id: 'open-notif-center', label: 'Notification Center', category: 'System', action: () => setNotifCenterOpen(true) },
   ], [])
 
   const filteredCommands = cmdQuery.trim()
@@ -136,13 +150,54 @@ export const CommandCenterApp = () => {
     setCmdFocus(0)
   }, [])
 
-  // Global keyboard — ⌘K, /, Escape
+  // AI Copilot context — derived from current route
+  const copilotContext = useMemo<CopilotContext>(() => ({
+    surface: route.path,
+  }), [route.path])
+
+  // Briefing digest builder
+  const openBriefing = useCallback(() => {
+    const digest = buildBriefingDigest({
+      hotLeadCount: 0,
+      warmLeadCount: 0,
+      totalLeads: 0,
+      activeAlerts: 0,
+      criticalAlerts: 0,
+      activeMarkets: 0,
+      healthLabel: 'Nominal',
+      pipelineValue: '$0',
+      agentsActive: 0,
+      autopilotActions: 0,
+      unreadInbox: 0,
+    })
+    setBriefingDigest(digest)
+    setBriefingOpen(true)
+    playSound('briefing-open')
+  }, [])
+
+  // Global keyboard — ⌘K, ⌘J, ⌘., /, Escape
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault()
         if (cmdOpen) closeCmd()
         else openCmd()
+        return
+      }
+      // ⌘J — AI Copilot toggle
+      if ((e.metaKey || e.ctrlKey) && e.key === 'j') {
+        e.preventDefault()
+        setCopilotOpen((prev) => {
+          if (!prev) playSound('copilot-wake')
+          return !prev
+        })
+        return
+      }
+      // ⌘. — Operator Briefing
+      if ((e.metaKey || e.ctrlKey) && e.key === '.') {
+        e.preventDefault()
+        if (!briefingOpen) openBriefing()
+        else setBriefingOpen(false)
         return
       }
       if (e.key === 'Escape' && cmdOpen) {
@@ -158,7 +213,7 @@ export const CommandCenterApp = () => {
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [cmdOpen, openCmd, closeCmd])
+  }, [cmdOpen, openCmd, closeCmd, briefingOpen, openBriefing])
 
   useEffect(() => {
     document.title = route.title
@@ -276,6 +331,23 @@ export const CommandCenterApp = () => {
           <div className="nx-dock__spacer" />
           <button
             type="button"
+            className={`nx-dock__item ${copilotOpen ? 'is-active' : ''}`}
+            onClick={() => { setCopilotOpen((p) => { if (!p) playSound('copilot-wake'); return !p }); }}
+            title="AI Copilot (⌘J)"
+          >
+            <Icon name="spark" className="nx-dock__icon" />
+          </button>
+          <button
+            type="button"
+            className="nx-dock__item"
+            onClick={() => setNotifCenterOpen(true)}
+            title="Notifications"
+          >
+            <Icon name="bell" className="nx-dock__icon" />
+            {notifCount > 0 && <span className="nx-dock__badge">{notifCount}</span>}
+          </button>
+          <button
+            type="button"
             className="nx-dock__cmd"
             onClick={openCmd}
             title="Command Palette (⌘K)"
@@ -358,6 +430,34 @@ export const CommandCenterApp = () => {
           <span>waiting for next key…</span>
         </div>
       )}
+
+      {/* Global notification toasts */}
+      <NotificationToasts />
+
+      {/* AI Copilot panel */}
+      <AICopilot
+        open={copilotOpen}
+        context={copilotContext}
+        onClose={() => setCopilotOpen(false)}
+        onAction={(actionId) => {
+          if (actionId === 'go-alerts') pushRoutePath('/alerts')
+          else if (actionId === 'focus-hot') pushRoutePath('/dashboard/live')
+          else if (actionId === 'batch-reply') pushRoutePath('/inbox')
+        }}
+      />
+
+      {/* Operator Briefing panel */}
+      <BriefingPanel
+        open={briefingOpen}
+        digest={briefingDigest}
+        onClose={() => setBriefingOpen(false)}
+      />
+
+      {/* Notification Center */}
+      <NotificationCenter
+        open={notifCenterOpen}
+        onClose={() => setNotifCenterOpen(false)}
+      />
     </div>
   )
 }
