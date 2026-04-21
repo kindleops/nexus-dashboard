@@ -29,13 +29,23 @@ interface VoiceCallbacks {
   onError?: (error: string) => void
 }
 
-// SpeechRecognition type alias for cross-browser support
-type SpeechRecognitionType = typeof window extends { SpeechRecognition: infer T } ? T : unknown
+type SpeechRecognitionLike = {
+  continuous: boolean
+  interimResults: boolean
+  lang: string
+  onstart: (() => void) | null
+  onresult: ((event: { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null
+  onerror: ((event: { error: string }) => void) | null
+  onend: (() => void) | null
+  start: () => void
+  stop: () => void
+  abort: () => void
+}
 
-function getSpeechRecognition(): (new () => SpeechRecognition) | null {
+function getSpeechRecognition(): (new () => SpeechRecognitionLike) | null {
   if (typeof window === 'undefined') return null
-  return (window as unknown as Record<string, unknown>).SpeechRecognition as (new () => SpeechRecognition) | null
-    ?? (window as unknown as Record<string, unknown>).webkitSpeechRecognition as (new () => SpeechRecognition) | null
+  return (window as unknown as Record<string, unknown>).SpeechRecognition as (new () => SpeechRecognitionLike) | null
+    ?? (window as unknown as Record<string, unknown>).webkitSpeechRecognition as (new () => SpeechRecognitionLike) | null
     ?? null
 }
 
@@ -50,7 +60,7 @@ export function useVoiceMode(callbacks?: VoiceCallbacks) {
     permissionDenied: false,
   })
 
-  const recognitionRef = useRef<SpeechRecognition | null>(null)
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const animFrameRef = useRef<number>(0)
@@ -126,7 +136,7 @@ export function useVoiceMode(callbacks?: VoiceCallbacks) {
       callbacks?.onStart?.()
     }
 
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
+    recognition.onresult = (event) => {
       let interim = ''
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i]
@@ -145,7 +155,7 @@ export function useVoiceMode(callbacks?: VoiceCallbacks) {
       if (interim) callbacks?.onInterim?.(interim)
     }
 
-    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+    recognition.onerror = (event) => {
       const msg = event.error === 'not-allowed'
         ? 'Microphone access denied'
         : `Voice error: ${event.error}`
@@ -174,6 +184,12 @@ export function useVoiceMode(callbacks?: VoiceCallbacks) {
     stopAmplitude()
   }, [stopAmplitude])
 
+  const cancelListening = useCallback(() => {
+    recognitionRef.current?.abort()
+    stopAmplitude()
+    setState(s => ({ ...s, listening: false, interimTranscript: '', error: null }))
+  }, [stopAmplitude])
+
   const toggleListening = useCallback(() => {
     if (state.listening) {
       stopListening()
@@ -186,11 +202,18 @@ export function useVoiceMode(callbacks?: VoiceCallbacks) {
     setState(s => ({ ...s, transcript: '', interimTranscript: '' }))
   }, [])
 
+  const retryListening = useCallback(() => {
+    setState(s => ({ ...s, error: null, permissionDenied: false }))
+    startListening()
+  }, [startListening])
+
   return {
     ...state,
     startListening,
     stopListening,
+    cancelListening,
     toggleListening,
     clearTranscript,
+    retryListening,
   }
 }

@@ -81,25 +81,35 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query.trim().toLowerCase())
   const [marketScope, setMarketScope] = useState<string>('all')
-  const [propertyType, setPropertyType] = useState<string>('all')
-  const [sentiment, setSentiment] = useState<string>('all')
-  const [stage, setStage] = useState<string>('all')
-  const [ownerType, setOwnerType] = useState<string>('all')
+  const [propertyType] = useState<string>('all')
+  const [sentiment] = useState<string>('all')
+  const [stage] = useState<string>('all')
+  const [ownerType] = useState<string>('all')
   const [leftRailOpen, setLeftRailOpen] = useState(true)
   const [rightRailOpen, setRightRailOpen] = useState(true)
-  const [filtersOpen, setFiltersOpen] = useState(true)
-  const [metricsCollapsed, setMetricsCollapsed] = useState(false)
   const [activeDrawer, setActiveDrawer] = useState<DrawerType>(null)
   const [selectedMarketId, setSelectedMarketId] = useState(data.defaults.marketId)
   const [selectedLeadId, setSelectedLeadId] = useState(data.defaults.leadId)
   const [selectedAgentId, setSelectedAgentId] = useState(data.defaults.agentId)
-  const [dismissedAlertIds, setDismissedAlertIds] = useState<string[]>([])
+  const [dismissedAlertIds] = useState<string[]>([])
   const [clock, setClock] = useState(() => new Date())
-  // New — layout, map mode, replay
+  // New — layout and map mode
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('split')
   const [mapMode, setMapMode] = useState<MapMode>('leads')
-  const [replayActive, setReplayActive] = useState(false)
   const [splitLeadId, setSplitLeadId] = useState<string | null>(null)
+
+  useEffect(() => {
+    const handleCopilotSplitView = (event: Event) => {
+      const detail = (event as CustomEvent<{ surfacePath?: string; target?: string }>).detail
+      if (detail?.surfacePath !== '/dashboard/live') return
+      if (detail.target === 'current-lead' || !detail.target) {
+        setSplitLeadId(selectedLeadId)
+      }
+    }
+
+    window.addEventListener('nx:copilot-split-view', handleCopilotSplitView)
+    return () => window.removeEventListener('nx:copilot-split-view', handleCopilotSplitView)
+  }, [selectedLeadId])
 
   const visibleLeads = data.leads.filter((lead) => {
     const matchesMarket = marketScope === 'all' || lead.marketId === marketScope
@@ -191,13 +201,6 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
       return
     }
 
-    // Cmd/Ctrl + R — Replay Mode toggle
-    if ((event.metaKey || event.ctrlKey) && event.key === 'r') {
-      event.preventDefault()
-      setReplayActive((curr) => !curr)
-      return
-    }
-
     const target = event.target
     if (
       target instanceof HTMLInputElement ||
@@ -273,10 +276,6 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
 
   const selectedAgentLead =
     data.leads.find((lead) => lead.id === selectedAgent?.focusLeadId) ?? selectedLead
-
-  const selectedMarketLeads = data.leads
-    .filter((lead) => lead.marketId === selectedMarket?.id)
-    .slice(0, 3)
 
   // Effective open states account for layout mode
   const leftEffOpen = leftRailOpen && layoutMode !== 'map' && layoutMode !== 'battlefield'
@@ -388,7 +387,7 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
             </button>
             <button
               type="button"
-              className={classes('hq__mode-btn', layoutMode === 'list' && 'is-active')}
+              className="hq__mode-btn"
               title="List View"
               onClick={() => setLayoutMode('list')}
             >
@@ -396,7 +395,7 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
             </button>
             <button
               type="button"
-              className={classes('hq__mode-btn', layoutMode === 'battlefield' && 'is-active')}
+              className="hq__mode-btn"
               title="Battlefield (⌘B)"
               onClick={() => setLayoutMode('battlefield')}
             >
@@ -598,7 +597,7 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
               <div className="hq__spotlight-stats">
                 <span>{formatStageLabel(selectedLead.pipelineStage)}</span>
                 <span>{selectedLead.outboundAttempts} outbound</span>
-                <span>{selectedLead.daysSinceLastContact}d since contact</span>
+                <span>{selectedLead.pipelineDays}d in pipeline</span>
               </div>
               <button
                 type="button"
@@ -847,7 +846,7 @@ const DashboardHeader = ({
   </header>
 )
 
-const IntelligenceRail = ({
+export const IntelligenceRail = ({
   data,
   filtersOpen,
   onToggleFilters,
@@ -1076,7 +1075,7 @@ const IntelligenceRail = ({
   </aside>
 )
 
-const MapStage = ({
+export const MapStage = ({
   markets,
   leads,
   selectedMarket,
@@ -1243,7 +1242,7 @@ const MapStage = ({
     </section>
   )
 
-const ActivityRail = ({
+export const ActivityRail = ({
   alerts,
   timeline,
   selectedLead,
@@ -1729,7 +1728,7 @@ const LeadListTable = ({
   </section>
 )
 
-const CommandHintBar = ({
+export const CommandHintBar = ({
   activeDrawer,
   layoutMode,
 }: {
@@ -1762,7 +1761,7 @@ const timelineKindIcon: Record<string, string> = {
   autopilot: 'command',
 }
 
-const TimelineRail = ({ events }: { events: LiveActivity[] }) => {
+export const TimelineRail = ({ events }: { events: LiveActivity[] }) => {
   const railRef = useRef<HTMLDivElement>(null)
   const recent = events.slice(0, 30)
 

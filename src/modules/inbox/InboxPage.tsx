@@ -1,7 +1,6 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { InboxModel, InboxThread } from './inbox.adapter'
 import { Icon } from '../../shared/icons'
-import { formatRelativeTime } from '../../shared/formatters'
 import { SplitView } from '../../shared/SplitView'
 import { emitNotification } from '../../shared/NotificationToast'
 
@@ -58,6 +57,19 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
     })
 
   const selected = data.threads.find((t) => t.id === selectedId) ?? null
+
+  useEffect(() => {
+    const handleCopilotSplitView = (event: Event) => {
+      const detail = (event as CustomEvent<{ surfacePath?: string; target?: string }>).detail
+      if (detail?.surfacePath !== '/inbox') return
+      if (selected) {
+        setSplitThread(selected)
+      }
+    }
+
+    window.addEventListener('nx:copilot-split-view', handleCopilotSplitView)
+    return () => window.removeEventListener('nx:copilot-split-view', handleCopilotSplitView)
+  }, [selected])
 
   const handleSelectThread = (id: string) => {
     setSelectedId(id)

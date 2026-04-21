@@ -16,6 +16,8 @@ export type DefaultMapMode = 'leads' | 'distress' | 'heat' | 'stage' | 'pressure
 export type GreetingStyle = 'formal' | 'casual' | 'minimal' | 'cinematic'
 export type CopilotInitiative = 'proactive' | 'balanced' | 'on-demand'
 export type CopilotVerbosity = 'concise' | 'detailed'
+export type CopilotReasoningDepth = 'minimal' | 'standard' | 'deep'
+export type CopilotVoiceMode = 'off' | 'text' | 'full'
 export type NexusTheme = 'dark-matter' | 'midnight-glass' | 'tactical-blue' | 'carbon-gold' | 'monochrome-ops' | 'infrared' | 'arctic-signal' | 'operator-black'
 export type AccentPalette = 'cyan' | 'emerald' | 'amber' | 'violet' | 'rose' | 'ice'
 
@@ -77,7 +79,19 @@ export interface NexusSettings {
   copilotModel: string
   actionPermission: string
   voiceModeDefault: boolean
+  copilotVoiceMode: CopilotVoiceMode
+  copilotAutonomous: boolean
+  // TTS controls
+  ttsVolume: number
+  ttsRate: number
+  ttsPitch: number
+  ttsVoice: string
+  ttsPersona: 'neutral' | 'warm' | 'energetic' | 'calm' | 'robotic' | 'friendly' | 'authoritative' | 'narrator'
   orbPlacement: 'dock' | 'corner'
+  copilotOrbAlwaysVisible: boolean
+  copilotOrbIntensity: number   // 0.2–2.0
+  copilotOrbSpeed: number       // 0.5–2.0
+  copilotMissionTracePinned: boolean
   copilotOpenOnRoomChange: boolean
 
   // Briefing Mode
@@ -100,6 +114,7 @@ export interface NexusSettings {
   greetingStyle: GreetingStyle
   copilotInitiative: CopilotInitiative
   copilotVerbosity: CopilotVerbosity
+  copilotReasoningDepth: CopilotReasoningDepth
 
   // Theme
   nexusTheme: NexusTheme
@@ -159,7 +174,18 @@ export const DEFAULT_SETTINGS: NexusSettings = {
   copilotModel: 'nexus-balanced',
   actionPermission: 'confirm-before',
   voiceModeDefault: false,
+  copilotVoiceMode: 'off',
+  copilotAutonomous: false,
+  ttsVolume: 1,
+  ttsRate: 1,
+  ttsPitch: 1,
+  ttsVoice: '',
+  ttsPersona: 'neutral',
   orbPlacement: 'dock',
+  copilotOrbAlwaysVisible: true,
+  copilotOrbIntensity: 1,
+  copilotOrbSpeed: 1,
+  copilotMissionTracePinned: false,
   copilotOpenOnRoomChange: false,
   briefingAutoGenerate: true,
   briefingSoundEnabled: true,
@@ -176,6 +202,7 @@ export const DEFAULT_SETTINGS: NexusSettings = {
   greetingStyle: 'formal',
   copilotInitiative: 'balanced',
   copilotVerbosity: 'concise',
+  copilotReasoningDepth: 'standard',
 
   // Theme
   nexusTheme: 'dark-matter',

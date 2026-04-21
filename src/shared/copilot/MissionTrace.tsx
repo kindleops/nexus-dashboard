@@ -1,23 +1,18 @@
-/**
- * NEXUS MissionTrace — Cinematic Activity Log
- *
- * Structured event feed showing copilot actions with timestamps,
- * severity, and stateful event stages. Compact + expanded modes.
- * Newest entries animate in from the top with spring motion.
- */
-
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { TraceEvent } from './copilot-state'
 
 interface MissionTraceProps {
   events: TraceEvent[]
   maxVisible?: number
+  variant?: 'sidecar' | 'deck'
+  forceExpanded?: boolean
+  pinnedDefault?: boolean
 }
 
-const TYPE_ICONS: Record<string, string> = {
+const TYPE_ICONS: Record<TraceEvent['type'], string> = {
   context: '◈',
   parse: '⟐',
-  search: '⏻',
+  search: '⌁',
   analysis: '◉',
   draft: '✎',
   execution: '▶',
@@ -29,65 +24,146 @@ const TYPE_ICONS: Record<string, string> = {
   system: '⎔',
 }
 
-const TYPE_ACCENT: Record<string, string> = {
-  context: 'trace-ctx',
-  parse: 'trace-parse',
-  search: 'trace-search',
-  analysis: 'trace-analyze',
-  draft: 'trace-draft',
-  execution: 'trace-exec',
-  completion: 'trace-done',
-  error: 'trace-err',
-  voice: 'trace-voice',
-  greeting: 'trace-greet',
-  confirmation: 'trace-confirm',
-  system: 'trace-sys',
+const FILTERS = ['all', 'error', 'execution', 'analysis', 'voice'] as const
+
+function formatTimestamp(ts: number) {
+  return new Date(ts).toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  })
 }
 
-function formatTimestamp(ts: number): string {
-  const d = new Date(ts)
-  return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+function getSeverity(type: TraceEvent['type']): 'critical' | 'warning' | 'info' | 'trace' {
+  if (type === 'error') return 'critical'
+  if (type === 'execution' || type === 'confirmation') return 'warning'
+  if (type === 'analysis' || type === 'completion') return 'info'
+  return 'trace'
 }
 
-export function MissionTrace({ events, maxVisible = 50 }: MissionTraceProps) {
-  const [expanded, setExpanded] = useState(false)
-  const visible = expanded ? events.slice(0, maxVisible) : events.slice(0, 8)
+export function MissionTrace({
+  events,
+  maxVisible = 50,
+  variant = 'sidecar',
+  forceExpanded = false,
+  pinnedDefault = false,
+}: MissionTraceProps) {
+  const [expanded, setExpanded] = useState(forceExpanded || variant === 'deck')
+  const [filter, setFilter] = useState<(typeof FILTERS)[number]>('all')
+  const [pinnedIds, setPinnedIds] = useState<string[]>([])
+
+  useEffect(() => {
+    if (forceExpanded) setExpanded(true)
+  }, [forceExpanded])
+
+  useEffect(() => {
+    if (!pinnedDefault || pinnedIds.length > 0) return
+    setPinnedIds(events.slice(0, Math.min(3, events.length)).map((event) => event.id))
+  }, [events, pinnedDefault, pinnedIds.length])
+
+  const filtered = useMemo(() => {
+    return filter === 'all' ? events : events.filter((event) => event.type === filter)
+  }, [events, filter])
+
+  const visible = useMemo(() => {
+    const limit = expanded ? maxVisible : variant === 'deck' ? 14 : 8
+    return filtered.slice(0, limit)
+  }, [expanded, filtered, maxVisible, variant])
+
+  const pinned = useMemo(() => {
+    return events.filter((event) => pinnedIds.includes(event.id)).slice(0, 3)
+  }, [events, pinnedIds])
 
   if (events.length === 0) {
     return (
-      <div className="nx-trace nx-trace--empty">
-        <span className="nx-trace__empty-label">No mission activity</span>
+      <div className={`nx-trace nx-trace--${variant} nx-trace--empty`}>
+        <span className="nx-trace__empty-label">Mission trace is waiting for live activity.</span>
       </div>
     )
   }
 
   return (
-    <div className={`nx-trace ${expanded ? 'nx-trace--expanded' : ''}`}>
-      <div className="nx-trace__header">
-        <span className="nx-trace__title">Mission Trace</span>
-        <span className="nx-trace__count">{events.length}</span>
-        {events.length > 8 && (
-          <button className="nx-trace__toggle" onClick={() => setExpanded(e => !e)}>
-            {expanded ? 'Collapse' : 'Expand'}
-          </button>
-        )}
-      </div>
-      <div className="nx-trace__feed">
-        {visible.map((ev, i) => (
-          <div
-            key={ev.id}
-            className={`nx-trace__event ${TYPE_ACCENT[ev.type] ?? 'trace-sys'}`}
-            style={{ animationDelay: `${i * 30}ms` }}
+    <section className={`nx-trace nx-trace--${variant} ${expanded ? 'nx-trace--expanded' : ''}`}>
+      <header className="nx-trace__header">
+        <div>
+          <span className="nx-trace__eyebrow">Mission Trace</span>
+          <h3 className="nx-trace__title">Live intelligence feed</h3>
+        </div>
+
+        <div className="nx-trace__header-actions">
+          <span className="nx-trace__count">{events.length}</span>
+          {events.length > (variant === 'deck' ? 14 : 8) && !forceExpanded ? (
+            <button type="button" className="nx-trace__toggle" onClick={() => setExpanded((current) => !current)}>
+              {expanded ? 'Collapse' : 'Expand'}
+            </button>
+          ) : null}
+        </div>
+      </header>
+
+      <div className="nx-trace__filters">
+        {FILTERS.map((item) => (
+          <button
+            key={item}
+            type="button"
+            className={`nx-trace__filter ${filter === item ? 'is-active' : ''}`}
+            onClick={() => setFilter(item)}
           >
-            <span className="nx-trace__icon">{TYPE_ICONS[ev.type] ?? '·'}</span>
-            <div className="nx-trace__body">
-              <span className="nx-trace__label">{ev.label}</span>
-              {ev.detail && <span className="nx-trace__detail">{ev.detail}</span>}
-            </div>
-            <span className="nx-trace__ts">{formatTimestamp(ev.ts)}</span>
-          </div>
+            {item === 'all' ? 'All' : item.charAt(0).toUpperCase() + item.slice(1)}
+          </button>
         ))}
       </div>
-    </div>
+
+      {pinned.length > 0 && (
+        <div className="nx-trace__pinned-grid">
+          {pinned.map((event) => (
+            <article key={event.id} className={`nx-trace__event nx-trace__event--pinned is-${getSeverity(event.type)}`}>
+              <div className="nx-trace__event-top">
+                <span className="nx-trace__icon">{TYPE_ICONS[event.type]}</span>
+                <span className="nx-trace__event-label">{event.label}</span>
+                <span className="nx-trace__ts">{formatTimestamp(event.ts)}</span>
+              </div>
+              {event.detail ? <p className="nx-trace__detail">{event.detail}</p> : null}
+            </article>
+          ))}
+        </div>
+      )}
+
+      <div className="nx-trace__feed">
+        {visible.map((event, index) => {
+          const severity = getSeverity(event.type)
+          const isPinned = pinnedIds.includes(event.id)
+          return (
+            <article
+              key={event.id}
+              className={`nx-trace__event is-${severity} ${isPinned ? 'is-pinned' : ''}`}
+              style={{ animationDelay: `${index * 28}ms` }}
+            >
+              <div className="nx-trace__event-top">
+                <span className="nx-trace__severity-dot" data-severity={severity} />
+                <span className="nx-trace__icon">{TYPE_ICONS[event.type]}</span>
+                <span className="nx-trace__event-label">{event.label}</span>
+                <button
+                  type="button"
+                  className={`nx-trace__pin ${isPinned ? 'is-pinned' : ''}`}
+                  onClick={() => setPinnedIds((current) => current.includes(event.id) ? current.filter((id) => id !== event.id) : [...current, event.id])}
+                >
+                  ⊡
+                </button>
+                <span className="nx-trace__ts">{formatTimestamp(event.ts)}</span>
+              </div>
+
+              {event.detail ? <p className="nx-trace__detail">{event.detail}</p> : null}
+
+              <div className="nx-trace__meta-row">
+                {event.contextLabel ? <span className="nx-trace__meta-chip">{event.contextLabel}</span> : null}
+                {event.state ? <span className="nx-trace__meta-chip">{event.state}</span> : null}
+                <span className="nx-trace__meta-chip">{event.type}</span>
+              </div>
+            </article>
+          )
+        })}
+      </div>
+    </section>
   )
 }

@@ -3,11 +3,11 @@ import { pushRoutePath, replaceRoutePath, useRoutePath } from './router'
 import { resolveRoute } from './routes'
 import { useCommandGrammar, type CommandBinding } from '../shared/command-grammar'
 import { Icon } from '../shared/icons'
-import { CopilotShell, type CopilotContext } from '../shared/copilot'
+import { CopilotShell, type CopilotContext, type ResolvedIntent } from '../shared/copilot'
 import { BriefingPanel, buildBriefingDigest, type BriefingDigest } from '../shared/BriefingPanel'
 import { NotificationToasts, NotificationCenter, useNotificationCount } from '../shared/NotificationToast'
 import { playSound } from '../shared/sounds'
-import { applyThemeToDOM, subscribeSettings } from '../shared/settings'
+import { applyThemeToDOM, subscribeSettings, updateSetting, type NexusTheme } from '../shared/settings'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -49,6 +49,24 @@ const navItems: NavItem[] = [
   { path: '/notifications', label: 'Notifications', icon: 'bell', shortcut: 'N', room: 'Event Stream' },
   { path: '/settings', label: 'Settings', icon: 'settings', shortcut: 'S', room: 'Control Layer' },
 ]
+
+const THEME_ALIASES: Record<string, NexusTheme> = {
+  'dark-matter': 'dark-matter',
+  'dark matter': 'dark-matter',
+  'midnight-glass': 'midnight-glass',
+  'midnight glass': 'midnight-glass',
+  'tactical-blue': 'tactical-blue',
+  'tactical blue': 'tactical-blue',
+  'carbon-gold': 'carbon-gold',
+  'carbon gold': 'carbon-gold',
+  'monochrome-ops': 'monochrome-ops',
+  'monochrome ops': 'monochrome-ops',
+  infrared: 'infrared',
+  'arctic-signal': 'arctic-signal',
+  'arctic signal': 'arctic-signal',
+  'operator-black': 'operator-black',
+  'operator black': 'operator-black',
+}
 
 // ── Global Command Palette ─────────────────────────────────────────────────
 
@@ -109,6 +127,26 @@ export const CommandCenterApp = () => {
 
   const grammarState = useCommandGrammar(bindings)
 
+  // Briefing digest builder
+  const openBriefing = useCallback(() => {
+    const digest = buildBriefingDigest({
+      hotLeadCount: 0,
+      warmLeadCount: 0,
+      totalLeads: 0,
+      activeAlerts: 0,
+      criticalAlerts: 0,
+      activeMarkets: 0,
+      healthLabel: 'Nominal',
+      pipelineValue: '$0',
+      agentsActive: 0,
+      autopilotActions: 0,
+      unreadInbox: 0,
+    })
+    setBriefingDigest(digest)
+    setBriefingOpen(true)
+    playSound('briefing-open')
+  }, [])
+
   // Global commands for palette
   const globalCommands = useMemo<GlobalCommand[]>(() => [
     ...navItems.map((item) => ({
@@ -130,7 +168,7 @@ export const CommandCenterApp = () => {
     { id: 'open-copilot', label: 'Open AI Copilot', hint: '⌘J', category: 'AI', action: () => setCopilotOpen(true) },
     { id: 'open-briefing', label: 'Operator Briefing', hint: '⌘.', category: 'AI', action: () => openBriefing() },
     { id: 'open-notif-center', label: 'Notification Center', category: 'System', action: () => setNotifCenterOpen(true) },
-  ], [])
+  ], [openBriefing])
 
   const filteredCommands = cmdQuery.trim()
     ? globalCommands.filter(
@@ -170,27 +208,105 @@ export const CommandCenterApp = () => {
   const copilotContext = useMemo<CopilotContext>(() => ({
     surface: route.path,
     roomPath: route.path,
-  }), [route.path])
+    entityLabel: route.title,
+  }), [route.path, route.title])
 
-  // Briefing digest builder
-  const openBriefing = useCallback(() => {
-    const digest = buildBriefingDigest({
-      hotLeadCount: 0,
-      warmLeadCount: 0,
-      totalLeads: 0,
-      activeAlerts: 0,
-      criticalAlerts: 0,
-      activeMarkets: 0,
-      healthLabel: 'Nominal',
-      pipelineValue: '$0',
-      agentsActive: 0,
-      autopilotActions: 0,
-      unreadInbox: 0,
-    })
-    setBriefingDigest(digest)
-    setBriefingOpen(true)
-    playSound('briefing-open')
+  const resolveThemeAlias = useCallback((rawTheme?: string): NexusTheme | null => {
+    if (!rawTheme) return null
+    const normalized = rawTheme.trim().toLowerCase()
+    return THEME_ALIASES[normalized] ?? null
   }, [])
+
+  const dispatchSplitView = useCallback((surfacePath: string, target?: string) => {
+    window.dispatchEvent(new CustomEvent('nx:copilot-split-view', { detail: { surfacePath, target } }))
+  }, [])
+
+  const handleCopilotAction = useCallback((intent: ResolvedIntent) => {
+    if (intent.domain === 'room' && intent.params.target) {
+      pushRoutePath(intent.params.target)
+      return
+    }
+
+    if (intent.domain === 'map') {
+      pushRoutePath('/dashboard/live')
+      return
+    }
+
+    if (intent.domain === 'inbox') {
+      pushRoutePath('/inbox')
+      return
+    }
+
+    if (intent.domain === 'alerts') {
+      pushRoutePath('/alerts')
+      return
+    }
+
+    if (intent.domain === 'markets') {
+      pushRoutePath('/markets')
+      return
+    }
+
+    if (intent.domain === 'buyers') {
+      pushRoutePath('/buyer')
+      return
+    }
+
+    if (intent.domain === 'title') {
+      pushRoutePath('/title')
+      return
+    }
+
+    if (intent.domain === 'watchlist') {
+      pushRoutePath('/watchlists')
+      return
+    }
+
+    if (intent.domain === 'notification') {
+      pushRoutePath('/notifications')
+      return
+    }
+
+    if (intent.domain === 'autopilot') {
+      pushRoutePath('/dashboard/live')
+      return
+    }
+
+    if (intent.domain === 'briefing') {
+      openBriefing()
+      return
+    }
+
+    if (intent.domain === 'settings' && intent.action === 'set_theme') {
+      const nextTheme = resolveThemeAlias(intent.params.theme)
+      if (nextTheme) {
+        updateSetting('nexusTheme', nextTheme)
+        applyThemeToDOM()
+      }
+      pushRoutePath('/settings')
+      return
+    }
+
+    if (intent.domain === 'copilot' && intent.action === 'switch_mode' && intent.params.mode) {
+      updateSetting('copilotMode', intent.params.mode as 'orb' | 'sidecar' | 'console')
+      return
+    }
+
+    if (intent.domain === 'copilot' && intent.action === 'voice_mode') {
+      updateSetting('voiceModeDefault', intent.params.enabled === 'true')
+      return
+    }
+
+    if (intent.domain === 'split_view') {
+      const targetRoute = route.path === '/dashboard/live' || route.path === '/inbox' ? route.path : '/dashboard/live'
+      if (route.path !== targetRoute) {
+        pushRoutePath(targetRoute)
+        window.setTimeout(() => dispatchSplitView(targetRoute, intent.params.target), 60)
+      } else {
+        dispatchSplitView(targetRoute, intent.params.target)
+      }
+    }
+  }, [dispatchSplitView, openBriefing, resolveThemeAlias, route.path])
 
   // Global keyboard — ⌘K, ⌘J, ⌘., /, Escape
   useEffect(() => {
@@ -215,6 +331,12 @@ export const CommandCenterApp = () => {
         e.preventDefault()
         if (!briefingOpen) openBriefing()
         else setBriefingOpen(false)
+        return
+      }
+      // ⌘V — Voice toggle (only activate voice; do not open sidecar)
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v') {
+        e.preventDefault()
+        window.dispatchEvent(new CustomEvent('nx:copilot-voice-activate'))
         return
       }
       if (e.key === 'Escape' && cmdOpen) {
@@ -457,16 +579,7 @@ export const CommandCenterApp = () => {
         context={copilotContext}
         onClose={() => setCopilotOpen(false)}
         onToggle={() => setCopilotOpen(p => { if (!p) playSound('copilot-wake'); return !p })}
-        onAction={(intent) => {
-          if (intent.domain === 'room' && intent.params.target) pushRoutePath(intent.params.target)
-          else if (intent.domain === 'map') pushRoutePath('/dashboard/live')
-          else if (intent.domain === 'inbox') pushRoutePath('/inbox')
-          else if (intent.domain === 'alerts') pushRoutePath('/alerts')
-          else if (intent.domain === 'markets') pushRoutePath('/markets')
-          else if (intent.domain === 'buyers') pushRoutePath('/buyer')
-          else if (intent.domain === 'title') pushRoutePath('/title')
-          else if (intent.domain === 'briefing') openBriefing()
-        }}
+        onAction={handleCopilotAction}
       />
 
       {/* Operator Briefing panel */}

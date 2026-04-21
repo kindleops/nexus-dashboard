@@ -93,11 +93,42 @@ const COPILOT_INITIATIVE: { value: CopilotInitiative; label: string }[] = [
 const COPILOT_VERBOSITY: { value: CopilotVerbosity; label: string }[] = [
   { value: 'concise', label: 'Concise' }, { value: 'detailed', label: 'Detailed' },
 ]
+const COPILOT_MODES = [
+  { value: 'orb', label: 'Orb' },
+  { value: 'sidecar', label: 'Sidecar' },
+  { value: 'console', label: 'Command Deck' },
+] as const
+const ORB_PLACEMENTS = [
+  { value: 'dock', label: 'Dock' },
+  { value: 'corner', label: 'Corner' },
+] as const
 
 export const SettingsPage = () => {
   const [s, setS] = useState(loadSettings)
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
 
   useEffect(() => subscribeSettings(() => setS(loadSettings())), [])
+
+  useEffect(() => {
+    if (!('speechSynthesis' in window)) return
+    const synth = window.speechSynthesis
+    const load = () => {
+      try {
+        const v = synth.getVoices() || []
+        setVoices(v)
+      } catch {
+        setVoices([])
+      }
+    }
+    load()
+    // Some browsers populate voices lazily — try again shortly and listen for the voiceschanged event
+    const timerId = window.setTimeout(load, 250)
+    synth.addEventListener('voiceschanged', load)
+    return () => {
+      try { synth.removeEventListener('voiceschanged', load) } catch (_) { /* noop */ }
+      window.clearTimeout(timerId)
+    }
+  }, [])
 
   const toggle = (key: keyof NexusSettings) => {
     updateSetting(key, !s[key] as any)
@@ -215,6 +246,16 @@ export const SettingsPage = () => {
               <button type="button" className={classes('nx-toggle', s.copilotEnabled && 'is-on')} onClick={() => toggle('copilotEnabled')} role="switch" aria-checked={s.copilotEnabled}><span className="nx-toggle__thumb" /></button>
             </div>
             <div className="nx-setting-row">
+              <div className="nx-setting-row__info"><strong>Presentation Mode</strong><p>Choose Orb, Sidecar, or the full Command Deck</p></div>
+              <div className="nx-setting-row__control">
+                <div className="nx-segmented">
+                  {COPILOT_MODES.map(mode => (
+                    <button key={mode.value} type="button" className={classes('nx-segmented__btn', s.copilotMode === mode.value && 'is-active')} onClick={() => setSelect('copilotMode', mode.value)}>{mode.label}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="nx-setting-row">
               <div className="nx-setting-row__info"><strong>Initiative Level</strong><p>How proactively the copilot surfaces insights</p></div>
               <div className="nx-setting-row__control">
                 <div className="nx-segmented">
@@ -239,8 +280,124 @@ export const SettingsPage = () => {
               <button type="button" className={classes('nx-toggle', s.copilotAutoOpen && 'is-on')} onClick={() => toggle('copilotAutoOpen')} role="switch" aria-checked={s.copilotAutoOpen}><span className="nx-toggle__thumb" /></button>
             </div>
             <div className="nx-setting-row">
+              <div className="nx-setting-row__info"><strong>Voice Mode Default</strong><p>Prime voice capture when the deck opens</p></div>
+              <button type="button" className={classes('nx-toggle', s.voiceModeDefault && 'is-on')} onClick={() => toggle('voiceModeDefault')} role="switch" aria-checked={s.voiceModeDefault}><span className="nx-toggle__thumb" /></button>
+            </div>
+            <div className="nx-setting-row">
+              <div className="nx-setting-row__info"><strong>Autonomous Mode</strong><p>Allow Copilot to execute actions automatically without explicit approval for typed or spoken commands</p></div>
+              <button type="button" className={classes('nx-toggle', s.copilotAutonomous && 'is-on')} onClick={() => toggle('copilotAutonomous')} role="switch" aria-checked={s.copilotAutonomous}><span className="nx-toggle__thumb" /></button>
+            </div>
+            <div className="nx-setting-row">
+              <div className="nx-setting-row__info"><strong>Voice Output</strong><p>When clicking away from the sidecar: talk or display animated text</p></div>
+              <div className="nx-setting-row__control">
+                <div className="nx-segmented">
+                  <button type="button" className={classes('nx-segmented__btn', s.copilotVoiceMode === 'full' && 'is-active')} onClick={() => setSelect('copilotVoiceMode', 'full')}>Full Voice</button>
+                  <button type="button" className={classes('nx-segmented__btn', s.copilotVoiceMode === 'text' && 'is-active')} onClick={() => setSelect('copilotVoiceMode', 'text')}>Animated Text</button>
+                  <button type="button" className={classes('nx-segmented__btn', s.copilotVoiceMode === 'off' && 'is-active')} onClick={() => setSelect('copilotVoiceMode', 'off')}>Off</button>
+                </div>
+              </div>
+            </div>
+
+            <div className="nx-setting-row">
+              <div className="nx-setting-row__info"><strong>TTS Voice Controls</strong><p>Adjust volume, rate, and pitch for full voice output</p></div>
+              <div className="nx-setting-row__control">
+                <div className="nx-tts-controls">
+                  <label className="nx-tts-label">Volume {s.ttsVolume}</label>
+                  <input type="range" className="nx-range" min={0} max={1} step={0.05} value={s.ttsVolume} onChange={e => setRange('ttsVolume', parseFloat(e.target.value))} />
+                  <label className="nx-tts-label">Rate {s.ttsRate}</label>
+                  <input type="range" className="nx-range" min={0.5} max={2} step={0.1} value={s.ttsRate} onChange={e => setRange('ttsRate', parseFloat(e.target.value))} />
+                  <label className="nx-tts-label">Pitch {s.ttsPitch}</label>
+                  <input type="range" className="nx-range" min={0.5} max={2} step={0.1} value={s.ttsPitch} onChange={e => setRange('ttsPitch', parseFloat(e.target.value))} />
+                  <label className="nx-tts-label" style={{ marginTop: 8 }}>Voice</label>
+                  <select className="nx-select" value={s.ttsVoice ?? ''} onChange={e => setSelect('ttsVoice', e.target.value)}>
+                    <option value="">Default</option>
+                    {voices.map((v) => (
+                      <option key={v.voiceURI || v.name} value={v.voiceURI || v.name}>{`${v.name} ${v.lang ? `(${v.lang})` : ''}`}</option>
+                    ))}
+                  </select>
+                  <label className="nx-tts-label" style={{ marginTop: 8 }}>Persona</label>
+                  <select className="nx-select" value={s.ttsPersona ?? 'neutral'} onChange={e => setSelect('ttsPersona', e.target.value as any)}>
+                    <option value="neutral">Neutral</option>
+                    <option value="warm">Warm</option>
+                    <option value="energetic">Energetic</option>
+                    <option value="calm">Calm</option>
+                    <option value="robotic">Robotic</option>
+                    <option value="friendly">Friendly</option>
+                    <option value="authoritative">Authoritative</option>
+                    <option value="narrator">Narrator</option>
+                  </select>
+                  <div style={{ marginTop: 8 }}>
+                    <button type="button" className="nx-inline-button" onClick={() => {
+                      if (!('speechSynthesis' in window)) return
+                      try {
+                        window.speechSynthesis.cancel()
+                        const u = new SpeechSynthesisUtterance('This is a voice preview.')
+                        // apply persona modifiers for a closer preview
+                        const persona = s.ttsPersona ?? 'neutral'
+                        const PERSONA: Record<string, { rate: number; pitch: number; vol: number }> = {
+                          neutral: { rate: 1, pitch: 1, vol: 1 },
+                          warm: { rate: 0.95, pitch: 0.92, vol: 0.98 },
+                          energetic: { rate: 1.12, pitch: 1.06, vol: 1 },
+                          calm: { rate: 0.88, pitch: 0.86, vol: 0.95 },
+                          robotic: { rate: 1.0, pitch: 0.56, vol: 1 },
+                          friendly: { rate: 1.02, pitch: 1.05, vol: 1 },
+                          authoritative: { rate: 0.95, pitch: 0.9, vol: 1.05 },
+                          narrator: { rate: 0.92, pitch: 0.88, vol: 1 },
+                        }
+                        const p = PERSONA[persona] ?? PERSONA.neutral
+                        u.volume = (s.ttsVolume ?? 1) * p.vol
+                        u.rate = (s.ttsRate ?? 1) * p.rate
+                        u.pitch = (s.ttsPitch ?? 1) * p.pitch
+                        if (s.ttsVoice) {
+                          try {
+                            const found = window.speechSynthesis.getVoices().find(v => (v.voiceURI || v.name) === s.ttsVoice)
+                            if (found) u.voice = found
+                          } catch (_) {
+                            // ignore voice selection errors
+                          }
+                        }
+                        window.speechSynthesis.speak(u)
+                      } catch (_) {
+                        // ignore
+                      }
+                    }}>Preview</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="nx-setting-row">
               <div className="nx-setting-row__info"><strong>Copilot Sound</strong><p>Audio cues for AI events</p></div>
               <button type="button" className={classes('nx-toggle', s.copilotSoundEnabled && 'is-on')} onClick={() => toggle('copilotSoundEnabled')} role="switch" aria-checked={s.copilotSoundEnabled}><span className="nx-toggle__thumb" /></button>
+            </div>
+            <div className="nx-setting-row">
+              <div className="nx-setting-row__info"><strong>Orb Always Visible</strong><p>Keep the ambient orb present even while panels are open</p></div>
+              <button type="button" className={classes('nx-toggle', s.copilotOrbAlwaysVisible && 'is-on')} onClick={() => toggle('copilotOrbAlwaysVisible')} role="switch" aria-checked={s.copilotOrbAlwaysVisible}><span className="nx-toggle__thumb" /></button>
+            </div>
+            <div className="nx-setting-row">
+              <div className="nx-setting-row__info"><strong>Orb Intensity</strong><p>Ambient orb strength ({s.copilotOrbIntensity?.toFixed(2) ?? '1.00'})</p></div>
+              <div className="nx-setting-row__control">
+                <input type="range" className="nx-range" min={0.2} max={2.0} step={0.05} value={s.copilotOrbIntensity ?? 1} onChange={e => setRange('copilotOrbIntensity', parseFloat(e.target.value))} />
+              </div>
+            </div>
+            <div className="nx-setting-row">
+              <div className="nx-setting-row__info"><strong>Orb Speed</strong><p>Background orb animation speed ({s.copilotOrbSpeed?.toFixed(2) ?? '1.00'})</p></div>
+              <div className="nx-setting-row__control">
+                <input type="range" className="nx-range" min={0.5} max={2.0} step={0.05} value={s.copilotOrbSpeed ?? 1} onChange={e => setRange('copilotOrbSpeed', parseFloat(e.target.value))} />
+              </div>
+            </div>
+            <div className="nx-setting-row">
+              <div className="nx-setting-row__info"><strong>Mission Trace Pinned</strong><p>Keep the trace feed expanded in the command deck</p></div>
+              <button type="button" className={classes('nx-toggle', s.copilotMissionTracePinned && 'is-on')} onClick={() => toggle('copilotMissionTracePinned')} role="switch" aria-checked={s.copilotMissionTracePinned}><span className="nx-toggle__thumb" /></button>
+            </div>
+            <div className="nx-setting-row">
+              <div className="nx-setting-row__info"><strong>Orb Placement</strong><p>Choose where the floating orb idles on screen</p></div>
+              <div className="nx-setting-row__control">
+                <div className="nx-segmented">
+                  {ORB_PLACEMENTS.map(option => (
+                    <button key={option.value} type="button" className={classes('nx-segmented__btn', s.orbPlacement === option.value && 'is-active')} onClick={() => setSelect('orbPlacement', option.value)}>{option.label}</button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -351,7 +508,7 @@ export const SettingsPage = () => {
             {LAYER_TOGGLES.map(layer => (
               <div key={layer.key} className="nx-setting-row">
                 <div className="nx-setting-row__info"><strong>{layer.label}</strong></div>
-                <button type="button" className={classes('nx-toggle', s[layer.key] && 'is-on')} onClick={() => toggle(layer.key)} role="switch" aria-checked={!!s[layer.key]}><span className="nx-toggle__thumb" /></button>
+                <button type="button" className={classes('nx-toggle', Boolean(s[layer.key]) && 'is-on')} onClick={() => toggle(layer.key)} role="switch" aria-checked={!!s[layer.key]}><span className="nx-toggle__thumb" /></button>
               </div>
             ))}
           </div>
@@ -429,7 +586,7 @@ export const SettingsPage = () => {
                 <div className="nx-setting-row__info"><strong>{se.label}</strong></div>
                 <div className="nx-setting-row__actions">
                   <button type="button" className="nx-inline-button" onClick={() => previewSound(se.event)}>Preview</button>
-                  <button type="button" className={classes('nx-toggle', s[se.key] && 'is-on')} onClick={() => toggle(se.key)} role="switch" aria-checked={!!s[se.key]}><span className="nx-toggle__thumb" /></button>
+                  <button type="button" className={classes('nx-toggle', Boolean(s[se.key]) && 'is-on')} onClick={() => toggle(se.key)} role="switch" aria-checked={!!s[se.key]}><span className="nx-toggle__thumb" /></button>
                 </div>
               </div>
             ))}
