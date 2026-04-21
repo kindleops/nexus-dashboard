@@ -31,7 +31,7 @@ export const AlertsPage = ({ data }: { data: AlertsModel }) => {
       <header className="nx-surface-header">
         <div className="nx-surface-header__title">
           <Icon className="nx-surface-icon" name="alert" />
-          <h1>Threat Board</h1>
+          <h1>Alerts</h1>
         </div>
         <div className="nx-surface-header__stats">
           <span className="nx-badge nx-badge--danger nx-badge--pulse">{data.criticalCount} critical</span>

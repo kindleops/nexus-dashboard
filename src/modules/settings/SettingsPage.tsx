@@ -386,7 +386,7 @@ export const SettingsPage = () => {
               </div>
             </div>
             <div className="nx-setting-row">
-              <div className="nx-setting-row__info"><strong>Mission Trace Pinned</strong><p>Keep the trace feed expanded in the command deck</p></div>
+              <div className="nx-setting-row__info"><strong>Trace Pinned</strong><p>Keep the trace feed expanded in the command deck</p></div>
               <button type="button" className={classes('nx-toggle', s.copilotMissionTracePinned && 'is-on')} onClick={() => toggle('copilotMissionTracePinned')} role="switch" aria-checked={s.copilotMissionTracePinned}><span className="nx-toggle__thumb" /></button>
             </div>
             <div className="nx-setting-row">
@@ -645,7 +645,7 @@ export const SettingsPage = () => {
             <div className="nx-shortcut"><kbd>g s</kbd><span>Go Stats</span></div>
             <div className="nx-shortcut"><kbd>g p</kbd><span>Go Markets (Pipeline)</span></div>
             <div className="nx-shortcut"><kbd>g b</kbd><span>Go Buyer Intelligence</span></div>
-            <div className="nx-shortcut"><kbd>g t</kbd><span>Go Title War Room</span></div>
+            <div className="nx-shortcut"><kbd>g t</kbd><span>Go Title & Closing</span></div>
             <div className="nx-shortcut"><kbd>g w</kbd><span>Go Watchlists</span></div>
             <div className="nx-shortcut"><kbd>g d</kbd><span>Go Settings</span></div>
             <div className="nx-shortcut"><kbd>⌘K</kbd><span>Command Palette</span></div>

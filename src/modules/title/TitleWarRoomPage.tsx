@@ -44,7 +44,7 @@ export const TitleWarRoomPage = ({ data }: { data: TitleModel }) => {
       <header className="nx-surface-header">
         <div className="nx-surface-header__title">
           <Icon className="nx-surface-icon" name="file-text" />
-          <h1>Title & Closing War Room</h1>
+          <h1>Title & Closing</h1>
         </div>
         <div className="nx-surface-header__stats">
           <span className="nx-badge nx-badge--success">{data.clearCount} clear</span>

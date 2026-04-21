@@ -88,7 +88,7 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
       <header className="nx-inbox__header">
         <div className="nx-inbox__title-row">
           <Icon className="nx-surface-icon" name="inbox" />
-          <h1>Comms Deck</h1>
+          <h1>Inbox</h1>
           <div className="nx-inbox__indicators">
             <span className="nx-badge nx-badge--primary">{data.unreadCount} unread</span>
             {data.urgentCount > 0 && (

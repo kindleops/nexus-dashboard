@@ -78,7 +78,7 @@ export function MissionTrace({
   if (events.length === 0) {
     return (
       <div className={`nx-trace nx-trace--${variant} nx-trace--empty`}>
-        <span className="nx-trace__empty-label">Mission trace is waiting for live activity.</span>
+        <span className="nx-trace__empty-label">Trace is waiting for activity.</span>
       </div>
     )
   }
@@ -87,7 +87,7 @@ export function MissionTrace({
     <section className={`nx-trace nx-trace--${variant} ${expanded ? 'nx-trace--expanded' : ''}`}>
       <header className="nx-trace__header">
         <div>
-          <span className="nx-trace__eyebrow">Mission Trace</span>
+          <span className="nx-trace__eyebrow">Trace</span>
           <h3 className="nx-trace__title">Live intelligence feed</h3>
         </div>
 

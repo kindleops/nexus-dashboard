@@ -180,7 +180,7 @@ export function ModelPicker({ model, permission, onModelChange, onPermissionChan
               </div>
 
               <div className="nx-model-picker__toggle-row">
-                <span className="nx-model-picker__toggle-label">Pin Mission Trace</span>
+                <span className="nx-model-picker__toggle-label">Pin Trace</span>
                 <button
                   type="button"
                   className={`nx-model-picker__toggle ${settings.copilotMissionTracePinned ? 'is-active' : ''}`}

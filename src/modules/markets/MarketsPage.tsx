@@ -36,7 +36,7 @@ export const MarketsPage = ({ data }: { data: MarketsModel }) => {
       <header className="nx-surface-header">
         <div className="nx-surface-header__title">
           <Icon className="nx-surface-icon" name="map" />
-          <h1>Operations Room</h1>
+          <h1>Markets</h1>
         </div>
         <div className="nx-surface-header__stats">
           <span className="nx-badge nx-badge--success">{data.totalPipeline} pipeline</span>

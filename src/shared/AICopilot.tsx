@@ -82,7 +82,7 @@ function buildGreeting(ctx: CopilotContext): string[] {
   const lines: string[] = []
 
   lines.push(`${getTimeGreeting()}, ${name}.`)
-  lines.push('Command floor is live.')
+  lines.push('Dashboard is live.')
 
   if (ctx.hotCount && ctx.hotCount > 0) {
     lines.push(`${ctx.hotCount} hot lead${ctx.hotCount > 1 ? 's' : ''} require attention.`)
@@ -130,7 +130,7 @@ function generateSuggestions(ctx: CopilotContext): CopilotSuggestion[] {
   switch (ctx.surface) {
     case '/dashboard/live':
       suggestions.push({
-        id: 'brief-home', type: 'brief', title: 'Command Floor Briefing',
+        id: 'brief-home', type: 'brief', title: 'Dashboard Briefing',
         detail: `${ctx.hotCount ?? 0} hot leads require attention. ${ctx.alertCount ?? 0} alerts active. ${ctx.pendingActions ?? 0} autopilot actions pending review.`,
         confidence: 95,
       })
@@ -144,7 +144,7 @@ function generateSuggestions(ctx: CopilotContext): CopilotSuggestion[] {
       if ((ctx.alertCount ?? 0) > 3) {
         suggestions.push({
           id: 'warn-alerts', type: 'warning', title: 'Alert Volume Elevated',
-          detail: `${ctx.alertCount} active alerts exceeds the daily average. Review critical alerts on the Threat Board.`,
+          detail: `${ctx.alertCount} active alerts exceeds the daily average. Review critical alerts in Alerts.`,
           confidence: 92, action: 'go-alerts', actionLabel: 'Open Alerts',
         })
       }
@@ -156,7 +156,7 @@ function generateSuggestions(ctx: CopilotContext): CopilotSuggestion[] {
       break
     case '/inbox':
       suggestions.push({
-        id: 'brief-inbox', type: 'brief', title: 'Comms Deck Intelligence',
+        id: 'brief-inbox', type: 'brief', title: 'Inbox Intelligence',
         detail: 'Threads requiring response detected. AI drafts ready for review. Prioritize hot sentiment threads first.',
         confidence: 90,
       })
@@ -173,7 +173,7 @@ function generateSuggestions(ctx: CopilotContext): CopilotSuggestion[] {
       break
     case '/alerts':
       suggestions.push({
-        id: 'brief-alerts', type: 'brief', title: 'Threat Board Briefing',
+        id: 'brief-alerts', type: 'brief', title: 'Alerts Briefing',
         detail: 'Active alerts span multiple markets. Critical items need immediate acknowledgment. P0 alerts age faster.',
         confidence: 94,
       })

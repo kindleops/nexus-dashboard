@@ -16,8 +16,6 @@ import { CopilotPresence } from './CopilotIntelligenceCore'
 import { CopilotStream } from './CopilotStream'
 import { CopilotReasoning } from './CopilotReasoning'
 import { useCopilotDeck } from './useCopilotDeck'
-import { CopilotLargeOrb } from './CopilotLargeOrb'
-import CopilotEliteOrb from './CopilotEliteOrb'
 
 const STATE_LABEL: Partial<Record<CopilotState, string>> = {
   idle: 'Standing by',
@@ -121,23 +119,6 @@ export function CopilotSidecar({ open, context, onClose, onAction, onPresenceCha
       </header>
 
       {/* 2 ── Presence */}
-      <CopilotEliteOrb
-        state={deck.copilotState}
-        amplitude={deck.voice.listening ? deck.voice.amplitude : (deck.copilotState === 'speaking' ? 0.5 : 0)}
-        intensity={deck.settings.copilotOrbIntensity ?? 1}
-        speed={deck.settings.copilotOrbSpeed ?? 1}
-        className="co-elite-orb--sidecar"
-        containerRef={railRef}
-      />
-      {/* Large flowing orb background for the sidecar */}
-      <CopilotLargeOrb
-        state={deck.copilotState}
-        amplitude={deck.voice.listening ? deck.voice.amplitude : (deck.copilotState === 'speaking' ? 0.5 : 0)}
-        intensity={deck.settings.copilotOrbIntensity ?? 1}
-        speed={deck.settings.copilotOrbSpeed ?? 1}
-        className="co-large-orb--sidecar"
-      />
-
       <CopilotPresence
         state={deck.copilotState}
         amplitude={deck.voice.listening ? deck.voice.amplitude : 0}

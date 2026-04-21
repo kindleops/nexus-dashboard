@@ -122,7 +122,7 @@ export const BriefingPanel = ({ open, digest, onClose }: BriefingPanelProps) => 
         <footer className="nx-briefing__footer">
           <span className="nx-briefing__hint">Press <kbd>ESC</kbd> to dismiss</span>
           <button type="button" className="nx-briefing__action" onClick={onClose}>
-            Return to Command Floor
+            Dashboard
           </button>
         </footer>
       </div>

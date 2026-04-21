@@ -38,16 +38,16 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { path: '/dashboard/live', label: 'Home', icon: 'radar', shortcut: 'H', room: 'Command Floor' },
-  { path: '/inbox', label: 'Inbox', icon: 'inbox', shortcut: 'I', room: 'Comms Deck' },
-  { path: '/alerts', label: 'Alerts', icon: 'alert', shortcut: 'A', room: 'Threat Board' },
-  { path: '/stats', label: 'Intelligence', icon: 'stats', shortcut: 'G', room: 'Strategy Room' },
-  { path: '/markets', label: 'Markets', icon: 'map', shortcut: 'M', room: 'Operations Room' },
-  { path: '/buyer', label: 'Buyers', icon: 'users', shortcut: 'B', room: 'Capital Deployment' },
-  { path: '/title', label: 'Title', icon: 'file-text', shortcut: 'T', room: 'Execution Room' },
-  { path: '/watchlists', label: 'Watchlists', icon: 'star', shortcut: 'W', room: 'Tracked Targets' },
-  { path: '/notifications', label: 'Notifications', icon: 'bell', shortcut: 'N', room: 'Event Stream' },
-  { path: '/settings', label: 'Settings', icon: 'settings', shortcut: 'S', room: 'Control Layer' },
+  { path: '/dashboard/live', label: 'Home', icon: 'radar', shortcut: 'H', room: 'Home' },
+  { path: '/inbox', label: 'Inbox', icon: 'inbox', shortcut: 'I', room: 'Inbox' },
+  { path: '/alerts', label: 'Alerts', icon: 'alert', shortcut: 'A', room: 'Alerts' },
+  { path: '/stats', label: 'Intelligence', icon: 'stats', shortcut: 'G', room: 'Intelligence' },
+  { path: '/markets', label: 'Markets', icon: 'map', shortcut: 'M', room: 'Markets' },
+  { path: '/buyer', label: 'Buyers', icon: 'users', shortcut: 'B', room: 'Buyers' },
+  { path: '/title', label: 'Title', icon: 'file-text', shortcut: 'T', room: 'Title' },
+  { path: '/watchlists', label: 'Watchlists', icon: 'star', shortcut: 'W', room: 'Watchlists' },
+  { path: '/notifications', label: 'Notifications', icon: 'bell', shortcut: 'N', room: 'Notifications' },
+  { path: '/settings', label: 'Settings', icon: 'settings', shortcut: 'S', room: 'Settings' },
 ]
 
 const THEME_ALIASES: Record<string, NexusTheme> = {

@@ -93,7 +93,7 @@ const buyerRoute = defineRoute<BuyerModel>({
 
 const titleRoute = defineRoute<TitleModel>({
   path: '/title',
-  title: 'NEXUS | Title & Closing War Room',
+  title: 'NEXUS | Title & Closing',
   loader: loadTitle,
   render: (data) => <TitleWarRoomPage data={data} />,
 })

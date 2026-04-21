@@ -53,7 +53,7 @@ export const NotificationsPage = ({ data }: { data: NotificationsModel }) => {
       <header className="nx-surface-header">
         <div className="nx-surface-header__title">
           <Icon className="nx-surface-icon" name="bell" />
-          <h1>Event Stream</h1>
+          <h1>Notifications</h1>
         </div>
         <div className="nx-surface-header__stats">
           <span className="nx-badge nx-badge--primary">
