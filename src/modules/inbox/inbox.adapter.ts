@@ -1,5 +1,7 @@
 import type { CommandCenterStore } from '../../domain/types'
 import { formatRelativeTime } from '../../shared/formatters'
+import { fetchInboxModel } from '../../lib/data/inboxData'
+import { isDev, shouldUseSupabase } from '../../lib/data/shared'
 
 export interface InboxThread {
   id: string
@@ -17,6 +19,21 @@ export interface InboxThread {
   unreadCount: number
   aiDraft: string | null
   labels: string[]
+  threadKey?: string
+  groupingMethod?: string
+  groupingConfidence?: 'high' | 'medium' | 'low'
+  ownerId?: string
+  prospectId?: string
+  propertyId?: string
+  phoneNumber?: string
+  canonicalE164?: string
+  sellerPhoneSourceField?: string
+  propertyAddress?: string
+  market?: string
+  lastInboundAt?: string | null
+  lastOutboundAt?: string | null
+  needsResponse?: boolean
+  unread?: boolean
 }
 
 export interface InboxModel {
@@ -53,6 +70,16 @@ export const adaptInboxModel = (store: CommandCenterStore): InboxModel => {
 }
 
 export const loadInbox = async (): Promise<InboxModel> => {
+  if (shouldUseSupabase()) {
+    try {
+      return await fetchInboxModel()
+    } catch (error) {
+      if (isDev) {
+        console.warn('[NEXUS] Inbox Supabase load failed, using normalized store.', error)
+      }
+    }
+  }
+
   const { loadCommandCenterStore } = await import('../../domain/normalize-command-center')
   const store = await loadCommandCenterStore()
   return adaptInboxModel(store)

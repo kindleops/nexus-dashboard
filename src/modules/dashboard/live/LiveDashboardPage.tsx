@@ -1,6 +1,19 @@
-import { useDeferredValue, useEffect, useEffectEvent, useRef, useState } from 'react'
+import { useDeferredValue, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { NexusMap } from './NexusMap'
+import type { DashboardMapFilters, DashboardMapMode } from './map/types'
+import {
+  aiScoreFromLead as mapLeadAiScore,
+  buyerDemandScoreFromLead as mapLeadBuyerDemandScore,
+  contractStatusFromLead as mapLeadContractStatus,
+  distressSignalsFromLead as mapLeadDistressSignals,
+  equityPctFromLead as mapLeadEquityPct,
+  followUpStatusFromLead as mapLeadFollowUpStatus,
+  priorityFromLead as mapLeadPriority,
+  replyStatusFromLead as mapLeadReplyStatus,
+  stageBucketFromLead as mapLeadStage,
+} from './map/lead-intel'
+import { buildActiveMarketConfig } from './map/market-config'
 import type {
   FilterOption,
   LiveActivity,
@@ -26,7 +39,7 @@ import { emitNotification } from '../../../shared/NotificationToast'
 
 type DrawerType = 'market' | 'lead' | 'agent' | null
 type LayoutMode = 'split' | 'map' | 'list' | 'battlefield'
-type MapMode = 'leads' | 'distress' | 'heat' | 'stage' | 'pressure' | 'closings'
+type MapMode = DashboardMapMode
 
 const classes = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
@@ -77,6 +90,28 @@ const operationalRiskLabel: Record<LiveMarket['operationalRisk'], string> = {
   nominal: 'NOMINAL',
 }
 
+const DEFAULT_MAP_FILTERS: DashboardMapFilters = {
+  marketIds: [],
+  temperatures: [],
+  leadTemperatures: [],
+  priorities: [],
+  propertyTypes: [],
+  distressSignals: [],
+  sellerStages: [],
+  campaignSources: [],
+  dateWindow: 'all',
+  agentIds: [],
+  followUpStatuses: [],
+  replyStatuses: [],
+  aiScoreMin: 0,
+  aiScoreMax: 100,
+  equityMin: 0,
+  equityMax: 100,
+  offerEligibility: 'all',
+  buyerDemandOverlap: 'all',
+  contractStatuses: [],
+}
+
 export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query.trim().toLowerCase())
@@ -96,7 +131,16 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
   // New — layout and map mode
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('split')
   const [mapMode, setMapMode] = useState<MapMode>('leads')
+  const [heatModeEnabled, setHeatModeEnabled] = useState(false)
+  const [mapFiltersOpen, setMapFiltersOpen] = useState(false)
+  const [mapFilterSearch, setMapFilterSearch] = useState('')
+  const [mapFilters, setMapFilters] = useState<DashboardMapFilters>(DEFAULT_MAP_FILTERS)
   const [splitLeadId, setSplitLeadId] = useState<string | null>(null)
+  const [commandMapOverlayOpen, setCommandMapOverlayOpen] = useState(false)
+  const [dashboardPaletteOpen, setDashboardPaletteOpen] = useState(false)
+  const mapFilterSearchRef = useRef<HTMLInputElement>(null)
+
+  const deferredMapFilterSearch = useDeferredValue(mapFilterSearch.trim().toLowerCase())
 
   useEffect(() => {
     const handleCopilotSplitView = (event: Event) => {
@@ -139,8 +183,7 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
   const visibleMarkets = data.markets.filter((market) => {
     const matchesScope = marketScope === 'all' || market.id === marketScope
     const matchesQuery = includesQuery(deferredQuery, market.name, market.label, market.scanLabel)
-    const hasVisibleLead = visibleLeads.some((lead) => lead.marketId === market.id)
-    return matchesScope && (matchesQuery || hasVisibleLead)
+    return matchesScope && (matchesQuery || deferredQuery.length === 0)
   })
 
   const visibleAgents = data.agents.filter((agent) => {
@@ -176,6 +219,124 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
     )
   })
 
+  const marketById = useMemo(() => {
+    return new Map(data.markets.map((market) => [market.id, market]))
+  }, [data.markets])
+
+  const leadAgentIdMap = useMemo(() => {
+    const direct = new Map<string, string>()
+    const byMarket = new Map<string, string[]>()
+
+    for (const agent of data.agents) {
+      direct.set(agent.focusLeadId, agent.id)
+      const list = byMarket.get(agent.marketId)
+      if (list) {
+        list.push(agent.id)
+      } else {
+        byMarket.set(agent.marketId, [agent.id])
+      }
+    }
+
+    const resolved = new Map<string, string>()
+    for (const lead of data.leads) {
+      const directAgent = direct.get(lead.id)
+      if (directAgent) {
+        resolved.set(lead.id, directAgent)
+        continue
+      }
+      const marketAgents = byMarket.get(lead.marketId)
+      if (marketAgents && marketAgents.length > 0) {
+        const index = Math.abs(lead.id.split('').reduce((sum, ch) => sum + ch.charCodeAt(0), 0)) % marketAgents.length
+        resolved.set(lead.id, marketAgents[index])
+      }
+    }
+
+    return resolved
+  }, [data.agents, data.leads])
+
+  const mapFilteredLeads = useMemo(() => {
+    return visibleLeads.filter((lead) => {
+      if (mapFilters.marketIds.length > 0 && !mapFilters.marketIds.includes(lead.marketId)) return false
+      if (mapFilters.temperatures.length > 0 && !mapFilters.temperatures.includes(lead.sentiment)) return false
+      if (mapFilters.leadTemperatures.length > 0 && !mapFilters.leadTemperatures.includes(lead.sentiment)) return false
+      if (mapFilters.priorities.length > 0 && !mapFilters.priorities.includes(mapLeadPriority(lead))) return false
+      if (mapFilters.propertyTypes.length > 0 && !mapFilters.propertyTypes.includes(lead.propertyType)) return false
+      if (mapFilters.sellerStages.length > 0 && !mapFilters.sellerStages.includes(mapLeadStage(lead))) return false
+      if (mapFilters.followUpStatuses.length > 0 && !mapFilters.followUpStatuses.includes(mapLeadFollowUpStatus(lead))) return false
+      if (mapFilters.replyStatuses.length > 0 && !mapFilters.replyStatuses.includes(mapLeadReplyStatus(lead))) return false
+      if (mapFilters.contractStatuses.length > 0 && !mapFilters.contractStatuses.includes(mapLeadContractStatus(lead))) return false
+
+      const leadDistressSignals = mapLeadDistressSignals(lead)
+      if (mapFilters.distressSignals.length > 0 && !mapFilters.distressSignals.some((signal) => leadDistressSignals.includes(signal))) {
+        return false
+      }
+
+      const aiScore = mapLeadAiScore(lead)
+      if (aiScore < mapFilters.aiScoreMin || aiScore > mapFilters.aiScoreMax) return false
+
+      const equityPct = mapLeadEquityPct(lead)
+      if (equityPct < mapFilters.equityMin || equityPct > mapFilters.equityMax) return false
+
+      if (mapFilters.offerEligibility === 'eligible' && !(lead.pipelineStage !== 'under-contract' && aiScore >= 62 && equityPct >= 18)) {
+        return false
+      }
+      if (mapFilters.offerEligibility === 'ineligible' && (lead.pipelineStage !== 'under-contract' && aiScore >= 62 && equityPct >= 18)) {
+        return false
+      }
+
+      const buyerDemandScore = mapLeadBuyerDemandScore(lead)
+      const buyerDemandBand = buyerDemandScore >= 76 ? 'high' : buyerDemandScore >= 50 ? 'medium' : 'low'
+      if (mapFilters.buyerDemandOverlap !== 'all' && buyerDemandBand !== mapFilters.buyerDemandOverlap) return false
+
+      if (mapFilters.campaignSources.length > 0) {
+        const market = marketById.get(lead.marketId)
+        const sourceTags = [
+          market?.scanLabel?.toLowerCase() ?? '',
+          market?.campaignStatus ?? '',
+          lead.ownerType,
+        ]
+        if (!mapFilters.campaignSources.some((source) => sourceTags.some((tag) => tag.includes(source)))) {
+          return false
+        }
+      }
+
+      if (mapFilters.dateWindow !== 'all') {
+        const latestIso = lead.lastInboundIso ?? lead.lastOutboundIso
+        const latest = Date.parse(latestIso)
+        const now = Date.now()
+        if (Number.isFinite(latest)) {
+          const ageHours = Math.max(0, (now - latest) / 3600000)
+          if (mapFilters.dateWindow === '24h' && ageHours > 24) return false
+          if (mapFilters.dateWindow === '7d' && ageHours > 24 * 7) return false
+          if (mapFilters.dateWindow === '30d' && ageHours > 24 * 30) return false
+        }
+      }
+
+      if (mapFilters.agentIds.length > 0) {
+        const mappedAgentId = leadAgentIdMap.get(lead.id)
+        if (!mappedAgentId || !mapFilters.agentIds.includes(mappedAgentId)) return false
+      }
+
+      if (deferredMapFilterSearch) {
+        const haystack = [
+          lead.ownerName,
+          lead.address,
+          lead.city,
+          lead.stateCode,
+          lead.marketLabel,
+          lead.propertyType,
+          lead.pipelineStage,
+          lead.ownerType,
+          ...lead.heatFactors,
+          ...lead.riskFlags,
+        ].join(' ').toLowerCase()
+        if (!haystack.includes(deferredMapFilterSearch)) return false
+      }
+
+      return true
+    })
+  }, [visibleLeads, mapFilters, deferredMapFilterSearch, leadAgentIdMap, marketById])
+
   useEffect(() => {
     const intervalId = window.setInterval(() => {
       setClock(new Date())
@@ -187,38 +348,25 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
   }, [])
 
   const onKeyboardShortcut = useEffectEvent((event: KeyboardEvent) => {
-    // Cmd/Ctrl + M — Map Focus Mode toggle
-    if ((event.metaKey || event.ctrlKey) && event.key === 'm') {
-      event.preventDefault()
-      setLayoutMode((curr) => (curr === 'map' ? 'split' : 'map'))
-      return
-    }
-
-    // Cmd/Ctrl + B — Battlefield Mode toggle
-    if ((event.metaKey || event.ctrlKey) && event.key === 'b') {
-      event.preventDefault()
-      setLayoutMode((curr) => (curr === 'battlefield' ? 'split' : 'battlefield'))
-      return
-    }
-
     const target = event.target
     if (
       target instanceof HTMLInputElement ||
       target instanceof HTMLTextAreaElement ||
-      target instanceof HTMLSelectElement
+      target instanceof HTMLSelectElement ||
+      (target instanceof HTMLElement && target.isContentEditable)
     ) {
       return
     }
 
-    if (event.key === '[') {
-      setLeftRailOpen((current) => !current)
-    }
-
-    if (event.key === ']') {
-      setRightRailOpen((current) => !current)
-    }
-
     if (event.key === 'Escape') {
+      if (dashboardPaletteOpen) {
+        setDashboardPaletteOpen(false)
+        return
+      }
+      if (commandMapOverlayOpen) {
+        setCommandMapOverlayOpen(false)
+        return
+      }
       if (layoutMode === 'map' || layoutMode === 'battlefield') {
         setLayoutMode('split')
         return
@@ -241,6 +389,69 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
     }
   }, [])
 
+  const handleToggleLeftRail = () => {
+    setLeftRailOpen((current) => !current)
+  }
+
+  const handleToggleRightRail = () => {
+    setRightRailOpen((current) => !current)
+  }
+
+  const handleOpenCommandMapOverlay = () => {
+    setCommandMapOverlayOpen((current) => !current)
+  }
+
+  const handleOpenDashboardPalette = () => {
+    setDashboardPaletteOpen((current) => !current)
+    window.dispatchEvent(new CustomEvent('nx:context-palette'))
+  }
+
+  const handleClearTemporaryPanels = () => {
+    setActiveDrawer(null)
+    setSplitLeadId(null)
+    setDashboardPaletteOpen(false)
+    setCommandMapOverlayOpen(false)
+  }
+
+  const updateFilterList = <K extends keyof DashboardMapFilters>(
+    key: K,
+    value: DashboardMapFilters[K] extends Array<infer T> ? T : never,
+  ) => {
+    setMapFilters((current) => {
+      const source = current[key]
+      if (!Array.isArray(source)) return current
+      const list = source as Array<typeof value>
+      const exists = list.includes(value)
+      return {
+        ...current,
+        [key]: exists ? list.filter((item) => item !== value) : [...list, value],
+      }
+    })
+  }
+
+  const clearMapFiltersAndHeat = () => {
+    setMapFilters(DEFAULT_MAP_FILTERS)
+    setMapFilterSearch('')
+    setMapMode('leads')
+    setHeatModeEnabled(false)
+  }
+
+  const handleToggleHeatMode = () => {
+    setHeatModeEnabled((current) => !current)
+  }
+
+  const handleSetMapMode = (mode: MapMode) => {
+    setMapMode(mode)
+    if (mode === 'heat') {
+      setHeatModeEnabled(true)
+    }
+  }
+
+  const handleFocusFilterSearch = () => {
+    setMapFiltersOpen(true)
+    mapFilterSearchRef.current?.focus()
+  }
+
   const resolvedSelectedMarketId = visibleMarkets.some((market) => market.id === selectedMarketId)
     ? selectedMarketId
     : visibleMarkets[0]?.id ?? data.defaults.marketId
@@ -261,6 +472,43 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
     data.leads.find((lead) => lead.id === resolvedSelectedLeadId) ??
     activeLeadPool[0] ??
     data.leads[0]
+
+  const selectedLeadIdForMap = mapFilteredLeads.some((lead) => lead.id === selectedLead?.id)
+    ? selectedLead?.id
+    : mapFilteredLeads[0]?.id
+
+  const selectedMarketIdForMap = data.markets.some((market) => market.id === selectedMarket?.id)
+    ? selectedMarket?.id
+    : data.markets[0]?.id
+
+  const activeMarketConfigs = useMemo(
+    () => buildActiveMarketConfig(data.markets, mapFilteredLeads, mapMode),
+    [data.markets, mapFilteredLeads, mapMode],
+  )
+
+  const activeFilterChips = [
+    ...mapFilters.marketIds.map((id) => ({ key: `market-${id}`, label: `Market: ${data.markets.find((m) => m.id === id)?.name ?? id}` })),
+    ...mapFilters.temperatures.map((value) => ({ key: `temp-${value}`, label: `Temp: ${value}` })),
+    ...mapFilters.leadTemperatures.map((value) => ({ key: `lead-temp-${value}`, label: `Lead: ${value}` })),
+    ...mapFilters.priorities.map((value) => ({ key: `priority-${value}`, label: value })),
+    ...mapFilters.campaignSources.map((value) => ({ key: `campaign-${value}`, label: `Src: ${value}` })),
+    ...mapFilters.agentIds.map((value) => ({ key: `agent-${value}`, label: `Agent: ${data.agents.find((a) => a.id === value)?.name ?? value}` })),
+    ...mapFilters.propertyTypes.map((value) => ({ key: `ptype-${value}`, label: `Type: ${value}` })),
+    ...mapFilters.distressSignals.map((value) => ({ key: `dist-${value}`, label: value })),
+    ...mapFilters.sellerStages.map((value) => ({ key: `stage-${value}`, label: value })),
+    ...mapFilters.followUpStatuses.map((value) => ({ key: `follow-${value}`, label: value })),
+    ...mapFilters.replyStatuses.map((value) => ({ key: `reply-${value}`, label: value })),
+    ...mapFilters.contractStatuses.map((value) => ({ key: `contract-${value}`, label: value })),
+    ...(mapFilters.offerEligibility !== 'all' ? [{ key: 'offer-eligibility', label: `Offer: ${mapFilters.offerEligibility}` }] : []),
+    ...(mapFilters.buyerDemandOverlap !== 'all' ? [{ key: 'buyer-overlap', label: `Buyer: ${mapFilters.buyerDemandOverlap}` }] : []),
+    ...(mapFilters.dateWindow !== 'all' ? [{ key: 'date-window', label: `Window: ${mapFilters.dateWindow}` }] : []),
+    ...(mapFilters.aiScoreMin !== 0 || mapFilters.aiScoreMax !== 100
+      ? [{ key: 'ai-range', label: `AI ${mapFilters.aiScoreMin}-${mapFilters.aiScoreMax}` }]
+      : []),
+    ...(mapFilters.equityMin !== 0 || mapFilters.equityMax !== 100
+      ? [{ key: 'equity-range', label: `Equity ${mapFilters.equityMin}-${mapFilters.equityMax}%` }]
+      : []),
+  ]
 
   const preferredAgentPool = visibleAgents.filter((agent) => agent.marketId === selectedMarket?.id)
   const activeAgentPool = preferredAgentPool.length > 0 ? preferredAgentPool : visibleAgents
@@ -334,16 +582,223 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
       {/* Full-bleed map — the emotional center */}
       <div className="hq__map">
         <NexusMap
-          leads={visibleLeads}
-          markets={visibleMarkets}
+          leads={mapFilteredLeads}
+          markets={data.markets}
+          marketConfigs={activeMarketConfigs}
           timeline={visibleTimeline}
-          selectedLeadId={selectedLead?.id}
-          selectedMarketId={selectedMarket?.id}
+          selectedLeadId={selectedLeadIdForMap}
+          selectedMarketId={selectedMarketIdForMap}
           mapMode={mapMode}
+          heatModeEnabled={heatModeEnabled}
+          activeFilters={mapFilters}
           activeDrawer={activeDrawer}
           onOpenLead={(leadId) => { setSelectedLeadId(leadId); setActiveDrawer('lead') }}
           onSelectMarket={(marketId) => { setSelectedMarketId(marketId) }}
+          onToggleLeftPanel={handleToggleLeftRail}
+          onToggleRightPanel={handleToggleRightRail}
+          onOpenCommandMapOverlay={handleOpenCommandMapOverlay}
+          onOpenDashboardPalette={handleOpenDashboardPalette}
+          onClearTemporaryPanels={handleClearTemporaryPanels}
+          onSetMapMode={handleSetMapMode}
+          onToggleHeatMode={handleToggleHeatMode}
+          onClearHeatAndFilters={clearMapFiltersAndHeat}
+          onFocusFilterSearch={handleFocusFilterSearch}
         />
+
+        <section className="hq__map-filter-dock" aria-label="Map filter controls">
+          <div className="hq__map-filter-head">
+            <button
+              type="button"
+              className={classes('hq__map-filter-toggle', mapFiltersOpen && 'is-open')}
+              onClick={() => setMapFiltersOpen((current) => !current)}
+            >
+              Filters
+            </button>
+            <button
+              type="button"
+              className={classes('hq__map-heat-toggle', heatModeEnabled && 'is-on')}
+              onClick={handleToggleHeatMode}
+              title="Heat overlay (H)"
+            >
+              Heat {heatModeEnabled ? 'On' : 'Off'}
+            </button>
+            <button type="button" className="hq__map-filter-clear" onClick={clearMapFiltersAndHeat}>
+              Reset
+            </button>
+          </div>
+
+          {activeFilterChips.length > 0 ? (
+            <div className="hq__map-filter-chips">
+              {activeFilterChips.slice(0, 12).map((chip) => (
+                <span key={chip.key} className="hq__map-filter-chip">{chip.label}</span>
+              ))}
+            </div>
+          ) : null}
+
+          {mapFiltersOpen ? (
+            <div className="hq__map-filter-panel">
+              <div className="hq__map-filter-row">
+                <input
+                  ref={mapFilterSearchRef}
+                  className="hq__map-filter-search"
+                  type="search"
+                  value={mapFilterSearch}
+                  onChange={(event) => setMapFilterSearch(event.target.value)}
+                  placeholder="Filter search (Cmd/Ctrl+F)…"
+                />
+                <select
+                  className="hq__map-filter-select"
+                  value={mapFilters.buyerDemandOverlap}
+                  onChange={(event) => setMapFilters((current) => ({ ...current, buyerDemandOverlap: event.target.value as DashboardMapFilters['buyerDemandOverlap'] }))}
+                >
+                  <option value="all">Buyer overlap: all</option>
+                  <option value="high">Buyer overlap: high</option>
+                  <option value="medium">Buyer overlap: medium</option>
+                  <option value="low">Buyer overlap: low</option>
+                </select>
+                <select
+                  className="hq__map-filter-select"
+                  value={mapFilters.offerEligibility}
+                  onChange={(event) => setMapFilters((current) => ({ ...current, offerEligibility: event.target.value as DashboardMapFilters['offerEligibility'] }))}
+                >
+                  <option value="all">Offer: all</option>
+                  <option value="eligible">Offer: eligible</option>
+                  <option value="ineligible">Offer: ineligible</option>
+                </select>
+              </div>
+
+              <div className="hq__map-filter-row hq__map-filter-row--chips">
+                {visibleMarkets.slice(0, 8).map((market) => (
+                  <button
+                    key={market.id}
+                    type="button"
+                    className={classes('hq__map-filter-pick', mapFilters.marketIds.includes(market.id) && 'is-active')}
+                    onClick={() => updateFilterList('marketIds', market.id)}
+                  >
+                    {market.name}
+                  </button>
+                ))}
+                {(['hot', 'warm', 'cold'] as const).map((temp) => (
+                  <button
+                    key={temp}
+                    type="button"
+                    className={classes('hq__map-filter-pick', mapFilters.temperatures.includes(temp) && 'is-active')}
+                    onClick={() => updateFilterList('temperatures', temp)}
+                  >
+                    {temp}
+                  </button>
+                ))}
+                {(['P0', 'P1', 'P2', 'P3'] as const).map((priority) => (
+                  <button
+                    key={priority}
+                    type="button"
+                    className={classes('hq__map-filter-pick', mapFilters.priorities.includes(priority) && 'is-active')}
+                    onClick={() => updateFilterList('priorities', priority)}
+                  >
+                    {priority}
+                  </button>
+                ))}
+                {Array.from(new Set(data.leads.map((lead) => lead.propertyType))).slice(0, 6).map((type) => (
+                  <button
+                    key={type}
+                    type="button"
+                    className={classes('hq__map-filter-pick', mapFilters.propertyTypes.includes(type) && 'is-active')}
+                    onClick={() => updateFilterList('propertyTypes', type)}
+                  >
+                    {type}
+                  </button>
+                ))}
+                {['tax-delinquent', 'probate', 'vacant', 'pre-foreclosure', 'absentee-owner', 'high-equity'].map((signal) => (
+                  <button
+                    key={signal}
+                    type="button"
+                    className={classes('hq__map-filter-pick', mapFilters.distressSignals.includes(signal) && 'is-active')}
+                    onClick={() => updateFilterList('distressSignals', signal)}
+                  >
+                    {signal}
+                  </button>
+                ))}
+                {['not-contacted', 'contacted', 'replied', 'negotiating', 'under-contract', 'closing'].map((stageLabel) => (
+                  <button
+                    key={stageLabel}
+                    type="button"
+                    className={classes('hq__map-filter-pick', mapFilters.sellerStages.includes(stageLabel) && 'is-active')}
+                    onClick={() => updateFilterList('sellerStages', stageLabel)}
+                  >
+                    {stageLabel}
+                  </button>
+                ))}
+                {['on-track', 'due-soon', 'overdue', 'stalled'].map((status) => (
+                  <button
+                    key={status}
+                    type="button"
+                    className={classes('hq__map-filter-pick', mapFilters.followUpStatuses.includes(status) && 'is-active')}
+                    onClick={() => updateFilterList('followUpStatuses', status)}
+                  >
+                    {status}
+                  </button>
+                ))}
+                {['awaiting-reply', 'replied', 'no-reply'].map((status) => (
+                  <button
+                    key={status}
+                    type="button"
+                    className={classes('hq__map-filter-pick', mapFilters.replyStatuses.includes(status) && 'is-active')}
+                    onClick={() => updateFilterList('replyStatuses', status)}
+                  >
+                    {status}
+                  </button>
+                ))}
+                {['under-contract', 'title-risk', 'clear-to-close', 'none'].map((status) => (
+                  <button
+                    key={status}
+                    type="button"
+                    className={classes('hq__map-filter-pick', mapFilters.contractStatuses.includes(status) && 'is-active')}
+                    onClick={() => updateFilterList('contractStatuses', status)}
+                  >
+                    {status}
+                  </button>
+                ))}
+              </div>
+
+              <div className="hq__map-filter-row hq__map-filter-row--range">
+                <label>
+                  AI {mapFilters.aiScoreMin}-{mapFilters.aiScoreMax}
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={mapFilters.aiScoreMin}
+                    onChange={(event) => setMapFilters((current) => ({ ...current, aiScoreMin: Number(event.target.value) }))}
+                  />
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={mapFilters.aiScoreMax}
+                    onChange={(event) => setMapFilters((current) => ({ ...current, aiScoreMax: Number(event.target.value) }))}
+                  />
+                </label>
+                <label>
+                  Equity {mapFilters.equityMin}-{mapFilters.equityMax}%
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={mapFilters.equityMin}
+                    onChange={(event) => setMapFilters((current) => ({ ...current, equityMin: Number(event.target.value) }))}
+                  />
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={mapFilters.equityMax}
+                    onChange={(event) => setMapFilters((current) => ({ ...current, equityMax: Number(event.target.value) }))}
+                  />
+                </label>
+              </div>
+            </div>
+          ) : null}
+        </section>
       </div>
 
       {/* Top Command Strip — thin, embedded, premium */}
@@ -380,7 +835,7 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
             <button
               type="button"
               className={classes('hq__mode-btn', layoutMode === 'map' && 'is-active')}
-              title="Map Focus (⌘M)"
+              title="Map Focus"
               onClick={() => setLayoutMode(layoutMode === 'map' ? 'split' : 'map')}
             >
               <Icon name="maximize" className="hq__mode-icon" />
@@ -396,19 +851,19 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
             <button
               type="button"
               className="hq__mode-btn"
-              title="Battlefield (⌘B)"
+              title="Battlefield"
               onClick={() => setLayoutMode('battlefield')}
             >
               <Icon name="command" className="hq__mode-icon" />
             </button>
           </div>
           <div className="hq__map-modes">
-            {(['leads', 'heat', 'pressure', 'distress', 'stage', 'closings'] as MapMode[]).map((mode) => (
+            {(['leads', 'heat', 'pressure', 'distress', 'stage', 'closings', 'buyerDemand', 'aiPriority'] as MapMode[]).map((mode) => (
               <button
                 key={mode}
                 type="button"
                 className={classes('hq__map-mode', mapMode === mode && 'is-active')}
-                onClick={() => setMapMode(mode)}
+                onClick={() => handleSetMapMode(mode)}
               >
                 {mode}
               </button>
@@ -651,6 +1106,43 @@ export const LiveDashboardPage = ({ data }: { data: LiveDashboardModel }) => {
           ))}
         </div>
       </div>
+
+      {commandMapOverlayOpen ? (
+        <section className="hq__command-overlay" role="dialog" aria-label="Map Command Overlay">
+          <div className="hq__command-overlay-head">
+            <span>Map Command Overlay</span>
+            <button type="button" onClick={() => setCommandMapOverlayOpen(false)}>Close</button>
+          </div>
+          <div className="hq__command-overlay-grid">
+            <span>G</span><span>National command view</span>
+            <span>M</span><span>Cycle active markets</span>
+            <span>F</span><span>Focus selected property</span>
+            <span>P / T / B</span><span>Pitch, terrain, and 3D buildings</span>
+            <span>H / Shift+H</span><span>Heat toggle, clear heat+filters</span>
+            <span>1..6</span><span>Mode select: leads, heat, pressure, distress, stage, closings</span>
+            <span>Cmd/Ctrl+F</span><span>Focus map filter search</span>
+          </div>
+        </section>
+      ) : null}
+
+      {dashboardPaletteOpen ? (
+        <section className="hq__palette-overlay" role="dialog" aria-label="Dashboard Command Palette">
+          <div className="hq__palette-overlay-head">
+            <span>Dashboard Command Palette</span>
+            <button type="button" onClick={() => setDashboardPaletteOpen(false)}>Close</button>
+          </div>
+          <div className="hq__palette-overlay-body">
+            <button type="button" onClick={() => { handleSetMapMode('leads'); setDashboardPaletteOpen(false) }}>Set map mode: Leads</button>
+            <button type="button" onClick={() => { handleSetMapMode('heat'); setDashboardPaletteOpen(false) }}>Set map mode: Heat</button>
+            <button type="button" onClick={() => { handleSetMapMode('pressure'); setDashboardPaletteOpen(false) }}>Set map mode: Pressure</button>
+            <button type="button" onClick={() => { handleSetMapMode('distress'); setDashboardPaletteOpen(false) }}>Set map mode: Distress</button>
+            <button type="button" onClick={() => { handleSetMapMode('stage'); setDashboardPaletteOpen(false) }}>Set map mode: Stage</button>
+            <button type="button" onClick={() => { handleSetMapMode('closings'); setDashboardPaletteOpen(false) }}>Set map mode: Closings</button>
+            <button type="button" onClick={() => { handleSetMapMode('buyerDemand'); setDashboardPaletteOpen(false) }}>Set map mode: Buyer Demand</button>
+            <button type="button" onClick={() => { handleSetMapMode('aiPriority'); setDashboardPaletteOpen(false) }}>Set map mode: AI Priority</button>
+          </div>
+        </section>
+      ) : null}
 
       {/* Map attribution */}
       <div className="hq__attribution">
@@ -1121,7 +1613,7 @@ export const MapStage = ({
           {metricsCollapsed ? 'Show KPI' : 'Hide KPI'}
         </button>
         <div className="cc-map-mode-selector" role="group" aria-label="Map intelligence mode">
-          {(['leads', 'distress', 'heat', 'stage', 'pressure', 'closings'] as MapMode[]).map((mode) => (
+          {(['leads', 'heat', 'pressure', 'distress', 'stage', 'closings', 'buyerDemand', 'aiPriority'] as MapMode[]).map((mode) => (
             <button
               key={mode}
               type="button"
@@ -1155,9 +1647,12 @@ export const MapStage = ({
           selectedLeadId={selectedLead?.id}
           selectedMarketId={selectedMarket?.id}
           mapMode={mapMode}
+          heatModeEnabled={mapMode === 'heat'}
+          activeFilters={DEFAULT_MAP_FILTERS}
           activeDrawer={activeDrawer}
           onOpenLead={onOpenLead}
           onSelectMarket={onSelectMarket}
+          onSetMapMode={onSetMapMode}
         />
 
         {selectedMarket ? (

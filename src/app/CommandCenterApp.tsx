@@ -8,6 +8,7 @@ import { BriefingPanel, buildBriefingDigest, type BriefingDigest } from '../shar
 import { NotificationToasts, NotificationCenter, useNotificationCount } from '../shared/NotificationToast'
 import { playSound } from '../shared/sounds'
 import { applyThemeToDOM, subscribeSettings, updateSetting, type NexusTheme } from '../shared/settings'
+import { COMMAND_STORE_ITEMS, addStoreItemToSpace, getInstallSet, saveInstallSet } from '../modules/command-store/command-store.data'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -27,7 +28,7 @@ const initialState: RouteLoadState = {
 
 // ── Nav Items ──────────────────────────────────────────────────────────────
 
-type NavIconName = 'radar' | 'inbox' | 'alert' | 'stats' | 'map' | 'users' | 'file-text' | 'settings' | 'bell' | 'star'
+type NavIconName = 'radar' | 'inbox' | 'alert' | 'stats' | 'map' | 'users' | 'file-text' | 'settings' | 'bell' | 'star' | 'grid' | 'target'
 
 interface NavItem {
   path: string
@@ -38,8 +39,12 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { path: '/dashboard/live', label: 'Home', icon: 'radar', shortcut: 'H', room: 'Home' },
+  { path: '/', label: 'Home', icon: 'radar', shortcut: 'H', room: 'Home' },
+  { path: '/acquisition', label: 'Acquisition', icon: 'target', shortcut: 'R', room: 'Acquisition Command' },
+  { path: '/command-store', label: 'Command Store', icon: 'grid', shortcut: 'C', room: 'Command Store' },
   { path: '/inbox', label: 'Inbox', icon: 'inbox', shortcut: 'I', room: 'Inbox' },
+  { path: '/queue', label: 'Queue', icon: 'inbox', shortcut: 'Q', room: 'Queue' },
+  { path: '/dossier', label: 'Dossier', icon: 'users', shortcut: 'D', room: 'Dossier' },
   { path: '/alerts', label: 'Alerts', icon: 'alert', shortcut: 'A', room: 'Alerts' },
   { path: '/stats', label: 'Intelligence', icon: 'stats', shortcut: 'G', room: 'Intelligence' },
   { path: '/markets', label: 'Markets', icon: 'map', shortcut: 'M', room: 'Markets' },
@@ -115,15 +120,19 @@ export const CommandCenterApp = () => {
   }, [route.path])
 
   // Command grammar bindings — single-key navigation
+  // Exclude the binding for the currently active route so pressing its shortcut
+  // while already on that page doesn't trigger a loader re-run / remount.
   const bindings = useMemo<CommandBinding[]>(() => [
-    ...navItems.map((item) => ({
-      keys: item.shortcut,
-      seq: [item.shortcut.toLowerCase()],
-      label: item.label,
-      category: 'Navigation',
-      action: () => pushRoutePath(item.path),
-    })),
-  ], [])
+    ...navItems
+      .filter((item) => item.path !== path)
+      .map((item) => ({
+        keys: item.shortcut,
+        seq: [item.shortcut.toLowerCase()],
+        label: item.label,
+        category: 'Navigation',
+        action: () => pushRoutePath(item.path),
+      })),
+  ], [path])
 
   const grammarState = useCommandGrammar(bindings)
 
@@ -147,6 +156,23 @@ export const CommandCenterApp = () => {
     playSound('briefing-open')
   }, [])
 
+  const installStoreItemById = useCallback((itemId: string, destination: Parameters<typeof addStoreItemToSpace>[1] = 'acquisition') => {
+    const item = COMMAND_STORE_ITEMS.find((candidate) => candidate.id === itemId)
+    if (!item) return
+    const next = getInstallSet()
+    next.add(item.id)
+    saveInstallSet(next)
+    addStoreItemToSpace(item.id, destination)
+    pushRoutePath('/command-store')
+  }, [])
+
+  const addStoreItemById = useCallback((itemId: string, destination: Parameters<typeof addStoreItemToSpace>[1] = 'acquisition') => {
+    const item = COMMAND_STORE_ITEMS.find((candidate) => candidate.id === itemId)
+    if (!item) return
+    addStoreItemToSpace(item.id, destination)
+    pushRoutePath('/command-store')
+  }, [])
+
   // Global commands for palette
   const globalCommands = useMemo<GlobalCommand[]>(() => [
     ...navItems.map((item) => ({
@@ -168,7 +194,29 @@ export const CommandCenterApp = () => {
     { id: 'open-copilot', label: 'Open AI Copilot', hint: '⌘J', category: 'AI', action: () => setCopilotOpen(true) },
     { id: 'open-briefing', label: 'Operator Briefing', hint: '⌘.', category: 'AI', action: () => openBriefing() },
     { id: 'open-notif-center', label: 'Notification Center', category: 'System', action: () => setNotifCenterOpen(true) },
-  ], [openBriefing])
+    { id: 'open-command-store', label: 'Open Command Store', hint: 'C', category: 'Command Store', action: () => pushRoutePath('/command-store') },
+    { id: 'open-acquisition-command', label: 'Open Acquisition Command', category: 'Acquisition', action: () => pushRoutePath('/acquisition') },
+    { id: 'open-hot-sellers', label: 'Open Hot Sellers', category: 'Acquisition', action: () => pushRoutePath('/acquisition') },
+    { id: 'open-ready-queue', label: 'Open Ready Queue', category: 'Acquisition', action: () => pushRoutePath('/queue') },
+    { id: 'open-failed-sends', label: 'Open Failed Sends', category: 'Acquisition', action: () => pushRoutePath('/queue') },
+    { id: 'open-owner-search', label: 'Open Owner Search', category: 'Acquisition', action: () => pushRoutePath('/acquisition') },
+    { id: 'open-property-search', label: 'Open Property Search', category: 'Acquisition', action: () => pushRoutePath('/acquisition') },
+    { id: 'generate-offer', label: 'Generate Offer', category: 'Acquisition', action: () => pushRoutePath('/acquisition') },
+    { id: 'open-acquisition-map', label: 'Open Acquisition Map', category: 'Acquisition', action: () => pushRoutePath('/acquisition') },
+    { id: 'review-ai-recommendations', label: 'Review AI Recommendations', category: 'Acquisition', action: () => pushRoutePath('/acquisition') },
+    { id: 'open-seller-dossier', label: 'Open Seller Dossier', category: 'Acquisition', action: () => pushRoutePath('/dossier') },
+    { id: 'open-contact-stack', label: 'Open Contact Stack', category: 'Acquisition', action: () => pushRoutePath('/acquisition') },
+    { id: 'search-store', label: 'Search Store', category: 'Command Store', action: () => pushRoutePath('/command-store') },
+    { id: 'show-installed-apps', label: 'Show Installed Apps', category: 'Command Store', action: () => pushRoutePath('/command-store') },
+    { id: 'open-integrations', label: 'Open Integrations', category: 'Command Store', action: () => pushRoutePath('/command-store') },
+    { id: 'install-seller-inbox', label: 'Install Seller Inbox', category: 'Command Store', action: () => installStoreItemById('app-seller-inbox', 'acquisition') },
+    { id: 'install-queue-agent', label: 'Install Queue Recovery Agent', category: 'Command Store', action: () => installStoreItemById('queue-recovery-agent', 'queue') },
+    { id: 'add-hot-replies-widget', label: 'Add Hot Replies Widget', category: 'Command Store', action: () => addStoreItemById('widget-hot-replies', 'acquisition') },
+    { id: 'add-market-heat-widget', label: 'Add Market Heat Widget', category: 'Command Store', action: () => addStoreItemById('widget-market-heat', 'market-intelligence') },
+    { id: 'add-revenue-forecast', label: 'Add Revenue Forecast Dashboard', category: 'Command Store', action: () => addStoreItemById('report-revenue-forecast', 'revenue') },
+    { id: 'add-acq-app-space', label: 'Add App to Acquisition Command', category: 'Command Store', action: () => addStoreItemById('real-estate-acquisitions-pack', 'acquisition') },
+    { id: 'add-map-layer', label: 'Add Map Layer', category: 'Command Store', action: () => addStoreItemById('layer-heat-map-layer', 'market-intelligence') },
+  ], [addStoreItemById, installStoreItemById, openBriefing])
 
   const filteredCommands = cmdQuery.trim()
     ? globalCommands.filter(
@@ -308,9 +356,15 @@ export const CommandCenterApp = () => {
     }
   }, [dispatchSplitView, openBriefing, resolveThemeAlias, route.path])
 
-  // Global keyboard — ⌘K, ⌘J, ⌘., /, Escape
+  // Global keyboard — ⌘K, ⌘⇧K, ⌘J, ⌘., /, Escape
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
+      // ⌘⇧K — context-aware command palette for the active screen
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault()
+        window.dispatchEvent(new CustomEvent('nx:context-palette'))
+        return
+      }
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault()
         if (cmdOpen) closeCmd()
@@ -443,7 +497,7 @@ export const CommandCenterApp = () => {
   let cmdItemIdx = -1
 
   return (
-    <div className="nx-os">
+    <div className={`nx-os ${route.path === '/' ? 'is-home-route' : ''}`}>
       {/* Minimal bottom dock — only visible on non-Home surfaces */}
       {route.path !== '/dashboard/live' && (
         <nav className="nx-dock" aria-label="Navigation dock">
@@ -497,7 +551,7 @@ export const CommandCenterApp = () => {
       )}
 
       {/* Room label — non-Home surfaces */}
-      {route.path !== '/dashboard/live' && activeNav && (
+      {route.path !== '/dashboard/live' && route.path !== '/command-store' && activeNav && (
         <div className="nx-room-label">
           <span className="nx-room-label__name">{activeNav.room}</span>
         </div>

@@ -11,18 +11,33 @@
  * Attribution required: © CARTO  © OpenStreetMap contributors
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import type { FeatureCollection, Point } from 'geojson'
 import type { ExpressionSpecification } from 'maplibre-gl'
 import type { LiveActivity, LiveLead, LiveMarket } from './live-dashboard.adapter'
+import type { ActiveMarketConfig, DashboardMapFilters, DashboardMapMode } from './map/types'
+import {
+  aiScoreFromLead,
+  buyerDemandScoreFromLead as mapBuyerDemandScore,
+  contractStatusFromLead as mapContractState,
+  distressCountFromLead as mapDistressCount,
+  equityPctFromLead as mapEquityPct,
+  heatWeightFromLead as mapHeatWeight,
+  priorityFromLead as mapPriorityFromLead,
+  replyStatusFromLead as mapReplyStateFromLead,
+  stageBucketFromLead as mapStageBucketFromLead,
+  followUpLagMinutesFromLead as mapFollowUpLagMinutes,
+  titleStateFromLead as mapTitleState,
+} from './map/lead-intel'
+import { buildMarketHeatFieldGeoJSON } from './map/heat-field'
 import { loadSettings, resolveMapStyleUrl } from '../../../shared/settings'
 import { playSound } from '../../../shared/sounds'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
-type MapMode = 'leads' | 'distress' | 'heat' | 'stage' | 'pressure' | 'closings'
+type MapMode = DashboardMapMode
 type DrawerType = 'market' | 'lead' | 'agent' | null
 
 type PinTier = 'hot' | 'warm' | 'neutral' | 'cold'
@@ -33,8 +48,26 @@ interface LeadFeatureProps {
   id: string
   ownerName: string
   address: string
+  city: string
+  stateCode: string
   marketId: string
   marketLabel: string
+  ownerType: string
+  propertyType: string
+  sentiment: string
+  priority: 'P0' | 'P1' | 'P2' | 'P3'
+  pipelineStage: string
+  stageBucket: string
+  replyState: 'replied' | 'awaiting-reply' | 'no-reply'
+  contractState: 'under-contract' | 'negotiating' | 'clear-to-close' | 'none'
+  titleState: 'clear' | 'risk'
+  distressCount: number
+  followUpLagMinutes: number
+  buyerDemandScore: number
+  aiScore: number
+  equityPct: number
+  heatWeight: number
+  outboundAttempts: number
   urgencyScore: number
   pinTier: PinTier
   selected: 0 | 1
@@ -47,6 +80,120 @@ interface MarketFeatureProps {
   heat: string
   campaignStatus: string
   selected: 0 | 1
+}
+
+interface FocusFeatureProps {
+  id: string
+  kind: 'subject' | 'comp' | 'activity'
+  score: number
+}
+
+type DetailLevel = 'national' | 'market' | 'property'
+type LayerToggleKey = 'leads' | 'heat' | 'pressure' | 'distress' | 'stage' | 'closings' | 'buyerDemand' | 'aiPriority'
+
+interface ViewportTuning {
+  nationalMaxZoom: number
+  propertyMinZoom: number
+  zoomStep: number
+  panBase: number
+  flyScale: number
+}
+
+const DEFAULT_CENTER: [number, number] = [-96.0, 37.5]
+const DEFAULT_ZOOM = 3.7
+const GOOGLE_MAPS_API_KEY = (import.meta.env as Record<string, string | undefined>).VITE_GOOGLE_MAPS_API_KEY
+
+const getStreetViewEmbedUrl = (lead: LiveLead): string | undefined => {
+  if (!GOOGLE_MAPS_API_KEY) return undefined
+
+  const location = `${lead.lat},${lead.lng}`
+  const params = new URLSearchParams({
+    key: GOOGLE_MAPS_API_KEY,
+    location,
+    heading: '210',
+    pitch: '0',
+    fov: '80',
+  })
+
+  return `https://www.google.com/maps/embed/v1/streetview?${params.toString()}`
+}
+
+const getStreetViewMapsUrl = (lead: LiveLead): string =>
+  `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lead.lat},${lead.lng}`
+
+const getViewportTuning = (): ViewportTuning => {
+  if (typeof window === 'undefined') {
+    return {
+      nationalMaxZoom: 4.5,
+      propertyMinZoom: 10.1,
+      zoomStep: 0.72,
+      panBase: 104,
+      flyScale: 1,
+    }
+  }
+
+  const width = window.innerWidth
+  if (width >= 1880) {
+    return {
+      nationalMaxZoom: 4.2,
+      propertyMinZoom: 10.9,
+      zoomStep: 0.66,
+      panBase: 94,
+      flyScale: 0.86,
+    }
+  }
+
+  return {
+    nationalMaxZoom: 4.75,
+    propertyMinZoom: 10.25,
+    zoomStep: 0.78,
+    panBase: 112,
+    flyScale: 1,
+  }
+}
+
+const MAP_LAYER_IDS = {
+  heat: 'leads-heat',
+  clusters: 'leads-clusters',
+  clusterCount: 'leads-cluster-count',
+  pinGlow: 'leads-pin-glow',
+  pulseRing: 'leads-pulse-ring',
+  pins: 'leads-pins',
+  pressure: 'leads-pressure',
+  distress: 'leads-distress',
+  closings: 'leads-closings',
+  marketsGlow: 'markets-glow',
+  marketsPulse: 'markets-pulse-ring',
+  marketsCore: 'markets-core',
+  marketsLabel: 'markets-label',
+  focusNearby: 'focus-nearby-points',
+  focusNearbyLabel: 'focus-nearby-label',
+  eventPulse: 'event-pulse-rings',
+  buildings3d: 'nexus-3d-buildings',
+  stage: 'leads-stage',
+  buyerDemand: 'leads-buyer-demand',
+  aiPriority: 'leads-ai-priority',
+  marketHeatField: 'market-heat-field',
+} as const
+
+const SOURCE_IDS = {
+  leads: 'leads',
+  markets: 'markets',
+  marketHeatField: 'market-heat-field',
+  eventPulses: 'event-pulses',
+  focusNearby: 'focus-nearby',
+  terrainDem: 'nexus-dem',
+} as const
+
+const MODE_TO_TOGGLE: Record<DashboardMapMode, LayerToggleKey> = {
+  leads: 'leads',
+  heat: 'heat',
+  pressure: 'pressure',
+  distress: 'distress',
+  closings: 'closings',
+  stage: 'stage',
+  buyerDemand: 'buyerDemand',
+  aiPriority: 'aiPriority',
 }
 
 // ─── Coordinate guard ─────────────────────────────────────────────────────
@@ -97,6 +244,18 @@ function computePinTier(lead: LiveLead, mode: MapMode): PinTier {
       return lead.pipelineStage === 'under-contract' ||
         lead.pipelineStage === 'negotiating'
         ? 'hot' : 'cold'
+    case 'buyerDemand':
+      return mapBuyerDemandScore(lead) >= 75 ? 'hot'
+        : mapBuyerDemandScore(lead) >= 58 ? 'warm'
+        : mapBuyerDemandScore(lead) >= 40 ? 'neutral'
+        : 'cold'
+    case 'aiPriority': {
+      const aiScore = Math.round((lead.urgencyScore * 0.55) + (lead.opportunityScore * 0.45))
+      return aiScore >= 82 ? 'hot'
+        : aiScore >= 64 ? 'warm'
+        : aiScore >= 46 ? 'neutral'
+        : 'cold'
+    }
   }
 }
 
@@ -104,7 +263,7 @@ function computePinTier(lead: LiveLead, mode: MapMode): PinTier {
 
 function buildLeadsGeoJSON(
   leads: LiveLead[],
-  mode: MapMode,
+  mode: DashboardMapMode,
   selectedLeadId: string | undefined,
 ): FeatureCollection<Point, LeadFeatureProps> {
   return {
@@ -112,6 +271,8 @@ function buildLeadsGeoJSON(
     features: leads
       .filter((l) => isValidCoord(l.lat, l.lng))
       .map((lead) => ({
+        // Keep weighting calculation in-source so mode and filters can update layers
+        // without remounting the map instance.
         type: 'Feature' as const,
         geometry: {
           type: 'Point' as const,
@@ -121,13 +282,89 @@ function buildLeadsGeoJSON(
           id: lead.id,
           ownerName: lead.ownerName,
           address: lead.address,
+          city: lead.city,
+          stateCode: lead.stateCode,
           marketId: lead.marketId,
           marketLabel: lead.marketLabel,
+          ownerType: lead.ownerType,
+          propertyType: lead.propertyType,
+          sentiment: lead.sentiment,
+          priority: mapPriorityFromLead(lead),
+          pipelineStage: lead.pipelineStage,
+          stageBucket: mapStageBucketFromLead(lead),
+          replyState: mapReplyStateFromLead(lead),
+          contractState: mapContractState(lead),
+          titleState: mapTitleState(lead),
+          distressCount: mapDistressCount(lead),
+          followUpLagMinutes: mapFollowUpLagMinutes(lead),
+          buyerDemandScore: mapBuyerDemandScore(lead),
+          aiScore: aiScoreFromLead(lead),
+          equityPct: mapEquityPct(lead),
+          heatWeight: mapHeatWeight(lead, mode),
+          outboundAttempts: lead.outboundAttempts,
           urgencyScore: lead.urgencyScore,
           pinTier: computePinTier(lead, mode),
           selected: lead.id === selectedLeadId ? 1 : 0,
         } satisfies LeadFeatureProps,
       })),
+  }
+}
+
+function buildFocusNearbyGeoJSON(
+  leads: LiveLead[],
+  selectedLeadId: string | undefined,
+): FeatureCollection<Point, FocusFeatureProps> {
+  if (!selectedLeadId) {
+    return { type: 'FeatureCollection', features: [] }
+  }
+
+  const subject = leads.find((l) => l.id === selectedLeadId)
+  if (!subject || !isValidCoord(subject.lat, subject.lng)) {
+    return { type: 'FeatureCollection', features: [] }
+  }
+
+  const comparables = leads
+    .filter((lead) =>
+      lead.id !== subject.id &&
+      lead.marketId === subject.marketId &&
+      isValidCoord(lead.lat, lead.lng),
+    )
+    .sort((a, b) => b.urgencyScore - a.urgencyScore)
+    .slice(0, 14)
+
+  const features: Array<GeoJSON.Feature<Point, FocusFeatureProps>> = [
+    {
+      type: 'Feature',
+      geometry: {
+        type: 'Point',
+        coordinates: [subject.lng, subject.lat],
+      },
+      properties: {
+        id: subject.id,
+        kind: 'subject',
+        score: subject.urgencyScore,
+      },
+    },
+    ...comparables.map((lead, index) => {
+      const kind: FocusFeatureProps['kind'] = index % 3 === 0 ? 'activity' : 'comp'
+      return {
+        type: 'Feature' as const,
+        geometry: {
+          type: 'Point' as const,
+          coordinates: [lead.lng, lead.lat],
+        },
+        properties: {
+          id: lead.id,
+          kind,
+          score: lead.urgencyScore,
+        },
+      }
+    }),
+  ]
+
+  return {
+    type: 'FeatureCollection',
+    features,
   }
 }
 
@@ -268,31 +505,76 @@ const PIN_COLOR_EXPR: ExpressionSpecification = [
 export interface NexusMapProps {
   leads: LiveLead[]
   markets: LiveMarket[]
+  marketConfigs?: ActiveMarketConfig[]
   timeline: LiveActivity[]
   selectedLeadId: string | undefined
   selectedMarketId: string | undefined
-  mapMode: MapMode
+  mapMode: DashboardMapMode
+  heatModeEnabled?: boolean
+  activeFilters?: DashboardMapFilters
   activeDrawer: DrawerType
   onOpenLead: (id: string) => void
   onSelectMarket: (id: string) => void
+  onToggleLeftPanel?: () => void
+  onToggleRightPanel?: () => void
+  onOpenCommandMapOverlay?: () => void
+  onOpenDashboardPalette?: () => void
+  onClearTemporaryPanels?: () => void
+  onSetMapMode?: (mode: DashboardMapMode) => void
+  onToggleHeatMode?: () => void
+  onClearHeatAndFilters?: () => void
+  onFocusFilterSearch?: () => void
 }
 
 export const NexusMap = ({
   leads,
   markets,
+  marketConfigs = [],
   timeline,
   selectedLeadId,
   selectedMarketId,
   mapMode,
+  heatModeEnabled = false,
+  activeFilters,
   activeDrawer,
   onOpenLead,
   onSelectMarket,
+  onToggleLeftPanel,
+  onToggleRightPanel,
+  onOpenCommandMapOverlay,
+  onOpenDashboardPalette,
+  onClearTemporaryPanels,
+  onSetMapMode,
+  onToggleHeatMode,
+  onClearHeatAndFilters,
+  onFocusFilterSearch,
 }: NexusMapProps) => {
+  const [streetViewOpen, setStreetViewOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
+  const hoverPopupRef = useRef<maplibregl.Popup | null>(null)
   const mapReadyRef = useRef(false)
   const eventPulsesRef = useRef<EventPulse[]>([])
   const lastTimelineCountRef = useRef(0)
+  const detailLevelRef = useRef<DetailLevel>('national')
+  const viewportTuningRef = useRef<ViewportTuning>(getViewportTuning())
+  const pitchEnabledRef = useRef(false)
+  const heatModeEnabledRef = useRef(heatModeEnabled)
+  const terrainEnabledRef = useRef(false)
+  const buildingsEnabledRef = useRef(false)
+  const labelsEnabledRef = useRef(true)
+  const baseSymbolLayerIdsRef = useRef<string[]>([])
+  const buildingsSourceRef = useRef<{ source: string; sourceLayer: string } | null>(null)
+  const layerTogglesRef = useRef<Record<LayerToggleKey, boolean>>({
+    leads: true,
+    heat: heatModeEnabled,
+    pressure: false,
+    distress: false,
+    stage: false,
+    closings: false,
+    buyerDemand: false,
+    aiPriority: false,
+  })
 
   // Stable refs for callbacks — avoid stale closures in map event listeners
   const onOpenLeadRef = useRef(onOpenLead)
@@ -306,11 +588,279 @@ export const NexusMap = ({
   const mapModeRef = useRef(mapMode)
   const selectedLeadIdRef = useRef(selectedLeadId)
   const selectedMarketIdRef = useRef(selectedMarketId)
+  const marketConfigsRef = useRef(marketConfigs)
   leadsRef.current = leads
   marketsRef.current = markets
+  marketConfigsRef.current = marketConfigs
   mapModeRef.current = mapMode
+  heatModeEnabledRef.current = heatModeEnabled
   selectedLeadIdRef.current = selectedLeadId
   selectedMarketIdRef.current = selectedMarketId
+
+  const leadsGeoJSON = useMemo(
+    () => buildLeadsGeoJSON(leads, mapMode, selectedLeadId),
+    [leads, mapMode, selectedLeadId],
+  )
+
+  const marketsGeoJSON = useMemo(
+    () => buildMarketsGeoJSON(markets, selectedMarketId),
+    [markets, selectedMarketId],
+  )
+
+  const focusNearbyGeoJSON = useMemo(
+    () => buildFocusNearbyGeoJSON(leads, selectedLeadId),
+    [leads, selectedLeadId],
+  )
+
+  const marketHeatFieldGeoJSON = useMemo(
+    () => buildMarketHeatFieldGeoJSON(marketConfigs, 0),
+    [marketConfigs],
+  )
+
+  const selectedLeadForMapCard = selectedLeadId
+    ? leads.find((lead) => lead.id === selectedLeadId)
+    : undefined
+  const streetViewEmbedUrl = selectedLeadForMapCard ? getStreetViewEmbedUrl(selectedLeadForMapCard) : undefined
+  const streetViewMapsUrl = selectedLeadForMapCard ? getStreetViewMapsUrl(selectedLeadForMapCard) : undefined
+
+  useEffect(() => {
+    setStreetViewOpen(false)
+  }, [selectedLeadId])
+
+  const setLayerVisible = (layerId: string, visible: boolean) => {
+    const map = mapRef.current
+    if (!map || !map.getLayer(layerId)) return
+    map.setLayoutProperty(layerId, 'visibility', visible ? 'visible' : 'none')
+  }
+
+  const applyLayerVisibility = () => {
+    const map = mapRef.current
+    if (!map || !mapReadyRef.current) return
+
+    const detail = detailLevelRef.current
+    const toggles = layerTogglesRef.current
+    const heatEnabled = heatModeEnabledRef.current || mapModeRef.current === 'heat'
+
+    const showMarket = detail === 'national' || detail === 'market'
+    const showPins = detail !== 'national'
+    const showClusters = detail !== 'property'
+    const showHeat = heatEnabled && toggles.heat && detail !== 'property'
+    const showFocusNearby = detail === 'property'
+
+    setLayerVisible(MAP_LAYER_IDS.heat, showHeat)
+    setLayerVisible(MAP_LAYER_IDS.marketHeatField, showHeat)
+    setLayerVisible(MAP_LAYER_IDS.clusters, showClusters)
+    setLayerVisible(MAP_LAYER_IDS.clusterCount, showClusters)
+    setLayerVisible(MAP_LAYER_IDS.pinGlow, showPins)
+    setLayerVisible(MAP_LAYER_IDS.pulseRing, showPins)
+    setLayerVisible(MAP_LAYER_IDS.pins, showPins)
+    setLayerVisible(MAP_LAYER_IDS.marketsGlow, showMarket)
+    setLayerVisible(MAP_LAYER_IDS.marketsPulse, showMarket)
+    setLayerVisible(MAP_LAYER_IDS.marketsCore, showMarket)
+    setLayerVisible(MAP_LAYER_IDS.marketsLabel, showMarket && labelsEnabledRef.current)
+    setLayerVisible(MAP_LAYER_IDS.pressure, toggles.pressure && detail !== 'national')
+    setLayerVisible(MAP_LAYER_IDS.distress, toggles.distress && detail !== 'national')
+    setLayerVisible(MAP_LAYER_IDS.stage, toggles.stage && detail !== 'national')
+    setLayerVisible(MAP_LAYER_IDS.closings, toggles.closings && detail !== 'national')
+    setLayerVisible(MAP_LAYER_IDS.buyerDemand, toggles.buyerDemand && detail !== 'national')
+    setLayerVisible(MAP_LAYER_IDS.aiPriority, toggles.aiPriority && detail !== 'national')
+    setLayerVisible(MAP_LAYER_IDS.focusNearby, showFocusNearby)
+    setLayerVisible(MAP_LAYER_IDS.focusNearbyLabel, showFocusNearby && labelsEnabledRef.current)
+
+    if (buildingsEnabledRef.current) {
+      const shouldShowBuildings = detail === 'property' || map.getZoom() >= 13.5
+      setLayerVisible(MAP_LAYER_IDS.buildings3d, shouldShowBuildings)
+    }
+  }
+
+  const setDetailLevelFromZoom = (zoom: number) => {
+    const tuning = viewportTuningRef.current
+    const tunedNext: DetailLevel = zoom <= tuning.nationalMaxZoom
+      ? 'national'
+      : zoom >= tuning.propertyMinZoom
+        ? 'property'
+        : 'market'
+
+    if (tunedNext !== detailLevelRef.current) {
+      detailLevelRef.current = tunedNext
+    }
+    applyLayerVisibility()
+  }
+
+  const flyToNational = () => {
+    const map = mapRef.current
+    if (!map || !mapReadyRef.current) return
+    const tuning = viewportTuningRef.current
+    detailLevelRef.current = 'national'
+    map.flyTo({
+      center: DEFAULT_CENTER,
+      zoom: DEFAULT_ZOOM,
+      pitch: 0,
+      bearing: 0,
+      duration: Math.round(1080 * tuning.flyScale),
+      essential: true,
+    })
+    applyLayerVisibility()
+  }
+
+  const flyToMarket = (marketId: string) => {
+    const map = mapRef.current
+    if (!map || !mapReadyRef.current) return
+    const tuning = viewportTuningRef.current
+    const market = marketsRef.current.find((m) => m.id === marketId)
+    if (!market || !isValidCoord(market.lat, market.lng)) return
+    detailLevelRef.current = 'market'
+    map.flyTo({
+      center: [market.lng, market.lat],
+      zoom: Math.max(map.getZoom(), 8.4),
+      pitch: pitchEnabledRef.current ? 46 : 0,
+      duration: Math.round(920 * tuning.flyScale),
+      essential: true,
+    })
+    applyLayerVisibility()
+  }
+
+  const flyToProperty = (leadId: string) => {
+    const map = mapRef.current
+    if (!map || !mapReadyRef.current) return
+    const tuning = viewportTuningRef.current
+    const lead = leadsRef.current.find((l) => l.id === leadId)
+    if (!lead || !isValidCoord(lead.lat, lead.lng)) return
+    detailLevelRef.current = 'property'
+    map.flyTo({
+      center: [lead.lng, lead.lat],
+      zoom: Math.max(map.getZoom(), 13.2),
+      pitch: pitchEnabledRef.current ? 52 : 20,
+      offset: activeDrawer === 'lead' ? [-190, 10] : [0, 0],
+      duration: Math.round(860 * tuning.flyScale),
+      essential: true,
+    })
+    applyLayerVisibility()
+  }
+
+  const ensureTerrainSource = () => {
+    const map = mapRef.current
+    if (!map || map.getSource(SOURCE_IDS.terrainDem)) return
+    map.addSource(SOURCE_IDS.terrainDem, {
+      type: 'raster-dem',
+      url: 'https://demotiles.maplibre.org/terrain-tiles/tiles.json',
+      tileSize: 256,
+      maxzoom: 14,
+    })
+  }
+
+  const enterTactical3D = () => {
+    const map = mapRef.current
+    if (!map || !mapReadyRef.current) return
+    const tuning = viewportTuningRef.current
+    pitchEnabledRef.current = true
+    map.easeTo({ pitch: 52, duration: Math.round(540 * tuning.flyScale) })
+    applyLayerVisibility()
+  }
+
+  const exitTactical3D = () => {
+    const map = mapRef.current
+    if (!map || !mapReadyRef.current) return
+    const tuning = viewportTuningRef.current
+    pitchEnabledRef.current = false
+    map.easeTo({ pitch: 0, bearing: 0, duration: Math.round(540 * tuning.flyScale) })
+    applyLayerVisibility()
+  }
+
+  const toggleTerrain = () => {
+    const map = mapRef.current
+    if (!map || !mapReadyRef.current) return
+    if (!terrainEnabledRef.current) {
+      try {
+        ensureTerrainSource()
+        map.setTerrain({ source: SOURCE_IDS.terrainDem, exaggeration: 1.15 })
+        terrainEnabledRef.current = true
+      } catch {
+        terrainEnabledRef.current = false
+      }
+      return
+    }
+    map.setTerrain(null)
+    terrainEnabledRef.current = false
+  }
+
+  const ensureBuildingsLayer = () => {
+    const map = mapRef.current
+    if (!map || map.getLayer(MAP_LAYER_IDS.buildings3d)) return
+
+    if (!buildingsSourceRef.current) {
+      const style = map.getStyle()
+      const buildingLayer = style.layers?.find((layer) =>
+        layer.type === 'fill' &&
+        !!(layer as { source?: string })?.source &&
+        String((layer as { 'source-layer'?: string })['source-layer'] ?? '').includes('building'),
+      ) as (maplibregl.LayerSpecification & { source?: string; 'source-layer'?: string }) | undefined
+
+      if (!buildingLayer?.source || !buildingLayer['source-layer']) {
+        return
+      }
+
+      buildingsSourceRef.current = {
+        source: buildingLayer.source,
+        sourceLayer: buildingLayer['source-layer'],
+      }
+    }
+
+    const buildingMeta = buildingsSourceRef.current
+    if (!buildingMeta) return
+
+    map.addLayer({
+      id: MAP_LAYER_IDS.buildings3d,
+      type: 'fill-extrusion',
+      source: buildingMeta.source,
+      'source-layer': buildingMeta.sourceLayer,
+      minzoom: 12,
+      paint: {
+        'fill-extrusion-color': 'rgba(148, 163, 184, 0.55)',
+        'fill-extrusion-height': [
+          'interpolate',
+          ['linear'],
+          ['zoom'],
+          12, 0,
+          15, ['coalesce', ['get', 'render_height'], ['get', 'height'], 24],
+        ],
+        'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], ['get', 'min_height'], 0],
+        'fill-extrusion-opacity': 0.66,
+      },
+      layout: { visibility: 'none' },
+    } as maplibregl.LayerSpecification)
+  }
+
+  const toggleBuildings = () => {
+    const map = mapRef.current
+    if (!map || !mapReadyRef.current) return
+    if (!buildingsEnabledRef.current) {
+      try {
+        ensureBuildingsLayer()
+      } catch {
+        return
+      }
+      buildingsEnabledRef.current = true
+      applyLayerVisibility()
+      return
+    }
+    buildingsEnabledRef.current = false
+    setLayerVisible(MAP_LAYER_IDS.buildings3d, false)
+  }
+
+  const toggleLabels = () => {
+    const map = mapRef.current
+    if (!map || !mapReadyRef.current) return
+    labelsEnabledRef.current = !labelsEnabledRef.current
+
+    for (const id of baseSymbolLayerIdsRef.current) {
+      if (map.getLayer(id)) {
+        map.setLayoutProperty(id, 'visibility', labelsEnabledRef.current ? 'visible' : 'none')
+      }
+    }
+
+    applyLayerVisibility()
+  }
 
   // ── Mount / unmount ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -363,10 +913,62 @@ export const NexusMap = ({
         data: buildMarketsGeoJSON(curMarkets, curSelectedMarket),
       })
 
+      map.addSource(SOURCE_IDS.focusNearby, {
+        type: 'geojson',
+        data: buildFocusNearbyGeoJSON(curLeads, curSelectedLead),
+      })
+
+      map.addSource(SOURCE_IDS.marketHeatField, {
+        type: 'geojson',
+        data: buildMarketHeatFieldGeoJSON(marketConfigsRef.current, 0),
+      })
+
+      const style = map.getStyle()
+      baseSymbolLayerIdsRef.current = (style.layers ?? [])
+        .filter((layer) => layer.type === 'symbol')
+        .map((layer) => layer.id)
+
       // ── Heatmap ─────────────────────────────────────────────────
       // Atmospheric pressure layer with settings-driven palette.
       // Wider radius creates blended fields rather than isolated circles.
       const heatIntensity = settings.heatIntensity
+      map.addLayer({
+        id: MAP_LAYER_IDS.marketHeatField,
+        type: 'heatmap',
+        source: SOURCE_IDS.marketHeatField,
+        maxzoom: 9,
+        paint: {
+          'heatmap-weight': [
+            'interpolate', ['linear'],
+            ['get', 'weight'],
+            0, 0,
+            100, 2.7,
+          ],
+          'heatmap-intensity': [
+            'interpolate', ['linear'],
+            ['zoom'], 2, 0.84, 6, 1.55, 9, 0.98,
+          ],
+          'heatmap-color': [
+            'interpolate', ['linear'], ['heatmap-density'],
+            0, 'rgba(5, 9, 18, 0)',
+            0.08, 'rgba(40, 99, 170, 0.22)',
+            0.24, 'rgba(46, 180, 212, 0.34)',
+            0.44, 'rgba(82, 210, 199, 0.44)',
+            0.64, 'rgba(226, 176, 82, 0.54)',
+            0.82, 'rgba(236, 131, 62, 0.64)',
+            1, 'rgba(224, 92, 102, 0.74)',
+          ],
+          'heatmap-radius': [
+            'interpolate', ['linear'],
+            ['zoom'], 2, 92, 5, 128, 8, 156,
+          ],
+          'heatmap-opacity': [
+            'interpolate', ['linear'],
+            ['zoom'], 2, 0.60, 8, 0.50,
+          ],
+        },
+      })
+
       map.addLayer({
         id: 'leads-heat',
         type: 'heatmap',
@@ -375,7 +977,7 @@ export const NexusMap = ({
         paint: {
           'heatmap-weight': [
             'interpolate', ['linear'],
-            ['get', 'urgencyScore'], 0, 0.12 * heatIntensity, 100, 2.2 * heatIntensity,
+            ['get', 'heatWeight'], 0, 0.06 * heatIntensity, 100, 2.4 * heatIntensity,
           ],
           'heatmap-intensity': [
             'interpolate', ['linear'],
@@ -388,7 +990,7 @@ export const NexusMap = ({
           ],
           'heatmap-opacity': [
             'interpolate', ['linear'],
-            ['zoom'], 3, 0.78, 10, 0.52,
+            ['zoom'], 3, 0.68, 10, 0.46,
           ],
         },
       })
@@ -506,6 +1108,161 @@ export const NexusMap = ({
         },
       })
 
+      map.addLayer({
+        id: MAP_LAYER_IDS.pressure,
+        type: 'circle',
+        source: SOURCE_IDS.leads,
+        filter: ['!', ['has', 'point_count']],
+        paint: {
+          'circle-radius': [
+            'interpolate', ['linear'],
+            ['get', 'outboundAttempts'],
+            0, 3,
+            4, 8,
+            8, 14,
+          ],
+          'circle-color': 'rgba(245, 184, 73, 0.30)',
+          'circle-stroke-width': 1,
+          'circle-stroke-color': 'rgba(245, 184, 73, 0.78)',
+          'circle-opacity': 0.72,
+        },
+        layout: { visibility: 'none' },
+      })
+
+      map.addLayer({
+        id: MAP_LAYER_IDS.distress,
+        type: 'circle',
+        source: SOURCE_IDS.leads,
+        filter: [
+          'all',
+          ['!', ['has', 'point_count']],
+          ['match', ['get', 'ownerType'], ['tax-delinquent', 'estate'], true, false],
+        ],
+        paint: {
+          'circle-radius': 9,
+          'circle-color': 'rgba(248, 113, 113, 0.16)',
+          'circle-stroke-width': 2,
+          'circle-stroke-color': 'rgba(248, 113, 113, 0.85)',
+          'circle-opacity': 0.88,
+        },
+        layout: { visibility: 'none' },
+      })
+
+      map.addLayer({
+        id: MAP_LAYER_IDS.closings,
+        type: 'circle',
+        source: SOURCE_IDS.leads,
+        filter: [
+          'all',
+          ['!', ['has', 'point_count']],
+          ['match', ['get', 'pipelineStage'], ['under-contract', 'negotiating'], true, false],
+        ],
+        paint: {
+          'circle-radius': 7,
+          'circle-color': 'rgba(62, 207, 142, 0.20)',
+          'circle-stroke-width': 2,
+          'circle-stroke-color': 'rgba(62, 207, 142, 0.86)',
+          'circle-opacity': 0.92,
+        },
+        layout: { visibility: 'none' },
+      })
+
+      map.addLayer({
+        id: MAP_LAYER_IDS.stage,
+        type: 'circle',
+        source: SOURCE_IDS.leads,
+        filter: ['!', ['has', 'point_count']],
+        paint: {
+          'circle-radius': [
+            'match', ['get', 'stageBucket'],
+            'not-contacted', 4,
+            'contacted', 5,
+            'replied', 6,
+            'negotiating', 8,
+            'under-contract', 9,
+            'closing', 8,
+            5,
+          ],
+          'circle-color': [
+            'match', ['get', 'stageBucket'],
+            'not-contacted', 'rgba(120, 132, 150, 0.58)',
+            'contacted', 'rgba(86, 153, 222, 0.58)',
+            'replied', 'rgba(56, 208, 240, 0.66)',
+            'negotiating', 'rgba(245, 184, 73, 0.70)',
+            'under-contract', 'rgba(249, 115, 22, 0.76)',
+            'closing', 'rgba(62, 207, 142, 0.74)',
+            'rgba(120, 132, 150, 0.52)',
+          ],
+          'circle-stroke-width': 1.5,
+          'circle-stroke-color': 'rgba(235, 242, 252, 0.38)',
+          'circle-opacity': 0.9,
+        },
+        layout: { visibility: 'none' },
+      })
+
+      map.addLayer({
+        id: MAP_LAYER_IDS.buyerDemand,
+        type: 'circle',
+        source: SOURCE_IDS.leads,
+        filter: ['!', ['has', 'point_count']],
+        paint: {
+          'circle-radius': [
+            'interpolate', ['linear'], ['get', 'buyerDemandScore'],
+            0, 3,
+            40, 6,
+            70, 9,
+            100, 12,
+          ],
+          'circle-color': [
+            'interpolate', ['linear'], ['get', 'buyerDemandScore'],
+            0, 'rgba(38, 92, 142, 0.20)',
+            55, 'rgba(245, 184, 73, 0.24)',
+            100, 'rgba(62, 207, 142, 0.32)',
+          ],
+          'circle-stroke-width': 1.4,
+          'circle-stroke-color': [
+            'interpolate', ['linear'], ['get', 'buyerDemandScore'],
+            0, 'rgba(88, 142, 196, 0.40)',
+            55, 'rgba(245, 184, 73, 0.58)',
+            100, 'rgba(62, 207, 142, 0.74)',
+          ],
+          'circle-opacity': 0.92,
+        },
+        layout: { visibility: 'none' },
+      })
+
+      map.addLayer({
+        id: MAP_LAYER_IDS.aiPriority,
+        type: 'circle',
+        source: SOURCE_IDS.leads,
+        filter: ['!', ['has', 'point_count']],
+        paint: {
+          'circle-radius': [
+            'interpolate', ['linear'], ['get', 'aiScore'],
+            0, 4,
+            60, 8,
+            100, 12,
+          ],
+          'circle-color': [
+            'interpolate', ['linear'], ['get', 'aiScore'],
+            0, 'rgba(56, 208, 240, 0.14)',
+            65, 'rgba(245, 184, 73, 0.24)',
+            82, 'rgba(249, 115, 22, 0.30)',
+            100, 'rgba(244, 114, 182, 0.32)',
+          ],
+          'circle-stroke-width': 1.6,
+          'circle-stroke-color': [
+            'interpolate', ['linear'], ['get', 'aiScore'],
+            0, 'rgba(56, 208, 240, 0.46)',
+            65, 'rgba(245, 184, 73, 0.64)',
+            82, 'rgba(249, 115, 22, 0.72)',
+            100, 'rgba(244, 114, 182, 0.78)',
+          ],
+          'circle-opacity': 0.9,
+        },
+        layout: { visibility: 'none' },
+      })
+
       // ── Market centroids ─────────────────────────────────────────
       // Wide glow bloom
       map.addLayer({
@@ -521,6 +1278,22 @@ export const NexusMap = ({
             'case', ['==', ['get', 'selected'], 1], 0.13, 0.06,
           ],
           'circle-blur': 1.2,
+        },
+      })
+
+      map.addLayer({
+        id: MAP_LAYER_IDS.marketsPulse,
+        type: 'circle',
+        source: SOURCE_IDS.markets,
+        paint: {
+          'circle-radius': [
+            'case', ['==', ['get', 'selected'], 1], 18, 14,
+          ],
+          'circle-color': 'rgba(56, 208, 240, 0.15)',
+          'circle-stroke-width': 1.2,
+          'circle-stroke-color': 'rgba(56, 208, 240, 0.72)',
+          'circle-opacity': 0.72,
+          'circle-blur': 0.45,
         },
       })
 
@@ -566,6 +1339,60 @@ export const NexusMap = ({
           'text-halo-width': 2,
         },
       })
+
+      map.addLayer({
+        id: MAP_LAYER_IDS.focusNearby,
+        type: 'circle',
+        source: SOURCE_IDS.focusNearby,
+        paint: {
+          'circle-radius': [
+            'match', ['get', 'kind'],
+            'subject', 10,
+            'comp', 6,
+            5,
+          ],
+          'circle-color': [
+            'match', ['get', 'kind'],
+            'subject', 'rgba(56, 208, 240, 0.16)',
+            'comp', 'rgba(245, 184, 73, 0.14)',
+            'rgba(148, 163, 184, 0.12)',
+          ],
+          'circle-stroke-width': 1.5,
+          'circle-stroke-color': [
+            'match', ['get', 'kind'],
+            'subject', 'rgba(56, 208, 240, 0.82)',
+            'comp', 'rgba(245, 184, 73, 0.70)',
+            'rgba(148, 163, 184, 0.62)',
+          ],
+          'circle-opacity': 0.9,
+        },
+        layout: { visibility: 'none' },
+      })
+
+      map.addLayer({
+        id: MAP_LAYER_IDS.focusNearbyLabel,
+        type: 'symbol',
+        source: SOURCE_IDS.focusNearby,
+        layout: {
+          'text-field': [
+            'match', ['get', 'kind'],
+            'subject', 'FOCUS',
+            'comp', 'COMP',
+            'ACT',
+          ],
+          'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'],
+          'text-size': 9,
+          'text-offset': [0, 1.2],
+          'text-anchor': 'top',
+          visibility: 'none',
+        },
+        paint: {
+          'text-color': 'rgba(220, 230, 240, 0.72)',
+          'text-halo-color': 'rgba(8, 10, 12, 0.9)',
+          'text-halo-width': 1.5,
+        },
+        filter: ['!=', ['get', 'kind'], 'subject'],
+      } as maplibregl.LayerSpecification)
 
       // ── Event pulse layer (empty source, populated dynamically) ──
       map.addSource('event-pulses', {
@@ -631,11 +1458,51 @@ export const NexusMap = ({
         })
       }
 
+      map.on('mousemove', 'leads-pins', (e) => {
+        const feature = e.features?.[0]
+        const geometry = feature?.geometry
+        const props = feature?.properties as Partial<LeadFeatureProps> | undefined
+        if (!props || !geometry || geometry.type !== 'Point') return
+
+        const coords = geometry.coordinates as [number, number]
+        const tooltipHtml = `
+          <div class="cc-map-tooltip">
+            <strong>${props.ownerName ?? 'Lead'}</strong>
+            <span>${props.city ?? ''}${props.city ? ', ' : ''}${props.stateCode ?? ''}</span>
+            <span>Temp ${String(props.sentiment ?? 'neutral').toUpperCase()} • ${props.priority ?? 'P2'}</span>
+            <span>AI ${Math.round(Number(props.aiScore ?? 0))} • ${String(props.pipelineStage ?? '').replace(/-/g, ' ')}</span>
+          </div>
+        `
+
+        if (!hoverPopupRef.current) {
+          hoverPopupRef.current = new maplibregl.Popup({
+            closeButton: false,
+            closeOnClick: false,
+            className: 'cc-map-tooltip-popup',
+            offset: 16,
+          })
+        }
+
+        hoverPopupRef.current
+          .setLngLat(coords)
+          .setHTML(tooltipHtml)
+          .addTo(map)
+      })
+
+      map.on('mouseleave', 'leads-pins', () => {
+        hoverPopupRef.current?.remove()
+      })
+
       mapReadyRef.current = true
+      setDetailLevelFromZoom(map.getZoom())
 
       // ── Live pulse animation — pulsing hot pins + event pulses ──
       let pulseFrame = 0
       let lastPulseTime = performance.now()
+      let lastFieldUpdate = performance.now()
+      const reduceMotion = typeof window !== 'undefined'
+        ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        : false
 
       const animatePulse = () => {
         if (!mapReadyRef.current) return
@@ -663,6 +1530,25 @@ export const NexusMap = ({
           ])
         } catch {
           // Layer may have been removed during cleanup
+        }
+
+        if (!reduceMotion) {
+          const breathe = (Math.sin(now / 1700) + 1) * 0.5
+          const heatOpacity = 0.46 + (breathe * 0.07)
+          const heatIntensity = 1.35 + (breathe * 0.22)
+          try {
+            map.setPaintProperty(MAP_LAYER_IDS.marketHeatField, 'heatmap-opacity', heatOpacity)
+            map.setPaintProperty(MAP_LAYER_IDS.marketHeatField, 'heatmap-intensity', heatIntensity)
+          } catch {
+            // Heat layer may not be available yet
+          }
+
+          if (now - lastFieldUpdate > 220) {
+            lastFieldUpdate = now
+            const phase = now / 1200
+            const source = map.getSource(SOURCE_IDS.marketHeatField) as maplibregl.GeoJSONSource | undefined
+            source?.setData(buildMarketHeatFieldGeoJSON(marketConfigsRef.current, phase))
+          }
         }
 
         // Event pulse rendering — throttled to 33ms (~30fps) for smooth rings
@@ -715,6 +1601,7 @@ export const NexusMap = ({
 
     return () => {
       mapReadyRef.current = false
+      hoverPopupRef.current?.remove()
       map.remove()
       mapRef.current = null
     }
@@ -726,15 +1613,89 @@ export const NexusMap = ({
   useEffect(() => {
     if (!mapReadyRef.current || !mapRef.current) return
     const source = mapRef.current.getSource('leads') as maplibregl.GeoJSONSource | undefined
-    source?.setData(buildLeadsGeoJSON(leads, mapMode, selectedLeadId))
-  }, [leads, mapMode, selectedLeadId])
+    source?.setData(leadsGeoJSON)
+  }, [leadsGeoJSON])
 
   // ── Update market GeoJSON (on markets or selectedMarketId change) ────────
   useEffect(() => {
     if (!mapReadyRef.current || !mapRef.current) return
     const source = mapRef.current.getSource('markets') as maplibregl.GeoJSONSource | undefined
-    source?.setData(buildMarketsGeoJSON(markets, selectedMarketId))
-  }, [markets, selectedMarketId])
+    source?.setData(marketsGeoJSON)
+  }, [marketsGeoJSON])
+
+  // ── Update focus context source ──────────────────────────────────────────
+  useEffect(() => {
+    if (!mapReadyRef.current || !mapRef.current) return
+    const source = mapRef.current.getSource(SOURCE_IDS.focusNearby) as maplibregl.GeoJSONSource | undefined
+    source?.setData(focusNearbyGeoJSON)
+  }, [focusNearbyGeoJSON])
+
+  // ── Update full-map market heat field (all active markets) ──────────────
+  useEffect(() => {
+    if (!mapReadyRef.current || !mapRef.current) return
+    const source = mapRef.current.getSource(SOURCE_IDS.marketHeatField) as maplibregl.GeoJSONSource | undefined
+    source?.setData(marketHeatFieldGeoJSON)
+  }, [marketHeatFieldGeoJSON])
+
+  // ── Sync map mode into active toggle visibility ──────────────────────────
+  useEffect(() => {
+    const modeToggles: Record<LayerToggleKey, boolean> = {
+      leads: true,
+      heat: true,
+      pressure: mapMode === 'pressure',
+      distress: mapMode === 'distress',
+      stage: mapMode === 'stage',
+      closings: mapMode === 'closings',
+      buyerDemand: mapMode === 'buyerDemand',
+      aiPriority: mapMode === 'aiPriority',
+    }
+    const key = MODE_TO_TOGGLE[mapMode]
+    modeToggles[key] = true
+    layerTogglesRef.current = modeToggles
+    applyLayerVisibility()
+    // Mode switching intentionally resets visualization toggles so each mode
+    // shows a clear, deterministic layer set.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapMode])
+
+  // ── Sync external heat mode toggle ───────────────────────────────────────
+  useEffect(() => {
+    heatModeEnabledRef.current = heatModeEnabled
+    layerTogglesRef.current.heat = heatModeEnabled
+    applyLayerVisibility()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heatModeEnabled])
+
+  // ── Update detail level only after zoom interactions complete ────────────
+  useEffect(() => {
+    if (!mapReadyRef.current || !mapRef.current) return
+    const map = mapRef.current
+    const onZoomEnd = () => setDetailLevelFromZoom(map.getZoom())
+    map.on('zoomend', onZoomEnd)
+    map.on('moveend', onZoomEnd)
+    return () => {
+      map.off('zoomend', onZoomEnd)
+      map.off('moveend', onZoomEnd)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // ── Retune camera profile for laptop vs large external displays ──────────
+  useEffect(() => {
+    const applyTuning = () => {
+      viewportTuningRef.current = getViewportTuning()
+      if (mapRef.current && mapReadyRef.current) {
+        setDetailLevelFromZoom(mapRef.current.getZoom())
+      }
+    }
+
+    applyTuning()
+    window.addEventListener('resize', applyTuning)
+    return () => {
+      window.removeEventListener('resize', applyTuning)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // ── FlyTo selected lead when drawer opens (drawer-aware offset) ──────────
   useEffect(() => {
@@ -802,17 +1763,294 @@ export const NexusMap = ({
     }
   }, [timeline, markets])
 
+  // ── Keyboard command map controls ────────────────────────────────────────
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        target?.isContentEditable
+      ) {
+        return
+      }
+
+      // Dashboard overlays
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'm') {
+        event.preventDefault()
+        onOpenCommandMapOverlay?.()
+        return
+      }
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        onOpenDashboardPalette?.()
+        return
+      }
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
+        event.preventDefault()
+        onFocusFilterSearch?.()
+        return
+      }
+
+      if (event.key === '[') {
+        event.preventDefault()
+        onToggleLeftPanel?.()
+        return
+      }
+
+      if (event.key === ']') {
+        event.preventDefault()
+        onToggleRightPanel?.()
+        return
+      }
+
+      const map = mapRef.current
+      if (!map || !mapReadyRef.current) return
+
+      const tuning = viewportTuningRef.current
+      const panDistance = event.shiftKey ? Math.round(tuning.panBase * 2.15) : tuning.panBase
+
+      switch (event.key) {
+        case 'g':
+        case 'G':
+          event.preventDefault()
+          flyToNational()
+          break
+        case 'm':
+        case 'M': {
+          event.preventDefault()
+          const validMarkets = marketsRef.current.filter((m) => isValidCoord(m.lat, m.lng))
+          if (!validMarkets.length) return
+          const currentIndex = validMarkets.findIndex((m) => m.id === selectedMarketIdRef.current)
+          const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % validMarkets.length : 0
+          const nextMarket = validMarkets[nextIndex]
+          onSelectMarketRef.current(nextMarket.id)
+          flyToMarket(nextMarket.id)
+          break
+        }
+        case 'f':
+        case 'F':
+          event.preventDefault()
+          if (selectedLeadIdRef.current) {
+            flyToProperty(selectedLeadIdRef.current)
+            break
+          }
+          if (selectedMarketIdRef.current) {
+            flyToMarket(selectedMarketIdRef.current)
+          }
+          break
+        case 'Escape':
+          event.preventDefault()
+          onClearTemporaryPanels?.()
+          exitTactical3D()
+          break
+        case '+':
+        case '=':
+          event.preventDefault()
+          map.easeTo({ zoom: Math.min(map.getZoom() + tuning.zoomStep, 17), duration: Math.round(250 * tuning.flyScale) })
+          break
+        case '-':
+        case '_':
+          event.preventDefault()
+          map.easeTo({ zoom: Math.max(map.getZoom() - tuning.zoomStep, 2), duration: Math.round(250 * tuning.flyScale) })
+          break
+        case 'ArrowUp':
+          event.preventDefault()
+          map.panBy([0, -panDistance], { duration: 180 })
+          break
+        case 'ArrowDown':
+          event.preventDefault()
+          map.panBy([0, panDistance], { duration: 180 })
+          break
+        case 'ArrowLeft':
+          event.preventDefault()
+          map.panBy([-panDistance, 0], { duration: 180 })
+          break
+        case 'ArrowRight':
+          event.preventDefault()
+          map.panBy([panDistance, 0], { duration: 180 })
+          break
+        case 'r':
+        case 'R':
+          event.preventDefault()
+          map.easeTo({ bearing: map.getBearing() + 18, duration: 260 })
+          break
+        case 'p':
+        case 'P':
+          event.preventDefault()
+          if (pitchEnabledRef.current) {
+            exitTactical3D()
+          } else {
+            enterTactical3D()
+          }
+          break
+        case 't':
+        case 'T':
+          event.preventDefault()
+          toggleTerrain()
+          break
+        case 'b':
+        case 'B':
+          event.preventDefault()
+          toggleBuildings()
+          break
+        case 'h':
+        case 'H': {
+          event.preventDefault()
+          if (event.shiftKey) {
+            onClearHeatAndFilters?.()
+            onSetMapMode?.('leads')
+            heatModeEnabledRef.current = false
+            layerTogglesRef.current.heat = false
+            applyLayerVisibility()
+            break
+          }
+          onToggleHeatMode?.()
+          heatModeEnabledRef.current = !heatModeEnabledRef.current
+          layerTogglesRef.current.heat = heatModeEnabledRef.current
+          applyLayerVisibility()
+          break
+        }
+        case 'l':
+        case 'L':
+          event.preventDefault()
+          toggleLabels()
+          break
+        case '1':
+          event.preventDefault()
+          onSetMapMode?.('leads')
+          break
+        case '2':
+          event.preventDefault()
+          onSetMapMode?.('heat')
+          break
+        case '3':
+          event.preventDefault()
+          onSetMapMode?.('pressure')
+          break
+        case '4':
+          event.preventDefault()
+          onSetMapMode?.('distress')
+          break
+        case '5':
+          event.preventDefault()
+          onSetMapMode?.('stage')
+          break
+        case '6':
+          event.preventDefault()
+          onSetMapMode?.('closings')
+          break
+        default:
+          break
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [
+    onOpenCommandMapOverlay,
+    onOpenDashboardPalette,
+    onToggleLeftPanel,
+    onToggleRightPanel,
+    onClearTemporaryPanels,
+    onSetMapMode,
+    onToggleHeatMode,
+    onClearHeatAndFilters,
+    onFocusFilterSearch,
+  ])
+
   // ── Debug counts ─────────────────────────────────────────────────────────
   const validCount = leads.filter((l) => isValidCoord(l.lat, l.lng)).length
+  const activeFilterCount = activeFilters
+    ? [
+      activeFilters.marketIds.length,
+      activeFilters.temperatures.length,
+      activeFilters.priorities.length,
+      activeFilters.propertyTypes.length,
+      activeFilters.distressSignals.length,
+      activeFilters.sellerStages.length,
+      activeFilters.followUpStatuses.length,
+      activeFilters.replyStatuses.length,
+      activeFilters.contractStatuses.length,
+      activeFilters.buyerDemandOverlap !== 'all' ? 1 : 0,
+      activeFilters.offerEligibility !== 'all' ? 1 : 0,
+      activeFilters.aiScoreMin !== 0 || activeFilters.aiScoreMax !== 100 ? 1 : 0,
+      activeFilters.equityMin !== 0 || activeFilters.equityMax !== 100 ? 1 : 0,
+    ].reduce((sum, value) => sum + value, 0)
+    : 0
 
   return (
     <div className="cc-nexus-map-wrap">
       {/* MapLibre canvas host — fills the .cc-map container */}
       <div ref={containerRef} className="cc-nexus-map" />
 
+      {selectedLeadForMapCard ? (
+        <aside className="cc-map-dossier" role="status" aria-live="polite">
+          <div className="cc-map-dossier__top">
+            <strong>{selectedLeadForMapCard.ownerName}</strong>
+            <span>{mapPriorityFromLead(selectedLeadForMapCard)}</span>
+          </div>
+          <span className="cc-map-dossier__address">{selectedLeadForMapCard.address}</span>
+          <div className="cc-map-dossier__meta">
+            <span>{selectedLeadForMapCard.city}, {selectedLeadForMapCard.stateCode}</span>
+            <span>{selectedLeadForMapCard.sentiment.toUpperCase()}</span>
+            <span>AI {Math.round((selectedLeadForMapCard.urgencyScore * 0.55) + (selectedLeadForMapCard.opportunityScore * 0.45))}</span>
+            <span>{selectedLeadForMapCard.pipelineStage.replace(/-/g, ' ')}</span>
+          </div>
+          <div className="cc-map-dossier__actions">
+            <button
+              type="button"
+              className={streetViewOpen ? 'is-active' : ''}
+              onClick={() => setStreetViewOpen((current) => !current)}
+            >
+              Street View
+            </button>
+            <button type="button" onClick={() => onOpenLead(selectedLeadForMapCard.id)}>
+              Open Lead
+            </button>
+          </div>
+        </aside>
+      ) : null}
+
+      {streetViewOpen && selectedLeadForMapCard ? (
+        <aside className="cc-map-street-view" aria-label="Live Street View">
+          <header>
+            <div>
+              <span>Live Street View</span>
+              <strong>{selectedLeadForMapCard.address}</strong>
+            </div>
+            <button type="button" onClick={() => setStreetViewOpen(false)} aria-label="Close Street View">
+              x
+            </button>
+          </header>
+          {streetViewEmbedUrl ? (
+            <iframe
+              title={`${selectedLeadForMapCard.address} street view`}
+              src={streetViewEmbedUrl}
+              loading="lazy"
+              referrerPolicy="no-referrer-when-downgrade"
+            />
+          ) : null}
+          {!streetViewEmbedUrl && streetViewMapsUrl ? (
+            <div className="cc-map-street-view__empty">
+              <strong>Street View embed key required</strong>
+              <span>Set VITE_GOOGLE_MAPS_API_KEY to show the live embedded panorama here.</span>
+              <a href={streetViewMapsUrl} target="_blank" rel="noreferrer">
+                Open in Google Street View
+              </a>
+            </div>
+          ) : null}
+        </aside>
+      ) : null}
+
       {/* Debug badge — property count vs. valid geo coords */}
       <div className="cc-map__debug" aria-hidden="true">
-        {validCount} / {leads.length} properties plotted
+        {validCount} / {leads.length} properties plotted{activeFilterCount > 0 ? ` • ${activeFilterCount} active filters` : ''}
       </div>
 
       {/* Empty state — shown when filter returns leads but none have coords */}

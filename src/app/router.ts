@@ -1,6 +1,6 @@
 import { startTransition, useEffect, useEffectEvent, useState } from 'react'
 
-export const defaultRoutePath = '/dashboard/live'
+export const defaultRoutePath = '/'
 
 export const normalizeRoutePath = (pathname: string) => {
   if (!pathname || pathname === '/' || pathname === '/dashboard') {

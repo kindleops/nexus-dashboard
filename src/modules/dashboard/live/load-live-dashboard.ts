@@ -2,6 +2,8 @@ import { loadCommandCenterStore } from '../../../domain/normalize-command-center
 import { adaptLiveDashboardModel } from './live-dashboard.adapter'
 import { fetchLiveDashboard } from './live-dashboard.fetcher'
 import type { LiveDashboardModel } from './live-dashboard.adapter'
+import { hydrateLiveDashboardFromSupabase } from '../../../lib/data/mapData'
+import { isDev, shouldUseSupabase } from '../../../lib/data/shared'
 
 // ─── Mode selection ────────────────────────────────────────────────────────
 // When VITE_NEXUS_API_URL is set the loader calls the live API.
@@ -34,7 +36,26 @@ async function loadFromApi(): Promise<LiveDashboardModel> {
 
 async function loadFromMock(): Promise<LiveDashboardModel> {
   const store = await loadCommandCenterStore()
-  return { ...adaptLiveDashboardModel(store), dataSource: 'mock' }
+  const base = { ...adaptLiveDashboardModel(store), dataSource: 'mock' as const }
+
+  if (!shouldUseSupabase()) {
+    return base
+  }
+
+  try {
+    return await hydrateLiveDashboardFromSupabase(base)
+  } catch (error) {
+    if (isDev) {
+      console.warn('[NEXUS] Live map Supabase hydration failed, using mock model.', error)
+    }
+    return {
+      ...base,
+      degraded: {
+        reason: error instanceof Error ? error.message : 'Supabase live map hydration failed',
+        partial: ['Map and market metrics are using local reference data'],
+      },
+    }
+  }
 }
 
 export const loadLiveDashboard = (): Promise<LiveDashboardModel> => {
