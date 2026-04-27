@@ -28,6 +28,17 @@ export interface InboxThread {
   phoneNumber?: string
   canonicalE164?: string
   sellerPhoneSourceField?: string
+  ourNumber?: string
+  directionUsed?: string
+  messageEventKey?: string
+  providerMessageSid?: string
+  queueId?: string
+  phoneNumberId?: string
+  textgridNumberId?: string
+  isOptOut?: boolean
+  deliveryStatus?: string
+  providerDeliveryStatus?: string
+  failureReason?: string
   propertyAddress?: string
   market?: string
   lastInboundAt?: string | null

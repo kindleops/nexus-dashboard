@@ -18,8 +18,12 @@ import {
   archiveThread,
   flagThread,
   doesMessageBelongToThread,
+  queueReplyFromInbox,
+  sendInboxMessageNow,
+  scheduleReplyFromInbox,
+  checkSuppressionStatus,
 } from '../../lib/data/inboxData'
-import type { ThreadMessage, ThreadContext, SuggestedDraft } from '../../lib/data/inboxData'
+import type { ThreadMessage, ThreadContext, SuggestedDraft, QueueReplyResult, SendNowResult } from '../../lib/data/inboxData'
 import { shouldUseSupabase } from '../../lib/data/shared'
 import { getSupabaseClient, hasSupabaseEnv } from '../../lib/supabaseClient'
 
@@ -117,6 +121,28 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
   const [commandOpen, setCommandOpen] = useState(false)
   const [schedulePanelOpen, setSchedulePanelOpen] = useState(false)
   const [scheduledTime, setScheduledTime] = useState<ScheduledTime | null>(null)
+  // ── Queue reply state ──────────────────────────────────────────────────────
+  const [queueReplyLoading, setQueueReplyLoading] = useState(false)
+  const [lastQueueReplyAttempt, setLastQueueReplyAttempt] = useState<string | null>(null)
+  const [queueReplyStatus, setQueueReplyStatus] = useState<string | null>(null)
+  const [queueReplyError, setQueueReplyError] = useState<string | null>(null)
+  const [insertedQueueId, setInsertedQueueId] = useState<string | null>(null)
+  const [queuedReplyPreview, setQueuedReplyPreview] = useState<string | null>(null)
+  // ── Send Now state ─────────────────────────────────────────────────────
+  const [sendNowLoading, setSendNowLoading] = useState(false)
+  const [lastSendNowAttempt, setLastSendNowAttempt] = useState<string | null>(null)
+  const [sendNowStatus, setSendNowStatus] = useState<string | null>(null)
+  const [sendNowError, setSendNowError] = useState<string | null>(null)
+  const [sendNowProviderSid, setSendNowProviderSid] = useState<string | null>(null)
+  const [sendNowEventId, setSendNowEventId] = useState<string | null>(null)
+  const [sendNowRouteUsed, setSendNowRouteUsed] = useState<string | null>(null)
+  const [suppressionBlocked, setSuppressionBlocked] = useState(false)
+  const [suppressionReason, setSuppressionReason] = useState<string | null>(null)
+  const [suppressionChecked, setSuppressionChecked] = useState<string | null>(null) // phone that was checked
+  const [optimisticMessages, setOptimisticMessages] = useState<Array<{ id: string; body: string; createdAt: string; dedupeKey: string }>>([])
+  const [sendQueueLastQueueKey, setSendQueueLastQueueKey] = useState<string | null>(null)
+  const [sendQueueLastPayloadKeys, setSendQueueLastPayloadKeys] = useState<string[]>([])
+  const [queueProcessorEligible, setQueueProcessorEligible] = useState<boolean | null>(null)
   const [now, setNow] = useState(() => new Date())
   const [leftPanelOpen, setLeftPanelOpen] = useState(true)
   const [rightPanelOpen, setRightPanelOpen] = useState(true)
@@ -284,6 +310,8 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
     // Supabase realtime subscription (preferred)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let channel: any = null
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let queueChannel: any = null
     if (hasSupabaseEnv) {
       try {
         const supabase = getSupabaseClient()
@@ -314,6 +342,26 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
           .subscribe((status: string) => {
             if (status === 'SUBSCRIBED') setRealtimeStatus('subscribed')
           })
+
+        // Subscribe to send_queue changes to update queueContext in real time
+        queueChannel = supabase
+          .channel('inbox-send-queue')
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'send_queue' },
+            () => {
+              // Refresh context to reflect updated queue state
+              if (selected) {
+                getThreadContext(selected)
+                  .then((ctx) => {
+                    setThreadContext(ctx)
+                    setLastRefreshAt(new Date().toISOString())
+                  })
+                  .catch(() => undefined)
+              }
+            },
+          )
+          .subscribe()
       } catch {
         // Realtime unavailable — polling fallback is active
         setRealtimeStatus('polling')
@@ -324,11 +372,10 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
       clearInterval(pollId)
       window.clearTimeout(debounceRef.timer)
       if (channel) {
-        try {
-          channel.unsubscribe()
-        } catch {
-          // ignore
-        }
+        try { channel.unsubscribe() } catch { /* ignore */ }
+      }
+      if (queueChannel) {
+        try { queueChannel.unsubscribe() } catch { /* ignore */ }
       }
       setRealtimeStatus('off')
     }
@@ -359,17 +406,191 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
     }
   }, [])
 
+  const handleQueueReply = useCallback(async (textOverride?: string) => {
+    const text = (textOverride ?? draftText).trim()
+    if (!text || !selected || queueReplyLoading) return
+    setQueueReplyLoading(true)
+    setQueueReplyError(null)
+    const attempt = new Date().toISOString()
+    setLastQueueReplyAttempt(attempt)
+    const scheduledAt = scheduledTime ? new Date(scheduledTime.label).toISOString() : undefined
+    let result: QueueReplyResult
+    try {
+      result = await queueReplyFromInbox(selected, text, scheduledAt ? { scheduledAt } : undefined)
+    } catch (err) {
+      result = { ok: false, queueId: null, status: null, errorMessage: String(err), insertPayloadKeys: [] }
+    }
+    setQueueReplyLoading(false)
+    setQueueReplyStatus(result.ok ? (result.status ?? 'approval') : 'error')
+    if (result.ok) {
+      setInsertedQueueId(result.queueId)
+      setQueuedReplyPreview(text)
+      setDraftText('')
+      setScheduledTime(null)
+      emitNotification({
+        title: 'Reply Queued',
+        detail: `Queued for approval — queue ID: ${result.queueId ?? 'pending'}`,
+        severity: 'success',
+        sound: 'ui-confirm',
+      })
+      // Refresh context to show updated queueContext
+      if (shouldUseSupabase()) {
+        Promise.all([fetchInboxModel(), getThreadContext(selected)])
+          .then(([fresh, ctx]) => {
+            setThreads(fresh.threads)
+            setLiveStats({ unreadCount: fresh.unreadCount, urgentCount: fresh.urgentCount, totalCount: fresh.totalCount, aiDraftCount: fresh.aiDraftCount })
+            setThreadContext(ctx)
+            setLastRefreshAt(new Date().toISOString())
+          })
+          .catch(() => undefined)
+      }
+    } else {
+      setQueueReplyError(result.errorMessage)
+      emitNotification({
+        title: 'Queue Failed',
+        detail: result.errorMessage ?? 'Could not queue reply',
+        severity: 'critical',
+        sound: 'ui-confirm',
+      })
+    }
+  }, [draftText, selected, queueReplyLoading, scheduledTime])
+
+  const handleScheduleReply = useCallback(async (text: string, scheduledAt: string) => {
+    if (!text.trim() || !selected) return
+    setQueueReplyLoading(true)
+    setQueueReplyError(null)
+    setLastQueueReplyAttempt(new Date().toISOString())
+    let result: QueueReplyResult
+    try {
+      result = await scheduleReplyFromInbox(selected, text, scheduledAt)
+    } catch (err) {
+      result = { ok: false, queueId: null, status: null, errorMessage: String(err), insertPayloadKeys: [] }
+    }
+    setQueueReplyLoading(false)
+    if (result.ok) {
+      setInsertedQueueId(result.queueId)
+      setDraftText('')
+      setScheduledTime(null)
+      setSchedulePanelOpen(false)
+      emitNotification({
+        title: 'Reply Scheduled',
+        detail: `Scheduled — queue ID: ${result.queueId ?? 'pending'}`,
+        severity: 'success',
+        sound: 'ui-confirm',
+      })
+      if (shouldUseSupabase() && selected) {
+        getThreadContext(selected).then(setThreadContext).catch(() => undefined)
+      }
+    } else {
+      setQueueReplyError(result.errorMessage)
+      emitNotification({ title: 'Schedule Failed', detail: result.errorMessage ?? 'Could not schedule reply', severity: 'critical', sound: 'ui-confirm' })
+    }
+  }, [selected])
+
+  const handleSendNow = useCallback(async (textOverride?: string) => {
+    const text = (textOverride ?? draftText).trim()
+    if (!text || !selected || sendNowLoading) return
+    if (suppressionBlocked) {
+      emitNotification({ title: 'Send Blocked', detail: suppressionReason ?? 'Recipient opted out', severity: 'warning', sound: 'ui-confirm' })
+      return
+    }
+    setSendNowLoading(true)
+    setSendNowError(null)
+    const attempt = new Date().toISOString()
+    setLastSendNowAttempt(attempt)
+
+    // Optimistic bubble (deduped by timestamp key)
+    const optimisticKey = `optimistic:${attempt}`
+    setOptimisticMessages(prev => [...prev, { id: optimisticKey, body: text, createdAt: attempt, dedupeKey: optimisticKey }])
+
+    let result: SendNowResult
+    try {
+      result = await sendInboxMessageNow(selected, text)
+    } catch (err) {
+      result = { ok: false, queueId: null, messageEventId: null, providerMessageSid: null, deliveryStatus: null, errorMessage: String(err), insertPayloadKeys: [], suppressionBlocked: false, sendRouteUsed: 'none', queueProcessorEligible: false }
+    }
+
+    setSendNowLoading(false)
+    setSendNowStatus(result.ok ? (result.deliveryStatus ?? 'queued') : 'error')
+    setSendNowRouteUsed(result.sendRouteUsed)
+
+    if (result.ok) {
+      setSendNowProviderSid(result.providerMessageSid)
+      setSendNowEventId(result.messageEventId)
+      setSendQueueLastQueueKey(result.queueId)
+      setSendQueueLastPayloadKeys(result.insertPayloadKeys)
+      setQueueProcessorEligible(result.queueProcessorEligible)
+      // Remove optimistic bubble once we have a real event id or after refresh
+      setOptimisticMessages(prev => prev.filter(m => m.dedupeKey !== optimisticKey))
+      setDraftText('')
+      setScheduledTime(null)
+      emitNotification({
+        title: 'Message Sent',
+        detail: `Queued for immediate send — ${selected.ownerName}`,
+        severity: 'success',
+        sound: 'ui-confirm',
+      })
+      if (shouldUseSupabase()) {
+        Promise.all([
+          fetchInboxModel(),
+          getThreadMessagesForThread(selected),
+          getThreadContext(selected),
+        ])
+          .then(([fresh, msgs, ctx]) => {
+            setThreads(fresh.threads)
+            setLiveStats({ unreadCount: fresh.unreadCount, urgentCount: fresh.urgentCount, totalCount: fresh.totalCount, aiDraftCount: fresh.aiDraftCount })
+            setSelectedMessages(msgs)
+            setThreadContext(ctx)
+            setLastRefreshAt(new Date().toISOString())
+            // Remove optimistic bubble now that real messages loaded
+            setOptimisticMessages([])
+          })
+          .catch(() => undefined)
+      }
+    } else {
+      // Replace optimistic bubble with failed state
+      setOptimisticMessages(prev => prev.map(m => m.dedupeKey === optimisticKey ? { ...m, id: `failed:${attempt}` } : m))
+      if (result.suppressionBlocked) {
+        setSuppressionBlocked(true)
+        setSuppressionReason(result.errorMessage)
+      }
+      setSendNowError(result.errorMessage)
+      emitNotification({
+        title: 'Send Failed',
+        detail: result.errorMessage ?? 'Could not send message',
+        severity: 'critical',
+        sound: 'ui-confirm',
+      })
+    }
+  }, [draftText, selected, sendNowLoading, suppressionBlocked, suppressionReason])
+
   const handleSend = useCallback(() => {
-    if (!draftText.trim() || !selected) return
-    emitNotification({
-      title: 'Reply Sent',
-      detail: `Response sent to ${selected.ownerName}`,
-      severity: 'success',
-      sound: 'ui-confirm',
-    })
-    setDraftText('')
-    setScheduledTime(null)
-  }, [draftText, selected])
+    // Route through send queue — no direct TextGrid from browser
+    void handleSendNow()
+  }, [handleSendNow])
+
+  // ── Suppression check when selected thread changes ─────────────────────────
+  useEffect(() => {
+    if (!selected?.phoneNumber || !shouldUseSupabase()) return
+    const phone = selected.canonicalE164 || selected.phoneNumber
+    if (phone === suppressionChecked) return
+    // Quick opt-out check from thread data first
+    if (selected.isOptOut) {
+      setSuppressionBlocked(true)
+      setSuppressionReason('Opted out')
+      setSuppressionChecked(phone)
+      return
+    }
+    setSuppressionBlocked(false)
+    setSuppressionReason(null)
+    checkSuppressionStatus(phone)
+      .then(({ suppressed, reason }) => {
+        setSuppressionBlocked(suppressed)
+        setSuppressionReason(reason)
+        setSuppressionChecked(phone)
+      })
+      .catch(() => undefined)
+  }, [selected?.phoneNumber, selected?.canonicalE164, selected?.isOptOut, suppressionChecked])
 
   // ── Keyboard shortcuts ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -1397,19 +1618,29 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
                     <div className="nx-ai-draft-card__actions">
                       <button
                         type="button"
-                        className="nx-inbox__conv-btn nx-inbox__conv-btn--ghost"
-                        title="Send disabled — safe send route not yet configured"
-                        disabled
+                        className={cls('nx-inbox__conv-btn', sendNowLoading && 'is-loading')}
+                        title={suppressionBlocked ? (suppressionReason ?? 'Recipient opted out') : 'Send this reply immediately via queue processor'}
+                        disabled={sendNowLoading || queueReplyLoading || suppressionBlocked || !suggestedDraft.text}
+                        onClick={() => void handleSendNow(suggestedDraft.text)}
                       >
                         <Icon name="send" className="nx-inbox__conv-btn-icon" />
-                        Send Draft
+                        {sendNowLoading ? 'Sending…' : suppressionBlocked ? 'Blocked' : 'Send Now'}
+                      </button>
+                      <button
+                        type="button"
+                        className={cls('nx-inbox__conv-btn nx-inbox__conv-btn--ghost', queueReplyLoading && 'is-loading')}
+                        title="Queue for operator approval"
+                        disabled={sendNowLoading || queueReplyLoading || !suggestedDraft.text}
+                        onClick={() => void handleQueueReply(suggestedDraft.text)}
+                      >
+                        {queueReplyLoading ? 'Queuing…' : 'Queue Reply'}
                       </button>
                       <button
                         type="button"
                         className="nx-inbox__conv-btn nx-inbox__conv-btn--ghost"
                         onClick={() => { setDraftText(suggestedDraft.text); composerRef.current?.focus() }}
                       >
-                        Edit &amp; Send
+                        Edit &amp; Queue
                       </button>
                       <button
                         type="button"
@@ -1436,9 +1667,35 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
                     <span>Generating draft…</span>
                   </div>
                 )}
+
+                {/* ── Optimistic outbound bubble(s) ───────────────────────── */}
+                {optimisticMessages.map((om) => (
+                  <div key={om.id} className="nx-msg-card nx-msg-card--outbound nx-msg-card--optimistic">
+                    <div className="nx-msg-card__head">
+                      <div className="nx-msg-card__sender">
+                        <strong className="nx-msg-card__name">You (sending…)</strong>
+                      </div>
+                      <div className="nx-msg-card__head-right">
+                        <span className="nx-msg-card__time">{formatRelativeTime(om.createdAt)}</span>
+                      </div>
+                    </div>
+                    <p className="nx-msg-card__body">{om.body}</p>
+                    <div className="nx-msg-card__submeta">
+                      {om.id.startsWith('failed:') ? '⚠️ Send failed — see diagnostics' : '⏳ Queuing for send…'}
+                    </div>
+                  </div>
+                ))}
               </div>
 
               <div className="nx-inbox__composer">
+                {/* Suppression warning */}
+                {suppressionBlocked && (
+                  <div className="nx-inbox__scheduled-banner" style={{ background: 'var(--nx-color-critical, #c0392b)', color: '#fff' }}>
+                    <span className="nx-inbox__scheduled-label">
+                      ⛔ {suppressionReason ?? 'Recipient opted out / suppressed'} — sending disabled
+                    </span>
+                  </div>
+                )}
                 {scheduledTime && (
                   <div className="nx-inbox__scheduled-banner">
                     <span className="nx-inbox__scheduled-label">
@@ -1502,13 +1759,22 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
                     </button>
                     <button
                       type="button"
+                      className="nx-inbox__schedule-btn"
+                      disabled={!draftText.trim() || queueReplyLoading || sendNowLoading}
+                      onClick={() => void handleQueueReply()}
+                      title="Queue for operator approval"
+                    >
+                      {queueReplyLoading ? 'Queuing…' : 'Queue Reply'}
+                    </button>
+                    <button
+                      type="button"
                       className="nx-inbox__send-btn"
-                      disabled={!draftText.trim()}
-                      onClick={handleSend}
-                      title="Send (⌘↵)"
+                      disabled={!draftText.trim() || sendNowLoading || suppressionBlocked}
+                      onClick={() => void handleSendNow()}
+                      title={suppressionBlocked ? (suppressionReason ?? 'Recipient opted out') : 'Send Now via queue processor (⌘↵)'}
                     >
                       <Icon name="send" className="nx-inbox__send-btn-icon" />
-                      Send
+                      {sendNowLoading ? 'Sending…' : 'Send Now'}
                     </button>
                   </div>
                 </div>
@@ -1628,6 +1894,15 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
                   </span>
                 </div>
               )}
+              {/* Queued reply badge after successful queueReplyFromInbox */}
+              {queuedReplyPreview && (
+                <div className="nx-dossier__row">
+                  <span className="nx-dossier__label">Queued Reply</span>
+                  <span className="nx-dossier__value nx-dossier__value--accent" title={queuedReplyPreview}>
+                    ⏳ Awaiting approval{insertedQueueId ? ` · ${insertedQueueId.slice(0, 8)}` : ''}
+                  </span>
+                </div>
+              )}
               {selected.labels.length > 0 && (
                 <div className="nx-dossier__tags">
                   {selected.labels.map(l => (
@@ -1723,6 +1998,19 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
                   <Icon name="map" className="nx-dossier__action-icon" />
                   Map View
                 </button>
+                {/* TODO: Link Contact — wire to phones/prospects table when contact linking is built */}
+                {!threadContext?.contextDebug?.matchedPhoneBy && (
+                  <button
+                    type="button"
+                    className="nx-dossier__action-btn"
+                    title="Link this phone number to a contact (not yet implemented)"
+                    disabled
+                    onClick={() => emitNotification({ title: 'Link Contact', detail: 'Contact linking coming soon — phone not found in phones table', severity: 'info', sound: 'ui-confirm' })}
+                  >
+                    <Icon name="layers" className="nx-dossier__action-icon" />
+                    Link Contact
+                  </button>
+                )}
               </div>
             </div>
             {import.meta.env.DEV && (
@@ -1745,12 +2033,36 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
                     <span className="nx-dossier__value">propertyId: {selected.propertyId ?? '-'}</span>
                     <span className="nx-dossier__value">phoneNumber: {selected.phoneNumber ?? '-'}</span>
                     <span className="nx-dossier__value">canonicalE164: {selected.canonicalE164 ?? '-'}</span>
+                    <span className="nx-dossier__value">sellerPhoneSourceField: {selected.sellerPhoneSourceField ?? '-'}</span>
+                    <span className="nx-dossier__value">ourNumber: {selected.ourNumber ?? '-'}</span>
+                    <span className="nx-dossier__value">directionUsed: {selected.directionUsed ?? '-'}</span>
+                    <span className="nx-dossier__value">message_event_key: {selected.messageEventKey ?? '-'}</span>
+                    <span className="nx-dossier__value">provider_message_sid: {selected.providerMessageSid ?? '-'}</span>
+                    <span className="nx-dossier__value">queue_id: {selected.queueId ?? '-'}</span>
+                    <span className="nx-dossier__value">phone_number_id: {selected.phoneNumberId ?? '-'}</span>
+                    <span className="nx-dossier__value">textgrid_number_id: {selected.textgridNumberId ?? '-'}</span>
+                    <span className="nx-dossier__value">is_opt_out: {selected.isOptOut != null ? String(selected.isOptOut) : '-'}</span>
+                    <span className="nx-dossier__value">delivery_status: {selected.deliveryStatus ?? '-'}</span>
+                    <span className="nx-dossier__value">provider_delivery_status: {selected.providerDeliveryStatus ?? '-'}</span>
+                    <span className="nx-dossier__value">failure_reason: {selected.failureReason ?? '-'}</span>
+                    <span className="nx-dossier__value">property_address: {selected.propertyAddress ?? '-'}</span>
+                    <span className="nx-dossier__value">master_owner_id: {selected.ownerId ?? '-'}</span>
+                    <span className="nx-dossier__value">prospect_id: {selected.prospectId ?? '-'}</span>
+                    <span className="nx-dossier__value">property_id: {selected.propertyId ?? '-'}</span>
                     <span className="nx-dossier__value">messageCount: {selectedMessages.length || selected.messageCount}</span>
                     <span className="nx-dossier__value">latestInbound: {selected.lastInboundAt ?? '-'}</span>
                     <span className="nx-dossier__value">latestOutbound: {selected.lastOutboundAt ?? '-'}</span>
                     <span className="nx-dossier__value">needsResponse: {String(selected.needsResponse ?? false)}</span>
                     <span className="nx-dossier__value">unread: {String(selected.unread ?? selected.unreadCount > 0)}</span>
                     <span className="nx-dossier__value">contextMatchQuality: {threadContext?.contextMatchQuality ?? 'missing'}</span>
+                    <span className="nx-dossier__value">resolvedPhoneTable: {threadContext?.contextDebug?.resolvedPhoneTable ?? '-'}</span>
+                    <span className="nx-dossier__value">resolvedMasterOwnerTable: {threadContext?.contextDebug?.resolvedMasterOwnerTable ?? '-'}</span>
+                    <span className="nx-dossier__value">resolvedOwnerTable: {threadContext?.contextDebug?.resolvedOwnerTable ?? '-'}</span>
+                    <span className="nx-dossier__value">matchedPhoneBy: {threadContext?.contextDebug?.matchedPhoneBy ?? '-'}</span>
+                    <span className="nx-dossier__value">matchedPhoneRowId: {threadContext?.contextDebug?.matchedPhoneRowId ?? '-'}</span>
+                    <span className="nx-dossier__value">bridgedMasterOwnerId: {threadContext?.contextDebug?.bridgedMasterOwnerId ?? '-'}</span>
+                    <span className="nx-dossier__value">bridgedProspectId: {threadContext?.contextDebug?.bridgedProspectId ?? '-'}</span>
+                    <span className="nx-dossier__value">bridgedPropertyId: {threadContext?.contextDebug?.bridgedPropertyId ?? '-'}</span>
                     <span className="nx-dossier__value">matchedOwnerBy: {threadContext?.contextDebug?.matchedOwnerBy ?? '-'}</span>
                     <span className="nx-dossier__value">matchedProspectBy: {threadContext?.contextDebug?.matchedProspectBy ?? '-'}</span>
                     <span className="nx-dossier__value">matchedPropertyBy: {threadContext?.contextDebug?.matchedPropertyBy ?? '-'}</span>
@@ -1759,6 +2071,26 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
                     <span className="nx-dossier__value">matchedQueueBy: {threadContext?.contextDebug?.matchedQueueBy ?? '-'}</span>
                     <span className="nx-dossier__value">realtimeStatus: {realtimeStatus}</span>
                     <span className="nx-dossier__value">lastRefreshAt: {lastRefreshAt ?? '-'}</span>
+                    <span className="nx-dossier__value">lastQueueReplyAttempt: {lastQueueReplyAttempt ?? '-'}</span>
+                    <span className="nx-dossier__value">queueReplyStatus: {queueReplyStatus ?? '-'}</span>
+                    <span className="nx-dossier__value">insertedQueueId: {insertedQueueId ?? '-'}</span>
+                    <span className="nx-dossier__value">queueReplyError: {queueReplyError ?? '-'}</span>
+                    <span className="nx-dossier__value">lastSendNowAttempt: {lastSendNowAttempt ?? '-'}</span>
+                    <span className="nx-dossier__value">sendNowStatus: {sendNowStatus ?? '-'}</span>
+                    <span className="nx-dossier__value">sendNowError: {sendNowError ?? '-'}</span>
+                    <span className="nx-dossier__value">sendNowProviderSid: {sendNowProviderSid ?? '-'}</span>
+                    <span className="nx-dossier__value">sendNowEventId: {sendNowEventId ?? '-'}</span>
+                    <span className="nx-dossier__value">sendNowRouteUsed: {sendNowRouteUsed ?? '-'}</span>
+                    <span className="nx-dossier__value">sendQueuePhoneFieldUsed: to_phone_number</span>
+                    <span className="nx-dossier__value">sendQueueMessageFieldUsed: message_body / message_text</span>
+                    <span className="nx-dossier__value">sendQueueStatusFieldUsed: queue_status</span>
+                    <span className="nx-dossier__value">sendQueueLastQueueKey: {sendQueueLastQueueKey ?? '-'}</span>
+                    <span className="nx-dossier__value">sendQueueLastPayloadKeys: {sendQueueLastPayloadKeys.length ? sendQueueLastPayloadKeys.join(', ') : '-'}</span>
+                    <span className="nx-dossier__value">queueProcessorEligible: {queueProcessorEligible === null ? '-' : String(queueProcessorEligible)}</span>
+                    <span className="nx-dossier__value">queueProcessorSelection: queue_status=queued AND scheduled_for&lt;=now</span>
+                    <span className="nx-dossier__value">suppressionBlocked: {String(suppressionBlocked)}</span>
+                    <span className="nx-dossier__value">suppressionReason: {suppressionReason ?? '-'}</span>
+                    <span className="nx-dossier__value">optimisticCount: {optimisticMessages.length}</span>
                   </div>
                 )}
               </div>
@@ -1783,12 +2115,17 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
         thread={selected}
         onSchedule={time => {
           setScheduledTime(time)
-          emitNotification({
-            title: 'Reply Scheduled',
-            detail: `Scheduled for ${time.label}`,
-            severity: 'success',
-            sound: 'ui-confirm',
-          })
+          // If there's draft text, schedule it now
+          if (draftText.trim() && selected) {
+            void handleScheduleReply(draftText, time.label)
+          } else {
+            emitNotification({
+              title: 'Reply Scheduled',
+              detail: `Scheduled for ${time.label}`,
+              severity: 'success',
+              sound: 'ui-confirm',
+            })
+          }
         }}
       />
 
