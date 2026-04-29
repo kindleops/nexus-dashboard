@@ -1,0 +1,560 @@
+/* NEXUS Inbox Premium — Design System v3.1 */
+
+.nx-premium-inbox {
+  display: flex;
+  height: 100vh;
+  width: 100%;
+  background: var(--bg-0);
+  color: var(--text-0);
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* 1. Left Rail (Threads) */
+.nx-thread-rail {
+  width: 360px;
+  border-right: 1px solid var(--border-1);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-0);
+}
+
+.nx-rail-header {
+  padding: 24px 20px 16px;
+  background: var(--surface-0);
+  border-bottom: 1px solid var(--border-0);
+}
+
+.nx-rail-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.nx-rail-title-row h1 {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.nx-search-container {
+  position: relative;
+  margin-bottom: 16px;
+}
+
+.nx-search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-3);
+  width: 14px;
+}
+
+.nx-search-container input {
+  width: 100%;
+  background: var(--bg-1);
+  border: none;
+  border-radius: 10px;
+  padding: 10px 12px 10px 36px;
+  color: var(--text-0);
+  font-size: 14px;
+  outline: none;
+  transition: box-shadow 0.2s;
+}
+
+.nx-search-container input:focus {
+  box-shadow: 0 0 0 2px var(--tone-primary-muted);
+}
+
+.nx-quick-stages {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.nx-stage-filter {
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--surface-1);
+  color: var(--text-2);
+  white-space: nowrap;
+  border: none;
+  cursor: pointer;
+}
+
+.nx-stage-filter.is-active {
+  background: var(--tone-primary);
+  color: white;
+}
+
+.nx-rail-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.nx-thread-row {
+  display: flex;
+  padding: 16px 20px;
+  gap: 16px;
+  cursor: pointer;
+  transition: background 0.2s;
+  border-bottom: 1px solid var(--border-0);
+}
+
+.nx-thread-row:hover {
+  background: var(--surface-1);
+}
+
+.nx-thread-row.is-selected {
+  background: rgba(var(--tone-primary-rgb), 0.08);
+  border-right: 3px solid var(--tone-primary);
+}
+
+.nx-thread-row__avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--tone-primary), var(--tone-sky));
+  color: white;
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.nx-thread-row__content {
+  flex: 1;
+  min-width: 0;
+}
+
+.nx-thread-row__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.nx-thread-row__name {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text-0);
+}
+
+.nx-thread-row__time {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.nx-thread-row__subject {
+  font-size: 13px;
+  color: var(--text-1);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nx-thread-row__preview {
+  font-size: 13px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+/* 2. Center Workspace */
+.nx-inbox-center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-0);
+  position: relative;
+}
+
+.nx-chat-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 40px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Apple iMessage Bubbles */
+.nx-bubble-wrap {
+  display: flex;
+  flex-direction: column;
+  max-width: 75%;
+}
+
+.nx-bubble-wrap.is-inbound { align-self: flex-start; }
+.nx-bubble-wrap.is-outbound { align-self: flex-end; }
+
+.nx-chat-bubble {
+  padding: 10px 16px;
+  border-radius: 20px;
+  font-size: 15px;
+  line-height: 1.4;
+  position: relative;
+}
+
+.is-inbound .nx-chat-bubble {
+  background: var(--surface-1);
+  color: var(--text-0);
+  border-bottom-left-radius: 4px;
+}
+
+.is-outbound .nx-chat-bubble {
+  background: var(--tone-primary);
+  color: white;
+  border-bottom-right-radius: 4px;
+  /* Premium Apple Blue Gradient */
+  background: linear-gradient(180deg, #007AFF 0%, #0066D6 100%);
+}
+
+.nx-bubble-time {
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: 4px;
+  padding: 0 4px;
+}
+
+.is-outbound .nx-bubble-time { text-align: right; }
+
+/* Sticky Composer */
+.nx-sticky-composer {
+  padding: 20px 40px 40px;
+  background: linear-gradient(to top, var(--bg-0) 80%, transparent);
+}
+
+.nx-composer-utility-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.nx-utility-btn {
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: 8px;
+  padding: 6px 12px;
+  color: var(--text-1);
+  font-size: 12px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.nx-utility-btn:hover {
+  background: var(--surface-2);
+  border-color: var(--border-2);
+}
+
+.nx-composer-input-area {
+  background: var(--surface-0);
+  border: 1px solid var(--border-1);
+  border-radius: 24px;
+  padding: 8px 16px;
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+}
+
+.nx-composer-input-area textarea {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-0);
+  font-size: 15px;
+  padding: 8px 0;
+  resize: none;
+  max-height: 200px;
+}
+
+.nx-send-button {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--tone-primary);
+  color: white;
+  display: grid;
+  place-items: center;
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-bottom: 4px;
+}
+
+.nx-send-button:disabled {
+  background: var(--surface-2);
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+/* 3. Right Panel (Intelligence) */
+.nx-intelligence-panel {
+  width: 320px;
+  background: var(--surface-0);
+  border-left: 1px solid var(--border-1);
+  display: flex;
+  flex-direction: column;
+  padding: 24px 20px;
+  overflow-y: auto;
+}
+
+.nx-intel-card {
+  background: var(--bg-1);
+  border: 1px solid var(--border-1);
+  border-radius: 16px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.nx-intel-card__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 12px;
+  display: block;
+}
+
+.nx-intel-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.nx-intel-label { color: var(--text-2); }
+.nx-intel-value { font-weight: 500; color: var(--text-0); }
+
+/* Loading State */
+.nx-inbox-loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  width: 100%;
+  gap: 16px;
+  color: var(--text-2);
+  font-size: 15px;
+}
+
+@keyframes nx-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.nx-loading-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--border-1);
+  border-top-color: var(--tone-primary);
+  border-radius: 50%;
+  animation: nx-spin 0.8s linear infinite;
+}
+
+/* Empty Rail */
+.nx-rail-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  color: var(--text-3);
+  font-size: 14px;
+  padding: 20px;
+  text-align: center;
+}
+
+/* Chat Header */
+.nx-chat-header {
+  padding: 16px 40px;
+  border-bottom: 1px solid var(--border-0);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--surface-0);
+}
+
+.nx-chat-header__info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nx-chat-header__name {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text-0);
+}
+
+.nx-chat-header__subject {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.nx-chat-header__pills {
+  display: flex;
+  gap: 8px;
+}
+
+/* Stage Pills */
+.nx-stage-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.nx-stage-pill.is-needs_response { background: rgba(255, 69, 58, 0.12); color: #FF453A; }
+.nx-stage-pill.is-ai_draft_ready { background: rgba(100, 210, 255, 0.12); color: #64D2FF; }
+.nx-stage-pill.is-queued_reply { background: rgba(255, 214, 10, 0.12); color: #FFD60A; }
+.nx-stage-pill.is-sent_waiting { background: rgba(48, 209, 88, 0.12); color: #30D158; }
+.nx-stage-pill.is-interested { background: rgba(48, 209, 88, 0.12); color: #30D158; }
+.nx-stage-pill.is-archived { background: rgba(152, 152, 157, 0.12); color: #98989D; }
+
+/* Sentiment Pills */
+.nx-sent-pill {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.nx-sent-pill.is-hot { background: rgba(255, 69, 58, 0.12); color: #FF453A; }
+.nx-sent-pill.is-warm { background: rgba(255, 159, 10, 0.12); color: #FF9F0A; }
+.nx-sent-pill.is-neutral { background: rgba(152, 152, 157, 0.12); color: #98989D; }
+.nx-sent-pill.is-cold { background: rgba(100, 210, 255, 0.12); color: #64D2FF; }
+
+/* Priority Pills */
+.nx-pri-pill {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.nx-pri-pill.is-urgent { background: rgba(255, 69, 58, 0.12); color: #FF453A; }
+.nx-pri-pill.is-high { background: rgba(255, 159, 10, 0.12); color: #FF9F0A; }
+.nx-pri-pill.is-normal { background: rgba(152, 152, 157, 0.12); color: #98989D; }
+.nx-pri-pill.is-low { background: rgba(100, 210, 255, 0.12); color: #64D2FF; }
+
+/* Intel Accent Card */
+.nx-intel-card.is-accent {
+  background: linear-gradient(135deg, rgba(0, 122, 255, 0.06) 0%, rgba(100, 210, 255, 0.06) 100%);
+  border-color: rgba(0, 122, 255, 0.15);
+}
+
+.nx-nba-text {
+  font-size: 14px;
+  color: var(--text-1);
+  line-height: 1.5;
+}
+
+/* Intel Header */
+.nx-intel-header {
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-0);
+  margin-bottom: 20px;
+}
+
+/* Unread Dot */
+.nx-unread-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tone-primary);
+  flex-shrink: 0;
+}
+
+.nx-thread-row__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* Empty workspace */
+.nx-inbox__workspace-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-3);
+  font-size: 15px;
+}
+
+/* Messages loading */
+.nx-inbox__messages-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 12px;
+  color: var(--text-3);
+}
+
+.nx-inbox__messages-loading-icon {
+  width: 24px;
+  opacity: 0.5;
+  animation: nx-spin 1s ease-in-out infinite;
+}
+
+/* Chat container empty */
+.nx-chat-container.is-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Message list */
+.nx-message-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 40px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Header actions */
+.nx-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Icon button */
+.nx-icon-button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+  color: var(--text-2);
+  display: grid;
+  place-items: center;
+  transition: background 0.2s;
+}
+
+.nx-icon-button:hover {
+  background: var(--surface-1);
+}

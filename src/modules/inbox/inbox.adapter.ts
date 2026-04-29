@@ -1,7 +1,9 @@
+import { useState, useEffect } from 'react'
 import type { CommandCenterStore } from '../../domain/types'
 import { formatRelativeTime } from '../../shared/formatters'
 import { fetchInboxModel } from '../../lib/data/inboxData'
 import { isDev, shouldUseSupabase, useSupabaseData } from '../../lib/data/shared'
+import type { InboxWorkflowThread } from '../../lib/data/inboxWorkflowData'
 import { hasSupabaseEnv, supabaseAnonKeyPresent, supabaseUrlPresent } from '../../lib/supabaseClient'
 
 const LIVE_INBOX_TIMEOUT_MS = 120000
@@ -214,4 +216,68 @@ export const loadInbox = async (): Promise<InboxModel> => {
   const { loadCommandCenterStore } = await import('../../domain/normalize-command-center')
   const store = await loadCommandCenterStore()
   return adaptInboxModel(store)
+}
+
+export const toWorkflowThread = (t: InboxThread): InboxWorkflowThread => {
+  const lastAt = t.lastMessageIso || new Date().toISOString()
+  return {
+    ...t,
+    threadKey: t.threadKey || t.id,
+    inboxStatus: (t.threadWorkflowStatus || (t.status === 'unread' ? 'unread' : 'open')) as any,
+    inboxStage: (t.threadWorkflowStage || 'needs_response') as any,
+    isArchived: t.threadIsArchived ?? (t.status === 'archived'),
+    isRead: t.threadIsRead ?? (t.status === 'read' || t.unreadCount === 0),
+    isPinned: t.threadIsPinned ?? false,
+    priority: t.priority as any,
+    lastInboundAt: t.lastInboundAt ?? null,
+    lastOutboundAt: t.lastOutboundAt ?? null,
+    lastMessageAt: lastAt,
+    lastMessageBody: t.preview,
+    lastDirection: 'unknown',
+    updatedAt: lastAt,
+    queueStatus: t.queueId ? 'queued' : null,
+  }
+}
+
+const EMPTY_MODEL: InboxModel = {
+  threads: [],
+  unreadCount: 0,
+  urgentCount: 0,
+  totalCount: 0,
+  aiDraftCount: 0,
+  dataMode: 'mock_preview',
+  liveFetchStatus: 'disabled',
+  liveFetchError: null,
+  messageEventsCount: null,
+  messageEventsRawCount: null,
+  groupedThreadCount: null,
+  sendQueueCount: null,
+  lastLiveFetchAt: null,
+}
+
+export const useInboxData = () => {
+  const [data, setData] = useState<InboxModel>(EMPTY_MODEL)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<any>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    loadInbox()
+      .then((model) => {
+        if (!cancelled) setData(model ?? EMPTY_MODEL)
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.warn('[NEXUS] useInboxData — loadInbox failed, using empty model', err)
+          setError(err)
+          setData(EMPTY_MODEL)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [])
+
+  return { data, loading, error }
 }

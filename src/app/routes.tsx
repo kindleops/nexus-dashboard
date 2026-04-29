@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { LiveDashboardPage } from '../modules/dashboard/live/LiveDashboardPage'
 import { loadLiveDashboard } from '../modules/dashboard/live/load-live-dashboard'
 import type { LiveDashboardModel } from '../modules/dashboard/live/live-dashboard.adapter'
-import { InboxPage } from '../modules/inbox/InboxPage'
+import InboxPage from '../modules/inbox/InboxPage'
 import { loadInbox } from '../modules/inbox/inbox.adapter'
 import type { InboxModel } from '../modules/inbox/inbox.adapter'
 import { AlertsPage } from '../modules/alerts/AlertsPage'
@@ -148,7 +148,7 @@ const acquisitionInboxRoute = defineRoute<
     ])
     return { ...workspaceData, inboxData }
   },
-  render: (data) => <AcquisitionInboxApp data={data as any} />,
+  render: () => <AcquisitionInboxApp />,
 })
 
 const acquisitionQueueRoute = defineRoute<
@@ -205,7 +205,7 @@ const inboxRoute = defineRoute<InboxModel>({
   path: '/inbox',
   title: 'NEXUS | Inbox',
   loader: loadInbox,
-  render: (data) => <InboxPage data={data} />,
+  render: () => <InboxPage />,
 })
 
 const alertsRoute = defineRoute<AlertsModel>({
