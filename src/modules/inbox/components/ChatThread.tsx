@@ -10,9 +10,19 @@ interface ChatThreadProps {
   thread: InboxWorkflowThread | null
   messages: ThreadMessage[]
   loading: boolean
+  onLoadMore?: () => void
+  allLoaded?: boolean
+  messageCount?: number
 }
 
-export const ChatThread = ({ thread, messages, loading }: ChatThreadProps) => {
+export const ChatThread = ({ 
+  thread, 
+  messages, 
+  loading, 
+  onLoadMore, 
+  allLoaded = false,
+  messageCount = 0 
+}: ChatThreadProps) => {
   if (!thread) return (
     <div className="nx-chat-container is-empty">
       <div className="nx-inbox__workspace-empty">
@@ -21,7 +31,7 @@ export const ChatThread = ({ thread, messages, loading }: ChatThreadProps) => {
     </div>
   )
 
-  if (loading) return (
+  if (loading && messages.length === 0) return (
     <div className="nx-chat-container">
       <div className="nx-inbox__messages-loading">
         <Icon name="activity" className="nx-inbox__messages-loading-icon" />
@@ -39,10 +49,23 @@ export const ChatThread = ({ thread, messages, loading }: ChatThreadProps) => {
         </div>
         <div className="nx-chat-header__pills">
           <span className={cls('nx-stage-pill', `is-${thread.inboxStage}`)}>{thread.inboxStage}</span>
+          <span className="nx-message-count">{messageCount} message{messageCount !== 1 ? 's' : ''}</span>
         </div>
       </header>
 
       <div className="nx-message-list">
+        {!allLoaded && messages.length > 0 && (
+          <div className="nx-load-more-container">
+            <button 
+              className="nx-load-more-button"
+              onClick={onLoadMore}
+              disabled={loading}
+            >
+              {loading ? 'Loading...' : 'Load More Messages'}
+            </button>
+          </div>
+        )}
+
         {messages.map(msg => (
           <div key={msg.id} className={cls('nx-bubble-wrap', msg.direction === 'inbound' ? 'is-inbound' : 'is-outbound')}>
             <div className="nx-chat-bubble">
@@ -51,6 +74,12 @@ export const ChatThread = ({ thread, messages, loading }: ChatThreadProps) => {
             <span className="nx-bubble-time">{formatRelativeTime(msg.createdAt)}</span>
           </div>
         ))}
+
+        {allLoaded && messages.length > 0 && (
+          <div className="nx-all-loaded-indicator">
+            <span>No more messages to load</span>
+          </div>
+        )}
       </div>
     </div>
   )
