@@ -28,16 +28,6 @@ const INITIAL_MESSAGE_BATCH = 500
 export default function InboxPage() {
   const { data, loading: dataLoading } = useInboxData()
   
-  // Debug logging
-  useEffect(() => {
-    console.log('[InboxPage] Loaded. Data:', { 
-      threadCount: data.threads?.length,
-      loading: dataLoading,
-      dataMode: data.dataMode,
-      totalCount: data.totalCount,
-    })
-  }, [data, dataLoading])
-  
   // -- Core State --
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [workflowTab, setWorkflowTab] = useState<InboxStatusTab>('all')
@@ -128,11 +118,6 @@ export default function InboxPage() {
       </div>
     </div>
   )
-  
-  // Debug result
-  if (!data.threads || data.threads.length === 0) {
-    console.warn('[InboxPage] No threads available', { dataMode: data.dataMode, error: data.liveFetchError })
-  }
 
   return (
     <div className="nx-premium-inbox">
