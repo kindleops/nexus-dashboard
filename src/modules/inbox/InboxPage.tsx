@@ -22,9 +22,6 @@ import { InboxSchedulePanel, type ScheduledTime } from './InboxSchedulePanel'
 
 import './inbox-premium.css'
 
-// Pagination config
-const INITIAL_MESSAGE_BATCH = 500
-
 export default function InboxPage() {
   const { data, loading: dataLoading } = useInboxData()
   
@@ -79,7 +76,7 @@ export default function InboxPage() {
     setContextLoading(true)
 
     Promise.all([
-      getThreadMessagesForThread(selected as any, { maxMessages: INITIAL_MESSAGE_BATCH }),
+      getThreadMessagesForThread(selected as any),
       getThreadContext(selected as any)
     ]).then(([messages, context]) => {
       setSelectedMessages(messages)
