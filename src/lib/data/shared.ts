@@ -56,5 +56,17 @@ export const safeArray = <T>(value: T[] | null | undefined): T[] => (Array.isArr
 export const normalizeStatus = (value: unknown): string =>
   asString(value, 'unknown').trim().toLowerCase().replace(/\s+/g, '_')
 
-export const mapErrorMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : 'Unknown Supabase error'
+export const getSupabaseErrorMessage = (error: unknown): string => {
+  if (!error) return 'Unknown Supabase error'
+  if (typeof error === 'string') return error
+  if (typeof error === 'object') {
+    const record = error as Record<string, unknown>
+    return asString(record.message, '') ||
+      asString(record.details, '') ||
+      asString(record.hint, '') ||
+      JSON.stringify(record)
+  }
+  return asString(error, 'Unknown Supabase error')
+}
+
+export const mapErrorMessage = (error: unknown): string => getSupabaseErrorMessage(error)

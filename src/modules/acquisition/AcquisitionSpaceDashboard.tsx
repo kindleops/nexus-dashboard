@@ -34,7 +34,7 @@ const AcquisitionApps = [
     name: 'Property Intelligence',
     description: 'Property review and underwriting entry',
     icon: 'layers',
-    route: '/acquisition/properties',
+    route: '/properties',
   },
   {
     id: 'prospects',

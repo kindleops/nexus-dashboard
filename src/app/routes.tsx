@@ -115,6 +115,13 @@ const acquisitionPropertiesRoute = defineRoute<AcquisitionWorkspaceModel>({
   render: (data) => <PropertyIntelligenceApp data={data} />,
 })
 
+const propertiesRoute = defineRoute<AcquisitionWorkspaceModel>({
+  path: '/properties',
+  title: 'NEXUS | Property Intelligence',
+  loader: loadAcquisitionWorkspace,
+  render: (data) => <PropertyIntelligenceApp data={data} />,
+})
+
 const acquisitionProspectsRoute = defineRoute<AcquisitionWorkspaceModel>({
   path: '/acquisition/prospects',
   title: 'NEXUS | Prospect Command',
@@ -276,6 +283,7 @@ const routes = [
   acquisitionRoute,
   acquisitionOwnersRoute,
   acquisitionPropertiesRoute,
+  propertiesRoute,
   acquisitionProspectsRoute,
   acquisitionContactsRoute,
   acquisitionInboxRoute,

@@ -6,6 +6,7 @@ export interface AcquisitionAppShellProps {
   breadcrumb: string
   appName: string
   appDescription: string
+  shellClassName?: string
   appStatus?: string
   marketOptions?: string[]
   selectedMarket?: string
@@ -22,6 +23,7 @@ export const AcquisitionAppShell = ({
   breadcrumb,
   appName,
   appDescription,
+  shellClassName,
   appStatus,
   marketOptions,
   selectedMarket,
@@ -34,7 +36,7 @@ export const AcquisitionAppShell = ({
   children,
 }: AcquisitionAppShellProps) => {
   return (
-    <section className="acq-app-shell">
+    <section className={['acq-app-shell', shellClassName].filter(Boolean).join(' ')}>
       <header className="acq-app-header">
         <div className="acq-app-header__title">
           <nav className="acq-breadcrumb">

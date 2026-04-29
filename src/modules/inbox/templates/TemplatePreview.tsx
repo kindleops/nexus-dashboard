@@ -1,0 +1,60 @@
+import type { SmsTemplate, TemplateRenderResult } from '../../../lib/data/templateData'
+import { TemplateVariableEditor } from './TemplateVariableEditor'
+
+export const TemplatePreview = ({
+  template,
+  renderResult,
+  variableValues,
+  onVariableChange,
+  onInsert,
+  onReplace,
+  onSendNow,
+  onQueue,
+  onSchedule,
+}: {
+  template: SmsTemplate | null
+  renderResult: TemplateRenderResult | null
+  variableValues: Record<string, string>
+  onVariableChange: (key: string, value: string) => void
+  onInsert: () => void
+  onReplace: () => void
+  onSendNow: () => void
+  onQueue: () => void
+  onSchedule: () => void
+}) => {
+  if (!template || !renderResult) {
+    return <div className="nx-template-preview-empty">Select a template to preview.</div>
+  }
+
+  return (
+    <div className="nx-template-preview">
+      <header>
+        <h3>{template.useCase}</h3>
+        <div className="nx-template-preview__chips">
+          <span>{template.language}</span>
+          {template.stageLabel && <span>{template.stageLabel}</span>}
+          {template.agentStyle && <span>{template.agentStyle}</span>}
+        </div>
+      </header>
+      <div className="nx-template-preview__body">{renderResult.renderedText}</div>
+      {template.englishTranslation && (
+        <div className="nx-template-preview__translation">
+          <span>English Translation</span>
+          <p>{template.englishTranslation}</p>
+        </div>
+      )}
+      <TemplateVariableEditor
+        missingVariables={renderResult.missingVariables}
+        values={variableValues}
+        onChange={onVariableChange}
+      />
+      <div className="nx-template-preview__actions">
+        <button type="button" onClick={onInsert}>Insert</button>
+        <button type="button" onClick={onReplace}>Replace Draft</button>
+        <button type="button" onClick={onSendNow}>Send Now</button>
+        <button type="button" onClick={onQueue}>Queue Reply</button>
+        <button type="button" onClick={onSchedule}>Schedule</button>
+      </div>
+    </div>
+  )
+}

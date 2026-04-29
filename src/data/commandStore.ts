@@ -392,7 +392,7 @@ export const COMMAND_STORE_ITEMS: CommandStoreItem[] = [
   ),
   app('send-queue', 'Send Queue', 'Queue management for delivery throughput, retries, and approvals.', '#42c8ff', 'installed', 'Apps', ['Messaging & AI', 'Automation Health'], ['queue', 'delivery']),
   app('seller-dossier', 'Seller Dossier', 'Owner intelligence profile with property, motivation, and comms history.', '#7de4c7', 'installed', 'Apps', ['Acquisition Command'], ['owner intelligence']),
-  app('property-intelligence', 'Property Intelligence', 'Property-level analytics and context for acquisition prioritization.', '#4fd4e4', 'available', 'Apps', ['Acquisition Command', 'Market Intelligence'], ['property']),
+  app('property-intelligence', 'Property Intelligence', 'Property-level analytics and context for acquisition prioritization.', '#4fd4e4', 'installed', 'Apps', ['Acquisition Command', 'Market Intelligence'], ['property']),
   app('offer-studio', 'Offer Studio', 'Offer generation, underwriting snapshots, and approval routing.', '#8d9bff', 'available', 'Apps', ['Deal Execution'], ['offer']),
   app('contract-studio', 'Contract Studio', 'Contract drafting, signing, and status orchestration.', '#d78fff', 'available', 'Apps', ['Deal Execution', 'Title & Closings'], ['contracts']),
   app('title-command', 'Title Command', 'Title routing, issue tracking, and closing readiness.', '#ffc169', 'available', 'Apps', ['Title & Closings'], ['title']),

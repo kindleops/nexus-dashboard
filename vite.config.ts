@@ -7,6 +7,12 @@ const tslibShim = fileURLToPath(new URL('./src/lib/tslib-shim.ts', import.meta.u
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  server: {
+    host: '0.0.0.0',
+    port: 5173,
+    strictPort: true,
+    allowedHosts: true,
+  },
   resolve: {
     alias: {
       tslib: tslibShim,

@@ -124,6 +124,46 @@ export interface SendNowResult {
 }
 
 const DEV = Boolean(import.meta.env.DEV)
+const MESSAGE_EVENTS_INBOX_PAGE_SIZE = 1000
+const MESSAGE_EVENTS_THREAD_PAGE_SIZE = 1000
+
+const MESSAGE_EVENTS_THREAD_COLUMNS = [
+  'id',
+  'message_event_key',
+  'provider_message_sid',
+  'direction',
+  'event_type',
+  'message_body',
+  'from_phone_number',
+  'to_phone_number',
+  'phone_number_id',
+  'queue_id',
+  'metadata',
+  'event_timestamp',
+  'created_at',
+  'sent_at',
+  'received_at',
+  'master_owner_id',
+  'prospect_id',
+  'property_id',
+  'textgrid_number_id',
+  'market_id',
+  'source_app',
+  'delivery_status',
+  'raw_carrier_status',
+  'provider_delivery_status',
+  'is_opt_out',
+  'failure_code',
+  'failure_reason',
+  'error_message',
+  'property_address',
+].join(',')
+
+const isMissingColumnError = (error: unknown): boolean => {
+  const code = (error as { code?: string } | null)?.code
+  const message = String((error as { message?: string } | null)?.message ?? '').toLowerCase()
+  return code === '42703' || code === 'PGRST204' || message.includes('column')
+}
 
 // UUID v4 safety guard — prevents inserting 'ph_...' text ids into uuid columns
 const isValidUUID = (v: string): boolean =>
@@ -177,6 +217,166 @@ const buildPhoneVariants = (phone: string): string[] => {
     variants.add(`+1${digits}`)
   }
   return Array.from(variants).filter(Boolean)
+}
+
+type PersonalizationCandidate = {
+  seller_first_name?: string | null
+  seller_full_name?: string | null
+  seller_name_source?: string | null
+  owner_display_name?: string | null
+  prospect_first_name?: string | null
+  prospect_full_name?: string | null
+  phone_first_name?: string | null
+  phone_full_name?: string | null
+  primary_display_name?: string | null
+  master_owner_display_name?: string | null
+  property_owner_name?: string | null
+  owner_name?: string | null
+  first_name?: string | null
+}
+
+type SellerFirstNameResolution = {
+  value: string
+  source: string
+}
+
+type RenderGuardResult = {
+  messageText: string
+  repaired: boolean
+  passed: boolean
+}
+
+const cleanFirstToken = (value: unknown): string => {
+  const raw = asString(value, '').trim()
+  if (!raw) return ''
+  const noHonorific = raw.replace(/^(mr|mrs|ms|dr|sr|sra|srta)\.?\s+/i, '')
+  const primarySegment = noHonorific.split(/[,&/]|\sand\s|\sy\s/i)[0] ?? noHonorific
+  const firstToken = primarySegment.trim().split(/\s+/)[0] ?? ''
+  return firstToken.replace(/^[^A-Za-z\u00C0-\u024F]+|[^A-Za-z\u00C0-\u024F'\-]+$/g, '')
+}
+
+export const resolveSellerFirstName = (candidate: PersonalizationCandidate): SellerFirstNameResolution => {
+  const ordered: Array<{ value: unknown; source: string }> = [
+    { value: candidate.seller_first_name, source: 'candidate.seller_first_name' },
+    { value: candidate.prospect_first_name, source: 'prospects.first_name' },
+    { value: candidate.phone_first_name, source: 'phones.first_name' },
+    { value: candidate.first_name, source: 'candidate.first_name' },
+    { value: candidate.primary_display_name, source: 'candidate.primary_display_name' },
+    { value: candidate.phone_full_name, source: 'phones.full_name' },
+    { value: candidate.prospect_full_name, source: 'prospects.full_name' },
+    { value: candidate.owner_display_name, source: 'owners.display_name' },
+    { value: candidate.master_owner_display_name, source: 'master_owners.display_name' },
+    { value: candidate.property_owner_name, source: 'properties.owner_name' },
+    { value: candidate.owner_name, source: 'candidate.owner_name' },
+  ]
+
+  for (const item of ordered) {
+    const token = cleanFirstToken(item.value)
+    if (token) return { value: token, source: item.source }
+  }
+
+  return { value: '', source: 'none' }
+}
+
+const applyRenderGuard = (renderedMessage: string): RenderGuardResult => {
+  const greetingCommaPattern = /^(\s*(?:hi|hey|hello|hola|ola|marhaba))\s+,/i
+  const repaired = renderedMessage.replace(greetingCommaPattern, '$1,')
+  return {
+    messageText: repaired,
+    repaired: repaired !== renderedMessage,
+    passed: !/^(hi|hey|hello|hola|ola|marhaba)\s+,/i.test(repaired.trim()),
+  }
+}
+
+const buildPersonalizationCandidate = (thread: InboxThread): PersonalizationCandidate => {
+  const owner = asString(thread.ownerName, '')
+  return {
+    seller_first_name: null,
+    seller_full_name: owner || null,
+    seller_name_source: owner ? 'thread.ownerName' : null,
+    owner_display_name: owner || null,
+    prospect_first_name: null,
+    prospect_full_name: null,
+    phone_first_name: null,
+    phone_full_name: null,
+    primary_display_name: owner || null,
+    master_owner_display_name: owner || null,
+    property_owner_name: owner || null,
+    owner_name: owner || null,
+    first_name: null,
+  }
+}
+
+const buildQueuePersonalization = (thread: InboxThread, messageText: string) => {
+  const candidate = buildPersonalizationCandidate(thread)
+  const resolved = resolveSellerFirstName(candidate)
+  const renderGuard = applyRenderGuard(messageText)
+  const firstNameFallback = resolved.value
+
+  const renderVariables = {
+    seller_first_name: cleanFirstToken(candidate.seller_first_name) || firstNameFallback,
+    seller_name: cleanFirstToken(candidate.seller_first_name) || firstNameFallback,
+    owner_first_name: cleanFirstToken(candidate.first_name) || firstNameFallback,
+    first_name: cleanFirstToken(candidate.first_name) || firstNameFallback,
+  }
+
+  const candidateSnapshot = {
+    phone_id: thread.phoneNumberId ?? null,
+    property_id: thread.propertyId ?? null,
+    seller_state: null,
+    touch_number: 1,
+    best_phone_id: thread.phoneNumberId ?? null,
+    seller_market: thread.market ?? thread.marketId ?? null,
+    master_owner_id: thread.ownerId ?? null,
+    canonical_phone_masked: thread.canonicalE164 ?? null,
+    seller_first_name: renderVariables.seller_first_name || null,
+    seller_full_name: candidate.seller_full_name ?? null,
+    seller_name_source: resolved.source,
+    owner_display_name: candidate.owner_display_name ?? null,
+    prospect_first_name: candidate.prospect_first_name ?? null,
+    prospect_full_name: candidate.prospect_full_name ?? null,
+    phone_first_name: candidate.phone_first_name ?? null,
+    phone_full_name: candidate.phone_full_name ?? null,
+    primary_display_name: candidate.primary_display_name ?? null,
+    master_owner_display_name: candidate.master_owner_display_name ?? null,
+    property_owner_name: candidate.property_owner_name ?? null,
+  }
+
+  const personalizationMeta = {
+    seller_first_name: renderVariables.seller_first_name || null,
+    seller_name_source: resolved.source,
+    name_missing: !Boolean(renderVariables.seller_first_name),
+    render_guard_passed: renderGuard.passed,
+    render_guard_repaired: renderGuard.repaired,
+  }
+
+  return {
+    messageText: renderGuard.messageText,
+    renderVariables,
+    candidateSnapshot,
+    personalizationMeta,
+  }
+}
+
+if (DEV) {
+  const check1 = resolveSellerFirstName({ prospect_first_name: 'Jose' })
+  const msg1 = applyRenderGuard(`Hello ${check1.value}, this is Chris...`)
+
+  const check2 = resolveSellerFirstName({ owner_display_name: 'Jose A Valdizon & Rocio Mendoza' })
+  const msg2 = applyRenderGuard(`Hello ${check2.value}, this is Chris...`)
+
+  const check3 = resolveSellerFirstName({})
+  const msg3 = applyRenderGuard('Hello , this is Chris...')
+
+  console.debug('[personalization-check]', {
+    case_prospect_first_name: msg1.messageText,
+    case_owner_display_name: msg2.messageText,
+    case_missing_name_source: check3.source,
+    case_missing_name: msg3.messageText,
+    guard_pattern_blocked: !/^(hi|hey|hello|hola|ola|marhaba)\s+,/i.test(msg1.messageText) &&
+      !/^(hi|hey|hello|hola|ola|marhaba)\s+,/i.test(msg2.messageText) &&
+      !/^(hi|hey|hello|hola|ola|marhaba)\s+,/i.test(msg3.messageText),
+  })
 }
 
 // All likely phone field names in the `phones` / `phone_numbers` table
@@ -687,32 +887,59 @@ const runFilteredQuery = async (
 export const getInboxThreads = async (filters: InboxThreadFilters = {}): Promise<InboxThread[]> => {
   const supabase = getSupabaseClient()
 
-  const [eventsResult, ownerResult, propertyResult, prospectResult] = await Promise.all([
-    supabase
+  const events: AnyRecord[] = []
+  let cursorCreatedAt: string | null = null
+  let page = 0
+  const maxPages = 500
+  let useWildcardSelect = false
+
+  while (page < maxPages) {
+    let query = supabase
       .from('message_events')
-      .select('*')
+      .select(useWildcardSelect ? '*' : (MESSAGE_EVENTS_THREAD_COLUMNS as unknown as '*'))
       .order('created_at', { ascending: false })
-      .limit(3000),
-    supabase
-      .from('master_owners')
-      .select('*')
-      .limit(3000),
-    supabase
-      .from('properties')
-      .select('*')
-      .limit(4000),
-    supabase
-      .from('prospects')
-      .select('*')
-      .limit(4000),
-  ])
+      .limit(MESSAGE_EVENTS_INBOX_PAGE_SIZE)
 
-  if (eventsResult.error) throw new Error(mapErrorMessage(eventsResult.error))
+    if (cursorCreatedAt) {
+      query = query.lt('created_at', cursorCreatedAt)
+    }
 
-  const events = safeArray(eventsResult.data as AnyRecord[])
-  const owners = ownerResult.error ? [] : safeArray(ownerResult.data as AnyRecord[])
-  const properties = propertyResult.error ? [] : safeArray(propertyResult.data as AnyRecord[])
-  const prospects = prospectResult.error ? [] : safeArray(prospectResult.data as AnyRecord[])
+    const eventsResult = await query
+
+    if (eventsResult.error) {
+      if (!useWildcardSelect && isMissingColumnError(eventsResult.error)) {
+        // Environment schema can differ; retry with wildcard selection.
+        useWildcardSelect = true
+        continue
+      }
+      if (events.length > 0) {
+        if (DEV) {
+          console.warn('[Inbox] message_events page failed after partial load; keeping cached pages', eventsResult.error.message)
+        }
+        break
+      }
+      throw new Error(mapErrorMessage(eventsResult.error))
+    }
+
+    const batch = safeArray(eventsResult.data as AnyRecord[])
+    if (batch.length === 0) break
+
+    events.push(...batch)
+
+    const last = batch[batch.length - 1]
+    const nextCursor = asIso(last?.['created_at'] ?? last?.['event_timestamp'])
+    if (!nextCursor || nextCursor === cursorCreatedAt) break
+
+    cursorCreatedAt = nextCursor
+    if (batch.length < MESSAGE_EVENTS_INBOX_PAGE_SIZE) break
+    page += 1
+  }
+
+  if (DEV) {
+    console.log(`[Inbox] loaded ${events.length} message_events rows for thread grouping`)
+  }
+
+  if (events.length === 0) return []
 
   // ── DEV: log raw message_events schema to diagnose field mapping ─────────
   if (DEV && events.length > 0) {
@@ -722,24 +949,6 @@ export const getInboxThreads = async (filters: InboxThreadFilters = {}): Promise
       console.log(`[Inbox message_events sample row][${i}]`, events[i])
       inspectMessageEventShape(events[i]!)
     }
-  }
-
-  const ownerById = new Map<string, AnyRecord>()
-  for (const owner of owners) {
-    const ownerId = asString(getFirst(owner, ['owner_id', 'master_owner_id']), '')
-    if (ownerId) ownerById.set(ownerId, owner)
-  }
-
-  const propertyById = new Map<string, AnyRecord>()
-  for (const property of properties) {
-    const propertyId = asString(getFirst(property, ['property_id', 'id']), '')
-    if (propertyId) propertyById.set(propertyId, property)
-  }
-
-  const prospectById = new Map<string, AnyRecord>()
-  for (const prospect of prospects) {
-    const prospectId = asString(getFirst(prospect, ['prospect_id', 'id']), '')
-    if (prospectId) prospectById.set(prospectId, prospect)
   }
 
   const grouped = new Map<string, { meta: ReturnType<typeof getThreadKeyParts>; rows: AnyRecord[] }>()
@@ -754,6 +963,24 @@ export const getInboxThreads = async (filters: InboxThreadFilters = {}): Promise
   })
 
   const threads: InboxThread[] = []
+  const threadKeys = Array.from(grouped.keys())
+  const stateRowsByKey = new Map<string, AnyRecord>()
+
+  if (threadKeys.length > 0) {
+    const { data: stateRows, error: stateError } = await supabase
+      .from('inbox_thread_state')
+      .select('thread_key,stage,status,priority,is_archived,is_read,is_pinned,last_read_at,archived_at,updated_at')
+      .in('thread_key', threadKeys)
+
+    if (stateError) {
+      if (DEV) console.warn('[NEXUS] inbox_thread_state read failed:', mapErrorMessage(stateError))
+    } else {
+      for (const row of safeArray(stateRows as AnyRecord[])) {
+        const key = asString(row['thread_key'], '')
+        if (key) stateRowsByKey.set(key, row)
+      }
+    }
+  }
 
   for (const [threadKey, bucket] of grouped.entries()) {
     const sorted = [...bucket.rows].sort(
@@ -779,42 +1006,48 @@ export const getInboxThreads = async (filters: InboxThreadFilters = {}): Promise
     const { sellerPhone, sellerPhoneSourceField, canonicalE164, ourNumber, directionUsed } = getSellerPhoneFromMessage(latest)
     const phoneNumber = sellerPhone
 
-    const owner = ownerById.get(ownerId)
-    const property = propertyById.get(propertyId)
-    const prospect = prospectById.get(prospectId)
-
     const ownerName = asString(
-      getFirst(owner ?? prospect ?? latest, ['full_name', 'name', 'first_name', 'owner_name']),
-      'Unknown owner',
+      getFirst(latest, ['owner_name', 'full_name', 'name', 'from_name', 'contact_name', 'seller_name']),
+      phoneNumber || 'Unknown owner',
     )
 
     const propertyAddress =
       asString(latest['property_address'], '') ||
-      asString(getFirst(property ?? {}, ['property_address', 'address']), '')
+      asString(getFirst(latest, ['address']), '')
 
     const market =
       asString(latest['market_id'], '') ||
-      asString(getFirst(property ?? owner ?? {}, ['market', 'market_id']), 'unknown')
+      asString(getFirst(latest, ['market', 'market_id']), 'unknown')
 
-    const archived = ['archived', 'closed'].includes(normalizeStatus(getFirst(latest, ['status'])))
+    const stateRow = stateRowsByKey.get(threadKey) ?? null
+    const stateRowFound = Boolean(stateRow)
+
+    const archivedFromEvent = ['archived', 'closed'].includes(normalizeStatus(getFirst(latest, ['status'])))
     const explicitRequiresResponse = sorted.some((row) => asBoolean(getFirst(row, ['requires_response']), false))
-    const needsResponse = (latestDirection === 'inbound' || explicitRequiresResponse) && !archived
+    const needsResponseFromEvent = (latestDirection === 'inbound' || explicitRequiresResponse) && !archivedFromEvent
 
     const explicitUnreadCount = sorted.filter((row) => asBoolean(getFirst(row, ['unread']), false)).length
     const derivedUnread =
       !!lastInbound && (!lastOutbound || new Date(lastInbound).getTime() > new Date(lastOutbound).getTime())
-    const unread = explicitUnreadCount > 0 || derivedUnread
+    const defaultStatus = latestDirection === 'inbound' ? 'unread' : 'sent'
+    const defaultPriority: InboxThread['priority'] = latestDirection === 'inbound' ? 'urgent' : 'normal'
+    const defaultStage = 'needs_response'
+    const stateStatus = normalizeStatus(stateRow?.['status'] ?? defaultStatus)
+    const isArchived = asBoolean(stateRow?.['is_archived'], false) || stateStatus === 'archived'
+    const isRead = asBoolean(stateRow?.['is_read'], false)
+    const unread = !isRead
 
     const lastActivityAt = getMessageTimestamp(latest)
     const preview = getMessageBody(latest) || 'No message preview'
 
     const sentiment = toSentiment(getFirst(latest, ['sentiment']))
-    let priority: InboxThread['priority'] = 'normal'
-    if (archived) priority = 'low'
-    else if (needsResponse && unread) priority = 'urgent'
-    else if (unread || sentiment === 'hot') priority = 'high'
+    const priorityNormalized = normalizeStatus(stateRow?.['priority'] ?? defaultPriority)
+    const priority: InboxThread['priority'] =
+      priorityNormalized === 'urgent' || priorityNormalized === 'high' || priorityNormalized === 'normal' || priorityNormalized === 'low'
+        ? priorityNormalized
+        : defaultPriority
 
-    const status: InboxThread['status'] = archived
+    const status: InboxThread['status'] = isArchived
       ? 'archived'
       : unread
       ? 'unread'
@@ -822,7 +1055,9 @@ export const getInboxThreads = async (filters: InboxThreadFilters = {}): Promise
       ? 'replied'
       : 'read'
 
-    const stage = archived ? 'Archived' : needsResponse ? 'Needs Response' : latestDirection === 'inbound' ? 'Replied' : 'Active'
+    const stateStage = asString(stateRow?.['stage'], defaultStage)
+    const needsResponse = !isArchived && (unread || needsResponseFromEvent)
+    const stage = isArchived ? 'Archived' : stateStage === 'needs_response' ? 'Needs Response' : latestDirection === 'inbound' ? 'Replied' : 'Active'
 
     const thread: InboxThread = {
       id: asString(latest['id'], threadKey),
@@ -837,7 +1072,7 @@ export const getInboxThreads = async (filters: InboxThreadFilters = {}): Promise
       messageCount: sorted.length,
       lastMessageLabel: formatRelativeTime(lastActivityAt),
       lastMessageIso: lastActivityAt,
-      unreadCount: explicitUnreadCount || (derivedUnread ? 1 : 0),
+      unreadCount: unread ? Math.max(1, explicitUnreadCount || (derivedUnread ? 1 : 0)) : 0,
       aiDraft: needsResponse ? 'Draft response ready for operator review.' : null,
       labels: [market || 'General', stage],
       threadKey,
@@ -866,6 +1101,14 @@ export const getInboxThreads = async (filters: InboxThreadFilters = {}): Promise
       lastOutboundAt: lastOutbound,
       needsResponse,
       unread,
+      stateRowFound,
+      threadWorkflowStage: asString(stateRow?.['stage'], '') || undefined,
+      threadWorkflowStatus: asString(stateRow?.['status'], '') || undefined,
+      threadIsRead: stateRow?.['is_read'] == null ? undefined : Boolean(stateRow['is_read']),
+      threadIsArchived: stateRow?.['is_archived'] == null ? undefined : Boolean(stateRow['is_archived']),
+      threadIsPinned: stateRow?.['is_pinned'] == null ? undefined : Boolean(stateRow['is_pinned']),
+      threadLastReadAt: asIso(stateRow?.['last_read_at']),
+      threadArchivedAt: asIso(stateRow?.['archived_at']),
     }
 
     threads.push(thread)
@@ -906,13 +1149,25 @@ export const getInboxThreads = async (filters: InboxThreadFilters = {}): Promise
 }
 
 export const fetchInboxModel = async (): Promise<InboxModel> => {
+  const lastLiveFetchAt = new Date().toISOString()
+
   const threads = await getInboxThreads()
+  const groupedThreadCount = threads.length
+
   return {
     threads,
     unreadCount: threads.filter((thread) => thread.unreadCount > 0).length,
     urgentCount: threads.filter((thread) => thread.priority === 'urgent').length,
     totalCount: threads.length,
     aiDraftCount: threads.filter((thread) => thread.aiDraft !== null).length,
+    dataMode: 'live_supabase',
+    liveFetchStatus: 'success',
+    liveFetchError: null,
+    messageEventsCount: null,
+    messageEventsRawCount: null,
+    groupedThreadCount,
+    sendQueueCount: null,
+    lastLiveFetchAt,
   }
 }
 
@@ -955,57 +1210,167 @@ const toThreadMessage = (row: AnyRecord): ThreadMessage => {
   }
 }
 
-export const getThreadMessagesForThread = async (thread: InboxThread): Promise<ThreadMessage[]> => {
+export interface ThreadMessageFetchOptions {
+  maxPages?: number
+  maxMessages?: number
+}
+
+export const getThreadMessagesForThread = async (
+  thread: InboxThread,
+  options: ThreadMessageFetchOptions = {},
+): Promise<ThreadMessage[]> => {
   const supabase = getSupabaseClient()
   const threadPhone = normalizePhone(thread.canonicalE164 || thread.phoneNumber)
   const propertyId = asString(thread.propertyId, '')
   const ownerId = asString(thread.ownerId, '')
   const prospectId = asString(thread.prospectId, '')
 
-  // ── Strategy: use actual confirmed columns for server-side filtering ──────
-  // Build a targeted query rather than a giant OR clause over non-existent fields.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let query: any = supabase.from('message_events').select('*').limit(500)
+  const applyThreadFilters = (
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    query: any,
+    activeThread: InboxThread,
+    normalizedPhone: string,
+    threadPropertyId: string,
+    threadOwnerId: string,
+    threadProspectId: string,
+  ) => {
+    const threadKey = asString(activeThread.threadKey, '')
 
-  if (threadPhone && propertyId) {
-    // Best case: phone + property — most precise grouping
-    query = query
-      .or(`from_phone_number.eq.${safeFilterValue(threadPhone)},to_phone_number.eq.${safeFilterValue(threadPhone)}`)
-      .eq('property_id', propertyId)
-  } else if (threadPhone && ownerId) {
-    query = query
-      .or(`from_phone_number.eq.${safeFilterValue(threadPhone)},to_phone_number.eq.${safeFilterValue(threadPhone)}`)
-      .eq('master_owner_id', ownerId)
-  } else if (threadPhone) {
-    query = query.or(
-      `from_phone_number.eq.${safeFilterValue(threadPhone)},to_phone_number.eq.${safeFilterValue(threadPhone)}`,
-    )
-  } else if (propertyId) {
-    query = query.eq('property_id', propertyId)
-  } else if (ownerId) {
-    query = query.eq('master_owner_id', ownerId)
-  } else if (prospectId) {
-    query = query.eq('prospect_id', prospectId)
-  } else {
-    // Last resort: match by id or message_event_key
-    const idVal = safeFilterValue(thread.id)
+    if (threadKey.startsWith('phone_property:')) {
+      const [, phone, keyPropertyId] = threadKey.split(':')
+      if (phone && keyPropertyId) {
+        return query
+          .or(`from_phone_number.eq.${safeFilterValue(phone)},to_phone_number.eq.${safeFilterValue(phone)}`)
+          .eq('property_id', keyPropertyId)
+      }
+    }
+
+    if (threadKey.startsWith('phone_owner:')) {
+      const [, phone, keyOwnerId] = threadKey.split(':')
+      if (phone && keyOwnerId) {
+        return query
+          .or(`from_phone_number.eq.${safeFilterValue(phone)},to_phone_number.eq.${safeFilterValue(phone)}`)
+          .eq('master_owner_id', keyOwnerId)
+      }
+    }
+
+    if (threadKey.startsWith('phone_prospect:')) {
+      const [, phone, keyProspectId] = threadKey.split(':')
+      if (phone && keyProspectId) {
+        return query
+          .or(`from_phone_number.eq.${safeFilterValue(phone)},to_phone_number.eq.${safeFilterValue(phone)}`)
+          .eq('prospect_id', keyProspectId)
+      }
+    }
+
+    if (threadKey.startsWith('property:')) {
+      const [, keyPropertyId] = threadKey.split(':')
+      if (keyPropertyId) {
+        return query.eq('property_id', keyPropertyId)
+      }
+    }
+
+    if (threadKey.startsWith('owner:')) {
+      const [, keyOwnerId] = threadKey.split(':')
+      if (keyOwnerId) {
+        return query.eq('master_owner_id', keyOwnerId)
+      }
+    }
+
+    if (threadKey.startsWith('prospect:')) {
+      const [, keyProspectId] = threadKey.split(':')
+      if (keyProspectId) {
+        return query.eq('prospect_id', keyProspectId)
+      }
+    }
+
+    if (normalizedPhone && threadPropertyId) {
+      return query
+        .or(`from_phone_number.eq.${safeFilterValue(normalizedPhone)},to_phone_number.eq.${safeFilterValue(normalizedPhone)}`)
+        .eq('property_id', threadPropertyId)
+    }
+
+    if (normalizedPhone && threadOwnerId) {
+      return query
+        .or(`from_phone_number.eq.${safeFilterValue(normalizedPhone)},to_phone_number.eq.${safeFilterValue(normalizedPhone)}`)
+        .eq('master_owner_id', threadOwnerId)
+    }
+
+    if (normalizedPhone && threadProspectId) {
+      return query
+        .or(`from_phone_number.eq.${safeFilterValue(normalizedPhone)},to_phone_number.eq.${safeFilterValue(normalizedPhone)}`)
+        .eq('prospect_id', threadProspectId)
+    }
+
+    if (normalizedPhone) {
+      return query.or(
+        `from_phone_number.eq.${safeFilterValue(normalizedPhone)},to_phone_number.eq.${safeFilterValue(normalizedPhone)}`,
+      )
+    }
+
+    if (threadPropertyId) return query.eq('property_id', threadPropertyId)
+    if (threadOwnerId) return query.eq('master_owner_id', threadOwnerId)
+    if (threadProspectId) return query.eq('prospect_id', threadProspectId)
+
+    const idVal = safeFilterValue(activeThread.id)
     const orParts = [`id.eq.${idVal}`]
-    const keyVal = asString(thread.threadKey, '')
+    const keyVal = asString(activeThread.threadKey, '')
     if (keyVal) orParts.push(`message_event_key.eq.${safeFilterValue(keyVal)}`)
-    query = query.or(orParts.join(','))
+    return query.or(orParts.join(','))
   }
 
-  const { data, error } = await query.order('created_at', { ascending: true })
-  if (error) throw new Error(mapErrorMessage(error))
+  const rows: AnyRecord[] = []
+  let cursorCreatedAt: string | null = null
+  let page = 0
+  const maxPages = Math.max(1, options.maxPages ?? 250)
+  const maxMessages = options.maxMessages && options.maxMessages > 0 ? options.maxMessages : null
 
-  const rows = safeArray(data as AnyRecord[])
+  while (page < maxPages) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let query: any = supabase
+      .from('message_events')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(MESSAGE_EVENTS_THREAD_PAGE_SIZE)
+
+    if (cursorCreatedAt) {
+      query = query.lt('created_at', cursorCreatedAt)
+    }
+
+    query = applyThreadFilters(query, thread, threadPhone, propertyId, ownerId, prospectId)
+
+    const { data, error } = await query
+    if (error) throw new Error(mapErrorMessage(error))
+
+    const batch = safeArray(data as AnyRecord[])
+    if (batch.length === 0) break
+    rows.push(...batch)
+
+    if (maxMessages !== null && rows.length >= maxMessages) {
+      break
+    }
+
+    const last = batch[batch.length - 1]
+    const oldest = asIso(last?.['created_at'])
+    if (!oldest) break
+    cursorCreatedAt = oldest
+    page += 1
+
+    if (batch.length < MESSAGE_EVENTS_THREAD_PAGE_SIZE) break
+  }
+
+  const deduped = Array.from(
+    new Map(rows.map((row, index) => [asString(row['id'], `${asString(row['created_at'], '')}:${index}`), row])).values(),
+  )
+  const bounded = maxMessages !== null ? deduped.slice(0, maxMessages) : deduped
+
   if (DEV) {
     console.log(
-      `[getThreadMessagesForThread] phone=${threadPhone} propertyId=${propertyId} ownerId=${ownerId} → ${rows.length} rows`,
+      `[getThreadMessagesForThread] phone=${threadPhone} propertyId=${propertyId} ownerId=${ownerId} pages=${page} → ${deduped.length} rows`,
     )
   }
 
-  return rows
+  return bounded
     .map(toThreadMessage)
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
 }
@@ -1392,6 +1757,8 @@ export const queueReplyFromInbox = async (
     return { ok: false, queueId: null, status: null, errorMessage: 'Message text is required', insertPayloadKeys: [] }
   }
 
+  const personalization = buildQueuePersonalization(thread, trimmedText)
+
   const toPhone = normalizePhone(thread.canonicalE164 || thread.phoneNumber)
   if (!toPhone) {
     return { ok: false, queueId: null, status: null, errorMessage: 'Thread has no valid phone number', insertPayloadKeys: [] }
@@ -1413,10 +1780,10 @@ export const queueReplyFromInbox = async (
     is_locked: false,
     retry_count: 0,
     max_retries: 3,
-    message_body: trimmedText,
-    message_text: trimmedText,
+    message_body: personalization.messageText,
+    message_text: personalization.messageText,
     to_phone_number: toPhone,
-    character_count: trimmedText.length,
+    character_count: personalization.messageText.length,
     touch_number: 1,
     current_stage: 'manual_reply',
     message_type: 'manual_reply',
@@ -1429,6 +1796,9 @@ export const queueReplyFromInbox = async (
       created_from: 'leadcommand_inbox',
       our_number: thread.ourNumber,
       seller_phone: thread.phoneNumber,
+      template_variables: personalization.renderVariables,
+      candidate_snapshot: personalization.candidateSnapshot,
+      personalization: personalization.personalizationMeta,
     },
     created_at: now,
   }
@@ -1550,45 +1920,119 @@ export const getSuggestedDraft = async (thread: InboxThread): Promise<SuggestedD
   }
 }
 
-const buildMutationFilter = (threadIdOrKey: string): string => {
-  const value = safeFilterValue(threadIdOrKey)
-  return [
-    `thread_id.eq.${value}`,
-    `conversation_id.eq.${value}`,
-    `owner_id.eq.${value}`,
-    `master_owner_id.eq.${value}`,
-    `property_id.eq.${value}`,
-    `prospect_id.eq.${value}`,
-    `canonical_e164.eq.${value}`,
-    `phone_number.eq.${value}`,
-  ].join(',')
+export interface InboxThreadStateMutationResult {
+  ok: boolean
+  threadKey: string
+  mutationPayload: AnyRecord
+  errorMessage: string | null
 }
 
-export const markThreadRead = async (threadIdOrKey: string): Promise<void> => {
+const writeInboxThreadState = async (
+  threadKey: string,
+  patch: AnyRecord,
+): Promise<InboxThreadStateMutationResult> => {
   const supabase = getSupabaseClient()
+  const now = new Date().toISOString()
+  const mutationPayload: AnyRecord = {
+    thread_key: threadKey,
+    updated_at: now,
+    ...patch,
+  }
   const { error } = await supabase
-    .from('message_events')
-    .update({ unread: false })
-    .or(buildMutationFilter(threadIdOrKey))
-  if (error && DEV) console.warn('[NEXUS] markThreadRead failed:', error.message)
+    .from('inbox_thread_state')
+    .upsert(mutationPayload, { onConflict: 'thread_key' })
+
+  if (!error) {
+    return { ok: true, threadKey, mutationPayload, errorMessage: null }
+  }
+  return { ok: false, threadKey, mutationPayload, errorMessage: mapErrorMessage(error) }
 }
 
-export const archiveThread = async (threadIdOrKey: string): Promise<void> => {
-  const supabase = getSupabaseClient()
-  const { error } = await supabase
-    .from('message_events')
-    .update({ status: 'archived' })
-    .or(buildMutationFilter(threadIdOrKey))
-  if (error && DEV) console.warn('[NEXUS] archiveThread failed:', error.message)
+export const upsertInboxThreadState = async (thread: InboxThread): Promise<InboxThreadStateMutationResult> => {
+  const threadKey = asString(thread.threadKey, '') || asString(thread.id, '')
+  if (!threadKey) {
+    return { ok: false, threadKey: '', mutationPayload: {}, errorMessage: 'Missing thread key for state upsert' }
+  }
+
+  return writeInboxThreadState(threadKey, {
+    master_owner_id: thread.ownerId ?? null,
+    prospect_id: thread.prospectId ?? null,
+    property_id: thread.propertyId ?? null,
+    seller_phone: thread.phoneNumber ?? null,
+    canonical_e164: thread.canonicalE164 ?? null,
+    our_number: thread.ourNumber ?? null,
+    market: thread.market ?? thread.marketId,
+  })
 }
 
-export const flagThread = async (threadIdOrKey: string): Promise<void> => {
-  const supabase = getSupabaseClient()
-  const { error } = await supabase
-    .from('message_events')
-    .update({ requires_response: true })
-    .or(buildMutationFilter(threadIdOrKey))
-  if (error && DEV) console.warn('[NEXUS] flagThread failed:', error.message)
+export const markThreadRead = async (threadKey: string): Promise<InboxThreadStateMutationResult> => {
+  return writeInboxThreadState(threadKey, {
+    is_read: true,
+    status: 'read',
+    last_read_at: new Date().toISOString(),
+  })
+}
+
+export const markThreadUnread = async (threadKey: string): Promise<InboxThreadStateMutationResult> => {
+  return writeInboxThreadState(threadKey, {
+    is_read: false,
+    status: 'unread',
+    last_read_at: null,
+  })
+}
+
+export const archiveThread = async (threadKey: string): Promise<InboxThreadStateMutationResult> => {
+  return writeInboxThreadState(threadKey, {
+    is_archived: true,
+    status: 'archived',
+    stage: 'archived',
+    archived_at: new Date().toISOString(),
+  })
+}
+
+export const unarchiveThread = async (threadKey: string): Promise<InboxThreadStateMutationResult> => {
+  return writeInboxThreadState(threadKey, {
+    is_archived: false,
+    status: 'open',
+    stage: 'needs_response',
+    archived_at: null,
+  })
+}
+
+export const updateThreadStage = async (threadKey: string, stage: string): Promise<InboxThreadStateMutationResult> => {
+  const status = stage === 'archived' ? 'archived' : stage === 'dnc_opt_out' ? 'suppressed' : 'open'
+  return writeInboxThreadState(threadKey, {
+    stage,
+    status,
+    is_archived: stage === 'archived',
+    archived_at: stage === 'archived' ? new Date().toISOString() : null,
+  })
+}
+
+export const updateThreadStatus = async (threadKey: string, status: string): Promise<InboxThreadStateMutationResult> => {
+  const archived = status === 'archived'
+  return writeInboxThreadState(threadKey, {
+    status,
+    is_archived: archived,
+    archived_at: archived ? new Date().toISOString() : null,
+  })
+}
+
+export const updateThreadPriority = async (threadKey: string, priority: string): Promise<InboxThreadStateMutationResult> => {
+  return writeInboxThreadState(threadKey, {
+    priority,
+    is_urgent: priority === 'urgent',
+  })
+}
+
+export const pinThread = async (threadKey: string, pinned: boolean): Promise<InboxThreadStateMutationResult> => {
+  return writeInboxThreadState(threadKey, {
+    is_pinned: pinned,
+  })
+}
+
+export const flagThread = async (threadKey: string): Promise<InboxThreadStateMutationResult> => {
+  return updateThreadStage(threadKey, 'needs_response')
 }
 
 export const sendDraft = async (_threadIdOrKey: string, _text: string): Promise<void> => {
@@ -1667,6 +2111,8 @@ export const sendInboxMessageNow = async (
     return { ok: false, queueId: null, messageEventId: null, providerMessageSid: null, deliveryStatus: null, errorMessage: 'Message text is required', insertPayloadKeys: [], suppressionBlocked: false, sendRouteUsed: 'none', queueProcessorEligible: false }
   }
 
+  const personalization = buildQueuePersonalization(thread, trimmedText)
+
   const toPhone = normalizePhone(thread.canonicalE164 || thread.phoneNumber)
   if (!toPhone) {
     return { ok: false, queueId: null, messageEventId: null, providerMessageSid: null, deliveryStatus: null, errorMessage: 'Thread has no valid phone number', insertPayloadKeys: [], suppressionBlocked: false, sendRouteUsed: 'none', queueProcessorEligible: false }
@@ -1726,11 +2172,11 @@ export const sendInboxMessageNow = async (
     is_locked: false,
     retry_count: 0,
     max_retries: 3,
-    message_body: trimmedText,
-    message_text: trimmedText,
+    message_body: personalization.messageText,
+    message_text: personalization.messageText,
     to_phone_number: toPhone,
     from_phone_number: fromPhone,
-    character_count: trimmedText.length,
+    character_count: personalization.messageText.length,
     touch_number: 1,
     current_stage: 'manual_reply',
     message_type: 'manual_reply',
@@ -1746,6 +2192,9 @@ export const sendInboxMessageNow = async (
       our_number: thread.ourNumber,
       seller_phone: thread.phoneNumber,
       note: 'queued_ready_for_processor',
+      template_variables: personalization.renderVariables,
+      candidate_snapshot: personalization.candidateSnapshot,
+      personalization: personalization.personalizationMeta,
     },
     created_at: now,
   }
@@ -1780,7 +2229,7 @@ export const sendInboxMessageNow = async (
   const eventPayload: Record<string, unknown> = {
     direction: 'outbound',
     event_type: 'outbound_send',
-    message_body: trimmedText,
+    message_body: personalization.messageText,
     to_phone_number: toPhone,
     from_phone_number: fromPhone,
     delivery_status: 'queued',
@@ -1791,7 +2240,7 @@ export const sendInboxMessageNow = async (
     created_at: now,
     sent_at: now,
     is_final_failure: false,
-    character_count: trimmedText.length,
+    character_count: personalization.messageText.length,
     queue_id: queueId,
     metadata: { source: 'inbox_send_now_optimistic', queue_key: queueKey },
   }
@@ -1846,6 +2295,8 @@ export const scheduleReplyFromInbox = async (
     return { ok: false, queueId: null, status: null, errorMessage: 'Message text is required', insertPayloadKeys: [] }
   }
 
+  const personalization = buildQueuePersonalization(thread, trimmedText)
+
   const toPhone = normalizePhone(thread.canonicalE164 || thread.phoneNumber)
   if (!toPhone) {
     return { ok: false, queueId: null, status: null, errorMessage: 'Thread has no valid phone number', insertPayloadKeys: [] }
@@ -1868,10 +2319,10 @@ export const scheduleReplyFromInbox = async (
     is_locked: false,
     retry_count: 0,
     max_retries: 3,
-    message_body: trimmedText,
-    message_text: trimmedText,
+    message_body: personalization.messageText,
+    message_text: personalization.messageText,
     to_phone_number: toPhone,
-    character_count: trimmedText.length,
+    character_count: personalization.messageText.length,
     touch_number: 1,
     current_stage: 'manual_reply',
     message_type: 'manual_scheduled_reply',
@@ -1884,6 +2335,9 @@ export const scheduleReplyFromInbox = async (
       created_from: 'leadcommand_inbox',
       our_number: thread.ourNumber,
       seller_phone: thread.phoneNumber,
+      template_variables: personalization.renderVariables,
+      candidate_snapshot: personalization.candidateSnapshot,
+      personalization: personalization.personalizationMeta,
     },
     created_at: now,
   }

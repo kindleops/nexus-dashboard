@@ -247,7 +247,7 @@ export const COMMAND_STORE_ITEMS: CommandStoreItem[] = [
           : name.includes('Market') || name.includes('Street') || name.includes('Comp')
             ? ['market-intelligence', 'acquisition']
             : ['acquisition', 'messaging'],
-      ['Seller Inbox', 'Send Queue', 'Market Map', 'Automation Health'].includes(name) ? 'installed' : 'available',
+      ['Seller Inbox', 'Send Queue', 'Property Intelligence', 'Market Map', 'Automation Health'].includes(name) ? 'installed' : 'available',
     ),
   ),
 

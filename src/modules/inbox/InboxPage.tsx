@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { InboxModel, InboxThread } from './inbox.adapter'
 import { Icon } from '../../shared/icons'
 import { SplitView } from '../../shared/SplitView'
@@ -14,9 +14,6 @@ import {
   getThreadMessagesForThread,
   getThreadContext,
   getSuggestedDraft,
-  markThreadRead,
-  archiveThread,
-  flagThread,
   doesMessageBelongToThread,
   queueReplyFromInbox,
   sendInboxMessageNow,
@@ -24,15 +21,39 @@ import {
   checkSuppressionStatus,
 } from '../../lib/data/inboxData'
 import type { ThreadMessage, ThreadContext, SuggestedDraft, QueueReplyResult, SendNowResult } from '../../lib/data/inboxData'
-import { shouldUseSupabase } from '../../lib/data/shared'
+import {
+  archiveThread,
+  fetchSentMessages,
+  markThreadRead,
+  markThreadUnread,
+  pinThread,
+  unarchiveThread,
+  unpinThread,
+  updateThreadPriority,
+  updateThreadStage,
+  updateThreadStatus,
+  type InboxPriority,
+  type InboxStage,
+  type InboxStatusTab,
+  type InboxThreadsQuery,
+  type InboxWorkflowStatus,
+  type InboxWorkflowThread,
+} from '../../lib/data/inboxWorkflowData'
+import { InboxStatusTabs } from './InboxStatusTabs'
+import { InboxFilterBar } from './InboxFilterBar'
+import { InboxStageDropdown } from './InboxStageDropdown'
+import { InboxThreadRow } from './InboxThreadRow'
+import { InboxThreadActions } from './InboxThreadActions'
+import { SentMessagesView } from './SentMessagesView'
+import { ArchivedThreadsView } from './ArchivedThreadsView'
+import { TemplateLibraryDrawer } from './templates/TemplateLibraryDrawer'
+import { buildTemplateContextFromThread, getRecommendedTemplates, renderTemplate, type SmsTemplate } from '../../lib/data/templateData'
+import { shouldUseSupabase, useSupabaseData } from '../../lib/data/shared'
 import { getSupabaseClient, hasSupabaseEnv } from '../../lib/supabaseClient'
+import './inbox-rebuild.css'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
-
-const PRIORITY_LABEL: Record<InboxThread['priority'], string> = {
-  urgent: 'P0', high: 'P1', normal: 'P2', low: 'P3',
-}
 
 const PRIORITY_CLS: Record<InboxThread['priority'], string> = {
   urgent: 'is-urgent', high: 'is-high', normal: 'is-normal', low: 'is-low',
@@ -64,6 +85,134 @@ function stage(t: InboxThread): string {
   return 'Open Thread'
 }
 
+const normalizeThreadDirection = (value: string | null | undefined): 'inbound' | 'outbound' | 'unknown' => {
+  const normalized = (value ?? '').toLowerCase()
+  if (['inbound', 'incoming', 'received', 'reply'].includes(normalized)) return 'inbound'
+  if (['outbound', 'outgoing', 'sent'].includes(normalized)) return 'outbound'
+  return 'unknown'
+}
+
+const WORKFLOW_STATUSES: ReadonlySet<InboxWorkflowStatus> = new Set([
+  'open',
+  'unread',
+  'read',
+  'pending',
+  'queued',
+  'sent',
+  'scheduled',
+  'failed',
+  'archived',
+  'suppressed',
+  'closed',
+])
+
+const WORKFLOW_STAGES: ReadonlySet<InboxStage> = new Set([
+  'new_reply',
+  'needs_response',
+  'ai_draft_ready',
+  'queued_reply',
+  'sent_waiting',
+  'interested',
+  'needs_offer',
+  'needs_call',
+  'nurture',
+  'not_interested',
+  'wrong_number',
+  'dnc_opt_out',
+  'archived',
+  'closed_converted',
+])
+
+const FAST_THREAD_MAX_MESSAGES = 240
+const FAST_THREAD_MAX_PAGES = 4
+
+const toPhoneDigits = (value: string | null | undefined): string => (value ?? '').replace(/\D/g, '')
+
+const deriveNeedsResponse = (thread: InboxThread, latestDirection: 'inbound' | 'outbound' | 'unknown'): boolean => {
+  const inboundAt = thread.lastInboundAt ? new Date(thread.lastInboundAt).getTime() : 0
+  const outboundAt = thread.lastOutboundAt ? new Date(thread.lastOutboundAt).getTime() : 0
+  if (inboundAt > outboundAt) return true
+  return latestDirection === 'inbound' && !thread.isOptOut
+}
+
+const deriveWorkflowState = (
+  thread: InboxThread,
+  queueStatus: string | null,
+): Pick<InboxWorkflowThread, 'inboxStatus' | 'inboxStage' | 'isArchived' | 'isRead' | 'lastDirection' | 'needsResponse' | 'priority'> => {
+  const lastDirection = normalizeThreadDirection(thread.directionUsed)
+  const failed = Boolean(thread.failureReason) || ['failed', 'error', 'undelivered'].includes((thread.deliveryStatus ?? '').toLowerCase())
+  const persistedStatus = (thread.threadWorkflowStatus ?? '').toLowerCase()
+  const persistedStage = (thread.threadWorkflowStage ?? '').toLowerCase()
+  const hasPersistedStatus = WORKFLOW_STATUSES.has(persistedStatus as InboxWorkflowStatus)
+  const hasPersistedStage = WORKFLOW_STAGES.has(persistedStage as InboxStage)
+  const isArchived = Boolean(thread.threadIsArchived) || thread.status === 'archived' || persistedStatus === 'archived'
+
+  const lastInboundTs = thread.lastInboundAt ? new Date(thread.lastInboundAt).getTime() : 0
+  const lastReadTs = thread.threadLastReadAt ? new Date(thread.threadLastReadAt).getTime() : 0
+  const readCoversLatestInbound = lastInboundTs > 0 && lastReadTs > 0 && lastReadTs >= lastInboundTs
+
+  let needsResponse = !isArchived && deriveNeedsResponse(thread, lastDirection)
+  if (readCoversLatestInbound) needsResponse = false
+
+  const persistedIsRead = Boolean(thread.threadIsRead)
+  const isRead = !isArchived && (persistedIsRead || readCoversLatestInbound) && !needsResponse
+
+  let inboxStatus: InboxWorkflowStatus = hasPersistedStatus
+    ? (persistedStatus as InboxWorkflowStatus)
+    : (isArchived ? 'archived' : 'open')
+
+  if (!hasPersistedStatus) {
+    if (thread.isOptOut) inboxStatus = 'suppressed'
+    else if (failed || queueStatus === 'failed') inboxStatus = 'failed'
+    else if (queueStatus === 'scheduled') inboxStatus = 'scheduled'
+    else if (queueStatus === 'queued' || queueStatus === 'approval') inboxStatus = 'queued'
+    else if (thread.lastOutboundAt || lastDirection === 'outbound') inboxStatus = 'sent'
+    else if (needsResponse) inboxStatus = 'unread'
+    else if (isRead) inboxStatus = 'read'
+  }
+  if (isArchived) inboxStatus = 'archived'
+
+  let inboxStage: InboxStage = hasPersistedStage
+    ? (persistedStage as InboxStage)
+    : 'sent_waiting'
+
+  if (!hasPersistedStage) {
+    if (isArchived) inboxStage = 'archived'
+    else if (thread.isOptOut) inboxStage = 'dnc_opt_out'
+    else if (failed || queueStatus === 'failed') inboxStage = 'needs_response'
+    else if (queueStatus === 'scheduled' || queueStatus === 'queued' || queueStatus === 'approval') inboxStage = 'queued_reply'
+    else if (needsResponse) inboxStage = 'needs_response'
+    else if (thread.aiDraft) inboxStage = 'ai_draft_ready'
+  }
+  if (isArchived) inboxStage = 'archived'
+
+  const priority: InboxPriority = needsResponse ? 'urgent' : thread.priority
+
+  return { inboxStatus, inboxStage, isArchived, isRead, lastDirection, needsResponse, priority }
+}
+
+const toWorkflowThread = (thread: InboxThread): InboxWorkflowThread => {
+  const derived = deriveWorkflowState(thread, null)
+
+  return {
+    ...thread,
+    threadKey: thread.threadKey ?? thread.id,
+    inboxStatus: derived.inboxStatus,
+    inboxStage: derived.inboxStage,
+    isArchived: derived.isArchived,
+    isRead: derived.isRead,
+    isPinned: Boolean(thread.threadIsPinned),
+    priority: derived.priority,
+    lastInboundAt: thread.lastInboundAt ?? null,
+    lastOutboundAt: thread.lastOutboundAt ?? null,
+    lastMessageAt: thread.lastMessageIso,
+    lastMessageBody: thread.preview,
+    lastDirection: derived.lastDirection,
+    updatedAt: thread.lastMessageIso,
+    queueStatus: null,
+  }
+}
+
 /** Returns true if the search query looks like a command intent */
 function isCommandLike(q: string): boolean {
   const commandTriggers = [
@@ -75,33 +224,45 @@ function isCommandLike(q: string): boolean {
   return commandTriggers.some(t => lower.startsWith(t) || lower.includes(t))
 }
 
-function formatClock(d: Date): string {
-  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short' })
-    .replace(':00 ', ' ')
-}
-
-function formatDate(d: Date): string {
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 
 type InboxLayoutMode = 'default' | 'conversation_focus' | 'triage'
 
+const LIVE_REFRESH_TIMEOUT_MS = 120000
+
+const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> => {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId)
+  }
+}
+
 export const InboxPage = ({ data }: { data: InboxModel }) => {
   // ── Live threads state (refreshable) ─────────────────────────────────────
-  const [threads, setThreads] = useState<InboxThread[]>(data.threads)
-  const [liveStats, setLiveStats] = useState<Pick<InboxModel, 'unreadCount' | 'urgentCount' | 'totalCount' | 'aiDraftCount'>>({
-    unreadCount: data.unreadCount,
-    urgentCount: data.urgentCount,
-    totalCount: data.totalCount,
-    aiDraftCount: data.aiDraftCount,
-  })
+  const [threads, setThreads] = useState<InboxWorkflowThread[]>(() => data.threads.map(toWorkflowThread))
+  const [sentItems, setSentItems] = useState<Awaited<ReturnType<typeof fetchSentMessages>>>([])
+  const [workflowTab, setWorkflowTab] = useState<InboxStatusTab>('all')
+  const [workflowFilters, setWorkflowFilters] = useState<InboxThreadsQuery>({ tab: 'all' })
+  const [workflowWriteTarget, setWorkflowWriteTarget] = useState<string>('pending')
+  const [lastMutationPayload, setLastMutationPayload] = useState<Record<string, unknown> | null>(null)
+  const [lastMutationError, setLastMutationError] = useState<string | null>(null)
+  const [threadRefreshNonce, setThreadRefreshNonce] = useState(0)
+  const [threadListSyncing, setThreadListSyncing] = useState(false)
   const [newMessageIndicator, setNewMessageIndicator] = useState(false)
 
   // ── Thread message / context / draft state ────────────────────────────────
   const [selectedMessages, setSelectedMessages] = useState<ThreadMessage[]>([])
   const [messagesLoading, setMessagesLoading] = useState(false)
+  const [messagesSyncing, setMessagesSyncing] = useState(false)
+  const [fullHistoryLoading, setFullHistoryLoading] = useState(false)
+  const [hasMoreThreadHistory, setHasMoreThreadHistory] = useState(false)
   const [messagesError, setMessagesError] = useState<string | null>(null)
   const [threadContext, setThreadContext] = useState<ThreadContext | null>(null)
   const [contextLoading, setContextLoading] = useState(false)
@@ -109,13 +270,26 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
   const [draftLoading, setDraftLoading] = useState(false)
   const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null)
   const [realtimeStatus, setRealtimeStatus] = useState<'off' | 'polling' | 'subscribed'>('off')
+  const [dataMode, setDataMode] = useState<InboxModel['dataMode']>(data.dataMode)
+  const [liveFetchStatus, setLiveFetchStatus] = useState<InboxModel['liveFetchStatus']>(data.liveFetchStatus)
+  const [liveFetchError, setLiveFetchError] = useState<string | null>(data.liveFetchError)
+  const [messageEventsCount, setMessageEventsCount] = useState<number | null>(data.messageEventsCount)
+  const [messageEventsRawCount, setMessageEventsRawCount] = useState<number | null>(data.messageEventsRawCount)
+  const [groupedThreadCount, setGroupedThreadCount] = useState<number | null>(data.groupedThreadCount)
+  const [sendQueueCount, setSendQueueCount] = useState<number | null>(data.sendQueueCount)
+  const [lastLiveFetchAt, setLastLiveFetchAt] = useState<string | null>(data.lastLiveFetchAt)
+  const [queueStateByThreadKey, setQueueStateByThreadKey] = useState<Record<string, string>>({})
   const [showDiagnostics, setShowDiagnostics] = useState(false)
+  const [timelineFilter, setTimelineFilter] = useState<'all' | 'inbound' | 'outbound' | 'failed'>('all')
+  const [templateDrawerOpen, setTemplateDrawerOpen] = useState(false)
+  const [recommendedTemplates, setRecommendedTemplates] = useState<SmsTemplate[]>([])
 
   const [selectedId, setSelectedId] = useState<string | null>(data.threads[0]?.id ?? null)
-  const [filterStatus, setFilterStatus] = useState<string>('all')
-  const [filterPriority, setFilterPriority] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
+  const [filtersDrawerOpen, setFiltersDrawerOpen] = useState(false)
   const [draftText, setDraftText] = useState('')
+  const [draftByThreadId, setDraftByThreadId] = useState<Record<string, string>>({})
+  const [composerSendMode, setComposerSendMode] = useState<'send_now' | 'queue_reply'>('send_now')
   const [showAiActions, setShowAiActions] = useState(false)
   const [splitThread, setSplitThread] = useState<InboxThread | null>(null)
   const [commandOpen, setCommandOpen] = useState(false)
@@ -143,7 +317,6 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
   const [sendQueueLastQueueKey, setSendQueueLastQueueKey] = useState<string | null>(null)
   const [sendQueueLastPayloadKeys, setSendQueueLastPayloadKeys] = useState<string[]>([])
   const [queueProcessorEligible, setQueueProcessorEligible] = useState<boolean | null>(null)
-  const [now, setNow] = useState(() => new Date())
   const [leftPanelOpen, setLeftPanelOpen] = useState(true)
   const [rightPanelOpen, setRightPanelOpen] = useState(true)
   const [layoutMode, setLayoutMode] = useState<InboxLayoutMode>('default')
@@ -160,39 +333,346 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
   const messagesRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const headerSearchRef = useRef<HTMLInputElement>(null)
+  const selectedMessagesRef = useRef<ThreadMessage[]>([])
+  const messageCacheRef = useRef<Record<string, ThreadMessage[]>>({})
+  const fullThreadLoadedRef = useRef<Record<string, boolean>>({})
+  const selectedMessagesThreadKeyRef = useRef<string | null>(null)
+  const selectedThreadRef = useRef<InboxWorkflowThread | null>(null)
+  const lastSelectedThreadRef = useRef<InboxWorkflowThread | null>(data.threads[0] ? toWorkflowThread(data.threads[0]) : null)
+  const liveRefreshInFlightRef = useRef(false)
+  const lastRefreshRequestAtRef = useRef(0)
 
-  const filtered = threads
-    .filter(t => filterStatus === 'all' || t.status === filterStatus)
-    .filter(t => filterPriority === 'all' || t.priority === filterPriority)
-    .filter(t => {
-      if (!searchQuery) return true
+  const derivedThreads = useMemo(() => threads.map((thread) => {
+    const queueStatus = queueStateByThreadKey[thread.threadKey ?? thread.id] ?? null
+    const derived = deriveWorkflowState(thread, queueStatus)
+    return {
+      ...thread,
+      queueStatus,
+      inboxStatus: derived.inboxStatus,
+      inboxStage: derived.inboxStage,
+      isArchived: derived.isArchived,
+      isRead: derived.isRead,
+      lastDirection: derived.lastDirection,
+      needsResponse: derived.needsResponse,
+      priority: derived.priority,
+    }
+  }), [threads, queueStateByThreadKey])
+
+  const filtered = derivedThreads
+    .filter((thread) => {
+      if (workflowTab === 'archived') return thread.isArchived || thread.status === 'archived'
+      if (workflowTab === 'sent') return Boolean(thread.lastOutboundAt) || thread.lastDirection === 'outbound' || thread.inboxStatus === 'sent'
+      if (workflowTab === 'priority') return thread.priority === 'urgent' || thread.priority === 'high'
+      if (workflowTab === 'needs_response') return Boolean(thread.needsResponse)
+      if (workflowTab === 'queued') return thread.queueStatus === 'queued' || thread.queueStatus === 'approval' || thread.inboxStatus === 'queued'
+      if (workflowTab === 'scheduled') return thread.queueStatus === 'scheduled' || thread.inboxStatus === 'scheduled'
+      if (workflowTab === 'failed') return Boolean(thread.failureReason) || ['failed', 'error', 'undelivered'].includes((thread.deliveryStatus ?? '').toLowerCase()) || thread.inboxStatus === 'failed'
+      return !thread.isArchived
+    })
+    .filter((thread) => {
+      if (workflowFilters.read === 'read') return thread.isRead
+      if (workflowFilters.read === 'unread') return !thread.isRead
+      return true
+    })
+    .filter((thread) => (workflowFilters.direction && workflowFilters.direction !== 'all' ? thread.lastDirection === workflowFilters.direction : true))
+    .filter((thread) => (workflowFilters.market && workflowFilters.market !== 'all' ? (thread.market || thread.marketId) === workflowFilters.market : true))
+    .filter((thread) => (workflowFilters.hasPropertyLink ? Boolean(thread.propertyId || thread.propertyAddress) : true))
+    .filter((thread) => (workflowFilters.hasOwnerLink ? Boolean(thread.ownerId || thread.ownerName) : true))
+    .filter((thread) => (workflowFilters.hasPhoneLink ? Boolean(thread.phoneNumber || thread.canonicalE164) : true))
+    .filter((thread) => (workflowFilters.dncOptOut ? Boolean(thread.isOptOut) || thread.inboxStatus === 'suppressed' : true))
+    .filter((thread) => (workflowFilters.priority && workflowFilters.priority !== 'all' ? thread.priority === workflowFilters.priority : true))
+    .filter((thread) => (workflowFilters.status && workflowFilters.status !== 'all' ? thread.inboxStatus === workflowFilters.status : true))
+    .filter((thread) => (workflowFilters.stage && workflowFilters.stage !== 'all' ? thread.inboxStage === workflowFilters.stage : true))
+    .filter((thread) => {
+      if (!workflowFilters.startDate) return true
+      const start = new Date(workflowFilters.startDate).getTime()
+      const ts = new Date(thread.lastMessageAt).getTime()
+      return Number.isFinite(start) && Number.isFinite(ts) ? ts >= start : true
+    })
+    .filter((thread) => {
+      if (!workflowFilters.endDate) return true
+      const end = new Date(workflowFilters.endDate).getTime()
+      const ts = new Date(thread.lastMessageAt).getTime()
+      return Number.isFinite(end) && Number.isFinite(ts) ? ts <= end : true
+    })
+    .filter((thread) => {
+      if (!searchQuery.trim()) return true
       const q = searchQuery.toLowerCase()
-      return (
-        t.ownerName.toLowerCase().includes(q) ||
-        t.subject.toLowerCase().includes(q) ||
-        t.preview.toLowerCase().includes(q) ||
-        t.marketId.toLowerCase().includes(q) ||
-        t.priority.toLowerCase().includes(q) ||
-        t.sentiment.toLowerCase().includes(q) ||
-        t.labels.some(l => l.toLowerCase().includes(q))
-      )
+      return [thread.ownerName, thread.subject, thread.preview, thread.propertyAddress, thread.market, thread.marketId, thread.phoneNumber]
+        .filter((v): v is string => Boolean(v))
+        .some((v) => v.toLowerCase().includes(q))
     })
 
-  const selected = threads.find(t => t.id === selectedId) ?? null
-  const hotCount = threads.filter(t => t.sentiment === 'hot').length
-  const aiReady = threads.filter(t => t.aiDraft && t.status === 'unread').length
+  const selectedLive = derivedThreads.find(t => t.id === selectedId) ?? threads.find(t => t.id === selectedId) ?? null
+  const selected = selectedLive ?? lastSelectedThreadRef.current
+  const hotCount = derivedThreads.filter(t => t.sentiment === 'hot').length
+  const aiReady = derivedThreads.filter((t) => t.aiDraft && t.needsResponse).length
+  const baseStats = useMemo(() => ({
+    totalCount: derivedThreads.length,
+    unreadCount: derivedThreads.filter((thread) => !thread.isRead || thread.unreadCount > 0).length,
+    urgentCount: derivedThreads.filter((thread) => thread.priority === 'urgent' || thread.needsResponse).length,
+    aiDraftCount: derivedThreads.filter((thread) => Boolean(thread.aiDraft)).length,
+  }), [derivedThreads])
 
-  // ── Live clock ─────────────────────────────────────────────────────────────
   useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 30_000)
-    return () => clearInterval(id)
-  }, [])
+    if (selectedLive) {
+      lastSelectedThreadRef.current = selectedLive
+    }
+  }, [selectedLive])
+
+  useEffect(() => {
+    selectedThreadRef.current = selected
+  }, [selected])
+
+  useEffect(() => {
+    selectedMessagesRef.current = selectedMessages
+  }, [selectedMessages])
+
+  useEffect(() => {
+    if (!selectedId) return
+    setDraftByThreadId((prev) => {
+      if (prev[selectedId] === draftText) return prev
+      return { ...prev, [selectedId]: draftText }
+    })
+  }, [selectedId, draftText])
+
+  useEffect(() => {
+    if (!selected || !shouldUseSupabase()) {
+      setRecommendedTemplates([])
+      return
+    }
+    let cancelled = false
+    getRecommendedTemplates(selected, threadContext)
+      .then((items) => {
+        if (!cancelled) setRecommendedTemplates(items)
+      })
+      .catch(() => {
+        if (!cancelled) setRecommendedTemplates([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selected, threadContext])
+
+  useEffect(() => {
+    if (!shouldUseSupabase()) {
+      setDataMode('mock_preview')
+      setLiveFetchStatus('disabled')
+      setLiveFetchError(null)
+      setMessageEventsRawCount(null)
+      setGroupedThreadCount(null)
+      setQueueStateByThreadKey({})
+      return
+    }
+
+    let cancelled = false
+
+    const load = async () => {
+      if (liveRefreshInFlightRef.current) return
+      liveRefreshInFlightRef.current = true
+      setThreadListSyncing(true)
+      try {
+        const model = await withTimeout(
+          fetchInboxModel(),
+          LIVE_REFRESH_TIMEOUT_MS,
+          `Live Inbox refresh timed out after ${LIVE_REFRESH_TIMEOUT_MS}ms`,
+        )
+        if (cancelled) return
+
+        const nextThreads = model.threads.map(toWorkflowThread)
+        setThreads(nextThreads)
+        setDataMode(model.dataMode)
+        setLiveFetchStatus(model.liveFetchStatus)
+        setLiveFetchError(model.liveFetchError)
+        setMessageEventsCount(model.messageEventsCount)
+        setMessageEventsRawCount(model.messageEventsRawCount)
+        setGroupedThreadCount(model.groupedThreadCount)
+        setSendQueueCount(model.sendQueueCount)
+        setLastLiveFetchAt(model.lastLiveFetchAt)
+
+        setSelectedId((prevSelectedId) => {
+          if (prevSelectedId) {
+            return prevSelectedId
+          }
+          return nextThreads[0]?.id ?? null
+        })
+      } catch (error) {
+        if (!cancelled) {
+          const message = error instanceof Error ? error.message : 'Live Inbox data failed to load'
+          const isTimeout = /timed out/i.test(message)
+          if (isTimeout && threads.length === 0) {
+            try {
+              // Initial hydration fallback for large datasets: retry once without timeout.
+              const model = await fetchInboxModel()
+              if (cancelled) return
+
+              const nextThreads = model.threads.map(toWorkflowThread)
+              setThreads(nextThreads)
+              setDataMode(model.dataMode)
+              setLiveFetchStatus(model.liveFetchStatus)
+              setLiveFetchError(model.liveFetchError)
+              setMessageEventsCount(model.messageEventsCount)
+              setMessageEventsRawCount(model.messageEventsRawCount)
+              setGroupedThreadCount(model.groupedThreadCount)
+              setSendQueueCount(model.sendQueueCount)
+              setLastLiveFetchAt(model.lastLiveFetchAt)
+
+              setSelectedId((prevSelectedId) => {
+                if (prevSelectedId) {
+                  return prevSelectedId
+                }
+                return nextThreads[0]?.id ?? null
+              })
+              return
+            } catch (retryError) {
+              const retryMessage = retryError instanceof Error ? retryError.message : 'Live Inbox data failed to load'
+              setLiveFetchStatus('error')
+              setLiveFetchError(retryMessage)
+              setLastLiveFetchAt(new Date().toISOString())
+              return
+            }
+          }
+
+          if (isTimeout && threads.length > 0) {
+            // Keep rendering the last known live data instead of hard-failing refresh UI.
+            setLiveFetchStatus('success')
+            setLiveFetchError(null)
+            setLastLiveFetchAt(new Date().toISOString())
+          } else {
+            setLiveFetchStatus('error')
+            setLiveFetchError(message)
+            setLastLiveFetchAt(new Date().toISOString())
+          }
+        }
+      } finally {
+        liveRefreshInFlightRef.current = false
+        if (!cancelled) setThreadListSyncing(false)
+      }
+    }
+
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [threadRefreshNonce])
+
+  useEffect(() => {
+    if (!shouldUseSupabase() || threads.length === 0) {
+      setQueueStateByThreadKey({})
+      return
+    }
+
+    let cancelled = false
+
+    const loadQueueState = async () => {
+      try {
+        const supabase = getSupabaseClient()
+        const { data: rows, error } = await supabase
+          .from('send_queue')
+          .select('id, status, owner_id, property_id, prospect_id, phone_number, recipient_e164, created_at')
+          .order('created_at', { ascending: false })
+          .limit(2000)
+
+        if (cancelled) return
+        if (error || !rows) {
+          setQueueStateByThreadKey({})
+          return
+        }
+
+        const next: Record<string, string> = {}
+
+        for (const thread of threads) {
+          const match = rows.find((row) => {
+            const threadPhone = toPhoneDigits(thread.phoneNumber)
+            const rowPhone = toPhoneDigits(row.recipient_e164 ?? row.phone_number)
+            const phoneMatch = threadPhone && rowPhone ? threadPhone === rowPhone : false
+            const ownerMatch = Boolean(thread.ownerId && row.owner_id && thread.ownerId === row.owner_id)
+            const propertyMatch = Boolean(thread.propertyId && row.property_id && thread.propertyId === row.property_id)
+            const prospectMatch = Boolean(thread.prospectId && row.prospect_id && thread.prospectId === row.prospect_id)
+            return phoneMatch || ownerMatch || propertyMatch || prospectMatch
+          })
+          if (match?.status) {
+            next[thread.threadKey ?? thread.id] = String(match.status).toLowerCase()
+          }
+        }
+
+        setQueueStateByThreadKey(next)
+      } catch {
+        if (!cancelled) setQueueStateByThreadKey({})
+      }
+    }
+
+    void loadQueueState()
+    return () => {
+      cancelled = true
+    }
+  }, [threadRefreshNonce, threads])
+
+  useEffect(() => {
+    if (dataMode === 'mock_preview') return
+    console.log('[Inbox Live Diagnostics]', {
+      dataMode,
+      liveFetchStatus,
+      liveFetchError,
+      messageEventsCount,
+      messageEventsRawCount,
+      groupedThreadCount,
+      sendQueueCount,
+      totalThreads: derivedThreads.length,
+      filteredThreadCount: filtered.length,
+      activeTab: workflowTab,
+      activeFilters: {
+        ...workflowFilters,
+        search: searchQuery,
+      },
+    })
+  }, [
+    dataMode,
+    liveFetchStatus,
+    liveFetchError,
+    messageEventsCount,
+    messageEventsRawCount,
+    groupedThreadCount,
+    sendQueueCount,
+    derivedThreads.length,
+    filtered.length,
+    workflowTab,
+    workflowFilters,
+    searchQuery,
+  ])
+
+  useEffect(() => {
+    if (workflowTab !== 'sent') {
+      setSentItems([])
+      return
+    }
+
+    let cancelled = false
+    fetchSentMessages({
+      search: searchQuery || workflowFilters.search || undefined,
+      market: workflowFilters.market,
+      startDate: workflowFilters.startDate,
+      endDate: workflowFilters.endDate,
+    })
+      .then((items) => {
+        if (!cancelled) setSentItems(items)
+      })
+      .catch(() => {
+        if (!cancelled) setSentItems([])
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [searchQuery, workflowFilters.endDate, workflowFilters.market, workflowFilters.search, workflowFilters.startDate, workflowTab])
 
   // ── Load thread messages + context + draft when thread changes ─────────────
   useEffect(() => {
     if (!selectedId || !selected) return
-    if (!shouldUseSupabase()) {
+    const selectedThreadKey = selected.threadKey ?? selected.id
+    if (dataMode === 'mock_preview') {
       // Fall back to a single synthetic message from thread preview
+      selectedMessagesThreadKeyRef.current = selectedThreadKey
       setSelectedMessages([{
         id: `mock-${selectedId}`,
         direction: selected.status === 'replied' ? 'inbound' : 'outbound',
@@ -219,59 +699,106 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
     }
 
     let cancelled = false
+    const cachedMessages = messageCacheRef.current[selectedThreadKey] ?? []
+    const fullThreadAlreadyLoaded = Boolean(fullThreadLoadedRef.current[selectedThreadKey])
+    if (cachedMessages.length > 0) {
+      selectedMessagesThreadKeyRef.current = selectedThreadKey
+      setSelectedMessages(cachedMessages)
+    } else {
+      selectedMessagesThreadKeyRef.current = selectedThreadKey
+      setSelectedMessages([])
+    }
+    setHasMoreThreadHistory(!fullThreadAlreadyLoaded && cachedMessages.length >= FAST_THREAD_MAX_MESSAGES)
+    setFullHistoryLoading(false)
 
-    setMessagesLoading(true)
+    const hasExistingMessages = cachedMessages.length > 0
+    setMessagesLoading(!hasExistingMessages)
+    setMessagesSyncing(hasExistingMessages)
     setMessagesError(null)
-    setThreadContext(null)
-    setSuggestedDraft(null)
 
     Promise.all([
-      getThreadMessagesForThread(selected),
+      getThreadMessagesForThread(selected, { maxPages: FAST_THREAD_MAX_PAGES, maxMessages: FAST_THREAD_MAX_MESSAGES }),
       getThreadContext(selected),
       getSuggestedDraft(selected),
     ])
       .then(([messages, context, draft]) => {
         if (cancelled) return
+        messageCacheRef.current[selectedThreadKey] = messages
+        if (messages.length < FAST_THREAD_MAX_MESSAGES) {
+          fullThreadLoadedRef.current[selectedThreadKey] = true
+        }
+        selectedMessagesThreadKeyRef.current = selectedThreadKey
         setSelectedMessages(messages)
         setThreadContext(context)
         setSuggestedDraft(draft)
+        setHasMoreThreadHistory(!fullThreadLoadedRef.current[selectedThreadKey] && messages.length >= FAST_THREAD_MAX_MESSAGES)
         setLastRefreshAt(new Date().toISOString())
       })
       .catch((err: unknown) => {
         if (cancelled) return
         const msg = err instanceof Error ? err.message : 'Failed to load thread'
         setMessagesError(msg)
-        // Fallback to thread preview as single message
-        setSelectedMessages([{
-          id: `fallback-${selectedId}`,
-          direction: 'inbound',
-          body: selected.preview,
-          createdAt: selected.lastMessageIso,
-          deliveredAt: null,
-          deliveryStatus: 'unknown',
-          fromNumber: '',
-          toNumber: '',
-          ownerId: selected.leadId,
-          prospectId: '',
-          propertyId: selected.leadId,
-          phoneNumber: '',
-          canonicalE164: '',
-          templateId: null,
-          templateName: null,
-          agentId: null,
-          source: 'sms',
-          rawStatus: 'unknown',
-          error: null,
-        }])
-        if (selected.aiDraft) setSuggestedDraft({ text: selected.aiDraft, confidence: null, reason: null, source: 'placeholder' })
+        if (selectedMessagesThreadKeyRef.current !== selectedThreadKey || selectedMessagesRef.current.length === 0) {
+          // Fallback to thread preview as single message for first-load only.
+          const fallback: ThreadMessage[] = [{
+            id: `fallback-${selectedId}`,
+            direction: 'inbound',
+            body: selected.preview,
+            createdAt: selected.lastMessageIso,
+            deliveredAt: null,
+            deliveryStatus: 'unknown',
+            fromNumber: '',
+            toNumber: '',
+            ownerId: selected.leadId,
+            prospectId: '',
+            propertyId: selected.leadId,
+            phoneNumber: '',
+            canonicalE164: '',
+            templateId: null,
+            templateName: null,
+            agentId: null,
+            source: 'sms',
+            rawStatus: 'unknown',
+            error: null,
+          }]
+          messageCacheRef.current[selectedThreadKey] = fallback
+          fullThreadLoadedRef.current[selectedThreadKey] = true
+          selectedMessagesThreadKeyRef.current = selectedThreadKey
+          setSelectedMessages(fallback)
+          setHasMoreThreadHistory(false)
+          if (selected.aiDraft) setSuggestedDraft({ text: selected.aiDraft, confidence: null, reason: null, source: 'placeholder' })
+        }
       })
       .finally(() => {
-        if (!cancelled) setMessagesLoading(false)
+        if (!cancelled) {
+          setMessagesLoading(false)
+          setMessagesSyncing(false)
+        }
       })
 
     return () => { cancelled = true }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId])
+  }, [dataMode, selected, selectedId])
+
+  const loadFullThreadHistory = useCallback(() => {
+    if (!selected || fullHistoryLoading) return
+    const selectedThreadKey = selected.threadKey ?? selected.id
+    if (fullThreadLoadedRef.current[selectedThreadKey]) {
+      setHasMoreThreadHistory(false)
+      return
+    }
+
+    setFullHistoryLoading(true)
+    getThreadMessagesForThread(selected)
+      .then((messages) => {
+        messageCacheRef.current[selectedThreadKey] = messages
+        fullThreadLoadedRef.current[selectedThreadKey] = true
+        selectedMessagesThreadKeyRef.current = selectedThreadKey
+        setSelectedMessages(messages)
+        setHasMoreThreadHistory(false)
+      })
+      .catch(() => undefined)
+      .finally(() => setFullHistoryLoading(false))
+  }, [fullHistoryLoading, selected])
 
   // ── Thread context separate loading indicator ──────────────────────────────
   useEffect(() => {
@@ -283,28 +810,16 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
   useEffect(() => {
     if (!shouldUseSupabase()) return
 
-    const debounceRef = { timer: 0 }
-
-    const refresh = () => {
-      window.clearTimeout(debounceRef.timer)
-      debounceRef.timer = window.setTimeout(async () => {
-        try {
-          const fresh = await fetchInboxModel()
-          setThreads(fresh.threads)
-          setLiveStats({
-            unreadCount: fresh.unreadCount,
-            urgentCount: fresh.urgentCount,
-            totalCount: fresh.totalCount,
-            aiDraftCount: fresh.aiDraftCount,
-          })
-          setLastRefreshAt(new Date().toISOString())
-        } catch {
-          // Silently ignore poll errors
-        }
-      }, 500)
+    const requestRefresh = (mode: 'poll' | 'realtime') => {
+      const nowTs = Date.now()
+      const minGap = mode === 'poll' ? 15_000 : 1_000
+      if (nowTs - lastRefreshRequestAtRef.current < minGap) return
+      lastRefreshRequestAtRef.current = nowTs
+      setThreadRefreshNonce((value) => value + 1)
+      setLastRefreshAt(new Date().toISOString())
     }
 
-    const pollId = setInterval(refresh, 15_000)
+    const pollId = setInterval(() => requestRefresh('poll'), 15_000)
     setRealtimeStatus('polling')
 
     // Supabase realtime subscription (preferred)
@@ -322,20 +837,26 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
             { event: '*', schema: 'public', table: 'message_events' },
             (payload: { new?: Record<string, unknown>; old?: Record<string, unknown> }) => {
               setNewMessageIndicator(true)
-              refresh()
+              requestRefresh('realtime')
               // If the change affects the selected thread, reload its messages and context
               const record = payload.new ?? payload.old
-              if (record && selected && doesMessageBelongToThread(record, selected)) {
+              const activeThread = selectedThreadRef.current
+              if (record && activeThread && doesMessageBelongToThread(record, activeThread)) {
+                setMessagesSyncing(true)
                 Promise.all([
-                  getThreadMessagesForThread(selected),
-                  getThreadContext(selected),
+                  getThreadMessagesForThread(activeThread, { maxPages: FAST_THREAD_MAX_PAGES, maxMessages: FAST_THREAD_MAX_MESSAGES }),
+                  getThreadContext(activeThread),
                 ])
                   .then(([messages, context]) => {
+                    const activeThreadKey = activeThread.threadKey ?? activeThread.id
+                    messageCacheRef.current[activeThreadKey] = messages
                     setSelectedMessages(messages)
                     setThreadContext(context)
+                    setHasMoreThreadHistory(!fullThreadLoadedRef.current[activeThreadKey] && messages.length >= FAST_THREAD_MAX_MESSAGES)
                     setLastRefreshAt(new Date().toISOString())
                   })
                   .catch(() => undefined)
+                  .finally(() => setMessagesSyncing(false))
               }
             },
           )
@@ -351,8 +872,9 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
             { event: '*', schema: 'public', table: 'send_queue' },
             () => {
               // Refresh context to reflect updated queue state
-              if (selected) {
-                getThreadContext(selected)
+              const activeThread = selectedThreadRef.current
+              if (activeThread) {
+                getThreadContext(activeThread)
                   .then((ctx) => {
                     setThreadContext(ctx)
                     setLastRefreshAt(new Date().toISOString())
@@ -370,7 +892,6 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
 
     return () => {
       clearInterval(pollId)
-      window.clearTimeout(debounceRef.timer)
       if (channel) {
         try { channel.unsubscribe() } catch { /* ignore */ }
       }
@@ -379,8 +900,7 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
       }
       setRealtimeStatus('off')
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected])
+  }, [])
 
   // ── SplitView event listener ───────────────────────────────────────────────
   useEffect(() => {
@@ -395,16 +915,169 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
 
   const handleSelect = useCallback((id: string) => {
     setSelectedId(id)
-    setDraftText('')
+    setDraftText(draftByThreadId[id] ?? '')
     setShowAiActions(false)
     setScheduledTime(null)
     setNewMessageIndicator(false)
     messagesRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
     // Mark thread read in Supabase if enabled
     if (shouldUseSupabase()) {
-      markThreadRead(id).catch(() => undefined)
+      const thread = threads.find((item) => item.id === id)
+      if (thread) {
+        markThreadRead(thread)
+          .then((result) => {
+            if (!result.ok) {
+              setLastMutationError(result.errorMessage ?? 'Could not persist read state')
+              emitNotification({
+                title: 'Read Update Failed',
+                detail: result.errorMessage ?? 'Could not persist read state',
+                severity: 'warning',
+                sound: 'ui-confirm',
+              })
+              return
+            }
+            setWorkflowWriteTarget(result.writeTarget)
+            setLastMutationPayload(result.mutationPayload)
+            setLastMutationError(null)
+            setThreads((prev) => prev.map((item) => {
+              const key = item.threadKey ?? item.id
+              if (key !== result.threadKey) return item
+              return {
+                ...item,
+                isRead: true,
+                unread: false,
+                unreadCount: 0,
+                status: item.status === 'archived' ? 'archived' : 'read',
+                inboxStatus: 'read',
+                threadIsRead: true,
+                threadLastReadAt: new Date().toISOString(),
+              }
+            }))
+          })
+          .catch(() => undefined)
+      }
     }
-  }, [])
+  }, [threads, draftByThreadId])
+
+  const handleWorkflowMutation = useCallback(async (
+    actionName: string,
+    run: () => Promise<{ ok: boolean; writeTarget: string; errorMessage: string | null; threadKey: string; mutationPayload: Record<string, unknown> | null }>,
+  ) => {
+    try {
+      const result = await run()
+      if (!result.ok) {
+        setLastMutationError(result.errorMessage ?? 'Could not persist workflow change')
+        emitNotification({
+          title: `${actionName} Failed`,
+          detail: result.errorMessage ?? 'Could not persist workflow change',
+          severity: 'critical',
+          sound: 'ui-confirm',
+        })
+        return
+      }
+      setWorkflowWriteTarget(result.writeTarget)
+      setLastMutationPayload(result.mutationPayload)
+      setLastMutationError(null)
+
+      setThreads((prev) => prev.map((item) => {
+        const key = item.threadKey ?? item.id
+        if (key !== result.threadKey) return item
+
+        const next = { ...item }
+        const payload = result.mutationPayload ?? {}
+
+        if (typeof payload['priority'] === 'string') {
+          const priority = payload['priority'] as InboxPriority
+          if (['urgent', 'high', 'normal', 'low'].includes(priority)) {
+            next.priority = priority
+          }
+        }
+
+        if (typeof payload['status'] === 'string') {
+          const status = String(payload['status']).toLowerCase()
+          next.threadWorkflowStatus = status
+          if (status === 'archived') {
+            next.status = 'archived'
+            next.isArchived = true
+            next.inboxStatus = 'archived'
+            next.threadIsArchived = true
+          } else if (status === 'unread') {
+            next.status = 'unread'
+            next.isRead = false
+            next.unread = true
+            next.unreadCount = Math.max(1, next.unreadCount)
+            next.inboxStatus = 'unread'
+            next.threadIsRead = false
+          } else if (status === 'read') {
+            next.status = next.status === 'archived' ? 'archived' : 'read'
+            next.isRead = true
+            next.unread = false
+            next.unreadCount = 0
+            next.inboxStatus = 'read'
+            next.threadIsRead = true
+          } else {
+            next.inboxStatus = status as InboxWorkflowStatus
+          }
+        }
+
+        if (typeof payload['stage'] === 'string') {
+          next.inboxStage = String(payload['stage']) as InboxStage
+          next.threadWorkflowStage = String(payload['stage'])
+        }
+
+        if (typeof payload['is_read'] === 'boolean') {
+          const isRead = Boolean(payload['is_read'])
+          next.isRead = isRead
+          next.threadIsRead = isRead
+          next.unread = !isRead
+          next.unreadCount = isRead ? 0 : Math.max(1, next.unreadCount)
+          if (!isRead) next.status = 'unread'
+          if (isRead && next.status !== 'archived') next.status = 'read'
+          next.threadLastReadAt = isRead ? new Date().toISOString() : null
+        }
+
+        if (typeof payload['is_archived'] === 'boolean') {
+          const isArchived = Boolean(payload['is_archived'])
+          next.isArchived = isArchived
+          next.threadIsArchived = isArchived
+          next.status = isArchived ? 'archived' : (next.isRead ? 'read' : 'unread')
+          next.inboxStatus = isArchived ? 'archived' : next.inboxStatus
+          next.threadArchivedAt = isArchived ? new Date().toISOString() : null
+        }
+
+        if (typeof payload['is_pinned'] === 'boolean') {
+          next.isPinned = Boolean(payload['is_pinned'])
+          next.threadIsPinned = Boolean(payload['is_pinned'])
+        }
+
+        return next
+      }))
+
+      const selectedKey = selectedThreadRef.current?.threadKey ?? selectedThreadRef.current?.id ?? null
+      const archivedMutation = result.mutationPayload?.['is_archived'] === true || result.mutationPayload?.['status'] === 'archived'
+      if (archivedMutation && selectedKey && selectedKey === result.threadKey && workflowTab !== 'archived') {
+        const idx = filtered.findIndex((thread) => (thread.threadKey ?? thread.id) === result.threadKey)
+        const nextVisible = (idx >= 0 ? (filtered[idx + 1] ?? filtered[idx - 1] ?? null) : null)
+        setSelectedId(nextVisible?.id ?? null)
+      }
+
+      emitNotification({
+        title: actionName,
+        detail: `Saved to ${result.writeTarget}`,
+        severity: 'success',
+        sound: 'ui-confirm',
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown persistence error'
+      setLastMutationError(message)
+      emitNotification({
+        title: `${actionName} Failed`,
+        detail: message,
+        severity: 'critical',
+        sound: 'ui-confirm',
+      })
+    }
+  }, [filtered, workflowTab])
 
   const handleQueueReply = useCallback(async (textOverride?: string) => {
     const text = (textOverride ?? draftText).trim()
@@ -425,6 +1098,7 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
     if (result.ok) {
       setInsertedQueueId(result.queueId)
       setQueuedReplyPreview(text)
+      setComposerSendMode('queue_reply')
       setDraftText('')
       setScheduledTime(null)
       emitNotification({
@@ -435,11 +1109,10 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
       })
       // Refresh context to show updated queueContext
       if (shouldUseSupabase()) {
-        Promise.all([fetchInboxModel(), getThreadContext(selected)])
-          .then(([fresh, ctx]) => {
-            setThreads(fresh.threads)
-            setLiveStats({ unreadCount: fresh.unreadCount, urgentCount: fresh.urgentCount, totalCount: fresh.totalCount, aiDraftCount: fresh.aiDraftCount })
+        Promise.all([getThreadContext(selected)])
+          .then(([ctx]) => {
             setThreadContext(ctx)
+            setThreadRefreshNonce((value) => value + 1)
             setLastRefreshAt(new Date().toISOString())
           })
           .catch(() => undefined)
@@ -520,6 +1193,7 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
       setSendQueueLastQueueKey(result.queueId)
       setSendQueueLastPayloadKeys(result.insertPayloadKeys)
       setQueueProcessorEligible(result.queueProcessorEligible)
+      setComposerSendMode('send_now')
       // Remove optimistic bubble once we have a real event id or after refresh
       setOptimisticMessages(prev => prev.filter(m => m.dedupeKey !== optimisticKey))
       setDraftText('')
@@ -532,15 +1206,16 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
       })
       if (shouldUseSupabase()) {
         Promise.all([
-          fetchInboxModel(),
-          getThreadMessagesForThread(selected),
+          getThreadMessagesForThread(selected, { maxPages: FAST_THREAD_MAX_PAGES, maxMessages: FAST_THREAD_MAX_MESSAGES }),
           getThreadContext(selected),
         ])
-          .then(([fresh, msgs, ctx]) => {
-            setThreads(fresh.threads)
-            setLiveStats({ unreadCount: fresh.unreadCount, urgentCount: fresh.urgentCount, totalCount: fresh.totalCount, aiDraftCount: fresh.aiDraftCount })
+          .then(([msgs, ctx]) => {
+            const selectedThreadKey = selected.threadKey ?? selected.id
+            messageCacheRef.current[selectedThreadKey] = msgs
             setSelectedMessages(msgs)
             setThreadContext(ctx)
+            setHasMoreThreadHistory(!fullThreadLoadedRef.current[selectedThreadKey] && msgs.length >= FAST_THREAD_MAX_MESSAGES)
+            setThreadRefreshNonce((value) => value + 1)
             setLastRefreshAt(new Date().toISOString())
             // Remove optimistic bubble now that real messages loaded
             setOptimisticMessages([])
@@ -568,6 +1243,40 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
     // Route through send queue — no direct TextGrid from browser
     void handleSendNow()
   }, [handleSendNow])
+
+  const handleTemplateInsert = useCallback((text: string) => {
+    if (!text.trim()) return
+    setDraftText((prev) => (prev.trim() ? `${prev.trim()}\n\n${text.trim()}` : text.trim()))
+    composerRef.current?.focus()
+  }, [])
+
+  const handleTemplateReplace = useCallback((text: string) => {
+    if (!text.trim()) return
+    setDraftText(text.trim())
+    composerRef.current?.focus()
+  }, [])
+
+  const handleTemplateSendNow = useCallback((text: string) => {
+    if (!text.trim()) return
+    setTemplateDrawerOpen(false)
+    setComposerSendMode('send_now')
+    void handleSendNow(text)
+  }, [handleSendNow])
+
+  const handleTemplateQueue = useCallback((text: string) => {
+    if (!text.trim()) return
+    setTemplateDrawerOpen(false)
+    setComposerSendMode('queue_reply')
+    void handleQueueReply(text)
+  }, [handleQueueReply])
+
+  const handleTemplateSchedule = useCallback((text: string) => {
+    if (!text.trim()) return
+    setDraftText(text.trim())
+    setTemplateDrawerOpen(false)
+    setSchedulePanelOpen(true)
+    composerRef.current?.focus()
+  }, [])
 
   // ── Suppression check when selected thread changes ─────────────────────────
   useEffect(() => {
@@ -636,8 +1345,16 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
         return
       }
 
+      // ── ⌘⇧T → open template library ─────────────────────────────────────
+      if (meta && e.shiftKey && (e.key === 't' || e.key === 'T')) {
+        e.preventDefault()
+        setTemplateDrawerOpen(true)
+        return
+      }
+
       // ── Esc → close overlays / exit layout mode ──────────────────────────
       if (e.key === 'Escape') {
+        if (templateDrawerOpen) { setTemplateDrawerOpen(false); return }
         if (schedulePanelOpen) { setSchedulePanelOpen(false); return }
         if (commandOpen) { setCommandOpen(false); return }
         if (splitThread) { setSplitThread(null); return }
@@ -664,13 +1381,16 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
         case 'J': navTo('next', t => t.status === 'unread' || t.priority === 'urgent'); break
         case 'K': navTo('prev', t => t.status === 'unread' || t.priority === 'urgent'); break
         case 'e': case 'E':
-          if (selected) emitNotification({ title: 'Thread Archived', detail: selected.ownerName, severity: 'info', sound: 'ui-confirm' })
+          if (selected) void handleWorkflowMutation('Thread Archived', () => archiveThread(selected))
           break
         case 'u': case 'U':
-          if (selected) emitNotification({ title: 'Marked Read', detail: selected.ownerName, severity: 'info', sound: 'ui-confirm' })
+          if (selected) void handleWorkflowMutation('Marked Read', () => markThreadRead(selected))
           break
         case 'f': case 'F':
-          if (selected) emitNotification({ title: 'Thread Flagged', detail: selected.ownerName, severity: 'info', sound: 'ui-confirm' })
+          if (selected) {
+            const nextPinned = selected.isPinned ? unpinThread(selected) : pinThread(selected)
+            void handleWorkflowMutation(selected.isPinned ? 'Thread Unpinned' : 'Thread Pinned', () => nextPinned)
+          }
           break
         case 'r': case 'R':
           composerRef.current?.focus()
@@ -740,7 +1460,7 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
 
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
-  }, [selected, selectedId, commandOpen, schedulePanelOpen, splitThread, searchQuery, filtered, handleSelect, handleSend, layoutMode, leftPanelOpen, rightPanelOpen, mapOpen])
+  }, [selected, selectedId, commandOpen, schedulePanelOpen, splitThread, searchQuery, filtered, handleSelect, handleSend, layoutMode, leftPanelOpen, rightPanelOpen, mapOpen, templateDrawerOpen, handleWorkflowMutation])
 
   // ── ⌘⇧K — context palette (global shortcut, inbox handler) ───────────────
   useEffect(() => {
@@ -830,6 +1550,11 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
     { id: 'reply-clear', label: 'Clear Draft', category: 'Reply',
       keywords: ['clear', 'empty', 'reset', 'delete draft'],
       action: () => setDraftText('')
+    },
+    { id: 'reply-templates', label: 'Open Template Library', category: 'Reply', shortcut: '⌘⇧T',
+      keywords: ['template', 'library', 'sms template', 'snippet'],
+      requiresThread: true,
+      action: () => setTemplateDrawerOpen(true)
     },
 
     // AI
@@ -949,42 +1674,67 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
     { id: 'status-archive', label: 'Archive Thread', category: 'Status', shortcut: 'E',
       keywords: ['archive', 'clear', 'done', 'close'],
       requiresThread: true,
-      action: () => emitNotification({ title: 'Thread Archived', detail: selected?.ownerName ?? '', severity: 'info', sound: 'ui-confirm' })
+      action: () => {
+        if (!selected) return
+        void handleWorkflowMutation('Thread Archived', () => archiveThread(selected))
+      }
     },
     { id: 'status-mark-read', label: 'Mark Read', category: 'Status', shortcut: 'U',
       keywords: ['read', 'seen', 'mark read'],
       requiresThread: true,
-      action: () => emitNotification({ title: 'Marked Read', detail: selected?.ownerName ?? '', severity: 'info', sound: 'ui-confirm' })
+      action: () => {
+        if (!selected) return
+        void handleWorkflowMutation('Marked Read', () => markThreadRead(selected))
+      }
     },
     { id: 'status-mark-unread', label: 'Mark Unread', category: 'Status',
       keywords: ['unread', 'new', 'unseen'],
       requiresThread: true,
-      action: () => emitNotification({ title: 'Marked Unread', detail: selected?.ownerName ?? '', severity: 'info', sound: 'ui-confirm' })
+      action: () => {
+        if (!selected) return
+        void handleWorkflowMutation('Marked Unread', () => markThreadUnread(selected))
+      }
     },
     { id: 'status-flag', label: 'Flag Thread', category: 'Status', shortcut: 'F',
       keywords: ['flag', 'important', 'priority', 'star'],
       requiresThread: true,
-      action: () => emitNotification({ title: 'Thread Flagged', detail: selected?.ownerName ?? '', severity: 'info', sound: 'ui-confirm' })
+      action: () => {
+        if (!selected) return
+        const nextPinned = selected.isPinned ? unpinThread(selected) : pinThread(selected)
+        void handleWorkflowMutation(selected.isPinned ? 'Thread Unpinned' : 'Thread Pinned', () => nextPinned)
+      }
     },
     { id: 'status-urgent', label: 'Mark Urgent', category: 'Status',
       keywords: ['urgent', 'p0', 'asap', 'hot', 'critical'],
       requiresThread: true,
-      action: () => emitNotification({ title: 'Marked Urgent', detail: selected?.ownerName ?? '', severity: 'warning', sound: 'ui-confirm' })
+      action: () => {
+        if (!selected) return
+        void handleWorkflowMutation('Priority Updated', () => updateThreadPriority(selected, 'urgent'))
+      }
     },
     { id: 'status-dnc', label: 'Mark DNC', category: 'Status',
       keywords: ['dnc', 'do not contact', 'stop', 'opt out', 'remove'],
       requiresThread: true,
-      action: () => emitNotification({ title: 'Marked DNC', detail: `${selected?.ownerName ?? ''} removed from outreach`, severity: 'warning', sound: 'ui-confirm' })
+      action: () => {
+        if (!selected) return
+        void handleWorkflowMutation('Stage Updated', () => updateThreadStage(selected, 'dnc_opt_out'))
+      }
     },
     { id: 'status-wrong-number', label: 'Mark Wrong Number', category: 'Status',
       keywords: ['wrong number', 'bad number', 'incorrect'],
       requiresThread: true,
-      action: () => emitNotification({ title: 'Marked Wrong Number', detail: selected?.ownerName ?? '', severity: 'warning', sound: 'ui-confirm' })
+      action: () => {
+        if (!selected) return
+        void handleWorkflowMutation('Stage Updated', () => updateThreadStage(selected, 'wrong_number'))
+      }
     },
     { id: 'status-not-interested', label: 'Mark Not Interested', category: 'Status',
       keywords: ['not interested', 'no', 'declined', 'rejected'],
       requiresThread: true,
-      action: () => emitNotification({ title: 'Marked Not Interested', detail: selected?.ownerName ?? '', severity: 'info', sound: 'ui-confirm' })
+      action: () => {
+        if (!selected) return
+        void handleWorkflowMutation('Stage Updated', () => updateThreadStage(selected, 'not_interested'))
+      }
     },
     { id: 'status-snooze', label: 'Snooze Thread', category: 'Status',
       keywords: ['snooze', 'later', 'remind', 'delay'],
@@ -1000,35 +1750,48 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
     // Filters
     { id: 'filter-unread', label: 'Show Unread', category: 'Filters',
       keywords: ['unread', 'new', 'unseen', 'inbox'],
-      action: () => setFilterStatus('unread')
+      action: () => setWorkflowFilters((prev) => ({ ...prev, read: 'unread' }))
     },
     { id: 'filter-replied', label: 'Show Replied', category: 'Filters',
       keywords: ['replied', 'sent', 'responded'],
-      action: () => setFilterStatus('replied')
+      action: () => {
+        setWorkflowTab('sent')
+        setWorkflowFilters((prev) => ({ ...prev, tab: 'sent' }))
+      }
     },
     { id: 'filter-archived', label: 'Show Archived', category: 'Filters',
       keywords: ['archived', 'done', 'cleared'],
-      action: () => setFilterStatus('archived')
+      action: () => {
+        setWorkflowTab('archived')
+        setWorkflowFilters((prev) => ({ ...prev, tab: 'archived' }))
+      }
     },
     { id: 'filter-all', label: 'Show All Threads', category: 'Filters',
       keywords: ['all', 'clear filter', 'reset'],
-      action: () => { setFilterStatus('all'); setFilterPriority('all') }
+      action: () => {
+        setWorkflowTab('all')
+        setWorkflowFilters({ tab: 'all' })
+      }
     },
     { id: 'filter-urgent', label: 'Show Urgent (P0)', category: 'Filters',
       keywords: ['urgent', 'p0', 'critical', 'hot'],
-      action: () => setFilterPriority('urgent')
+      action: () => setWorkflowFilters((prev) => ({ ...prev, priority: 'urgent' }))
     },
     { id: 'filter-high', label: 'Show High Priority (P1)', category: 'Filters',
       keywords: ['high', 'p1'],
-      action: () => setFilterPriority('high')
+      action: () => setWorkflowFilters((prev) => ({ ...prev, priority: 'high' }))
     },
     { id: 'filter-normal', label: 'Show Normal Priority (P2)', category: 'Filters',
       keywords: ['normal', 'p2', 'medium'],
-      action: () => setFilterPriority('normal')
+      action: () => setWorkflowFilters((prev) => ({ ...prev, priority: 'normal' }))
     },
     { id: 'filter-clear', label: 'Clear All Filters', category: 'Filters',
       keywords: ['clear', 'reset', 'remove filter', 'all'],
-      action: () => { setFilterStatus('all'); setFilterPriority('all'); setSearchQuery('') }
+      action: () => {
+        setWorkflowTab('all')
+        setWorkflowFilters({ tab: 'all' })
+        setSearchQuery('')
+      }
     },
     { id: 'filter-by-seller', label: 'Search by Seller Name', category: 'Filters',
       keywords: ['seller', 'name', 'contact', 'search'],
@@ -1168,50 +1931,21 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
   return (
     <div className={cls(
       'nx-inbox',
+      'is-operator-rebuild',
       !leftPanelOpen && 'is-left-collapsed',
       !rightPanelOpen && 'is-right-collapsed',
       layoutMode === 'conversation_focus' && 'is-conversation-focus',
       layoutMode === 'triage' && 'is-triage-mode',
     )}>
 
-      {/* ══ App Header ═══════════════════════════════════════════════════════ */}
       <header className="nx-inbox__hdr">
-        {/* Left: title + status badges */}
         <div className="nx-inbox__hdr-left">
           <div className="nx-inbox__hdr-title">
             <Icon name="inbox" className="nx-inbox__hdr-icon" />
-            <span>Inbox</span>
-          </div>
-          <div className="nx-inbox__hdr-badges">
-            {newMessageIndicator && (
-              <span className="nx-inbox-badge nx-inbox-badge--teal" title="New messages arrived">
-                New messages
-              </span>
-            )}
-            {liveStats.unreadCount > 0 && (
-              <span className="nx-inbox-badge nx-inbox-badge--cyan" title={`${liveStats.unreadCount} unread`}>
-                {liveStats.unreadCount} unread
-              </span>
-            )}
-            {liveStats.urgentCount > 0 && (
-              <span className="nx-inbox-badge nx-inbox-badge--red" title={`${liveStats.urgentCount} urgent`}>
-                {liveStats.urgentCount} urgent
-              </span>
-            )}
-            {hotCount > 0 && (
-              <span className="nx-inbox-badge nx-inbox-badge--amber" title={`${hotCount} hot`}>
-                {hotCount} hot
-              </span>
-            )}
-            {aiReady > 0 && (
-              <span className="nx-inbox-badge nx-inbox-badge--teal" title={`${aiReady} AI ready`}>
-                {aiReady} AI ready
-              </span>
-            )}
+            <span>Operator Inbox</span>
           </div>
         </div>
 
-        {/* Center: search / command input */}
         <div className="nx-inbox__hdr-search">
           <Icon name="search" className="nx-inbox__hdr-search-icon" />
           <input
@@ -1234,58 +1968,19 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
           {searchQuery && isCommandLike(searchQuery) && (
             <span className="nx-inbox__hdr-search-mode">CMD</span>
           )}
-          <kbd className="nx-inbox__hdr-search-kbd">⌘⇧K</kbd>
         </div>
 
-        {/* Right: live state + clock + actions */}
         <div className="nx-inbox__hdr-right">
-          <span className="nx-inbox-status-pill nx-inbox-status-pill--live">LIVE</span>
+          {newMessageIndicator && <span className="nx-inbox-status-pill nx-inbox-status-pill--ai">New</span>}
+          <span className="nx-inbox-status-pill nx-inbox-status-pill--live">{realtimeStatus === 'subscribed' ? 'Live' : 'Polling'}</span>
+          <span className="nx-inbox-status-pill">Queue {baseStats.unreadCount}</span>
           {aiReady > 0 && (
-            <span className="nx-inbox-status-pill nx-inbox-status-pill--ai">AI READY</span>
+            <span className="nx-inbox-status-pill nx-inbox-status-pill--ai">AI {aiReady}</span>
           )}
-          <span className="nx-inbox__hdr-time">{formatClock(now)}</span>
-          <span className="nx-inbox__hdr-date">{formatDate(now)}</span>
-          <div className="nx-inbox__hdr-layout-hints" aria-hidden="true">
-            <button
-              type="button"
-              className={cls('nx-inbox__hdr-layout-btn', !leftPanelOpen && 'is-active')}
-              onClick={() => setLeftPanelOpen(v => !v)}
-              title="Toggle Thread Queue ([)"
-            >[ Queue</button>
-            <button
-              type="button"
-              className={cls('nx-inbox__hdr-layout-btn', layoutMode === 'triage' && 'is-active')}
-              onClick={() => { setLeftPanelOpen(true); setRightPanelOpen(true); setLayoutMode(m => m === 'triage' ? 'default' : 'triage') }}
-              title="Toggle Triage Mode (\\)"
-            >\ Triage</button>
-            <button
-              type="button"
-              className={cls('nx-inbox__hdr-layout-btn', !rightPanelOpen && 'is-active')}
-              onClick={() => setRightPanelOpen(v => !v)}
-              title="Toggle Seller Dossier (])">
-              ] Dossier
-            </button>
-          </div>
-          <button
-            type="button"
-            className="nx-inbox__hdr-btn"
-            title="Notifications"
-            aria-label={`${liveStats.unreadCount} unread notifications`}
-          >
-            <Icon name="bell" className="nx-inbox__hdr-btn-icon" />
-            {liveStats.unreadCount > 0 && (
-              <span className="nx-inbox__hdr-notif">{liveStats.unreadCount}</span>
-            )}
-          </button>
-          <button
-            type="button"
-            className="nx-inbox__hdr-btn"
-            title="Inbox options (⌘⇧K)"
-            aria-label="Inbox command palette"
-            onClick={() => setCommandOpen(true)}
-          >
-            <Icon name="settings" className="nx-inbox__hdr-btn-icon" />
-          </button>
+          <button type="button" className={cls('nx-inbox__hdr-layout-btn', !leftPanelOpen && 'is-active')} onClick={() => setLeftPanelOpen(v => !v)}>Queue</button>
+          <button type="button" className={cls('nx-inbox__hdr-layout-btn', layoutMode === 'triage' && 'is-active')} onClick={() => { setLeftPanelOpen(true); setRightPanelOpen(true); setLayoutMode(m => m === 'triage' ? 'default' : 'triage') }}>Triage {hotCount > 0 ? hotCount : ''}</button>
+          <button type="button" className={cls('nx-inbox__hdr-layout-btn', !rightPanelOpen && 'is-active')} onClick={() => setRightPanelOpen(v => !v)}>Dossier</button>
+          <button type="button" className="nx-inbox__hdr-layout-btn" onClick={() => setCommandOpen(true)}>AI</button>
         </div>
       </header>
 
@@ -1301,87 +1996,44 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
                 <span>Threads</span>
               </div>
               <div className="nx-inbox__queue-counts">
-                {liveStats.unreadCount > 0 && (
-                  <span className="nx-inbox__count-pill">{liveStats.unreadCount}</span>
-                )}
-                {aiReady > 0 && (
-                  <span className="nx-inbox__ai-pill">
-                    <Icon name="spark" className="nx-inbox__ai-pill-icon" />
-                    {aiReady}
-                  </span>
-                )}
+                <span className="nx-inbox__count-pill">{filtered.length}</span>
+                <button type="button" className="nx-inline-button" onClick={() => setFiltersDrawerOpen((v) => !v)}>
+                  {filtersDrawerOpen ? 'Hide Filters' : 'Filters'}
+                </button>
               </div>
             </div>
-            <div className="nx-inbox__stats">
-              <div className="nx-inbox__stat">
-                <span className="nx-inbox__stat-count">{liveStats.totalCount}</span>
-                <span className="nx-inbox__stat-label">Total</span>
-              </div>
-              <div className="nx-inbox__stat">
-                <span className="nx-inbox__stat-count">{liveStats.unreadCount}</span>
-                <span className="nx-inbox__stat-label">Unread</span>
-              </div>
-              <div className="nx-inbox__stat">
-                <span className="nx-inbox__stat-count">{liveStats.urgentCount}</span>
-                <span className="nx-inbox__stat-label">Urgent</span>
-              </div>
-              <div className="nx-inbox__stat">
-                <span className="nx-inbox__stat-count">{liveStats.aiDraftCount}</span>
-                <span className="nx-inbox__stat-label">AI Ready</span>
-              </div>
-            </div>
-            <div className="nx-inbox__search-wrap">
-              <Icon name="search" className="nx-inbox__search-icon" />
-              <input
-                className="nx-inbox__search"
-                type="search"
-                placeholder="Filter threads…"
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                aria-label="Filter inbox threads"
+            <InboxStatusTabs
+              value={workflowTab}
+              onChange={(tab) => {
+                setWorkflowTab(tab)
+                setWorkflowFilters((prev) => ({ ...prev, tab }))
+              }}
+            />
+            <div className={cls('nx-inbox__filter-drawer', filtersDrawerOpen && 'is-open')}>
+              <InboxFilterBar
+                filters={workflowFilters}
+                markets={Array.from(new Set(threads.map((thread) => thread.market || thread.marketId).filter(Boolean)))}
+                onChange={(patch) => setWorkflowFilters((prev) => ({ ...prev, ...patch }))}
+                onReset={() => {
+                  setWorkflowTab('all')
+                  setWorkflowFilters({ tab: 'all' })
+                  setSearchQuery('')
+                }}
               />
-              {searchQuery && (
-                <button type="button" className="nx-inbox__search-clear" onClick={() => setSearchQuery('')} aria-label="Clear search">×</button>
-              )}
-            </div>
-            <div className="nx-inbox__filter-row">
-              {['all', 'unread', 'replied', 'archived'].map(s => (
-                <button
-                  key={s}
-                  type="button"
-                  className={cls('nx-inbox__filter-btn', filterStatus === s && 'is-active')}
-                  onClick={() => setFilterStatus(s)}
-                >
-                  {s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
-                </button>
-              ))}
-            </div>
-            <div className="nx-inbox__filter-row nx-inbox__filter-row--tight">
-              {[
-                { id: 'all', label: 'Any' },
-                { id: 'urgent', label: 'P0' },
-                { id: 'high', label: 'P1' },
-                { id: 'normal', label: 'P2' },
-              ].map(p => (
-                <button
-                  key={p.id}
-                  type="button"
-                  className={cls('nx-inbox__filter-btn nx-inbox__filter-btn--priority', filterPriority === p.id && 'is-active')}
-                  onClick={() => setFilterPriority(p.id)}
-                >
-                  {p.label}
-                </button>
-              ))}
             </div>
           </div>
 
           <div className="nx-inbox__queue-meta">
             <span>{filtered.length} threads</span>
-            {(filterStatus !== 'all' || filterPriority !== 'all' || searchQuery) && (
+            {(Object.keys(workflowFilters).length > 1 || searchQuery) && (
               <button
                 type="button"
                 className="nx-inline-button"
-                onClick={() => { setFilterStatus('all'); setFilterPriority('all'); setSearchQuery('') }}
+                onClick={() => {
+                  setWorkflowTab('all')
+                  setWorkflowFilters({ tab: 'all' })
+                  setSearchQuery('')
+                }}
               >
                 Clear
               </button>
@@ -1389,58 +2041,98 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
           </div>
 
           <div className="nx-inbox__queue-list">
-            {filtered.map(thread => (
-              <button
-                key={thread.id}
-                type="button"
-                className={cls(
-                  'nx-thread-card',
-                  selectedId === thread.id && 'is-selected',
-                  thread.status === 'unread' && 'is-unread',
-                  thread.sentiment === 'hot' && 'is-hot',
-                  thread.sentiment === 'cold' && thread.status !== 'archived' && 'is-stalled',
-                )}
-                onClick={() => handleSelect(thread.id)}
-              >
-                <div className="nx-thread-card__row">
-                  <div className="nx-thread-card__name-wrap">
-                    <span className={cls('nx-thread-card__sentiment', SENTIMENT_CLS[thread.sentiment])} />
-                    <span className="nx-thread-card__name">{thread.ownerName}</span>
-                    {thread.unreadCount > 0 && (
-                      <span className="nx-thread-card__unread">{thread.unreadCount}</span>
-                    )}
-                  </div>
-                  <div className="nx-thread-card__meta">
-                    <span className={cls('nx-thread-card__priority', PRIORITY_CLS[thread.priority])}>
-                      {PRIORITY_LABEL[thread.priority]}
-                    </span>
-                    <span className="nx-thread-card__time">{thread.lastMessageLabel}</span>
-                  </div>
-                </div>
-                <div className="nx-thread-card__subject">{thread.subject}</div>
-                <div className="nx-thread-card__preview">{thread.preview}</div>
-                <div className="nx-thread-card__chips">
-                  {thread.aiDraft && (
-                    <span className="nx-thread-card__ai-chip">
-                      <Icon name="spark" className="nx-thread-card__chip-icon" />
-                      AI Draft
-                    </span>
-                  )}
-                  {thread.labels.slice(0, 2).map(l => (
-                    <span key={l} className="nx-thread-card__label-chip">{l}</span>
-                  ))}
-                  <span className="nx-thread-card__count">{thread.messageCount} msgs</span>
-                </div>
-              </button>
-            ))}
+            {workflowTab === 'sent' ? (
+              <SentMessagesView
+                messages={sentItems}
+                onOpenThread={(threadKey) => {
+                  const match = filtered.find((thread) => thread.threadKey === threadKey)
+                  if (match) {
+                    setWorkflowTab('all')
+                    setWorkflowFilters((prev) => ({ ...prev, tab: 'all' }))
+                    handleSelect(match.id)
+                  }
+                }}
+              />
+            ) : workflowTab === 'archived' ? (
+              <ArchivedThreadsView
+                threads={filtered}
+                selectedId={selectedId}
+                onSelect={handleSelect}
+                onUnarchive={(thread) => {
+                  void handleWorkflowMutation('Thread Unarchived', () => unarchiveThread(thread))
+                }}
+              />
+            ) : (
+              filtered.map((thread) => (
+                <InboxThreadRow
+                  key={thread.id}
+                  thread={thread}
+                  selected={selectedId === thread.id}
+                  onSelect={() => handleSelect(thread.id)}
+                  onMarkRead={!thread.isRead ? () => {
+                    void handleWorkflowMutation('Marked Read', () => markThreadRead(thread))
+                  } : undefined}
+                  onArchive={() => {
+                    void handleWorkflowMutation('Thread Archived', () => archiveThread(thread))
+                  }}
+                />
+              ))
+            )}
             {filtered.length === 0 && (
-              <div className="nx-inbox__empty">No threads match this filter.</div>
+              <div className="nx-inbox__empty" role="status" aria-live="polite">
+                <strong>No matching threads.</strong>
+                <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                  <button
+                    type="button"
+                    className="nx-inline-button"
+                    onClick={() => {
+                      setWorkflowTab('all')
+                      setWorkflowFilters({ tab: 'all' })
+                      setSearchQuery('')
+                    }}
+                  >
+                    Show All Threads
+                  </button>
+                  <button
+                    type="button"
+                    className="nx-inline-button"
+                    onClick={() => setThreadRefreshNonce((n) => n + 1)}
+                  >
+                    Retry Live Fetch
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         </aside>
 
         {/* ── Center: Conversation Workspace ────────────────────────────── */}
         <main className="nx-inbox__workspace">
+          {liveFetchStatus === 'error' && (
+            <div className="nx-inbox__messages-error" role="alert" aria-live="polite" style={{ marginBottom: 10, display: 'grid', gap: 8 }}>
+              <span><strong>Live Inbox refresh failed.</strong> {liveFetchError ? ` ${liveFetchError}` : ''}</span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  className="nx-inline-button"
+                  onClick={() => setThreadRefreshNonce((n) => n + 1)}
+                >
+                  Retry
+                </button>
+                <button
+                  type="button"
+                  className="nx-inline-button"
+                  onClick={() => {
+                    setWorkflowTab('all')
+                    setWorkflowFilters({ tab: 'all' })
+                    setSearchQuery('')
+                  }}
+                >
+                  Reset View
+                </button>
+              </div>
+            </div>
+          )}
           {selected ? (
             <>
               <div className="nx-inbox__conv-head">
@@ -1458,6 +2150,12 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
                   </div>
                 </div>
                 <div className="nx-inbox__conv-actions">
+                  {(threadListSyncing || messagesSyncing) && (
+                    <span className="nx-inbox__sync-pill" title="Refreshing live data">
+                      <span className="nx-inbox__sync-dot" />
+                      syncing...
+                    </span>
+                  )}
                   <button type="button" className="nx-inbox__conv-btn" title="Reply (R)" onClick={() => composerRef.current?.focus()}>
                     <Icon name="send" className="nx-inbox__conv-btn-icon" />
                     Reply
@@ -1465,31 +2163,35 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
                   <button
                     type="button"
                     className="nx-inbox__conv-btn nx-inbox__conv-btn--ghost"
-                    title="Archive (E)"
-                    onClick={() => {
-                      if (selected) {
-                        if (shouldUseSupabase()) archiveThread(selected.id).catch(() => undefined)
-                        emitNotification({ title: 'Thread Archived', detail: selected.ownerName, severity: 'info', sound: 'ui-confirm' })
-                      }
-                    }}
+                    title="Template Library (Cmd+Shift+T)"
+                    onClick={() => setTemplateDrawerOpen(true)}
                   >
-                    <Icon name="archive" className="nx-inbox__conv-btn-icon" />
-                    Archive
+                    <Icon name="file-text" className="nx-inbox__conv-btn-icon" />
+                    Templates
                   </button>
-                  <button
-                    type="button"
-                    className="nx-inbox__conv-btn nx-inbox__conv-btn--ghost"
-                    title="Flag (F)"
-                    onClick={() => {
-                      if (selected) {
-                        if (shouldUseSupabase()) flagThread(selected.id).catch(() => undefined)
-                        emitNotification({ title: 'Thread Flagged', detail: selected.ownerName, severity: 'info', sound: 'ui-confirm' })
-                      }
+                  <InboxStageDropdown
+                    stage={selected.inboxStage}
+                    status={selected.inboxStatus}
+                    priority={selected.priority as InboxPriority}
+                    onStageChange={(next) => {
+                      void handleWorkflowMutation('Stage Updated', () => updateThreadStage(selected, next as InboxStage))
                     }}
-                  >
-                    <Icon name="flag" className="nx-inbox__conv-btn-icon" />
-                    Flag
-                  </button>
+                    onStatusChange={(next) => {
+                      void handleWorkflowMutation('Status Updated', () => updateThreadStatus(selected, next as InboxWorkflowStatus))
+                    }}
+                    onPriorityChange={(next) => {
+                      void handleWorkflowMutation('Priority Updated', () => updateThreadPriority(selected, next as InboxPriority))
+                    }}
+                  />
+                  <InboxThreadActions
+                    thread={selected}
+                    onArchive={() => { void handleWorkflowMutation('Thread Archived', () => archiveThread(selected)) }}
+                    onUnarchive={() => { void handleWorkflowMutation('Thread Unarchived', () => unarchiveThread(selected)) }}
+                    onMarkRead={() => { void handleWorkflowMutation('Marked Read', () => markThreadRead(selected)) }}
+                    onMarkUnread={() => { void handleWorkflowMutation('Marked Unread', () => markThreadUnread(selected)) }}
+                    onPin={() => { void handleWorkflowMutation('Thread Pinned', () => pinThread(selected)) }}
+                    onUnpin={() => { void handleWorkflowMutation('Thread Unpinned', () => unpinThread(selected)) }}
+                  />
                   <button
                     type="button"
                     className="nx-inbox__conv-btn nx-inbox__conv-btn--ghost"
@@ -1502,7 +2204,49 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
                 </div>
               </div>
 
+              {recommendedTemplates.length > 0 && (
+                <div className="nx-inbox__queue-meta">
+                  <span>Recommended Templates</span>
+                  <div className="nx-inbox-thread-actions">
+                    {recommendedTemplates.slice(0, 3).map((template) => {
+                      const rendered = renderTemplate(
+                        template,
+                        buildTemplateContextFromThread(selected, threadContext),
+                      )
+                      return (
+                        <button
+                          key={template.id}
+                          type="button"
+                          className="nx-inline-button"
+                          title={template.templateText}
+                          onClick={() => setDraftText(rendered.renderedText)}
+                        >
+                          {template.useCase}
+                        </button>
+                      )
+                    })}
+                    <button type="button" className="nx-inline-button" onClick={() => setTemplateDrawerOpen(true)}>
+                      Browse Library
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <div className="nx-inbox__messages" ref={messagesRef}>
+                <div className="nx-inbox-timeline-filters" role="tablist" aria-label="Timeline filters">
+                  {['all', 'inbound', 'outbound', 'failed'].map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      role="tab"
+                      aria-selected={timelineFilter === mode}
+                      className={cls('nx-inbox-timeline-filter', timelineFilter === mode && 'is-active')}
+                      onClick={() => setTimelineFilter(mode as 'all' | 'inbound' | 'outbound' | 'failed')}
+                    >
+                      {mode}
+                    </button>
+                  ))}
+                </div>
                 {messagesLoading && (
                   <div className="nx-inbox__messages-loading">
                     <Icon name="activity" className="nx-inbox__messages-loading-icon" />
@@ -1510,21 +2254,29 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
                   </div>
                 )}
 
+                {messagesSyncing && !messagesLoading && (
+                  <div className="nx-inbox__messages-sync">Syncing latest events...</div>
+                )}
+
                 {!messagesLoading && messagesError && (
                   <div className="nx-inbox__messages-error">
-                    <Icon name="alert" className="nx-inbox__messages-error-icon" />
-                    <span>Could not load messages. Showing last known state.</span>
+                    <span>Could not refresh messages. Showing last known state.</span>
                   </div>
                 )}
 
                 {!messagesLoading && selectedMessages.length === 0 && !messagesError && (
                   <div className="nx-inbox__messages-empty">
-                    <Icon name="message" className="nx-inbox__messages-empty-icon" />
-                    <span>No live message events found for this thread.</span>
+                    <span>No messages loaded yet.</span>
                   </div>
                 )}
 
-                {selectedMessages.map((msg) => (
+                {selectedMessages
+                  .filter((msg) => {
+                    if (timelineFilter === 'all') return true
+                    if (timelineFilter === 'failed') return Boolean(msg.error) || ['failed', 'undelivered', 'error'].includes(msg.deliveryStatus)
+                    return msg.direction === timelineFilter
+                  })
+                  .map((msg) => (
                   <div
                     key={msg.id}
                     className={cls(
@@ -1580,48 +2332,50 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
                     <div className="nx-msg-card__submeta">
                       {msg.direction === 'inbound' ? 'Inbound seller message' : 'Outbound reply'}
                       {msg.fromNumber && ` • ${msg.fromNumber}`}
+                      {msg.direction === 'outbound' && (
+                        <>
+                          {msg.deliveredAt && ` • sent ${formatRelativeTime(msg.deliveredAt)}`}
+                          {` • provider ${msg.deliveryStatus || 'unknown'}`}
+                        </>
+                      )}
                     </div>
                   </div>
                 ))}
+
+                {hasMoreThreadHistory && (
+                  <div style={{ marginTop: 10, display: 'flex', justifyContent: 'center' }}>
+                    <button
+                      type="button"
+                      className="nx-inline-button"
+                      onClick={loadFullThreadHistory}
+                      disabled={fullHistoryLoading}
+                    >
+                      {fullHistoryLoading ? 'Loading full history...' : 'Load full thread history'}
+                    </button>
+                  </div>
+                )}
 
                 {suggestedDraft && !draftLoading && (
                   <div className="nx-ai-draft-card">
                     <div className="nx-ai-draft-card__head">
                       <div className="nx-ai-draft-card__label">
                         <Icon name="spark" className="nx-ai-draft-card__icon" />
-                        <span>AI Draft</span>
-                        <span className="nx-ai-draft-card__status">
-                          {suggestedDraft.source === 'placeholder' ? 'Preview' : 'Ready'}
-                        </span>
+                        <span>AI Draft Dock</span>
                       </div>
-                      {suggestedDraft.confidence !== null && (
-                        <div className="nx-ai-draft-card__confidence">
-                          <span className="nx-conf-bar">
-                            <span className="nx-conf-bar__fill" style={{ width: `${Math.round(suggestedDraft.confidence * 100)}%` }} />
-                          </span>
-                          <span className="nx-conf-label">{Math.round(suggestedDraft.confidence * 100)}% confidence</span>
-                        </div>
-                      )}
                     </div>
-                    {suggestedDraft.reason && (
-                      <p className="nx-ai-draft-card__reason">{suggestedDraft.reason}</p>
-                    )}
-                    <p className="nx-ai-draft-card__body">{suggestedDraft.text}</p>
-                    {selected && (selected.sentiment === 'hot' || selected.priority === 'urgent') && (
-                      <div className="nx-ai-draft-card__warning">
-                        <Icon name="alert" className="nx-ai-draft-card__warning-icon" />
-                        {selected.sentiment === 'hot'
-                          ? 'Owner is actively negotiating — consider personalizing pricing details.'
-                          : 'High priority — review and personalize before sending.'}
-                      </div>
-                    )}
+                    <textarea
+                      className="nx-ai-draft-card__editor"
+                      rows={2}
+                      value={draftText || suggestedDraft.text}
+                      onChange={(e) => setDraftText(e.target.value)}
+                    />
                     <div className="nx-ai-draft-card__actions">
                       <button
                         type="button"
                         className={cls('nx-inbox__conv-btn', sendNowLoading && 'is-loading')}
                         title={suppressionBlocked ? (suppressionReason ?? 'Recipient opted out') : 'Send this reply immediately via queue processor'}
-                        disabled={sendNowLoading || queueReplyLoading || suppressionBlocked || !suggestedDraft.text}
-                        onClick={() => void handleSendNow(suggestedDraft.text)}
+                        disabled={sendNowLoading || queueReplyLoading || suppressionBlocked || !(draftText || suggestedDraft.text)}
+                        onClick={() => void handleSendNow(draftText || suggestedDraft.text)}
                       >
                         <Icon name="send" className="nx-inbox__conv-btn-icon" />
                         {sendNowLoading ? 'Sending…' : suppressionBlocked ? 'Blocked' : 'Send Now'}
@@ -1630,17 +2384,24 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
                         type="button"
                         className={cls('nx-inbox__conv-btn nx-inbox__conv-btn--ghost', queueReplyLoading && 'is-loading')}
                         title="Queue for operator approval"
-                        disabled={sendNowLoading || queueReplyLoading || !suggestedDraft.text}
-                        onClick={() => void handleQueueReply(suggestedDraft.text)}
+                        disabled={sendNowLoading || queueReplyLoading || !(draftText || suggestedDraft.text)}
+                        onClick={() => void handleQueueReply(draftText || suggestedDraft.text)}
                       >
                         {queueReplyLoading ? 'Queuing…' : 'Queue Reply'}
                       </button>
                       <button
                         type="button"
                         className="nx-inbox__conv-btn nx-inbox__conv-btn--ghost"
-                        onClick={() => { setDraftText(suggestedDraft.text); composerRef.current?.focus() }}
+                        onClick={() => setTemplateDrawerOpen(true)}
                       >
-                        Edit &amp; Queue
+                        Templates
+                      </button>
+                      <button
+                        type="button"
+                        className="nx-inbox__conv-btn nx-inbox__conv-btn--ghost"
+                        onClick={() => { setDraftText(draftText || suggestedDraft.text); composerRef.current?.focus() }}
+                      >
+                        Move To Composer
                       </button>
                       <button
                         type="button"
@@ -1718,7 +2479,11 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
                   onKeyDown={e => {
                     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && draftText.trim()) {
                       e.preventDefault()
-                      handleSend()
+                      if (composerSendMode === 'queue_reply') {
+                        void handleQueueReply()
+                      } else {
+                        handleSend()
+                      }
                     }
                   }}
                 />
@@ -1744,7 +2509,7 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
                     >
                       <Icon name="spark" className="nx-compose-tool__icon" />
                     </button>
-                    <button type="button" className="nx-compose-tool" title="Templates" aria-label="Insert template">
+                    <button type="button" className="nx-compose-tool" title="Templates" aria-label="Insert template" onClick={() => setTemplateDrawerOpen(true)}>
                       <Icon name="file-text" className="nx-compose-tool__icon" />
                     </button>
                   </div>
@@ -1761,7 +2526,10 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
                       type="button"
                       className="nx-inbox__schedule-btn"
                       disabled={!draftText.trim() || queueReplyLoading || sendNowLoading}
-                      onClick={() => void handleQueueReply()}
+                      onClick={() => {
+                        setComposerSendMode('queue_reply')
+                        void handleQueueReply()
+                      }}
                       title="Queue for operator approval"
                     >
                       {queueReplyLoading ? 'Queuing…' : 'Queue Reply'}
@@ -1770,7 +2538,10 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
                       type="button"
                       className="nx-inbox__send-btn"
                       disabled={!draftText.trim() || sendNowLoading || suppressionBlocked}
-                      onClick={() => void handleSendNow()}
+                      onClick={() => {
+                        setComposerSendMode('send_now')
+                        void handleSendNow()
+                      }}
                       title={suppressionBlocked ? (suppressionReason ?? 'Recipient opted out') : 'Send Now via queue processor (⌘↵)'}
                     >
                       <Icon name="send" className="nx-inbox__send-btn-icon" />
@@ -1782,15 +2553,14 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
             </>
           ) : (
             <div className="nx-inbox__workspace-empty">
-              <Icon name="inbox" className="nx-inbox__workspace-empty-icon" />
-              <p>Select a thread to view the conversation</p>
+              <p>Keep operating from the thread rail. Select a thread to inspect the conversation.</p>
             </div>
           )}
         </main>
 
         {/* ── Right: Seller Dossier / Map ──────────────────────────────── */}
         {selected && (
-          <aside className="nx-inbox__dossier">
+          <aside className="nx-inbox__dossier nx-inbox__dossier--compact">
             {/* Tabs — Dossier | Map (shown when map is open) */}
             {mapOpen && (
               <div className="nx-dossier__tabs">
@@ -1825,7 +2595,7 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
                 <div className="nx-dossier__value">No linked seller context found yet.</div>
               </div>
             )}
-            <div className="nx-dossier__section">
+            <div className="nx-dossier__section nx-dossier__card nx-dossier__card--seller">
               <h3 className="nx-dossier__section-title">Seller</h3>
               <div className="nx-dossier__name">
                 {contextLoading ? '…' : (threadContext?.seller?.name ?? selected.ownerName)}
@@ -1869,7 +2639,7 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
               )}
             </div>
 
-            <div className="nx-dossier__section">
+            <div className="nx-dossier__section nx-dossier__card nx-dossier__card--deal">
               <h3 className="nx-dossier__section-title">Deal Context</h3>
               <div className="nx-dossier__subject">
                 {contextLoading ? '…' : (threadContext?.property?.address ?? selected.subject)}
@@ -1959,7 +2729,7 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
               </div>
             </div>
 
-            <div className="nx-dossier__section">
+            <div className="nx-dossier__section nx-dossier__card nx-dossier__card--quick-actions">
               <h3 className="nx-dossier__section-title">Quick Actions</h3>
               <div className="nx-dossier__actions">
                 <button
@@ -2025,6 +2795,10 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
                 {showDiagnostics && (
                   <div className="nx-dossier__row" style={{ display: 'grid', gap: 6, marginTop: 10 }}>
                     <span className="nx-dossier__value">selectedThreadId: {selected.id}</span>
+                    <span className="nx-dossier__value">selectedThreadKey: {selected.threadKey ?? selected.id}</span>
+                    <span className="nx-dossier__value">stateRowFound: {String(selected.stateRowFound ?? false)}</span>
+                    <span className="nx-dossier__value">archive/read mutation payload: {lastMutationPayload ? JSON.stringify(lastMutationPayload) : '-'}</span>
+                    <span className="nx-dossier__value">last mutation error: {lastMutationError ?? '-'}</span>
                     <span className="nx-dossier__value">threadKey: {selected.threadKey ?? '-'}</span>
                     <span className="nx-dossier__value">groupingMethod: {selected.groupingMethod ?? '-'}</span>
                     <span className="nx-dossier__value">groupingConfidence: {selected.groupingConfidence ?? '-'}</span>
@@ -2081,6 +2855,20 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
                     <span className="nx-dossier__value">sendNowProviderSid: {sendNowProviderSid ?? '-'}</span>
                     <span className="nx-dossier__value">sendNowEventId: {sendNowEventId ?? '-'}</span>
                     <span className="nx-dossier__value">sendNowRouteUsed: {sendNowRouteUsed ?? '-'}</span>
+                    <span className="nx-dossier__value">workflowWriteTarget: {workflowWriteTarget}</span>
+                    <span className="nx-dossier__value">dataMode: {dataMode}</span>
+                    <span className="nx-dossier__value">liveFetchStatus: {liveFetchStatus}</span>
+                    <span className="nx-dossier__value">liveFetchError: {liveFetchError ?? '-'}</span>
+                    <span className="nx-dossier__value">messageEventsCount: {messageEventsCount ?? '-'}</span>
+                    <span className="nx-dossier__value">messageEventsRawCount: {messageEventsRawCount ?? '-'}</span>
+                    <span className="nx-dossier__value">groupedThreadCount: {groupedThreadCount ?? '-'}</span>
+                    <span className="nx-dossier__value">filteredThreadCount: {filtered.length}</span>
+                    <span className="nx-dossier__value">sendQueueCount: {sendQueueCount ?? '-'}</span>
+                    <span className="nx-dossier__value">lastLiveFetchAt: {lastLiveFetchAt ?? '-'}</span>
+                    <span className="nx-dossier__value">activeTab: {workflowTab}</span>
+                    <span className="nx-dossier__value">activeFilters: {JSON.stringify({ ...workflowFilters, search: searchQuery })}</span>
+                    <span className="nx-dossier__value">hasSupabaseEnv: {String(hasSupabaseEnv)}</span>
+                    <span className="nx-dossier__value">useSupabaseData: {String(useSupabaseData)}</span>
                     <span className="nx-dossier__value">sendQueuePhoneFieldUsed: to_phone_number</span>
                     <span className="nx-dossier__value">sendQueueMessageFieldUsed: message_body / message_text</span>
                     <span className="nx-dossier__value">sendQueueStatusFieldUsed: queue_status</span>
@@ -2107,6 +2895,18 @@ export const InboxPage = ({ data }: { data: InboxModel }) => {
         onClose={() => setCommandOpen(false)}
         hasThread={!!selected}
         commands={commands}
+      />
+
+      <TemplateLibraryDrawer
+        open={templateDrawerOpen}
+        thread={selected}
+        threadContext={threadContext}
+        onClose={() => setTemplateDrawerOpen(false)}
+        onInsert={handleTemplateInsert}
+        onReplace={handleTemplateReplace}
+        onSendNow={handleTemplateSendNow}
+        onQueue={handleTemplateQueue}
+        onSchedule={handleTemplateSchedule}
       />
 
       <InboxSchedulePanel
