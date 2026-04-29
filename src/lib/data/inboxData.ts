@@ -886,6 +886,7 @@ const runFilteredQuery = async (
 
 export const getInboxThreads = async (filters: InboxThreadFilters = {}): Promise<InboxThread[]> => {
   const supabase = getSupabaseClient()
+  console.log('[getInboxThreads] Fetching from Supabase')
 
   const events: AnyRecord[] = []
   let cursorCreatedAt: string | null = null
@@ -918,10 +919,12 @@ export const getInboxThreads = async (filters: InboxThreadFilters = {}): Promise
         }
         break
       }
+      console.error('[getInboxThreads] Query error:', eventsResult.error)
       throw new Error(mapErrorMessage(eventsResult.error))
     }
 
     const batch = safeArray(eventsResult.data as AnyRecord[])
+    console.log('[getInboxThreads] Got batch of', batch.length, 'events, page', page)
     if (batch.length === 0) break
 
     events.push(...batch)
@@ -939,7 +942,10 @@ export const getInboxThreads = async (filters: InboxThreadFilters = {}): Promise
     console.log(`[Inbox] loaded ${events.length} message_events rows for thread grouping`)
   }
 
-  if (events.length === 0) return []
+  if (events.length === 0) {
+    console.warn('[getInboxThreads] No message events found - returning empty array')
+    return []
+  }
 
   // ── DEV: log raw message_events schema to diagnose field mapping ─────────
   if (DEV && events.length > 0) {
@@ -1150,8 +1156,10 @@ export const getInboxThreads = async (filters: InboxThreadFilters = {}): Promise
 
 export const fetchInboxModel = async (): Promise<InboxModel> => {
   const lastLiveFetchAt = new Date().toISOString()
+  console.log('[fetchInboxModel] Starting inbox fetch')
 
   const threads = await getInboxThreads()
+  console.log('[fetchInboxModel] Got', threads.length, 'threads from Supabase')
   const groupedThreadCount = threads.length
 
   return {

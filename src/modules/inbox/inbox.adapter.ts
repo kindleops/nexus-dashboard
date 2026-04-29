@@ -128,6 +128,7 @@ export const loadInbox = async (): Promise<InboxModel> => {
     console.log('[Inbox Live Data Gate]', {
       hasSupabaseEnv,
       useSupabaseData,
+      shouldUseSupabase: shouldUseSupabase(),
       supabaseUrlPresent,
       anonKeyPresent: supabaseAnonKeyPresent,
     })
@@ -156,12 +157,15 @@ export const loadInbox = async (): Promise<InboxModel> => {
   }
 
   if (shouldUseSupabase()) {
+    if (isDev) console.log('[loadInbox] Attempting Supabase fetch')
     try {
-      return await withTimeout(
+      const result = await withTimeout(
         fetchInboxModel(),
         LIVE_INBOX_TIMEOUT_MS,
         `Live Inbox request timed out after ${LIVE_INBOX_TIMEOUT_MS}ms`,
       )
+      if (isDev) console.log('[loadInbox] Supabase fetch succeeded', { threadCount: result.threads.length })
+      return result
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       if (/timed out/i.test(message)) {
