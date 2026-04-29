@@ -3,26 +3,100 @@
 
 create table if not exists public.message_events (
   id uuid primary key default gen_random_uuid(),
+  message_event_key text,
+  provider_message_sid text,
   event_timestamp timestamptz not null default now(),
   created_at timestamptz not null default now(),
+  sent_at timestamptz,
+  received_at timestamptz,
   message_body text not null,
   from_phone_number text,
   to_phone_number text,
   direction text not null default 'inbound',
+  event_type text default 'sms',
   source_app text not null default 'textgrid',
   delivery_status text default 'delivered',
   provider_delivery_status text,
+  raw_carrier_status text,
   delivered_at timestamptz,
   master_owner_id text,
   prospect_id text,
   property_id text,
   market text,
+  market_id text,
+  phone_number_id text,
+  textgrid_number_id text,
+  queue_id text,
+  is_opt_out boolean default false,
+  failure_code text,
+  failure_reason text,
+  error_message text,
+  property_address text,
   metadata jsonb default '{}'::jsonb,
   -- Additional fields for inbox grouping
   seller_phone text,
   canonical_e164 text,
   our_number text
 );
+
+-- Add missing columns if they don't already exist (for idempotency)
+do $$
+begin
+  if not exists (select 1 from information_schema.columns where table_name='message_events' and column_name='message_event_key') then
+    alter table public.message_events add column message_event_key text;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_name='message_events' and column_name='provider_message_sid') then
+    alter table public.message_events add column provider_message_sid text;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_name='message_events' and column_name='event_type') then
+    alter table public.message_events add column event_type text default 'sms';
+  end if;
+  if not exists (select 1 from information_schema.columns where table_name='message_events' and column_name='raw_carrier_status') then
+    alter table public.message_events add column raw_carrier_status text;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_name='message_events' and column_name='sent_at') then
+    alter table public.message_events add column sent_at timestamptz;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_name='message_events' and column_name='received_at') then
+    alter table public.message_events add column received_at timestamptz;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_name='message_events' and column_name='market_id') then
+    alter table public.message_events add column market_id text;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_name='message_events' and column_name='phone_number_id') then
+    alter table public.message_events add column phone_number_id text;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_name='message_events' and column_name='textgrid_number_id') then
+    alter table public.message_events add column textgrid_number_id text;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_name='message_events' and column_name='queue_id') then
+    alter table public.message_events add column queue_id text;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_name='message_events' and column_name='is_opt_out') then
+    alter table public.message_events add column is_opt_out boolean default false;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_name='message_events' and column_name='failure_code') then
+    alter table public.message_events add column failure_code text;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_name='message_events' and column_name='failure_reason') then
+    alter table public.message_events add column failure_reason text;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_name='message_events' and column_name='error_message') then
+    alter table public.message_events add column error_message text;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_name='message_events' and column_name='property_address') then
+    alter table public.message_events add column property_address text;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_name='message_events' and column_name='seller_phone') then
+    alter table public.message_events add column seller_phone text;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_name='message_events' and column_name='canonical_e164') then
+    alter table public.message_events add column canonical_e164 text;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_name='message_events' and column_name='our_number') then
+    alter table public.message_events add column our_number text;
+  end if;
+end $$;
 
 -- Create indexes for common queries
 create index if not exists idx_message_events_created_at
