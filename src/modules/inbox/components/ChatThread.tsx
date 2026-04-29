@@ -10,12 +10,9 @@ interface ChatThreadProps {
   thread: InboxWorkflowThread | null
   messages: ThreadMessage[]
   loading: boolean
-  loadingMore?: boolean
-  allLoaded?: boolean
-  onLoadMore?: () => void
 }
 
-export const ChatThread = ({ thread, messages, loading, loadingMore = false, allLoaded = true, onLoadMore }: ChatThreadProps) => {
+export const ChatThread = ({ thread, messages, loading }: ChatThreadProps) => {
   if (!thread) return (
     <div className="nx-chat-container is-empty">
       <div className="nx-inbox__workspace-empty">
@@ -46,17 +43,6 @@ export const ChatThread = ({ thread, messages, loading, loadingMore = false, all
       </header>
 
       <div className="nx-message-list">
-        {!allLoaded && !loading && (
-          <div className="nx-load-more-section">
-            <button 
-              onClick={onLoadMore}
-              disabled={loadingMore}
-              className="nx-load-more-button"
-            >
-              {loadingMore ? 'Loading more messages…' : 'Load Older Messages'}
-            </button>
-          </div>
-        )}
         {messages.map(msg => (
           <div key={msg.id} className={cls('nx-bubble-wrap', msg.direction === 'inbound' ? 'is-inbound' : 'is-outbound')}>
             <div className="nx-chat-bubble">

@@ -536,35 +536,6 @@
   gap: 12px;
 }
 
-.nx-load-more-section {
-  display: flex;
-  justify-content: center;
-  padding: 12px 0;
-  margin-bottom: 12px;
-  border-bottom: 1px solid var(--vscode-editorWidget-border, #e0e0e0);
-}
-
-.nx-load-more-button {
-  padding: 8px 16px;
-  border: 1px solid var(--vscode-editorWidget-border, #e0e0e0);
-  background: var(--vscode-editor-background, #ffffff);
-  color: var(--vscode-editor-foreground, #333333);
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 13px;
-  transition: all 200ms ease;
-}
-
-.nx-load-more-button:hover:not(:disabled) {
-  background: var(--vscode-editorHoverWidget-background, #f5f5f5);
-  border-color: var(--vscode-editor-foreground, #333333);
-}
-
-.nx-load-more-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
 /* Header actions */
 .nx-header-actions {
   display: flex;

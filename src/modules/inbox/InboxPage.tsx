@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useInboxData, toWorkflowThread } from './inbox.adapter'
 import { 
   updateThreadStage, 
@@ -22,9 +22,6 @@ import { InboxSchedulePanel, type ScheduledTime } from './InboxSchedulePanel'
 
 import './inbox-premium.css'
 
-const INITIAL_MESSAGE_BATCH = 500
-const LOADMORE_MESSAGE_BATCH = 250
-
 export default function InboxPage() {
   const { data, loading: dataLoading } = useInboxData()
   
@@ -37,12 +34,8 @@ export default function InboxPage() {
   // -- Detail State --
   const [selectedMessages, setSelectedMessages] = useState<ThreadMessage[]>([])
   const [messagesLoading, setMessagesLoading] = useState(false)
-  const [loadingMore, setLoadingMore] = useState(false)
-  const [allMessagesLoaded, setAllMessagesLoaded] = useState(true)
-  const [totalMessageCount, setTotalMessageCount] = useState(0)
   const [threadContext, setThreadContext] = useState<ThreadContext | null>(null)
   const [contextLoading, setContextLoading] = useState(false)
-  const messageOffsetRef = useRef(0)
   
   // -- Overlay State --
   const [commandOpen, setCommandOpen] = useState(false)
@@ -76,33 +69,18 @@ export default function InboxPage() {
     if (!selected) {
       setSelectedMessages([])
       setThreadContext(null)
-      messageOffsetRef.current = 0
-      setAllMessagesLoaded(true)
       return
     }
 
     setMessagesLoading(true)
     setContextLoading(true)
-    messageOffsetRef.current = 0
 
     Promise.all([
-      getThreadMessagesForThread(selected as any, { maxMessages: INITIAL_MESSAGE_BATCH }),
+      getThreadMessagesForThread(selected as any),
       getThreadContext(selected as any)
     ]).then(([messages, context]) => {
       setSelectedMessages(messages)
       setThreadContext(context)
-      messageOffsetRef.current = messages.length
-      // If we got fewer messages than requested, we have them all
-      setAllMessagesLoaded(messages.length < INITIAL_MESSAGE_BATCH)
-      setTotalMessageCount(messages.length)
-    }).catch(err => {
-      console.error('[InboxPage] Error loading messages:', err)
-      // Fall back to loading without pagination on error
-      getThreadMessagesForThread(selected as any).then(messages => {
-        setSelectedMessages(messages)
-        messageOffsetRef.current = messages.length
-        setAllMessagesLoaded(true)
-      })
     }).finally(() => {
       setMessagesLoading(false)
       setContextLoading(false)
@@ -128,32 +106,6 @@ export default function InboxPage() {
     emitNotification({ title: 'Sending...', detail: `Message: "${text.slice(0, 20)}..."`, severity: 'info' })
     setDraftText('')
   }, [selected])
-
-  const handleLoadMoreMessages = useCallback(async () => {
-    if (!selected || loadingMore || allMessagesLoaded) return
-    
-    setLoadingMore(true)
-    try {
-      // Load the next batch, skipping the ones we already have
-      const allMessages = await getThreadMessagesForThread(selected as any, { 
-        maxMessages: messageOffsetRef.current + LOADMORE_MESSAGE_BATCH 
-      })
-      
-      setSelectedMessages(allMessages)
-      messageOffsetRef.current = allMessages.length
-      setTotalMessageCount(allMessages.length)
-      
-      // Check if we've loaded everything
-      if (allMessages.length < messageOffsetRef.current + LOADMORE_MESSAGE_BATCH) {
-        setAllMessagesLoaded(true)
-      }
-    } catch (err) {
-      console.error('[InboxPage] Error loading more messages:', err)
-      emitNotification({ title: 'Error', detail: 'Failed to load more messages', severity: 'warning' })
-    } finally {
-      setLoadingMore(false)
-    }
-  }, [selected, loadingMore, allMessagesLoaded])
 
   if (dataLoading) return (
     <div className="nx-premium-inbox">
@@ -191,9 +143,6 @@ export default function InboxPage() {
           thread={selected}
           messages={selectedMessages}
           loading={messagesLoading}
-          loadingMore={loadingMore}
-          allLoaded={allMessagesLoaded}
-          onLoadMore={handleLoadMoreMessages}
         />
         
         <Composer 
