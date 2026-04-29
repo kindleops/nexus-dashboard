@@ -24,7 +24,6 @@ import './inbox-premium.css'
 
 // Pagination config
 const INITIAL_MESSAGE_BATCH = 500
-const ADDITIONAL_MESSAGE_BATCH = 250
 
 export default function InboxPage() {
   const { data, loading: dataLoading } = useInboxData()
@@ -38,7 +37,6 @@ export default function InboxPage() {
   // -- Detail State --
   const [selectedMessages, setSelectedMessages] = useState<ThreadMessage[]>([])
   const [messagesLoading, setMessagesLoading] = useState(false)
-  const [allMessagesLoaded, setAllMessagesLoaded] = useState(false)
   const [threadContext, setThreadContext] = useState<ThreadContext | null>(null)
   const [contextLoading, setContextLoading] = useState(false)
   
@@ -74,13 +72,11 @@ export default function InboxPage() {
     if (!selected) {
       setSelectedMessages([])
       setThreadContext(null)
-      setAllMessagesLoaded(false)
       return
     }
 
     setMessagesLoading(true)
     setContextLoading(true)
-    setAllMessagesLoaded(false)
 
     Promise.all([
       getThreadMessagesForThread(selected as any, { maxMessages: INITIAL_MESSAGE_BATCH }),
@@ -88,29 +84,11 @@ export default function InboxPage() {
     ]).then(([messages, context]) => {
       setSelectedMessages(messages)
       setThreadContext(context)
-      setAllMessagesLoaded(messages.length < INITIAL_MESSAGE_BATCH)
     }).finally(() => {
       setMessagesLoading(false)
       setContextLoading(false)
     })
   }, [selected])
-
-  // -- Load More Messages --
-  const handleLoadMoreMessages = useCallback(async () => {
-    if (!selected || allMessagesLoaded || messagesLoading) return
-
-    setMessagesLoading(true)
-    try {
-      const skipCount = selectedMessages.length
-      const allMessages = await getThreadMessagesForThread(selected as any, {
-        maxMessages: skipCount + ADDITIONAL_MESSAGE_BATCH
-      })
-      setSelectedMessages(allMessages)
-      setAllMessagesLoaded(allMessages.length < skipCount + ADDITIONAL_MESSAGE_BATCH)
-    } finally {
-      setMessagesLoading(false)
-    }
-  }, [selected, selectedMessages.length, allMessagesLoaded, messagesLoading])
 
   // -- Handlers --
   const handleWorkflowMutation = useCallback(async (label: string, mutation: () => Promise<any>) => {
@@ -168,9 +146,6 @@ export default function InboxPage() {
           thread={selected}
           messages={selectedMessages}
           loading={messagesLoading}
-          onLoadMore={handleLoadMoreMessages}
-          allLoaded={allMessagesLoaded}
-          messageCount={selectedMessages.length}
         />
         
         <Composer 
