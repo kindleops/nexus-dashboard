@@ -266,19 +266,32 @@ export const useInboxData = () => {
 
   useEffect(() => {
     let cancelled = false
+    console.log('[useInboxData] Hook mounted, calling loadInbox()')
     loadInbox()
       .then((model) => {
-        if (!cancelled) setData(model ?? EMPTY_MODEL)
+        console.log('[useInboxData] loadInbox returned', {
+          threadCount: model?.threads?.length,
+          dataMode: model?.dataMode,
+          liveFetchStatus: model?.liveFetchStatus,
+          liveFetchError: model?.liveFetchError,
+        })
+        if (!cancelled) {
+          setData(model ?? EMPTY_MODEL)
+          console.log('[useInboxData] Data state updated')
+        }
       })
       .catch((err) => {
         if (!cancelled) {
-          console.warn('[NEXUS] useInboxData — loadInbox failed, using empty model', err)
+          console.error('[NEXUS] useInboxData — loadInbox threw error', err)
           setError(err)
           setData(EMPTY_MODEL)
         }
       })
       .finally(() => {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) {
+          setLoading(false)
+          console.log('[useInboxData] Loading complete')
+        }
       })
     return () => { cancelled = true }
   }, [])

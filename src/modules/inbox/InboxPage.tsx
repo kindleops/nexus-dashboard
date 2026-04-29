@@ -44,7 +44,16 @@ export default function InboxPage() {
   const [scheduledTime, setScheduledTime] = useState<ScheduledTime | null>(null)
 
   // -- Derived Data --
-  const threads = useMemo(() => (data.threads ?? []).map(toWorkflowThread), [data])
+  const threads = useMemo(() => {
+    const converted = (data.threads ?? []).map(toWorkflowThread)
+    console.log('[InboxPage] threads derived', { 
+      rawCount: data.threads?.length, 
+      convertedCount: converted.length,
+      dataMode: data.dataMode,
+      liveFetchStatus: data.liveFetchStatus,
+    })
+    return converted
+  }, [data])
   const selected = useMemo(() => threads.find((t: any) => t.id === selectedId) ?? null, [threads, selectedId])
 
   const filtered = useMemo(() => {
