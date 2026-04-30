@@ -6,21 +6,44 @@ import { isDev, shouldUseSupabase, useSupabaseData } from '../../lib/data/shared
 import type { InboxWorkflowThread } from '../../lib/data/inboxWorkflowData'
 import { hasSupabaseEnv, supabaseAnonKeyPresent, supabaseUrlPresent } from '../../lib/supabaseClient'
 
-const LIVE_INBOX_TIMEOUT_MS = 120000
+const LIVE_INBOX_TIMEOUT_MS = 30000
+let liveInboxRequest: Promise<InboxModel> | null = null
 
-const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> => {
+const withTimeout = async <T,>(
+  run: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<T> => {
+  const controller = new AbortController()
   let timeoutId: ReturnType<typeof setTimeout> | null = null
   try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs)
-      }),
-    ])
+    timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+    return await run(controller.signal)
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(timeoutMessage)
+    }
+    throw error
   } finally {
     if (timeoutId) clearTimeout(timeoutId)
   }
 }
+
+const emptyLiveErrorModel = (liveFetchError: string): InboxModel => ({
+  threads: [],
+  unreadCount: 0,
+  urgentCount: 0,
+  totalCount: 0,
+  aiDraftCount: 0,
+  dataMode: 'live_supabase',
+  liveFetchStatus: 'error',
+  liveFetchError,
+  messageEventsCount: null,
+  messageEventsRawCount: null,
+  groupedThreadCount: null,
+  sendQueueCount: null,
+  lastLiveFetchAt: new Date().toISOString(),
+})
 
 export interface InboxThread {
   id: string
@@ -139,81 +162,31 @@ export const loadInbox = async (): Promise<InboxModel> => {
     if (isDev) {
       console.error('[NEXUS] Inbox live mode misconfigured.', liveFetchError)
     }
-    return {
-      threads: [],
-      unreadCount: 0,
-      urgentCount: 0,
-      totalCount: 0,
-      aiDraftCount: 0,
-      dataMode: 'live_supabase',
-      liveFetchStatus: 'error',
-      liveFetchError,
-      messageEventsCount: null,
-      messageEventsRawCount: null,
-      groupedThreadCount: null,
-      sendQueueCount: null,
-      lastLiveFetchAt: new Date().toISOString(),
-    }
+    return emptyLiveErrorModel(liveFetchError)
   }
 
   if (shouldUseSupabase()) {
     if (isDev) console.log('[loadInbox] Attempting Supabase fetch')
     try {
-      const result = await withTimeout(
-        fetchInboxModel(),
-        LIVE_INBOX_TIMEOUT_MS,
-        `Live Inbox request timed out after ${LIVE_INBOX_TIMEOUT_MS}ms`,
-      )
+      if (!liveInboxRequest) {
+        liveInboxRequest = withTimeout(
+          (signal) => fetchInboxModel({ signal }),
+          LIVE_INBOX_TIMEOUT_MS,
+          `Live Inbox request timed out after ${LIVE_INBOX_TIMEOUT_MS}ms`,
+        ).finally(() => {
+          liveInboxRequest = null
+        })
+      }
+
+      const result = await liveInboxRequest
       if (isDev) console.log('[loadInbox] Supabase fetch succeeded', { threadCount: result.threads.length })
       return result
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      if (/timed out/i.test(message)) {
-        try {
-          // Large inboxes can exceed the client timeout; allow one uncapped attempt.
-          return await fetchInboxModel()
-        } catch (retryError) {
-          const liveFetchError = retryError instanceof Error ? retryError.message : String(retryError)
-          if (isDev) {
-            console.error('[NEXUS] Inbox Supabase live load retry failed.', retryError)
-          }
-          return {
-            threads: [],
-            unreadCount: 0,
-            urgentCount: 0,
-            totalCount: 0,
-            aiDraftCount: 0,
-            dataMode: 'live_supabase',
-            liveFetchStatus: 'error',
-            liveFetchError,
-            messageEventsCount: null,
-            messageEventsRawCount: null,
-            groupedThreadCount: null,
-            sendQueueCount: null,
-            lastLiveFetchAt: new Date().toISOString(),
-          }
-        }
-      }
-
       const liveFetchError = error instanceof Error ? error.message : String(error)
       if (isDev) {
         console.error('[NEXUS] Inbox Supabase live load failed.', error)
       }
-      return {
-        threads: [],
-        unreadCount: 0,
-        urgentCount: 0,
-        totalCount: 0,
-        aiDraftCount: 0,
-        dataMode: 'live_supabase',
-        liveFetchStatus: 'error',
-        liveFetchError,
-        messageEventsCount: null,
-        messageEventsRawCount: null,
-        groupedThreadCount: null,
-        sendQueueCount: null,
-        lastLiveFetchAt: new Date().toISOString(),
-      }
+      return emptyLiveErrorModel(liveFetchError)
     }
   }
 
@@ -227,12 +200,12 @@ export const toWorkflowThread = (t: InboxThread): InboxWorkflowThread => {
   return {
     ...t,
     threadKey: t.threadKey || t.id,
-    inboxStatus: (t.threadWorkflowStatus || (t.status === 'unread' ? 'unread' : 'open')) as any,
-    inboxStage: (t.threadWorkflowStage || 'needs_response') as any,
+    inboxStatus: (t.threadWorkflowStatus || (t.status === 'unread' ? 'unread' : 'open')) as InboxWorkflowThread['inboxStatus'],
+    inboxStage: (t.threadWorkflowStage || 'needs_response') as InboxWorkflowThread['inboxStage'],
     isArchived: t.threadIsArchived ?? (t.status === 'archived'),
     isRead: t.threadIsRead ?? (t.status === 'read' || t.unreadCount === 0),
     isPinned: t.threadIsPinned ?? false,
-    priority: t.priority as any,
+    priority: t.priority as InboxWorkflowThread['priority'],
     lastInboundAt: t.lastInboundAt ?? null,
     lastOutboundAt: t.lastOutboundAt ?? null,
     lastMessageAt: lastAt,
@@ -262,7 +235,7 @@ const EMPTY_MODEL: InboxModel = {
 export const useInboxData = () => {
   const [data, setData] = useState<InboxModel>(EMPTY_MODEL)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<any>(null)
+  const [error, setError] = useState<unknown>(null)
 
   useEffect(() => {
     let cancelled = false

@@ -1,5 +1,4 @@
 import { useMemo, useState, memo } from 'react'
-import { List } from 'react-window'
 import type { InboxWorkflowThread, InboxStatusTab, InboxThreadsQuery, InboxStage } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
 import { formatRelativeTime } from '../../../shared/formatters'
@@ -14,9 +13,10 @@ interface ThreadListProps {
   workflowTab: InboxStatusTab
   setWorkflowTab: (tab: InboxStatusTab) => void
   workflowFilters?: InboxThreadsQuery
-  setWorkflowFilters?: (f: any) => void
+  setWorkflowFilters?: (f: InboxThreadsQuery) => void
   searchQuery: string
   setSearchQuery: (q: string) => void
+  loadingError?: string | null
   onUpdateStage?: (id: string, stage: InboxStage) => void
   onArchive?: (thread: InboxWorkflowThread) => void
   onMarkRead?: (thread: InboxWorkflowThread) => void
@@ -53,6 +53,7 @@ export const ThreadList = memo(({
   setWorkflowTab,
   searchQuery,
   setSearchQuery,
+  loadingError,
 }: ThreadListProps) => {
   const [filterOpen, setFilterOpen] = useState(false)
 
@@ -65,19 +66,6 @@ export const ThreadList = memo(({
       return matchTab && matchSearch
     })
   }, [threads, workflowTab, searchQuery])
-
-  const Row = ({ index, style }: { index: number, style: React.CSSProperties }) => {
-    const thread = filtered[index]
-    return (
-      <div style={style}>
-        <ThreadRow 
-          thread={thread} 
-          isSelected={selectedId === thread.id} 
-          onSelect={onSelect} 
-        />
-      </div>
-    )
-  }
 
   return (
     <aside className="nx-thread-rail">
@@ -117,17 +105,19 @@ export const ThreadList = memo(({
       <div className="nx-rail-list">
         {filtered.length === 0 ? (
           <div className="nx-rail-empty">
-            <p>No threads match your filters.</p>
+            <p>{loadingError ? `Inbox data could not load: ${loadingError}` : 'No threads match your filters.'}</p>
           </div>
         ) : (
-          <List {...{
-            height: 800,
-            itemCount: filtered.length,
-            itemSize: 92,
-            width: '100%'
-          } as any}>
-            {Row as any}
-          </List>
+          <div className="nx-thread-list-items">
+            {filtered.map((thread) => (
+              <ThreadRow
+                key={thread.id}
+                thread={thread}
+                isSelected={selectedId === thread.id}
+                onSelect={onSelect}
+              />
+            ))}
+          </div>
         )}
       </div>
     </aside>

@@ -155,6 +155,14 @@ const toThreadKey = (thread: InboxThread): string =>
   asString(thread.id, '') ||
   [thread.ownerId, thread.propertyId, thread.phoneNumber].filter(Boolean).join(':')
 
+const chunk = <T,>(items: T[], size: number): T[][] => {
+  const out: T[][] = []
+  for (let index = 0; index < items.length; index += size) {
+    out.push(items.slice(index, index + size))
+  }
+  return out
+}
+
 const inferStage = (
   input: {
     isArchived: boolean
@@ -540,21 +548,27 @@ export const fetchInboxThreads = async (params: InboxThreadsQuery = {}): Promise
   const base = await getInboxThreads({ query: params.search })
   const supabase = getSupabaseClient()
 
-  let stateRowsByKey = new Map<string, AnyRecord>()
+  const stateRowsByKey = new Map<string, AnyRecord>()
   if (await tableExists('inbox_thread_state')) {
     const keys = base.map((thread) => toThreadKey(thread)).filter(Boolean)
     if (keys.length > 0) {
-      const { data, error } = await supabase
-        .from('inbox_thread_state')
-        .select('thread_key,stage,status,priority,is_archived,is_read,is_pinned,last_read_at,archived_at,updated_at')
-        .in('thread_key', keys)
-      if (!error) {
-        for (const row of safeArray(data as AnyRecord[])) {
-          const key = asString(row['thread_key'], '')
-          if (key) stateRowsByKey.set(key, row)
+      const stateResponses = await Promise.all(
+        chunk(keys, 40).map((keyBatch) => (
+          supabase
+            .from('inbox_thread_state')
+            .select('thread_key,stage,status,priority,is_archived,is_read,is_pinned,last_read_at,archived_at,updated_at')
+            .in('thread_key', keyBatch)
+        )),
+      )
+      for (const response of stateResponses) {
+        if (!response.error) {
+          for (const row of safeArray(response.data as AnyRecord[])) {
+            const key = asString(row['thread_key'], '')
+            if (key) stateRowsByKey.set(key, row)
+          }
+        } else if (DEV) {
+          console.warn('[inboxWorkflow] inbox_thread_state read failed', getSupabaseErrorMessage(response.error))
         }
-      } else if (DEV) {
-        console.warn('[inboxWorkflow] inbox_thread_state read failed', getSupabaseErrorMessage(error))
       }
     }
   }

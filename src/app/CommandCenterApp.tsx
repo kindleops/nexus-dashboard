@@ -2,10 +2,9 @@ import { startTransition, useCallback, useEffect, useMemo, useRef, useState } fr
 import { pushRoutePath, replaceRoutePath, useRoutePath } from './router'
 import { resolveRoute } from './routes'
 import { useCommandGrammar, type CommandBinding } from '../shared/command-grammar'
-import { Icon } from '../shared/icons'
 import { CopilotShell, type CopilotContext, type ResolvedIntent } from '../shared/copilot'
 import { BriefingPanel, buildBriefingDigest, type BriefingDigest } from '../shared/BriefingPanel'
-import { NotificationToasts, NotificationCenter, useNotificationCount } from '../shared/NotificationToast'
+import { NotificationToasts, NotificationCenter } from '../shared/NotificationToast'
 import { playSound } from '../shared/sounds'
 import { applyThemeToDOM, subscribeSettings, updateSetting, type NexusTheme } from '../shared/settings'
 import { COMMAND_STORE_ITEMS, addStoreItemToSpace, getInstallSet, saveInstallSet } from '../modules/command-store/command-store.data'
@@ -47,6 +46,7 @@ const navItems: NavItem[] = [
   { path: '/dossier', label: 'Dossier', icon: 'users', shortcut: 'D', room: 'Dossier' },
   { path: '/alerts', label: 'Alerts', icon: 'alert', shortcut: 'A', room: 'Alerts' },
   { path: '/stats', label: 'Intelligence', icon: 'stats', shortcut: 'G', room: 'Intelligence' },
+  { path: '/dashboard/kpis', label: 'KPIs', icon: 'stats', shortcut: 'K', room: 'KPI Intelligence' },
   { path: '/markets', label: 'Markets', icon: 'map', shortcut: 'M', room: 'Markets' },
   { path: '/buyer', label: 'Buyers', icon: 'users', shortcut: 'B', room: 'Buyers' },
   { path: '/title', label: 'Title', icon: 'file-text', shortcut: 'T', room: 'Title' },
@@ -102,7 +102,6 @@ export const CommandCenterApp = () => {
   const [briefingOpen, setBriefingOpen] = useState(false)
   const [briefingDigest, setBriefingDigest] = useState<BriefingDigest | null>(null)
   const [notifCenterOpen, setNotifCenterOpen] = useState(false)
-  const notifCount = useNotificationCount()
 
   // ── Theme system — apply on mount + subscribe to changes ──
   useEffect(() => {
@@ -499,58 +498,6 @@ export const CommandCenterApp = () => {
 
   return (
     <div className={`nx-os ${route.path === '/' ? 'is-home-route' : ''}`}>
-      {/* Minimal bottom dock — only visible on non-Home surfaces */}
-      {route.path !== '/dashboard/live' && (
-        <nav className="nx-dock" aria-label="Navigation dock">
-          <button
-            type="button"
-            className="nx-dock__home"
-            onClick={() => pushRoutePath('/dashboard/live')}
-            title="Home (H)"
-          >
-            <Icon name="radar" className="nx-dock__icon" />
-          </button>
-          <div className="nx-dock__divider" />
-          {navItems.filter(n => n.path !== '/dashboard/live' && n.path !== '/settings').map((item) => (
-            <button
-              key={item.path}
-              type="button"
-              className={`nx-dock__item ${route.path === item.path ? 'is-active' : ''}`}
-              onClick={() => pushRoutePath(item.path)}
-              title={`${item.label} (${item.shortcut})`}
-            >
-              <Icon name={item.icon} className="nx-dock__icon" />
-            </button>
-          ))}
-          <div className="nx-dock__spacer" />
-          <button
-            type="button"
-            className={`nx-dock__item ${copilotOpen ? 'is-active' : ''}`}
-            onClick={() => { setCopilotOpen((p) => { if (!p) playSound('copilot-wake'); return !p }); }}
-            title="AI Copilot (⌘J)"
-          >
-            <Icon name="spark" className="nx-dock__icon" />
-          </button>
-          <button
-            type="button"
-            className="nx-dock__item"
-            onClick={() => setNotifCenterOpen(true)}
-            title="Notifications"
-          >
-            <Icon name="bell" className="nx-dock__icon" />
-            {notifCount > 0 && <span className="nx-dock__badge">{notifCount}</span>}
-          </button>
-          <button
-            type="button"
-            className="nx-dock__cmd"
-            onClick={openCmd}
-            title="Command Palette (⌘K)"
-          >
-            <Icon name="command" className="nx-dock__icon" />
-          </button>
-        </nav>
-      )}
-
       {/* Room label — non-Home surfaces */}
       {route.path !== '/dashboard/live' && route.path !== '/command-store' && activeNav && (
         <div className="nx-room-label">

@@ -3,8 +3,6 @@ import { LiveDashboardPage } from '../modules/dashboard/live/LiveDashboardPage'
 import { loadLiveDashboard } from '../modules/dashboard/live/load-live-dashboard'
 import type { LiveDashboardModel } from '../modules/dashboard/live/live-dashboard.adapter'
 import InboxPage from '../modules/inbox/InboxPage'
-import { loadInbox } from '../modules/inbox/inbox.adapter'
-import type { InboxModel } from '../modules/inbox/inbox.adapter'
 import { AlertsPage } from '../modules/alerts/AlertsPage'
 import { loadAlerts } from '../modules/alerts/alerts.adapter'
 import type { AlertsModel } from '../modules/alerts/alerts.adapter'
@@ -33,6 +31,7 @@ import type { QueueModel } from '../modules/queue/queue.types'
 import { DossierPage } from '../modules/dossier/DossierPage'
 import { loadDossier } from '../modules/dossier/dossier.adapter'
 import type { DossierModel } from '../modules/dossier/dossier.types'
+import { KpiIntelligencePage } from '../modules/kpis/KpiIntelligencePage'
 import { HomePage } from '../modules/home/HomePage'
 import { loadHome } from '../modules/home/home.adapter'
 import type { HomeModel } from '../modules/home/home.types'
@@ -136,18 +135,10 @@ const acquisitionContactsRoute = defineRoute<AcquisitionWorkspaceModel>({
   render: (data) => <ContactStackApp data={data} />,
 })
 
-const acquisitionInboxRoute = defineRoute<
-  AcquisitionWorkspaceModel & { inboxData: InboxModel }
->({
+const acquisitionInboxRoute = defineRoute<null>({
   path: '/acquisition/inbox',
   title: 'NEXUS | Seller Inbox',
-  loader: async () => {
-    const [workspaceData, inboxData] = await Promise.all([
-      loadAcquisitionWorkspace(),
-      loadInbox(),
-    ])
-    return { ...workspaceData, inboxData }
-  },
+  loader: async () => null,
   render: () => <AcquisitionInboxApp />,
 })
 
@@ -163,7 +154,7 @@ const acquisitionQueueRoute = defineRoute<
     ])
     return { ...workspaceData, queueData }
   },
-  render: (data) => <AcquisitionQueueApp data={data as any} />,
+  render: (data) => <AcquisitionQueueApp data={data} />,
 })
 
 const acquisitionOffersRoute = defineRoute<AcquisitionWorkspaceModel>({
@@ -201,10 +192,10 @@ const acquisitionAutomationsRoute = defineRoute<AcquisitionWorkspaceModel>({
   render: (data) => <AutomationMonitorApp data={data} />,
 })
 
-const inboxRoute = defineRoute<InboxModel>({
+const inboxRoute = defineRoute<null>({
   path: '/inbox',
   title: 'NEXUS | Inbox',
-  loader: loadInbox,
+  loader: async () => null,
   render: () => <InboxPage />,
 })
 
@@ -220,6 +211,13 @@ const statsRoute = defineRoute<StatsModel>({
   title: 'NEXUS | Intelligence Dashboard',
   loader: loadStats,
   render: (data) => <StatsPage data={data} />,
+})
+
+const kpiRoute = defineRoute<null>({
+  path: '/dashboard/kpis',
+  title: 'NEXUS | KPI Intelligence',
+  loader: async () => null,
+  render: () => <KpiIntelligencePage />,
 })
 
 const marketsRoute = defineRoute<MarketsModel>({
@@ -298,6 +296,7 @@ const routes = [
   inboxRoute,
   alertsRoute,
   statsRoute,
+  kpiRoute,
   marketsRoute,
   buyerRoute,
   titleRoute,

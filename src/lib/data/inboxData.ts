@@ -42,6 +42,11 @@ export interface InboxThreadFilters {
   query?: string
 }
 
+export interface InboxFetchOptions {
+  signal?: AbortSignal
+  maxRows?: number
+}
+
 export interface ThreadMessage {
   id: string
   direction: 'inbound' | 'outbound' | 'unknown'
@@ -123,9 +128,123 @@ export interface SendNowResult {
   queueProcessorEligible: boolean
 }
 
+export interface QueueProcessorHealth {
+  checkedAt: string
+  queuedCount: number
+  queuedOlderThanLagWindow: number
+  oldestQueuedAt: string | null
+  latestSentAt: string | null
+  processorHealthy: boolean
+  status: 'healthy' | 'lagging' | 'unknown'
+  summary: string
+}
+
+const QUEUE_PROCESSOR_LAG_MINUTES = 10
+
 const DEV = Boolean(import.meta.env.DEV)
-const MESSAGE_EVENTS_INBOX_PAGE_SIZE = 1000
+const MESSAGE_EVENTS_INBOX_PAGE_SIZE = 250
 const MESSAGE_EVENTS_THREAD_PAGE_SIZE = 1000
+const INBOX_THREAD_STATE_TIMEOUT_MS = 3000
+const INBOX_THREAD_STATE_BATCH_SIZE = 40
+
+const chunkArray = <T,>(items: T[], size: number): T[][] => {
+  const out: T[][] = []
+  for (let index = 0; index < items.length; index += size) {
+    out.push(items.slice(index, index + size))
+  }
+  return out
+}
+
+export const getQueueProcessorHealth = async (): Promise<QueueProcessorHealth> => {
+  const supabase = getSupabaseClient()
+  const checkedAt = new Date().toISOString()
+  const lagCutoffIso = new Date(Date.now() - QUEUE_PROCESSOR_LAG_MINUTES * 60 * 1000).toISOString()
+
+  try {
+    const [queuedProbe, lagProbe, oldestQueuedProbe, latestSentProbe] = await Promise.all([
+      supabase
+        .from('send_queue')
+        .select('id', { count: 'exact', head: true })
+        .eq('queue_status', 'queued'),
+      supabase
+        .from('send_queue')
+        .select('id', { count: 'exact', head: true })
+        .eq('queue_status', 'queued')
+        .lt('created_at', lagCutoffIso),
+      supabase
+        .from('send_queue')
+        .select('created_at')
+        .eq('queue_status', 'queued')
+        .order('created_at', { ascending: true })
+        .limit(1),
+      supabase
+        .from('send_queue')
+        .select('sent_at,updated_at,created_at')
+        .eq('queue_status', 'sent')
+        .order('sent_at', { ascending: false, nullsFirst: false })
+        .order('updated_at', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false })
+        .limit(1),
+    ])
+
+    if (queuedProbe.error || lagProbe.error || oldestQueuedProbe.error || latestSentProbe.error) {
+      const err = queuedProbe.error ?? lagProbe.error ?? oldestQueuedProbe.error ?? latestSentProbe.error
+      return {
+        checkedAt,
+        queuedCount: queuedProbe.count ?? 0,
+        queuedOlderThanLagWindow: lagProbe.count ?? 0,
+        oldestQueuedAt: null,
+        latestSentAt: null,
+        processorHealthy: false,
+        status: 'unknown',
+        summary: mapErrorMessage(err) || 'Unable to read queue processor status',
+      }
+    }
+
+    const queuedCount = queuedProbe.count ?? 0
+    const queuedOlderThanLagWindow = lagProbe.count ?? 0
+    const oldestQueuedRow = safeArray(oldestQueuedProbe.data as AnyRecord[])[0] ?? null
+    const latestSentRow = safeArray(latestSentProbe.data as AnyRecord[])[0] ?? null
+
+    const oldestQueuedAt = asIso(getFirst(oldestQueuedRow ?? {}, ['created_at'])) ?? null
+    const latestSentAt = asIso(getFirst(latestSentRow ?? {}, ['sent_at', 'updated_at', 'created_at'])) ?? null
+
+    if (queuedOlderThanLagWindow > 0) {
+      return {
+        checkedAt,
+        queuedCount,
+        queuedOlderThanLagWindow,
+        oldestQueuedAt,
+        latestSentAt,
+        processorHealthy: false,
+        status: 'lagging',
+        summary: `${queuedOlderThanLagWindow} queued older than ${QUEUE_PROCESSOR_LAG_MINUTES}m`,
+      }
+    }
+
+    return {
+      checkedAt,
+      queuedCount,
+      queuedOlderThanLagWindow,
+      oldestQueuedAt,
+      latestSentAt,
+      processorHealthy: true,
+      status: 'healthy',
+      summary: queuedCount > 0 ? `${queuedCount} queued and within normal window` : 'Queue clear',
+    }
+  } catch (error) {
+    return {
+      checkedAt,
+      queuedCount: 0,
+      queuedOlderThanLagWindow: 0,
+      oldestQueuedAt: null,
+      latestSentAt: null,
+      processorHealthy: false,
+      status: 'unknown',
+      summary: mapErrorMessage(error) || 'Unable to read queue processor status',
+    }
+  }
+}
 
 const MESSAGE_EVENTS_THREAD_COLUMNS = [
   'id',
@@ -138,7 +257,6 @@ const MESSAGE_EVENTS_THREAD_COLUMNS = [
   'to_phone_number',
   'phone_number_id',
   'queue_id',
-  'metadata',
   'event_timestamp',
   'created_at',
   'sent_at',
@@ -252,7 +370,7 @@ const cleanFirstToken = (value: unknown): string => {
   const noHonorific = raw.replace(/^(mr|mrs|ms|dr|sr|sra|srta)\.?\s+/i, '')
   const primarySegment = noHonorific.split(/[,&/]|\sand\s|\sy\s/i)[0] ?? noHonorific
   const firstToken = primarySegment.trim().split(/\s+/)[0] ?? ''
-  return firstToken.replace(/^[^A-Za-z\u00C0-\u024F]+|[^A-Za-z\u00C0-\u024F'\-]+$/g, '')
+  return firstToken.replace(/^[^A-Za-z\u00C0-\u024F]+|[^A-Za-z\u00C0-\u024F'-]+$/g, '')
 }
 
 export const resolveSellerFirstName = (candidate: PersonalizationCandidate): SellerFirstNameResolution => {
@@ -345,7 +463,7 @@ const buildQueuePersonalization = (thread: InboxThread, messageText: string) => 
   const personalizationMeta = {
     seller_first_name: renderVariables.seller_first_name || null,
     seller_name_source: resolved.source,
-    name_missing: !Boolean(renderVariables.seller_first_name),
+    name_missing: !renderVariables.seller_first_name,
     render_guard_passed: renderGuard.passed,
     render_guard_repaired: renderGuard.repaired,
   }
@@ -380,12 +498,7 @@ if (DEV) {
 }
 
 // All likely phone field names in the `phones` / `phone_numbers` table
-const PHONE_NUMBER_FIELD_NAMES = [
-  'phone_number', 'phone', 'canonical_e164', 'phone_e164', 'best_phone',
-  'best_phone_e164', 'e164', 'phone_raw', 'number', 'normalized_phone',
-  'phone_number_e164', 'raw_phone', 'formatted_phone', 'contact_phone',
-  'phone_digits', 'original_phone',
-] as const
+const PHONE_NUMBER_FIELD_NAMES = ['phone', 'canonical_e164'] as const
 
 // ── Table alias resolution ─────────────────────────────────────────────────
 // Maps logical alias keys to ordered candidate table names.
@@ -401,6 +514,25 @@ const TABLE_ALIASES: Record<string, readonly string[]> = {
 }
 
 const resolvedTableCache = new Map<string, string | null>()
+
+const FILTER_COLUMNS_BY_ALIAS: Record<string, readonly string[]> = {
+  phones: ['phone', 'canonical_e164', 'master_owner_id'],
+  masterOwners: [],
+  owners: [],
+  prospects: ['prospect_id', 'master_owner_id', 'first_name', 'full_name'],
+  emails: [],
+  aiBrain: ['id', 'to_phone_number'],
+  offers: [],
+  send_queue: [
+    'id',
+    'queue_key',
+    'to_phone_number',
+    'from_phone_number',
+    'master_owner_id',
+    'prospect_id',
+    'property_id',
+  ],
+}
 
 /** Returns the first existing table for an alias key, or the raw key if not a known alias. */
 const resolveTable = async (aliasKey: string): Promise<string> => {
@@ -792,18 +924,11 @@ const getThreadKeyParts = (
   const ownerId = asString(row['master_owner_id'], '')
   const prospectId = asString(row['prospect_id'], '')
   const propertyId = asString(row['property_id'], '')
-  const propertyAddress = asString(row['property_address'], '').trim().toLowerCase()
   const { sellerPhone } = getSellerPhoneFromMessage(row)
 
-  // Priority: most stable grouping key first
-  if (sellerPhone && propertyId)
-    return { key: `phone_property:${sellerPhone}:${propertyId}`, method: 'seller_phone+property_id', confidence: 'high' }
-  if (sellerPhone && propertyAddress)
-    return { key: `phone_address:${sellerPhone}:${propertyAddress}`, method: 'seller_phone+property_address', confidence: 'high' }
-  if (sellerPhone && ownerId)
-    return { key: `phone_owner:${sellerPhone}:${ownerId}`, method: 'seller_phone+master_owner_id', confidence: 'high' }
-  if (sellerPhone && prospectId)
-    return { key: `phone_prospect:${sellerPhone}:${prospectId}`, method: 'seller_phone+prospect_id', confidence: 'medium' }
+  // The inbox conversation is keyed by seller phone. Outbound rows often carry
+  // owner/property IDs while inbound webhook rows do not, so phone-first keeps
+  // replies merged with the original outreach thread.
   if (sellerPhone)
     return { key: `phone:${sellerPhone}`, method: 'seller_phone', confidence: 'medium' }
   if (ownerId && propertyId)
@@ -871,10 +996,13 @@ const runFilteredQuery = async (
   if (!table) return []
   const supabase = getSupabaseClient()
   let query = supabase.from(table).select('*').limit(limit)
-  const valid = filters.filter((f) => f.value)
+  const allowedColumns = FILTER_COLUMNS_BY_ALIAS[tableOrAlias]
+  const valid = filters.filter((f) => f.value && (!allowedColumns || allowedColumns.includes(f.key)))
   if (valid.length > 0) {
     const orClause = valid.map((f) => `${f.key}.eq.${safeFilterValue(f.value)}`).join(',')
     query = query.or(orClause)
+  } else if (filters.some((f) => f.value)) {
+    return []
   }
   const { data, error } = await query
   if (error) {
@@ -884,7 +1012,10 @@ const runFilteredQuery = async (
   return safeArray(data as AnyRecord[])
 }
 
-export const getInboxThreads = async (filters: InboxThreadFilters = {}): Promise<InboxThread[]> => {
+export const getInboxThreads = async (
+  filters: InboxThreadFilters = {},
+  options: InboxFetchOptions = {},
+): Promise<InboxThread[]> => {
   const supabase = getSupabaseClient()
   console.log('[getInboxThreads] Fetching from Supabase')
 
@@ -892,17 +1023,24 @@ export const getInboxThreads = async (filters: InboxThreadFilters = {}): Promise
   let cursorCreatedAt: string | null = null
   let page = 0
   const maxPages = 500
+  const maxRows = options.maxRows ?? Number.POSITIVE_INFINITY
   let useWildcardSelect = false
 
   while (page < maxPages) {
+    const remaining = Number.isFinite(maxRows) ? Math.max(0, maxRows - events.length) : MESSAGE_EVENTS_INBOX_PAGE_SIZE
+    if (remaining <= 0) break
     let query = supabase
       .from('message_events')
       .select(useWildcardSelect ? '*' : (MESSAGE_EVENTS_THREAD_COLUMNS as unknown as '*'))
       .order('created_at', { ascending: false })
-      .limit(MESSAGE_EVENTS_INBOX_PAGE_SIZE)
+      .limit(Math.min(MESSAGE_EVENTS_INBOX_PAGE_SIZE, remaining))
 
     if (cursorCreatedAt) {
       query = query.lt('created_at', cursorCreatedAt)
+    }
+
+    if (options.signal) {
+      query = query.abortSignal(options.signal)
     }
 
     const eventsResult = await query
@@ -928,6 +1066,7 @@ export const getInboxThreads = async (filters: InboxThreadFilters = {}): Promise
     if (batch.length === 0) break
 
     events.push(...batch)
+    if (Number.isFinite(maxRows) && events.length >= maxRows) break
 
     const last = batch[batch.length - 1]
     const nextCursor = asIso(last?.['created_at'] ?? last?.['event_timestamp'])
@@ -971,20 +1110,78 @@ export const getInboxThreads = async (filters: InboxThreadFilters = {}): Promise
   const threads: InboxThread[] = []
   const threadKeys = Array.from(grouped.keys())
   const stateRowsByKey = new Map<string, AnyRecord>()
+  const queueRowsByPhone = new Map<string, AnyRecord>()
 
   if (threadKeys.length > 0) {
-    const { data: stateRows, error: stateError } = await supabase
-      .from('inbox_thread_state')
-      .select('thread_key,stage,status,priority,is_archived,is_read,is_pinned,last_read_at,archived_at,updated_at')
-      .in('thread_key', threadKeys)
+    const stateController = new AbortController()
+    let stateTimedOut = false
+    const stateTimeout = setTimeout(() => {
+      stateTimedOut = true
+      stateController.abort()
+    }, INBOX_THREAD_STATE_TIMEOUT_MS)
+    const abortStateFromParent = () => stateController.abort()
+    options.signal?.addEventListener('abort', abortStateFromParent, { once: true })
 
-    if (stateError) {
-      if (DEV) console.warn('[NEXUS] inbox_thread_state read failed:', mapErrorMessage(stateError))
-    } else {
-      for (const row of safeArray(stateRows as AnyRecord[])) {
-        const key = asString(row['thread_key'], '')
-        if (key) stateRowsByKey.set(key, row)
+    try {
+      const stateResponses = await Promise.all(
+        chunkArray(threadKeys, INBOX_THREAD_STATE_BATCH_SIZE).map((keyBatch) => (
+          supabase
+            .from('inbox_thread_state')
+            .select('thread_key,stage,status,priority,is_archived,is_read,is_pinned,last_read_at,archived_at,updated_at')
+            .in('thread_key', keyBatch)
+            .abortSignal(stateController.signal)
+        )),
+      )
+
+      for (const response of stateResponses) {
+        if (response.error) {
+          if (DEV) console.warn('[NEXUS] inbox_thread_state read failed:', mapErrorMessage(response.error))
+          continue
+        }
+
+        for (const row of safeArray(response.data as AnyRecord[])) {
+          const key = asString(row['thread_key'], '')
+          if (key) stateRowsByKey.set(key, row)
+        }
       }
+    } catch (error) {
+      if (options.signal?.aborted) throw error
+      if (DEV) {
+        const reason = stateTimedOut
+          ? `timed out after ${INBOX_THREAD_STATE_TIMEOUT_MS}ms`
+          : mapErrorMessage(error)
+        console.warn('[NEXUS] inbox_thread_state read skipped:', reason)
+      }
+    } finally {
+      clearTimeout(stateTimeout)
+      options.signal?.removeEventListener('abort', abortStateFromParent)
+    }
+  }
+
+  const sellerPhones = Array.from(
+    new Set(
+      events
+        .map((row) => normalizePhone(getSellerPhoneFromMessage(row).sellerPhone))
+        .filter(Boolean),
+    ),
+  )
+  for (let index = 0; index < sellerPhones.length; index += 100) {
+    const phoneBatch = sellerPhones.slice(index, index + 100)
+    const { data: queueRows, error: queueError } = await supabase
+      .from('send_queue')
+      .select('id,queue_key,queue_status,to_phone_number,from_phone_number,master_owner_id,prospect_id,property_id,property_address,market_id,seller_first_name,seller_display_name,message_body,message_text,created_at')
+      .in('to_phone_number', phoneBatch)
+      .order('created_at', { ascending: false })
+      .limit(1000)
+
+    if (queueError) {
+      if (DEV) console.warn('[NEXUS] send_queue inbox enrichment failed:', mapErrorMessage(queueError))
+      continue
+    }
+
+    for (const row of safeArray(queueRows as AnyRecord[])) {
+      const phone = normalizePhone(row['to_phone_number'])
+      if (phone && !queueRowsByPhone.has(phone)) queueRowsByPhone.set(phone, row)
     }
   }
 
@@ -1005,24 +1202,33 @@ export const getInboxThreads = async (filters: InboxThreadFilters = {}): Promise
       .map((row) => getMessageTimestamp(row))
       .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] ?? null
 
-    // Direct column access — actual message_events schema
-    const ownerId = asString(latest['master_owner_id'], '')
-    const prospectId = asString(latest['prospect_id'], '')
-    const propertyId = asString(latest['property_id'], '')
     const { sellerPhone, sellerPhoneSourceField, canonicalE164, ourNumber, directionUsed } = getSellerPhoneFromMessage(latest)
     const phoneNumber = sellerPhone
+    const queueRow = queueRowsByPhone.get(normalizePhone(sellerPhone)) ?? null
 
-    const ownerName = asString(
-      getFirst(latest, ['owner_name', 'full_name', 'name', 'from_name', 'contact_name', 'seller_name']),
-      phoneNumber || 'Unknown owner',
-    )
+    const rowWithOwner = sorted.find((row) => asString(row['master_owner_id'], '')) ?? latest
+    const rowWithProspect = sorted.find((row) => asString(row['prospect_id'], '')) ?? latest
+    const rowWithProperty = sorted.find((row) => asString(row['property_id'], '')) ?? latest
+
+    const resolvedOwnerId = asString(rowWithOwner['master_owner_id'], '') || asString(queueRow?.['master_owner_id'], '')
+    const resolvedProspectId = asString(rowWithProspect['prospect_id'], '') || asString(queueRow?.['prospect_id'], '')
+    const resolvedPropertyId = asString(rowWithProperty['property_id'], '') || asString(queueRow?.['property_id'], '')
+
+    const ownerName =
+      asString(getFirst(latest, ['owner_name', 'full_name', 'name', 'from_name', 'contact_name', 'seller_name']), '') ||
+      asString(queueRow?.['seller_display_name'], '') ||
+      asString(queueRow?.['seller_first_name'], '') ||
+      phoneNumber ||
+      'Unknown owner'
 
     const propertyAddress =
       asString(latest['property_address'], '') ||
+      asString(queueRow?.['property_address'], '') ||
       asString(getFirst(latest, ['address']), '')
 
     const market =
       asString(latest['market_id'], '') ||
+      asString(queueRow?.['market_id'], '') ||
       asString(getFirst(latest, ['market', 'market_id']), 'unknown')
 
     const stateRow = stateRowsByKey.get(threadKey) ?? null
@@ -1067,7 +1273,7 @@ export const getInboxThreads = async (filters: InboxThreadFilters = {}): Promise
 
     const thread: InboxThread = {
       id: asString(latest['id'], threadKey),
-      leadId: propertyId || ownerId || threadKey,
+      leadId: resolvedPropertyId || resolvedOwnerId || threadKey,
       marketId: market || 'unknown',
       ownerName,
       subject: propertyAddress || `Thread ${threads.length + 1}`,
@@ -1084,9 +1290,9 @@ export const getInboxThreads = async (filters: InboxThreadFilters = {}): Promise
       threadKey,
       groupingMethod: bucket.meta.method,
       groupingConfidence: bucket.meta.confidence,
-      ownerId,
-      prospectId,
-      propertyId,
+      ownerId: resolvedOwnerId,
+      prospectId: resolvedProspectId,
+      propertyId: resolvedPropertyId,
       phoneNumber,
       canonicalE164,
       sellerPhoneSourceField: sellerPhoneSourceField || undefined,
@@ -1094,7 +1300,7 @@ export const getInboxThreads = async (filters: InboxThreadFilters = {}): Promise
       directionUsed: directionUsed || undefined,
       messageEventKey: asString(latest['message_event_key'], '') || undefined,
       providerMessageSid: asString(latest['provider_message_sid'], '') || undefined,
-      queueId: asString(latest['queue_id'], '') || undefined,
+      queueId: asString(latest['queue_id'], '') || asString(queueRow?.['id'], '') || undefined,
       phoneNumberId: asString(latest['phone_number_id'], '') || undefined,
       textgridNumberId: asString(latest['textgrid_number_id'], '') || undefined,
       isOptOut: latest['is_opt_out'] != null ? Boolean(latest['is_opt_out']) : undefined,
@@ -1154,11 +1360,11 @@ export const getInboxThreads = async (filters: InboxThreadFilters = {}): Promise
   return filtered
 }
 
-export const fetchInboxModel = async (): Promise<InboxModel> => {
+export const fetchInboxModel = async (options: InboxFetchOptions = {}): Promise<InboxModel> => {
   const lastLiveFetchAt = new Date().toISOString()
   console.log('[fetchInboxModel] Starting inbox fetch')
 
-  const threads = await getInboxThreads()
+  const threads = await getInboxThreads({}, options)
   console.log('[fetchInboxModel] Got', threads.length, 'threads from Supabase')
   const groupedThreadCount = threads.length
 
@@ -1243,6 +1449,13 @@ export const getThreadMessagesForThread = async (
     threadProspectId: string,
   ) => {
     const threadKey = asString(activeThread.threadKey, '')
+
+    if (threadKey.startsWith('phone:')) {
+      const [, phone] = threadKey.split(':')
+      if (phone) {
+        return query.or(`from_phone_number.eq.${safeFilterValue(phone)},to_phone_number.eq.${safeFilterValue(phone)}`)
+      }
+    }
 
     if (threadKey.startsWith('phone_property:')) {
       const [, phone, keyPropertyId] = threadKey.split(':')
@@ -1760,6 +1973,7 @@ export const queueReplyFromInbox = async (
   messageText: string,
   _options?: { scheduledAt?: string },
 ): Promise<QueueReplyResult> => {
+  void _options
   const trimmedText = messageText.trim()
   if (!trimmedText) {
     return { ok: false, queueId: null, status: null, errorMessage: 'Message text is required', insertPayloadKeys: [] }
@@ -1771,6 +1985,13 @@ export const queueReplyFromInbox = async (
   if (!toPhone) {
     return { ok: false, queueId: null, status: null, errorMessage: 'Thread has no valid phone number', insertPayloadKeys: [] }
   }
+
+  // Resolve from number with better fallback chain
+  const fromPhone = [
+    normalizePhone(thread.ourNumber ?? ''),
+    normalizePhone(import.meta.env.VITE_TEXTGRID_FROM_NUMBER ?? ''),
+    normalizePhone(import.meta.env.VITE_TEXTGRID_NUMBER ?? ''),
+  ].find((phone) => phone && phone.length > 0) || null
 
   const supabase = getSupabaseClient()
   const now = new Date().toISOString()
@@ -1811,13 +2032,14 @@ export const queueReplyFromInbox = async (
     created_at: now,
   }
 
-  if (thread.ourNumber) payload.from_phone_number = normalizePhone(thread.ourNumber) || thread.ourNumber
+  // ALWAYS include from_phone_number (even if null)
+  payload.from_phone_number = fromPhone
   if (isValidUUID(asString(thread.phoneNumberId, ''))) payload.phone_number_id = thread.phoneNumberId
-  if (thread.textgridNumberId) payload.textgrid_number_id = thread.textgridNumberId
+  if (isValidUUID(asString(thread.textgridNumberId, ''))) payload.textgrid_number_id = thread.textgridNumberId
   if (thread.propertyAddress) payload.property_address = thread.propertyAddress
-  if (thread.ownerId) payload.master_owner_id = thread.ownerId
-  if (thread.prospectId) payload.prospect_id = thread.prospectId
-  if (thread.propertyId) payload.property_id = thread.propertyId
+  if (isValidUUID(asString(thread.ownerId, ''))) payload.master_owner_id = thread.ownerId
+  if (isValidUUID(asString(thread.prospectId, ''))) payload.prospect_id = thread.prospectId
+  if (isValidUUID(asString(thread.propertyId, ''))) payload.property_id = thread.propertyId
   if (thread.marketId) payload.market_id = thread.marketId
 
   const insertPayloadKeys = Object.keys(payload)
@@ -2044,6 +2266,8 @@ export const flagThread = async (threadKey: string): Promise<InboxThreadStateMut
 }
 
 export const sendDraft = async (_threadIdOrKey: string, _text: string): Promise<void> => {
+  void _threadIdOrKey
+  void _text
   throw new Error('sendDraft: replaced by sendInboxMessageNow — use that instead')
 }
 
@@ -2134,11 +2358,17 @@ export const sendInboxMessageNow = async (
   }
 
   // ── Resolve from number ────────────────────────────────────────────────────
-  const fromPhone =
-    normalizePhone(options?.fromPhoneNumber ?? '') ||
-    normalizePhone(thread.ourNumber ?? '') ||
-    normalizePhone(import.meta.env.VITE_TEXTGRID_FROM_NUMBER ?? '') ||
-    normalizePhone(import.meta.env.VITE_TEXTGRID_NUMBER ?? '')
+  // Try all possible sources for from_phone_number; empty strings are treated as falsy
+  const fromPhone = [
+    normalizePhone(options?.fromPhoneNumber ?? ''),
+    normalizePhone(thread.ourNumber ?? ''),
+    normalizePhone(import.meta.env.VITE_TEXTGRID_FROM_NUMBER ?? ''),
+    normalizePhone(import.meta.env.VITE_TEXTGRID_NUMBER ?? ''),
+  ].find((phone) => phone && phone.length > 0) || null
+
+  if (!fromPhone) {
+    if (DEV) console.warn('[sendInboxMessageNow] no from_phone_number available — send will likely fail', { threadOurNumber: thread.ourNumber, envVars: { VITE_TEXTGRID_FROM_NUMBER: !!import.meta.env.VITE_TEXTGRID_FROM_NUMBER, VITE_TEXTGRID_NUMBER: !!import.meta.env.VITE_TEXTGRID_NUMBER } })
+  }
 
   // If from number known, try to resolve textgrid_numbers table for the number id
   let textgridNumberId = asString(thread.textgridNumberId, '') || null
@@ -2160,10 +2390,6 @@ export const sendInboxMessageNow = async (
     }
   }
 
-  if (!fromPhone) {
-    return { ok: false, queueId: null, messageEventId: null, providerMessageSid: null, deliveryStatus: null, errorMessage: 'Missing sender number — set ourNumber on thread or VITE_TEXTGRID_NUMBER env var', insertPayloadKeys: [], suppressionBlocked: false, sendRouteUsed: 'none', queueProcessorEligible: false }
-  }
-
   const now = new Date().toISOString()
   const queueKey = `inbox:send_now:${thread.threadKey ?? thread.id}:${Date.now()}`
 
@@ -2183,7 +2409,6 @@ export const sendInboxMessageNow = async (
     message_body: personalization.messageText,
     message_text: personalization.messageText,
     to_phone_number: toPhone,
-    from_phone_number: fromPhone,
     character_count: personalization.messageText.length,
     touch_number: 1,
     current_stage: 'manual_reply',
@@ -2207,17 +2432,24 @@ export const sendInboxMessageNow = async (
     created_at: now,
   }
 
+  // ALWAYS include from_phone_number (even if null) — backend processor requires this field
+  insertPayload.from_phone_number = fromPhone
+  if (isValidUUID(asString(textgridNumberId, ''))) insertPayload.textgrid_number_id = textgridNumberId
   if (isValidUUID(asString(thread.phoneNumberId, ''))) insertPayload.phone_number_id = thread.phoneNumberId
-  if (textgridNumberId) insertPayload.textgrid_number_id = textgridNumberId
   if (thread.propertyAddress) insertPayload.property_address = thread.propertyAddress
-  if (thread.ownerId) insertPayload.master_owner_id = thread.ownerId
-  if (thread.prospectId) insertPayload.prospect_id = thread.prospectId
-  if (thread.propertyId) insertPayload.property_id = thread.propertyId
+  if (isValidUUID(asString(thread.ownerId, ''))) insertPayload.master_owner_id = thread.ownerId
+  if (isValidUUID(asString(thread.prospectId, ''))) insertPayload.prospect_id = thread.prospectId
+  if (isValidUUID(asString(thread.propertyId, ''))) insertPayload.property_id = thread.propertyId
   if (thread.marketId) insertPayload.market_id = thread.marketId
 
   const insertPayloadKeys = Object.keys(insertPayload)
 
-  if (DEV) console.log('[sendInboxMessageNow] inserting queue row queue_status=ready', { keys: insertPayloadKeys, toPhone, fromPhone, queueKey })
+  if (DEV) { 
+    console.log('[sendInboxMessageNow] inserting queue row queue_status=ready', { keys: insertPayloadKeys, toPhone, fromPhone, queueKey })
+    console.log('[sendInboxMessageNow] full payload:', insertPayload)
+  } else {
+    console.log('[sendInboxMessageNow] inserting with keys:', insertPayloadKeys.join(', '), '| toPhone:', toPhone, '| fromPhone:', fromPhone)
+  }
 
   const { data: queueData, error: queueError } = await supabase
     .from('send_queue')
@@ -2226,20 +2458,45 @@ export const sendInboxMessageNow = async (
     .limit(1)
 
   if (queueError) {
-    if (DEV) console.error('[sendInboxMessageNow] queue insert failed:', queueError.message)
+    console.error('[sendInboxMessageNow] queue insert FAILED:', { 
+      errorMessage: queueError.message, 
+      errorCode: queueError.code, 
+      keys: insertPayloadKeys, 
+      toPhone, 
+      fromPhone 
+    })
+    if (DEV) console.error('[sendInboxMessageNow] full error:', queueError)
     return { ok: false, queueId: null, messageEventId: null, providerMessageSid: null, deliveryStatus: null, errorMessage: queueError.message, insertPayloadKeys, suppressionBlocked: false, sendRouteUsed: 'send_queue_queued', queueProcessorEligible: false }
   }
 
   const queueRow = safeArray(queueData as AnyRecord[])[0] ?? null
   const queueId = queueRow ? asString(getFirst(queueRow, ['id', 'queue_id', 'queue_key']), '') || queueKey : queueKey
 
+  let queueProcessorEligible = true
+  let processorLagCount = 0
+  try {
+    const lagCutoffIso = new Date(Date.now() - QUEUE_PROCESSOR_LAG_MINUTES * 60 * 1000).toISOString()
+    const lagProbe = await supabase
+      .from('send_queue')
+      .select('id', { count: 'exact', head: true })
+      .eq('queue_status', 'queued')
+      .lt('created_at', lagCutoffIso)
+
+    if (!lagProbe.error) {
+      processorLagCount = lagProbe.count ?? 0
+      if (processorLagCount > 0) queueProcessorEligible = false
+    }
+  } catch {
+    // Keep optimistic defaults when health probe cannot run.
+  }
+
   // ── Insert optimistic outbound message_events row ─────────────────────────
   const eventPayload: Record<string, unknown> = {
+    message_event_key: `${queueKey}:optimistic`,
     direction: 'outbound',
     event_type: 'outbound_send',
     message_body: personalization.messageText,
     to_phone_number: toPhone,
-    from_phone_number: fromPhone,
     delivery_status: 'queued',
     provider_delivery_status: 'queued',
     source_app: 'inbox',
@@ -2252,12 +2509,14 @@ export const sendInboxMessageNow = async (
     queue_id: queueId,
     metadata: { source: 'inbox_send_now_optimistic', queue_key: queueKey },
   }
-  if (textgridNumberId) eventPayload.textgrid_number_id = textgridNumberId
+  // ALWAYS include from_phone_number (even if null)
+  eventPayload.from_phone_number = fromPhone
+  if (isValidUUID(asString(textgridNumberId, ''))) eventPayload.textgrid_number_id = textgridNumberId
   if (isValidUUID(asString(thread.phoneNumberId, ''))) eventPayload.phone_number_id = thread.phoneNumberId
   if (thread.propertyAddress) eventPayload.property_address = thread.propertyAddress
-  if (thread.ownerId) eventPayload.master_owner_id = thread.ownerId
-  if (thread.prospectId) eventPayload.prospect_id = thread.prospectId
-  if (thread.propertyId) eventPayload.property_id = thread.propertyId
+  if (isValidUUID(asString(thread.ownerId, ''))) eventPayload.master_owner_id = thread.ownerId
+  if (isValidUUID(asString(thread.prospectId, ''))) eventPayload.prospect_id = thread.prospectId
+  if (isValidUUID(asString(thread.propertyId, ''))) eventPayload.property_id = thread.propertyId
   if (thread.marketId) eventPayload.market_id = thread.marketId
 
   const { data: eventData, error: eventError } = await supabase
@@ -2266,14 +2525,20 @@ export const sendInboxMessageNow = async (
     .select('id')
     .limit(1)
 
-  if (eventError && DEV) {
-    console.warn('[sendInboxMessageNow] message_events insert failed (non-fatal):', eventError.message)
+  if (eventError) {
+    console.error('[sendInboxMessageNow] message_events insert FAILED (non-fatal):', { 
+      errorMessage: eventError.message, 
+      errorCode: eventError.code,
+      queueId
+    })
+    if (DEV) console.error('[sendInboxMessageNow] full message_events error:', eventError)
   }
 
   const eventRow = safeArray(eventData as AnyRecord[])[0] ?? null
   const messageEventId = eventRow ? asString(getFirst(eventRow, ['id']), '') || null : null
 
-  if (DEV) console.log('[sendInboxMessageNow] success', { queueId, messageEventId, queue_status: 'queued', queueKey, queueProcessorEligible: true })
+  if (DEV) console.log('[sendInboxMessageNow] success', { queueId, messageEventId, queue_status: 'queued', queueKey, queueProcessorEligible, processorLagCount })
+  else console.log('[sendInboxMessageNow] SUCCESS - queueId:', queueId, '| messageEventId:', messageEventId)
 
   return {
     ok: true,
@@ -2281,11 +2546,11 @@ export const sendInboxMessageNow = async (
     messageEventId,
     providerMessageSid: null,
     deliveryStatus: 'queued',
-    errorMessage: null,
+    errorMessage: queueProcessorEligible ? null : `Queued, but processor appears delayed (${processorLagCount} queued older than ${QUEUE_PROCESSOR_LAG_MINUTES}m)`,
     insertPayloadKeys,
     suppressionBlocked: false,
     sendRouteUsed: 'send_queue_queued',
-    queueProcessorEligible: true,
+    queueProcessorEligible,
   }
 }
 
@@ -2309,6 +2574,13 @@ export const scheduleReplyFromInbox = async (
   if (!toPhone) {
     return { ok: false, queueId: null, status: null, errorMessage: 'Thread has no valid phone number', insertPayloadKeys: [] }
   }
+
+  // Resolve from number with better fallback chain
+  const fromPhone = [
+    normalizePhone(thread.ourNumber ?? ''),
+    normalizePhone(import.meta.env.VITE_TEXTGRID_FROM_NUMBER ?? ''),
+    normalizePhone(import.meta.env.VITE_TEXTGRID_NUMBER ?? ''),
+  ].find((phone) => phone && phone.length > 0) || null
 
   const supabase = getSupabaseClient()
   const now = new Date().toISOString()
@@ -2350,13 +2622,14 @@ export const scheduleReplyFromInbox = async (
     created_at: now,
   }
 
-  if (thread.ourNumber) payload.from_phone_number = normalizePhone(thread.ourNumber) || thread.ourNumber
+  // ALWAYS include from_phone_number (even if null)
+  payload.from_phone_number = fromPhone
   if (isValidUUID(asString(thread.phoneNumberId, ''))) payload.phone_number_id = thread.phoneNumberId
-  if (thread.textgridNumberId) payload.textgrid_number_id = thread.textgridNumberId
+  if (isValidUUID(asString(thread.textgridNumberId, ''))) payload.textgrid_number_id = thread.textgridNumberId
   if (thread.propertyAddress) payload.property_address = thread.propertyAddress
-  if (thread.ownerId) payload.master_owner_id = thread.ownerId
-  if (thread.prospectId) payload.prospect_id = thread.prospectId
-  if (thread.propertyId) payload.property_id = thread.propertyId
+  if (isValidUUID(asString(thread.ownerId, ''))) payload.master_owner_id = thread.ownerId
+  if (isValidUUID(asString(thread.prospectId, ''))) payload.prospect_id = thread.prospectId
+  if (isValidUUID(asString(thread.propertyId, ''))) payload.property_id = thread.propertyId
   if (thread.marketId) payload.market_id = thread.marketId
 
   const insertPayloadKeys = Object.keys(payload)

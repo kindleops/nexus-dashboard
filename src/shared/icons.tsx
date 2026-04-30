@@ -1,12 +1,13 @@
 import type { SVGProps } from 'react'
 
-type IconName =
+export type IconName =
   | 'search'
   | 'bell'
   | 'settings'
   | 'radar'
   | 'spark'
   | 'pin'
+  | 'chevron-down'
   | 'chevron-right'
   | 'arrow-up-right'
   | 'clock'
@@ -29,6 +30,12 @@ type IconName =
   | 'stats'
   | 'users'
   | 'file-text'
+  | 'phone'
+  | 'mail'
+  | 'paperclip'
+  | 'more'
+  | 'key'
+  | 'user'
   | 'eye'
   | 'play'
   | 'pause'
@@ -108,6 +115,12 @@ export const Icon = ({ name, ...props }: IconProps) => {
         <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
           <path d="M12 21s6-5.2 6-11a6 6 0 0 0-12 0c0 5.8 6 11 6 11Z" {...commonProps} />
           <circle cx="12" cy="10" r="2.2" {...commonProps} />
+        </svg>
+      )
+    case 'chevron-down':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="m6 9 6 6 6-6" {...commonProps} />
         </svg>
       )
     case 'chevron-right':
@@ -254,6 +267,47 @@ export const Icon = ({ name, ...props }: IconProps) => {
         <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
           <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z" {...commonProps} />
           <path d="M14 3v4h4M8 13h8M8 17h5" {...commonProps} />
+        </svg>
+      )
+    case 'phone':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M6.6 4.5 9 4l2.1 4.7-1.7 1.1a11.5 11.5 0 0 0 4.8 4.8l1.1-1.7L20 15l-.5 2.4c-.2 1-1 1.8-2 1.9-7 .2-12.8-5.6-12.6-12.6.1-1 .8-1.9 1.7-2.2Z" {...commonProps} />
+        </svg>
+      )
+    case 'mail':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <rect x="3.5" y="5.5" width="17" height="13" rx="2" {...commonProps} />
+          <path d="m4.5 7 7.5 6 7.5-6" {...commonProps} />
+        </svg>
+      )
+    case 'paperclip':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="m21 11.2-8.5 8.5a5.2 5.2 0 0 1-7.4-7.4l9-9a3.5 3.5 0 0 1 5 5l-9 9a1.8 1.8 0 1 1-2.5-2.5l8.4-8.4" {...commonProps} />
+        </svg>
+      )
+    case 'more':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <circle cx="5" cy="12" r="1.4" fill="currentColor" />
+          <circle cx="12" cy="12" r="1.4" fill="currentColor" />
+          <circle cx="19" cy="12" r="1.4" fill="currentColor" />
+        </svg>
+      )
+    case 'key':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <circle cx="8" cy="15" r="4" {...commonProps} />
+          <path d="m11 12 8-8M16 7l2 2M14 9l2 2" {...commonProps} />
+        </svg>
+      )
+    case 'user':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <circle cx="12" cy="8" r="4" {...commonProps} />
+          <path d="M4 21a8 8 0 0 1 16 0" {...commonProps} />
         </svg>
       )
     case 'eye':
