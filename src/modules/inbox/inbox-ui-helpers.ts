@@ -16,17 +16,11 @@ export type InboxStageSelectValue =
 
 export type InboxViewSelectValue =
   | 'priority'
-  | 'needs_response'
-  | 'positive_interested'
-  | 'info_requests'
-  | 'price_offer'
-  | 'review_required'
+  | 'active'
+  | 'waiting'
+  | 'hidden'
   | 'suppressed'
-  | 'wrong_number'
-  | 'not_interested'
-  | 'sent'
   | 'all'
-  | 'archived'
 
 export type InboxSavedFilterPreset =
   | 'my_priority'
@@ -191,33 +185,26 @@ export const stageOptions: Array<{ value: InboxStageSelectValue; label: string }
 
 export const viewOptions: Array<{ value: InboxViewSelectValue; label: string }> = [
   { value: 'priority', label: 'Priority' },
-  { value: 'needs_response', label: 'Needs Response' },
-  { value: 'positive_interested', label: 'Positive / Interested' },
-  { value: 'info_requests', label: 'Info Requests' },
-  { value: 'price_offer', label: 'Price / Offer' },
-  { value: 'review_required', label: 'Review Required' },
+  { value: 'active', label: 'Active' },
+  { value: 'waiting', label: 'Waiting' },
+  { value: 'hidden', label: 'Hidden' },
   { value: 'suppressed', label: 'Suppressed' },
-  { value: 'wrong_number', label: 'Wrong Number' },
-  { value: 'not_interested', label: 'Not Interested' },
-  { value: 'sent', label: 'Sent' },
   { value: 'all', label: 'All' },
-  { value: 'archived', label: 'Archived' },
 ]
 
 export const savedFilterOptions: Array<{ value: InboxSavedFilterPreset; label: string }> = [
-  { value: 'my_priority', label: 'My Priority' },
-  { value: 'new_inbounds', label: 'New Inbounds' },
-  { value: 'high_motivation', label: 'High Motivation' },
-  { value: 'offer_needed', label: 'Offer Needed' },
-  { value: 'review_required', label: 'Review Required' },
+  { value: 'my_priority', label: 'Priority' },
+  { value: 'new_inbounds', label: 'Active' },
+  { value: 'high_motivation', label: 'Active + Motivation' },
+  { value: 'offer_needed', label: 'Waiting' },
+  { value: 'review_required', label: 'All' },
   { value: 'suppressed', label: 'Suppressed' },
-  { value: 'spanish_replies', label: 'Spanish Replies' },
-  { value: 'wrong_numbers', label: 'Wrong Numbers' },
-  { value: 'unlinked_records', label: 'Unlinked Records' },
+  { value: 'spanish_replies', label: 'Language Focus' },
+  { value: 'wrong_numbers', label: 'Hidden' },
+  { value: 'unlinked_records', label: 'All (Debug)' },
 ]
 
 const closedStages = new Set(['not_interested', 'wrong_number', 'dnc_opt_out', 'archived', 'closed_converted'])
-const actionableStages = new Set(['new_reply', 'needs_response', 'interested', 'needs_offer', 'needs_call', 'ai_draft_ready'])
 
 const toText = (value: unknown): string => String(value ?? '').trim()
 const toLower = (value: unknown): string => toText(value).toLowerCase()
@@ -235,6 +222,9 @@ const numberOrNull = (value: unknown): number | null => {
 const containsAny = (haystack: string, terms: string[]): boolean => terms.some((term) => haystack.includes(term))
 
 export const isSuppressedThread = (thread: InboxWorkflowThread): boolean => {
+  const priorityBucket = toLower(getField(thread, 'priorityBucket') || getField(thread, 'priority_bucket'))
+  if (priorityBucket === 'suppressed') return true
+
   const blob = [
     thread.inboxStage,
     thread.inboxStatus,
@@ -251,32 +241,8 @@ export const isSuppressedThread = (thread: InboxWorkflowThread): boolean => {
   )
 }
 
-const isHardNoThread = (thread: InboxWorkflowThread): boolean => {
-  const blob = [thread.preview, thread.lastMessageBody, thread.subject, thread.inboxStage].map(toLower).join(' ')
-  return containsAny(blob, ['wrong number', 'wrong person', 'not interested', 'not for sale', 'leave me alone', 'do not contact'])
-}
-
 const isPriorityCandidate = (thread: InboxWorkflowThread): boolean => {
-  if (isSuppressedThread(thread)) return false
-  if (thread.isArchived || closedStages.has(thread.inboxStage)) return false
-  if (isHardNoThread(thread)) return false
-
-  const blob = [thread.preview, thread.lastMessageBody, thread.subject].map(toLower).join(' ')
-  const actionableLanguage = containsAny(blob, [
-    'yes',
-    'maybe',
-    'depends',
-    'interested',
-    'price',
-    'offer',
-    'how much',
-    'condition',
-    'tenant',
-    'vacant',
-    'call me',
-  ])
-
-  return actionableStages.has(thread.inboxStage) || Boolean(thread.needsResponse) || actionableLanguage
+  return Boolean(getField(thread, 'showInPriorityInbox') ?? getField(thread, 'show_in_priority_inbox'))
 }
 
 const matchesStageSelection = (thread: InboxWorkflowThread, stage: InboxStageSelectValue): boolean => {
@@ -294,19 +260,16 @@ const matchesStageSelection = (thread: InboxWorkflowThread, stage: InboxStageSel
 }
 
 const matchesViewSelection = (thread: InboxWorkflowThread, view: InboxViewSelectValue): boolean => {
-  const blob = [thread.lastMessageBody, thread.preview].map(toLower).join(' ')
+  const uiIntent = toLower(getField(thread, 'uiIntent') || getField(thread, 'ui_intent'))
+  const priorityBucket = toLower(getField(thread, 'priorityBucket') || getField(thread, 'priority_bucket'))
+  const showInPriority = Boolean(getField(thread, 'showInPriorityInbox') ?? getField(thread, 'show_in_priority_inbox'))
+
   if (view === 'all') return true
-  if (view === 'priority') return isPriorityCandidate(thread)
-  if (view === 'needs_response') return thread.inboxStage === 'needs_response' || Boolean(thread.needsResponse)
-  if (view === 'positive_interested') return containsAny(blob, ['yes', 'interested', 'depends']) || thread.inboxStage === 'interested'
-  if (view === 'info_requests') return containsAny(blob, ['how', 'what', 'where', 'when', '?'])
-  if (view === 'price_offer') return containsAny(blob, ['price', 'offer', 'cash']) || thread.inboxStage === 'needs_offer'
-  if (view === 'review_required') return thread.priority === 'urgent' || thread.priority === 'high'
-  if (view === 'suppressed') return isSuppressedThread(thread)
-  if (view === 'wrong_number') return thread.inboxStage === 'wrong_number' || containsAny(blob, ['wrong number', 'wrong person'])
-  if (view === 'not_interested') return thread.inboxStage === 'not_interested' || containsAny(blob, ['not interested', 'not for sale'])
-  if (view === 'sent') return thread.inboxStatus === 'sent' || thread.inboxStage === 'sent_waiting'
-  if (view === 'archived') return thread.isArchived || thread.inboxStage === 'archived'
+  if (view === 'priority') return showInPriority
+  if (view === 'active') return priorityBucket !== 'hidden' && priorityBucket !== 'suppressed' && uiIntent !== 'outbound_waiting'
+  if (view === 'waiting') return uiIntent === 'outbound_waiting'
+  if (view === 'hidden') return priorityBucket === 'hidden'
+  if (view === 'suppressed') return priorityBucket === 'suppressed'
   return true
 }
 
@@ -413,29 +376,23 @@ export const getPriorityInboxThreads = (threads: InboxWorkflowThread[]): InboxWo
 
 export const getInboxViewCounts = (threads: InboxWorkflowThread[]): Record<InboxViewSelectValue, number> => ({
   priority: threads.filter((thread) => matchesViewSelection(thread, 'priority')).length,
-  needs_response: threads.filter((thread) => matchesViewSelection(thread, 'needs_response')).length,
-  positive_interested: threads.filter((thread) => matchesViewSelection(thread, 'positive_interested')).length,
-  info_requests: threads.filter((thread) => matchesViewSelection(thread, 'info_requests')).length,
-  price_offer: threads.filter((thread) => matchesViewSelection(thread, 'price_offer')).length,
-  review_required: threads.filter((thread) => matchesViewSelection(thread, 'review_required')).length,
+  active: threads.filter((thread) => matchesViewSelection(thread, 'active')).length,
+  waiting: threads.filter((thread) => matchesViewSelection(thread, 'waiting')).length,
+  hidden: threads.filter((thread) => matchesViewSelection(thread, 'hidden')).length,
   suppressed: threads.filter((thread) => matchesViewSelection(thread, 'suppressed')).length,
-  wrong_number: threads.filter((thread) => matchesViewSelection(thread, 'wrong_number')).length,
-  not_interested: threads.filter((thread) => matchesViewSelection(thread, 'not_interested')).length,
-  sent: threads.filter((thread) => matchesViewSelection(thread, 'sent')).length,
   all: threads.length,
-  archived: threads.filter((thread) => matchesViewSelection(thread, 'archived')).length,
 })
 
 export const getSavedPresetConfig = (preset: InboxSavedFilterPreset): Partial<InboxFilterState> => {
   if (preset === 'my_priority') return { view: 'priority' }
-  if (preset === 'new_inbounds') return { view: 'needs_response', stage: 'needs_response' }
-  if (preset === 'high_motivation') return { view: 'review_required', advanced: { motivationMin: 70 } }
-  if (preset === 'offer_needed') return { view: 'price_offer', stage: 'offer_sent' }
-  if (preset === 'review_required') return { view: 'review_required' }
+  if (preset === 'new_inbounds') return { view: 'active', stage: 'all_stages' }
+  if (preset === 'high_motivation') return { view: 'active', advanced: { motivationMin: 70 } }
+  if (preset === 'offer_needed') return { view: 'waiting', stage: 'all_stages' }
+  if (preset === 'review_required') return { view: 'all', stage: 'all_stages' }
   if (preset === 'suppressed') return { view: 'suppressed', stage: 'suppressed' }
-  if (preset === 'spanish_replies') return { advanced: { language: 'spanish' } }
-  if (preset === 'wrong_numbers') return { view: 'wrong_number' }
-  if (preset === 'unlinked_records') return { advanced: { ownerType: 'unknown' } }
+  if (preset === 'spanish_replies') return { view: 'active', advanced: { language: 'spanish' } }
+  if (preset === 'wrong_numbers') return { view: 'hidden' }
+  if (preset === 'unlinked_records') return { view: 'all', advanced: { ownerType: 'unknown' } }
   return {}
 }
 

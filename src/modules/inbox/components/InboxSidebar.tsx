@@ -29,6 +29,7 @@ export interface AdvancedFilterOptions {
 interface InboxSidebarProps {
   threads: InboxWorkflowThread[]
   selectedId: string | null
+  activeViewFilter: InboxViewSelectValue
   onSelect: (id: string) => void
   savedPreset: InboxSavedFilterPreset
   onApplySavedPreset: (preset: InboxSavedFilterPreset) => void
@@ -58,6 +59,22 @@ const fallback = (value: unknown, placeholder = 'Unknown') => {
 
 const marketLabel = (thread: InboxWorkflowThread) =>
   fallback(thread.market || thread.marketId, 'Market Unknown')
+
+const readClassifier = (thread: InboxWorkflowThread) => {
+  const row = thread as unknown as Record<string, unknown>
+  const uiIntent = String(row.uiIntent ?? row.ui_intent ?? '').trim().toLowerCase() || 'needs_review'
+  const priorityBucket = String(row.priorityBucket ?? row.priority_bucket ?? '').trim().toLowerCase() || 'priority'
+  const status = String(row.workflowStatus ?? row.status ?? '').trim().toLowerCase() || 'open'
+  const stage = String(row.workflowStage ?? row.stage ?? thread.inboxStage).trim().toLowerCase() || 'needs_response'
+  return { uiIntent, priorityBucket, status, stage }
+}
+
+const formatCurrency = (value: unknown, fallbackValue = 'Unknown') => {
+  if (value === null || value === undefined || value === '') return fallbackValue
+  const numeric = Number(String(value).replace(/[,$\s]/g, ''))
+  if (!Number.isFinite(numeric)) return String(value)
+  return `$${Math.round(numeric).toLocaleString()}`
+}
 
 const priorityTone = (thread: InboxWorkflowThread) => {
   if (thread.isOptOut || thread.inboxStatus === 'suppressed') return 'suppressed'
@@ -89,16 +106,29 @@ interface ConversationRowProps {
 }
 
 export const ConversationRow = memo(({ thread, selected, onSelect, isChecked, isStarred, onToggleCheck, onToggleStar }: ConversationRowProps) => {
-  const ownerName = fallback(thread.ownerName, 'Unknown Seller')
-  const propertyAddress = fallback(thread.propertyAddress || thread.subject, 'Property Unknown')
+  const row = thread as unknown as Record<string, unknown>
+  const ownerName = fallback(row.ownerDisplayName ?? thread.ownerName ?? thread.phoneNumber, 'Unknown Seller')
+  const propertyAddress = fallback(row.propertyAddressFull ?? thread.propertyAddress ?? thread.subject, 'Property Unknown')
+  const latestMessageBody = fallback(row.latestMessageBody ?? thread.lastMessageBody ?? thread.preview, 'No preview')
+  const { uiIntent, priorityBucket, status, stage } = readClassifier(thread)
+  const cashOffer = formatCurrency(row.cashOffer)
+  const estimatedValue = formatCurrency(row.estimatedValue)
+  const acquisitionScore = row.finalAcquisitionScore == null || row.finalAcquisitionScore === ''
+    ? 'Unknown'
+    : String(row.finalAcquisitionScore)
   const initial = ownerName.slice(0, 1).toUpperCase()
   const tone = priorityTone(thread)
-  const visual = getStatusVisual(thread.inboxStage, thread.isOptOut || thread.inboxStatus === 'suppressed')
+  const visual = getStatusVisual(thread.inboxStage, thread.isOptOut || thread.inboxStatus === 'suppressed' || priorityBucket === 'suppressed')
 
   return (
     <button
       type="button"
-      className={cls('nx-conversation-row', selected && 'is-selected')}
+      className={cls(
+        'nx-conversation-row',
+        selected && 'is-selected',
+        `intent-${uiIntent}`,
+        `bucket-${priorityBucket}`,
+      )}
       onClick={() => onSelect(thread.id)}
       style={statusStyleVars(visual)}
     >
@@ -118,19 +148,28 @@ export const ConversationRow = memo(({ thread, selected, onSelect, isChecked, is
         </span>
         <span className="nx-conversation-row__phone">{fallback(thread.phoneNumber || thread.canonicalE164, 'No phone')}</span>
         <span className="nx-conversation-row__address">{propertyAddress}</span>
-        <span className="nx-conversation-row__preview">{fallback(thread.lastMessageBody || thread.preview, 'No preview')}</span>
+        <span className="nx-conversation-row__preview">{latestMessageBody}</span>
         <span className="nx-conversation-row__meta">
           <span className="nx-market-tag">{marketLabel(thread)}</span>
           <span className="nx-stage-pill nx-status-pill">
             <i className="nx-status-dot" />
             {visual.label}
           </span>
+          <span className="nx-stage-pill">{uiIntent.replaceAll('_', ' ')}</span>
+          <span className="nx-stage-pill">{priorityBucket}</span>
+          <span className="nx-stage-pill">{status}</span>
+          <span className="nx-stage-pill">{stage}</span>
+        </span>
+        <span className="nx-conversation-row__meta nx-conversation-row__deal-metrics">
+          <span className="nx-stage-pill">Offer {cashOffer}</span>
+          <span className="nx-stage-pill">Value {estimatedValue}</span>
+          <span className="nx-stage-pill">Score {acquisitionScore}</span>
         </span>
       </span>
       <span className="nx-conversation-row__star" onClick={(event) => { event.stopPropagation(); onToggleStar(thread.id) }}>
         <Icon name="star" className={cls(isStarred && 'is-active')} />
       </span>
-      <span className="nx-priority-dot nx-status-dot" />
+      <span className={cls('nx-priority-dot nx-status-dot', `intent-${uiIntent}`, `bucket-${priorityBucket}`)} />
     </button>
   )
 })
@@ -139,6 +178,7 @@ ConversationRow.displayName = 'ConversationRow'
 
 export const ConversationList = ({
   threads,
+  activeViewFilter,
   selectedId,
   onSelect,
   selectedThreadIds,
@@ -147,6 +187,7 @@ export const ConversationList = ({
   onToggleStarThread,
 }: {
   threads: InboxWorkflowThread[]
+  activeViewFilter: InboxViewSelectValue
   selectedId: string | null
   onSelect: (id: string) => void
   selectedThreadIds: string[]
@@ -169,13 +210,18 @@ export const ConversationList = ({
         />
       ))
     ) : (
-      <div className="nx-sidebar-empty">No conversations match these filters.</div>
+      <div className="nx-sidebar-empty">
+        {activeViewFilter === 'priority'
+          ? 'No priority replies right now.'
+          : 'No conversations match these filters.'}
+      </div>
     )}
   </div>
 )
 
 export const InboxSidebar = ({
   threads,
+  activeViewFilter,
   selectedId,
   onSelect,
   savedPreset,
@@ -309,6 +355,7 @@ export const InboxSidebar = ({
 
       <ConversationList
         threads={threads.slice(0, visibleThreadCount)}
+        activeViewFilter={activeViewFilter}
         selectedId={selectedId}
         onSelect={onSelect}
         selectedThreadIds={selectedThreadIds}

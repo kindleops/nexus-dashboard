@@ -1,4 +1,3 @@
-/* eslint-disable react-hooks/set-state-in-effect */
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import { pushRoutePath } from '../../app/router'
 import { useInboxData, toWorkflowThread } from './inbox.adapter'
@@ -12,10 +11,12 @@ import {
 } from '../../lib/data/inboxWorkflowData'
 import {
   getQueueProcessorHealth,
+  getThreadIntelligence,
   getThreadMessagesForThread,
   getThreadContext,
   sendInboxMessageNow,
   type QueueProcessorHealth,
+  type ThreadIntelligenceRecord,
   type ThreadMessage,
   type ThreadContext,
 } from '../../lib/data/inboxData'
@@ -25,13 +26,14 @@ import { NexusTopBar } from './components/NexusTopBar'
 import { InboxSidebar } from './components/InboxSidebar'
 import { ChatThread } from './components/ChatThread'
 import { Composer } from './components/Composer'
+import { ComposerTranslationBar } from './components/ComposerTranslationBar'
 import { IntelligencePanel } from './components/IntelligencePanel'
 import { InboxCommandMap } from './InboxCommandMap'
 import { InboxUtilityDrawer, MapDossierDrawer } from './components/InboxUtilityDrawer'
 import { AdvancedFiltersPopover } from './components/AdvancedFiltersPopover'
 import { InboxCommandPalette } from './InboxCommandPalette'
-import { TemplateLibraryDrawer } from './templates/TemplateLibraryDrawer'
 import { InboxSchedulePanel, type ScheduledTime } from './InboxSchedulePanel'
+import { translateText } from './translate.api'
 import {
   closeMapMode,
   cycleInboxMode,
@@ -61,15 +63,52 @@ import './inbox-premium.css'
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
 
+const STARRED_THREADS_STORAGE_KEY = 'nexus.inbox.starredThreadIds'
+const LANGUAGE_LABELS: Record<string, string> = {
+  en: 'English',
+  es: 'Spanish',
+  fr: 'French',
+  pt: 'Portuguese',
+  it: 'Italian',
+  de: 'German',
+  ru: 'Russian',
+  zh: 'Chinese',
+  ja: 'Japanese',
+  ko: 'Korean',
+}
+
+type ThreadTranslateViewMode = 'original' | 'translated'
+
+const normalizeLanguageCode = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null
+  const cleaned = value.trim().toLowerCase().replace('_', '-')
+  if (!cleaned) return null
+  if (cleaned.startsWith('english')) return 'en'
+  if (cleaned.startsWith('spanish')) return 'es'
+  return cleaned
+}
+
+const languageLabelFor = (languageCode: string | null): string => {
+  if (!languageCode) return 'Unknown'
+  const baseCode = languageCode.split('-')[0]
+  return LANGUAGE_LABELS[baseCode] ?? languageCode.toUpperCase()
+}
+
+const isEnglishLanguage = (languageCode: string | null): boolean => {
+  if (!languageCode) return false
+  return languageCode.startsWith('en')
+}
+
 export default function InboxPage() {
-  const { data, loading: dataLoading } = useInboxData()
+  const { data, loading: dataLoading, refresh: refreshInbox } = useInboxData()
+  const DEV = Boolean(import.meta.env.DEV)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [stageFilter, setStageFilter] = useState<InboxStageSelectValue>('all_stages')
   const [viewFilter, setViewFilter] = useState<InboxViewSelectValue>('priority')
   const [savedPreset, setSavedPreset] = useState<InboxSavedFilterPreset>('my_priority')
   const [advancedFilters, setAdvancedFilters] = useState<InboxAdvancedFilters>({ outOfStateOwner: 'all' })
   const [rightStageFilter, setRightStageFilter] = useState<InboxStageSelectValue>('all_stages')
-  const [rightViewFilter, setRightViewFilter] = useState<InboxViewSelectValue>('needs_response')
+  const [rightViewFilter, setRightViewFilter] = useState<InboxViewSelectValue>('active')
   const [rightSavedPreset, setRightSavedPreset] = useState<InboxSavedFilterPreset>('new_inbounds')
   const [rightAdvancedFilters, setRightAdvancedFilters] = useState<InboxAdvancedFilters>({ outOfStateOwner: 'all' })
   const [searchQuery, setSearchQuery] = useState('')
@@ -81,11 +120,19 @@ export default function InboxPage() {
   const [starredThreadIds, setStarredThreadIds] = useState<string[]>([])
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [threadContext, setThreadContext] = useState<ThreadContext | null>(null)
+  const [threadIntelligence, setThreadIntelligence] = useState<ThreadIntelligenceRecord | null>(null)
   const [queueProcessorHealth, setQueueProcessorHealth] = useState<QueueProcessorHealth | null>(null)
   const [queueProcessorHealthLoading, setQueueProcessorHealthLoading] = useState(false)
   const [contextLoading, setContextLoading] = useState(false)
+  const [threadViewMode, setThreadViewMode] = useState<ThreadTranslateViewMode>('original')
+  const [threadTranslations, setThreadTranslations] = useState<Record<string, string>>({})
+  const [translatedDraftPreview, setTranslatedDraftPreview] = useState<string | null>(null)
+  const [originalDraftBeforeTranslation, setOriginalDraftBeforeTranslation] = useState<string | null>(null)
+  const [detectedThreadLanguage, setDetectedThreadLanguage] = useState<string | null>(null)
+  const [translationError, setTranslationError] = useState<string | null>(null)
+  const [threadTranslationLoading, setThreadTranslationLoading] = useState(false)
+  const [draftTranslationLoading, setDraftTranslationLoading] = useState(false)
   const [commandOpen, setCommandOpen] = useState(false)
-  const [templateDrawerOpen, setTemplateDrawerOpen] = useState(false)
   const [schedulePanelOpen, setSchedulePanelOpen] = useState(false)
   const [scheduledTime, setScheduledTime] = useState<ScheduledTime | null>(null)
   const [layoutState, setLayoutState] = useState(defaultInboxLayoutState)
@@ -127,6 +174,17 @@ export default function InboxPage() {
     threads.find((thread) => thread.id === selectedId) ?? filtered[0] ?? null
   ), [filtered, threads, selectedId])
 
+  useEffect(() => {
+    if (!DEV) return
+    const first = filtered[0] as unknown as { uiIntent?: string; ui_intent?: string; priorityBucket?: string; priority_bucket?: string } | undefined
+    console.log('[NEXUS Inbox Diagnostics]', {
+      totalReturnedThreads: threads.length,
+      activeFilterKey: viewFilter,
+      firstThreadUiIntent: first?.uiIntent ?? first?.ui_intent ?? null,
+      firstThreadPriorityBucket: first?.priorityBucket ?? first?.priority_bucket ?? null,
+    })
+  }, [DEV, filtered, threads.length, viewFilter])
+
   const statusCounts = useMemo(() => (
     threads.reduce<Partial<Record<InboxStage, number>>>((counts, thread) => {
       counts[thread.inboxStage] = (counts[thread.inboxStage] ?? 0) + 1
@@ -150,6 +208,55 @@ export default function InboxPage() {
       new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
     ))
   ), [selectedMessages, selectedPendingMessages])
+
+  const sellerLanguageCode = useMemo(() => {
+    if (!selected && !threadIntelligence) return null
+
+    const selectedRecord = (selected ?? {}) as unknown as Record<string, unknown>
+    const intelligenceRecord = (threadIntelligence ?? {}) as Record<string, unknown>
+
+    const candidates: unknown[] = [
+      selectedRecord.sellerLanguage,
+      selectedRecord.seller_language,
+      selectedRecord.detectedLanguage,
+      selectedRecord.detected_language,
+      intelligenceRecord.seller_language,
+      intelligenceRecord.detected_language,
+      intelligenceRecord.language_code,
+      intelligenceRecord.language,
+      intelligenceRecord.preferred_language,
+      detectedThreadLanguage,
+    ]
+
+    for (const candidate of candidates) {
+      const normalized = normalizeLanguageCode(candidate)
+      if (normalized) return normalized
+    }
+    return null
+  }, [detectedThreadLanguage, selected, threadIntelligence])
+
+  const sellerLanguageLabel = useMemo(
+    () => languageLabelFor(sellerLanguageCode),
+    [sellerLanguageCode],
+  )
+
+  const threadHasInboundMessages = useMemo(
+    () => selectedMessages.some((message) => message.direction === 'inbound' && message.body.trim().length > 0),
+    [selectedMessages],
+  )
+
+  const displayedMessagesWithTranslation = useMemo(() => {
+    if (threadViewMode !== 'translated') return displayedMessages
+    return displayedMessages.map((message) => {
+      if (message.direction !== 'inbound') return message
+      const translated = threadTranslations[message.id]
+      if (!translated || translated === message.body) return message
+      return {
+        ...message,
+        body: translated,
+      }
+    })
+  }, [displayedMessages, threadTranslations, threadViewMode])
 
   const applySavedPreset = useCallback((preset: InboxSavedFilterPreset) => {
     setSavedPreset(preset)
@@ -180,6 +287,23 @@ export default function InboxPage() {
   }, [searchQuery, stageFilter, viewFilter, advancedFilters])
 
   useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(STARRED_THREADS_STORAGE_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) {
+        setStarredThreadIds(parsed.filter((value): value is string => typeof value === 'string'))
+      }
+    } catch {
+      // Ignore malformed local storage payloads.
+    }
+  }, [])
+
+  useEffect(() => {
+    window.localStorage.setItem(STARRED_THREADS_STORAGE_KEY, JSON.stringify(starredThreadIds))
+  }, [starredThreadIds])
+
+  useEffect(() => {
     setSelectedThreadIds((current) => current.filter((id) => filtered.some((thread) => thread.id === id)))
   }, [filtered])
 
@@ -187,8 +311,22 @@ export default function InboxPage() {
     if (!selected) {
       setSelectedMessages([])
       setThreadContext(null)
+      setThreadIntelligence(null)
+      setThreadTranslations({})
+      setThreadViewMode('original')
+      setTranslatedDraftPreview(null)
+      setOriginalDraftBeforeTranslation(null)
+      setDetectedThreadLanguage(null)
+      setTranslationError(null)
       return
     }
+
+    setThreadTranslations({})
+    setThreadViewMode('original')
+    setTranslatedDraftPreview(null)
+    setOriginalDraftBeforeTranslation(null)
+    setDetectedThreadLanguage(null)
+    setTranslationError(null)
 
     let active = true
     setMessagesLoading(true)
@@ -197,10 +335,12 @@ export default function InboxPage() {
     Promise.all([
       getThreadMessagesForThread(selected),
       getThreadContext(selected),
-    ]).then(([messages, context]) => {
+      getThreadIntelligence(selected),
+    ]).then(([messages, context, intelligence]) => {
       if (!active) return
       setSelectedMessages(messages)
       setThreadContext(context)
+      setThreadIntelligence(intelligence)
 
       const deliveredByBody = new Set(
         messages
@@ -229,6 +369,111 @@ export default function InboxPage() {
       active = false
     }
   }, [selected])
+
+  const handleTranslateThread = useCallback(async () => {
+    if (!threadHasInboundMessages || isEnglishLanguage(sellerLanguageCode)) return
+
+    const inboundMessages = selectedMessages
+      .filter((message) => message.direction === 'inbound' && message.body.trim().length > 0)
+
+    if (inboundMessages.length === 0) return
+
+    setTranslationError(null)
+    setThreadTranslationLoading(true)
+
+    try {
+      const uniqueBodies = Array.from(new Set(inboundMessages.map((message) => message.body.trim())))
+      const translationByBody = new Map<string, string>()
+
+      await Promise.all(uniqueBodies.map(async (body) => {
+        const result = await translateText({
+          text: body,
+          sourceLanguage: sellerLanguageCode ?? undefined,
+          targetLanguage: 'en',
+          mode: 'thread',
+        })
+        translationByBody.set(body, result.translatedText)
+        if (result.detectedLanguage) {
+          setDetectedThreadLanguage(result.detectedLanguage.toLowerCase())
+        }
+      }))
+
+      const nextTranslations: Record<string, string> = {}
+      inboundMessages.forEach((message) => {
+        const translated = translationByBody.get(message.body.trim())
+        if (translated) {
+          nextTranslations[message.id] = translated
+        }
+      })
+
+      setThreadTranslations(nextTranslations)
+      setThreadViewMode('translated')
+      emitNotification({
+        title: 'Thread Translated',
+        detail: `${Object.keys(nextTranslations).length} inbound messages translated to English`,
+        severity: 'success',
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to translate thread messages'
+      setTranslationError(message)
+      emitNotification({
+        title: 'Translation Failed',
+        detail: message,
+        severity: 'warning',
+      })
+    } finally {
+      setThreadTranslationLoading(false)
+    }
+  }, [selectedMessages, sellerLanguageCode, threadHasInboundMessages])
+
+  const handleTranslateDraft = useCallback(async () => {
+    const text = draftText.trim()
+    if (!text) return
+
+    setTranslationError(null)
+    setDraftTranslationLoading(true)
+
+    try {
+      const targetLanguage = sellerLanguageCode && !isEnglishLanguage(sellerLanguageCode)
+        ? sellerLanguageCode
+        : 'es'
+
+      const result = await translateText({
+        text,
+        sourceLanguage: 'en',
+        targetLanguage,
+        mode: 'draft',
+      })
+
+      setDetectedThreadLanguage((current) => current ?? result.detectedLanguage)
+      setTranslatedDraftPreview(result.translatedText)
+      setOriginalDraftBeforeTranslation(text)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to translate draft'
+      setTranslationError(message)
+      emitNotification({
+        title: 'Draft Translation Failed',
+        detail: message,
+        severity: 'warning',
+      })
+    } finally {
+      setDraftTranslationLoading(false)
+    }
+  }, [draftText, sellerLanguageCode])
+
+  const handleUseDraftTranslation = useCallback(() => {
+    if (!translatedDraftPreview) return
+    setDraftText(translatedDraftPreview)
+    setTranslationError(null)
+  }, [translatedDraftPreview])
+
+  const handleRevertDraftTranslation = useCallback(() => {
+    if (!originalDraftBeforeTranslation) return
+    setDraftText(originalDraftBeforeTranslation)
+    setTranslatedDraftPreview(null)
+    setOriginalDraftBeforeTranslation(null)
+    setTranslationError(null)
+  }, [originalDraftBeforeTranslation])
 
   useEffect(() => {
     let active = true
@@ -266,7 +511,6 @@ export default function InboxPage() {
 
       if (event.key === 'Escape') {
         setCommandOpen(false)
-        setTemplateDrawerOpen(false)
         setSchedulePanelOpen(false)
         setLayoutState((current) => ({ ...current, activeOverlay: null }))
         return
@@ -331,11 +575,12 @@ export default function InboxPage() {
   const handleWorkflowMutation = useCallback(async (label: string, mutation: () => Promise<unknown>) => {
     try {
       await mutation()
+      await refreshInbox()
       emitNotification({ title: label, detail: 'Action completed successfully', severity: 'success' })
     } catch (err) {
       emitNotification({ title: 'Error', detail: String(err), severity: 'critical' })
     }
-  }, [])
+  }, [refreshInbox])
 
   const handleSelect = useCallback((id: string) => {
     setSelectedId(id)
@@ -463,6 +708,7 @@ export default function InboxPage() {
       direction: 'outbound',
       body: text.trim(),
       createdAt: timestamp,
+       timelineAt: timestamp,
       deliveredAt: null,
       deliveryStatus: 'pending',
       fromNumber: '',
@@ -563,13 +809,14 @@ export default function InboxPage() {
         {showLeftPanel && (
           <InboxSidebar
             threads={filtered}
+            activeViewFilter={viewFilter}
             selectedId={selected?.id ?? null}
             onSelect={handleSelect}
             savedPreset={savedPreset}
             onApplySavedPreset={applySavedPreset}
             viewCounts={viewCounts}
             onOpenAdvancedFilters={() => setActiveOverlay('filters')}
-            loadingError={data.liveFetchStatus === 'error' ? data.liveFetchError : null}
+            loadingError={DEV && data.liveFetchStatus === 'error' ? data.liveFetchError : null}
             visibleThreadCount={visibleThreadCount}
             canLoadMore={visibleThreadCount < filtered.length}
             onLoadMore={() => setVisibleThreadCount((current) => Math.min(filtered.length, current + 250))}
@@ -590,6 +837,7 @@ export default function InboxPage() {
         {isDoubleSided && (
           <InboxSidebar
             threads={rightFiltered}
+            activeViewFilter={rightViewFilter}
             selectedId={selected?.id ?? null}
             onSelect={handleSelect}
             savedPreset={rightSavedPreset}
@@ -628,7 +876,7 @@ export default function InboxPage() {
 
           <ChatThread
             thread={selected}
-            messages={displayedMessages}
+            messages={displayedMessagesWithTranslation}
             loading={messagesLoading}
             isSuppressed={selectedSuppressed}
             isStarred={selected ? starredThreadIds.includes(selected.id) : false}
@@ -637,14 +885,39 @@ export default function InboxPage() {
             onToggleArchive={handleToggleArchive}
           />
 
+          <ComposerTranslationBar
+            sellerLanguageLabel={sellerLanguageLabel}
+            sellerLanguageCode={sellerLanguageCode}
+            isSellerLanguageEnglish={isEnglishLanguage(sellerLanguageCode)}
+            hasInboundMessages={threadHasInboundMessages}
+            hasThreadTranslations={Object.keys(threadTranslations).length > 0}
+            threadViewMode={threadViewMode}
+            isThreadTranslating={threadTranslationLoading}
+            isDraftTranslating={draftTranslationLoading}
+            hasDraftText={Boolean(draftText.trim())}
+            translatedDraftPreview={translatedDraftPreview}
+            translationError={translationError}
+            canRevertDraft={Boolean(originalDraftBeforeTranslation)}
+            onTranslateThread={handleTranslateThread}
+            onTranslateDraft={handleTranslateDraft}
+            onSetThreadViewMode={setThreadViewMode}
+            onUseDraftTranslation={handleUseDraftTranslation}
+            onRevertDraft={handleRevertDraftTranslation}
+          />
+
           <Composer
             draftText={draftText}
             setDraftText={setDraftText}
             onSend={handleSend}
-            onOpenTemplates={() => setTemplateDrawerOpen(true)}
             onOpenSchedule={() => setSchedulePanelOpen(true)}
             onAI={() => setActiveOverlay('ai')}
             onOffer={() => setActiveOverlay('ai')}
+            thread={selected}
+            threadContext={threadContext}
+            onInsertTemplate={(text) => setDraftText(text)}
+            onReplaceTemplate={(text) => setDraftText(text)}
+            onSendTemplate={handleSend}
+            onScheduleTemplate={() => setSchedulePanelOpen(true)}
             disabled={selectedSuppressed}
             disabledReason="Messaging disabled for suppressed thread"
           />
@@ -694,6 +967,7 @@ export default function InboxPage() {
           <IntelligencePanel
             thread={selected}
             context={threadContext}
+            intelligence={threadIntelligence}
             messages={displayedMessages}
             isSuppressed={selectedSuppressed}
             panelMode={rightPanelMode}
@@ -732,18 +1006,6 @@ export default function InboxPage() {
         onClose={() => setCommandOpen(false)}
         hasThread={!!selected}
         commands={[]}
-      />
-
-      <TemplateLibraryDrawer
-        open={templateDrawerOpen}
-        onClose={() => setTemplateDrawerOpen(false)}
-        thread={selected}
-        threadContext={threadContext}
-        onInsert={(text) => setDraftText(text)}
-        onReplace={(text) => setDraftText(text)}
-        onSendNow={handleSend}
-        onQueue={handleSend}
-        onSchedule={() => setSchedulePanelOpen(true)}
       />
 
       <InboxSchedulePanel

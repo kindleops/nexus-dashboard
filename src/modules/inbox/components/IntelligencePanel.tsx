@@ -1,18 +1,11 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import type { ThreadContext } from '../../../lib/data/inboxData'
-import type { ThreadMessage } from '../../../lib/data/inboxData'
+import type { ThreadIntelligenceRecord, ThreadMessage } from '../../../lib/data/inboxData'
 import type { InboxStage, InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import type { PanelMode } from '../inbox-layout-state'
 import { Icon } from '../../../shared/icons'
 import type { IconName } from '../../../shared/icons'
 import { formatRelativeTime } from '../../../shared/formatters'
-import {
-  buildPropertyHeroStats,
-  buildRightPanelSections,
-  getThreadActivityFeed,
-} from '../inbox-ui-helpers'
-import { ActivityFeedCard } from './activity/ActivityFeedCard'
-import { shouldAutoExpandActivity } from './activity/activityDefaults'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
@@ -67,6 +60,7 @@ const StageSelector = ({ stage, onChange }: { stage: InboxStage; onChange: (s: I
 interface IntelligencePanelProps {
   thread: InboxWorkflowThread | null
   context: ThreadContext | null
+  intelligence: ThreadIntelligenceRecord | null
   messages: ThreadMessage[]
   isSuppressed: boolean
   panelMode?: Exclude<PanelMode, 'hidden'>
@@ -96,53 +90,107 @@ const missingLabel = (value: unknown, placeholder = 'Not available yet') => (
 const trimSummary = (value: string, max = 120) => (value.length > max ? `${value.slice(0, max - 3)}...` : value)
 
 const stageToneClass = (stage: string) => `is-${String(stage || 'unknown').toLowerCase().replace(/[^a-z0-9_]+/g, '_')}`
+const GOOGLE_MAPS_API_KEY = (import.meta.env as Record<string, string | undefined>).VITE_GOOGLE_MAPS_API_KEY
+
+const asUrl = (value: unknown): string | null => {
+  const text = String(value ?? '').trim()
+  if (!text) return null
+  if (text.startsWith('http://') || text.startsWith('https://')) return text
+  return null
+}
 
 const IntelRow = ({ label, value }: { label: string; value: string }) => (
   <div className="nx-intel-row">
     <span className="nx-intel-label">{label}</span>
-    <span className={cls('nx-intel-value', isMissingValue(value) && 'is-missing')}>
-      {missingLabel(value)}
-    </span>
+    {asUrl(value) ? (
+      <a className="nx-intel-value" href={asUrl(value) || '#'} target="_blank" rel="noreferrer">{value}</a>
+    ) : (
+      <span className={cls('nx-intel-value', isMissingValue(value) && 'is-missing')}>
+        {missingLabel(value)}
+      </span>
+    )}
   </div>
 )
 
+const getField = (record: ThreadIntelligenceRecord | null, key: string): unknown => record?.[key]
+
 const PropertyHeroCard = ({
   thread,
-  context,
-  mode,
+  intelligence,
 }: {
   thread: InboxWorkflowThread
-  context: ThreadContext | null
-  mode: 'compact' | 'split' | 'workspace'
+  intelligence: ThreadIntelligenceRecord | null
 }) => {
-  const address = fallback(context?.property?.address || thread.propertyAddress || thread.subject, 'Property Unknown')
-  const stats = useMemo(() => buildPropertyHeroStats(thread, context), [thread, context])
-  const get = (key: string) => (thread as unknown as Record<string, unknown>)[key]
-  const mediaLabel = missingLabel(get('propertyType'), 'Property profile')
-  const shownStats = mode === 'workspace' ? stats : mode === 'split' ? stats.slice(0, 6) : stats.slice(0, 4)
+  const address = fallback(getField(intelligence, 'property_address_full') || thread.propertyAddress || thread.subject, 'Property Unknown')
+  const streetview = normalizeText(
+    getField(intelligence, 'streetview_image')
+    || getField(intelligence, 'street_view_image')
+    || getField(intelligence, 'streetview_url')
+    || (thread as unknown as Record<string, unknown>)['streetviewImage']
+    || '',
+  )
+  const lat = normalizeText(getField(intelligence, 'latitude') || getField(intelligence, 'lat') || getField(intelligence, 'property_latitude'))
+  const lng = normalizeText(getField(intelligence, 'longitude') || getField(intelligence, 'lng') || getField(intelligence, 'property_longitude'))
+  const location = lat && lng ? `${lat},${lng}` : address
+  const mapsStreetViewUrl = location
+    ? `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${encodeURIComponent(location)}`
+    : null
+  const liveStreetViewEmbedUrl = GOOGLE_MAPS_API_KEY && location
+    ? `https://www.google.com/maps/embed/v1/streetview?${new URLSearchParams({ key: GOOGLE_MAPS_API_KEY, location, heading: '210', pitch: '0', fov: '80' }).toString()}`
+    : null
+  const stats: Array<{ icon: string; label: string; value: string }> = [
+    { icon: '🏷', label: 'Type', value: missingLabel(getField(intelligence, 'property_type'), '—') },
+    { icon: '🛏', label: 'Beds', value: missingLabel(getField(intelligence, 'beds'), '—') },
+    { icon: '🛁', label: 'Baths', value: missingLabel(getField(intelligence, 'baths'), '—') },
+    { icon: '📐', label: 'Sqft', value: missingLabel(getField(intelligence, 'sqft'), '—') },
+    { icon: '🗓', label: 'Year Built', value: missingLabel(getField(intelligence, 'year_built'), '—') },
+    { icon: '🗓', label: 'Effective Year', value: missingLabel(getField(intelligence, 'effective_year_built'), '—') },
+    { icon: '💰', label: 'Estimated Value', value: missingLabel(getField(intelligence, 'estimated_value'), '—') },
+    { icon: '🛠', label: 'Repair Cost', value: missingLabel(getField(intelligence, 'estimated_repair_cost'), '—') },
+    { icon: '⚡', label: 'Cash Offer', value: missingLabel(getField(intelligence, 'cash_offer'), '—') },
+    { icon: '🎯', label: 'Final Score', value: missingLabel(getField(intelligence, 'final_acquisition_score'), '—') },
+  ]
 
   return (
-    <section className={cls('nx-property-hero-card', `is-${mode}`)}>
+    <section className="nx-property-hero-card is-compact">
       <div className="nx-property-hero-media" aria-label="Street view snapshot">
         <span className="nx-property-hero-media__label">Property Snapshot</span>
-        <div className="nx-property-hero-media__image" role="img" aria-label="Property media placeholder">
-          <Icon name="map" />
-          <span>{mediaLabel}</span>
-        </div>
+        {liveStreetViewEmbedUrl ? (
+          <>
+            <iframe
+              className="nx-property-hero-media__image"
+              src={liveStreetViewEmbedUrl}
+              title="Live Street View"
+              loading="lazy"
+              referrerPolicy="no-referrer-when-downgrade"
+              allowFullScreen
+            />
+            {mapsStreetViewUrl && (
+              <a className="nx-property-hero-media__cta" href={mapsStreetViewUrl} target="_blank" rel="noreferrer">
+                Open Live Street View
+              </a>
+            )}
+          </>
+        ) : streetview ? (
+          <img className="nx-property-hero-media__image" src={streetview} alt="Street view" loading="lazy" />
+        ) : (
+          <div className="nx-property-hero-media__image" role="img" aria-label="Property media placeholder">
+            <Icon name="map" />
+            <span>{missingLabel(getField(intelligence, 'property_type'), 'Property profile')}</span>
+          </div>
+        )}
       </div>
       <div className="nx-property-hero-head">
         <strong>{address}</strong>
-        <span>{missingLabel(context?.property?.market || thread.market || thread.marketId, 'Market pending')}</span>
+        <span>{missingLabel(getField(intelligence, 'market') || thread.market || thread.marketId, 'Market pending')}</span>
       </div>
       <div className="nx-property-hero-strip">
-        <span className={cls('nx-stage-pill', stageToneClass(thread.inboxStage))}>{thread.inboxStage.replace(/_/g, ' ')}</span>
-        <span className={cls('nx-pri-pill', `is-${thread.priority || 'unknown'}`)}>
-          Priority {missingLabel(thread.priority, 'pending')}
-        </span>
+        <span className={cls('nx-stage-pill', stageToneClass(thread.inboxStage))}>{missingLabel(getField(intelligence, 'priority_tier'), thread.inboxStage.replace(/_/g, ' '))}</span>
+        <span className={cls('nx-pri-pill', `is-${thread.priority || 'unknown'}`)}>Priority {missingLabel(getField(intelligence, 'priority_score'), '—')}</span>
         <span className="nx-property-hero-strip__time">Updated {formatRelativeTime(thread.lastMessageAt)}</span>
       </div>
       <div className="nx-property-hero-stats">
-        {shownStats.map((item) => (
+        {stats.map((item) => (
           <span key={item.label} className="nx-property-pill">
             <i>{item.icon}</i>
             <small>{item.label}</small>
@@ -206,121 +254,96 @@ const AccordionCard = ({
   </section>
 )
 
-const IntelligenceHero = ({
-  thread,
-  context,
-  isSuppressed,
-  onOpenMap,
-  onOpenDossier,
-  onOpenAi,
-  onExpandAll,
-  onCollapseAll,
-}: {
-  thread: InboxWorkflowThread
-  context: ThreadContext | null
-  isSuppressed: boolean
-  onOpenMap: () => void
-  onOpenDossier: () => void
-  onOpenAi: () => void
-  onExpandAll: () => void
-  onCollapseAll: () => void
-}) => {
-  const get = (key: string) => (thread as unknown as Record<string, unknown>)[key]
-
-  const summaryChips = [
-    `AI ${missingLabel(get('aiScore'), '—')}`,
-    `Sentiment ${missingLabel(thread.sentiment, 'pending')}`,
-    `Stage ${thread.inboxStage.replace(/_/g, ' ')}`,
-    `Motivation ${missingLabel(get('motivationFlagsCount'), '—')}`,
-    `Buyer ${missingLabel(get('buyerMatchCount'), '0')} matches`,
-    `Underwriting ${missingLabel(get('offerVerificationStatus'), 'pending')}`,
-  ]
-
-  return (
-    <section className="nx-intel-hero">
-      <div className="nx-intel-hero__left">
-        <strong>{fallback(context?.property?.address || thread.propertyAddress || thread.subject, 'Deal workspace')}</strong>
-        <span>
-          {missingLabel(context?.seller?.name || thread.ownerName, 'Seller pending')} · {missingLabel(context?.property?.market || thread.market || thread.marketId, 'Market pending')} · {thread.id.slice(0, 8)}
-        </span>
-        <div className="nx-intel-hero__status-row">
-          <span className={cls('nx-stage-pill', stageToneClass(thread.inboxStage))}>{thread.inboxStage.replace(/_/g, ' ')}</span>
-          <span className={cls('nx-pri-pill', `is-${thread.priority || 'unknown'}`)}>{missingLabel(thread.priority, 'pending')} priority</span>
-          {isSuppressed && <span className="nx-suppression-badge">suppressed</span>}
-          <small>Last activity {formatRelativeTime(thread.lastMessageAt)}</small>
-        </div>
-      </div>
-
-      <div className="nx-intel-hero__center">
-        {summaryChips.map((chip) => (
-          <span key={chip}>{chip}</span>
-        ))}
-      </div>
-
-      <div className="nx-intel-hero__actions">
-        <button type="button" onClick={onOpenMap}><Icon name="map" /> Open Map</button>
-        <button type="button" onClick={onOpenDossier}><Icon name="briefing" /> Open Dossier</button>
-        <button type="button" onClick={onOpenAi} disabled={isSuppressed}><Icon name="spark" /> AI Assist</button>
-        <button type="button" onClick={onExpandAll}><Icon name="maximize" /> Expand All</button>
-        <button type="button" onClick={onCollapseAll}><Icon name="layout-split" /> Collapse All</button>
-      </div>
-    </section>
-  )
-}
-
-const IntelligenceActionRail = ({
-  isSuppressed,
-  onOpenMap,
-  onOpenDossier,
-  onOpenAi,
-  onExpandAll,
-  onCollapseAll,
-  mode,
-}: {
-  isSuppressed: boolean
-  onOpenMap: () => void
-  onOpenDossier: () => void
-  onOpenAi: () => void
-  onExpandAll: () => void
-  onCollapseAll: () => void
-  mode: 'compact' | 'split' | 'workspace'
-}) => (
-  <div className={cls('nx-intel-action-rail', `is-${mode}`)}>
-    <button type="button" onClick={onOpenMap}><Icon name="map" /><span>Map</span></button>
-    <button type="button" onClick={onOpenDossier}><Icon name="briefing" /><span>Dossier</span></button>
-    <button type="button" onClick={onOpenAi} disabled={isSuppressed}><Icon name="spark" /><span>AI Assist</span></button>
-    {mode !== 'compact' && (
-      <>
-        <button type="button" onClick={onExpandAll}><Icon name="maximize" /><span>Expand All</span></button>
-        <button type="button" onClick={onCollapseAll}><Icon name="layout-split" /><span>Collapse All</span></button>
-      </>
-    )}
-  </div>
-)
-
 const resolvePanelLayoutMode = (panelMode: Exclude<PanelMode, 'hidden'>): 'compact' | 'split' | 'workspace' => {
   if (panelMode === 'half') return 'split'
   if (panelMode === 'full') return 'workspace'
   return 'compact'
 }
 
-export const IntelligencePanel = ({
-  thread,
-  context,
-  messages,
-  isSuppressed,
-  panelMode = 'default',
-  onCollapse,
-  onOpenMap,
-  onOpenDossier,
-  onOpenAi,
-  onStageChange,
-}: IntelligencePanelProps) => {
+export const IntelligencePanel = (props: IntelligencePanelProps) => {
+  const {
+    thread,
+    intelligence,
+    isSuppressed,
+    panelMode = 'default',
+    onCollapse,
+    onOpenMap,
+    onOpenDossier,
+    onOpenAi,
+    onStageChange,
+  } = props
   const [sectionStateByThread, setSectionStateByThread] = useState<Record<string, string[]>>({})
   const layoutMode = resolvePanelLayoutMode(panelMode)
-  const sections = useMemo(() => (
-    thread ? buildRightPanelSections(thread, context, isSuppressed) : []
-  ), [thread, context, isSuppressed])
+  const sections = useMemo(() => {
+    const zillowLink = getField(intelligence, 'zillow_url')
+      || getField(intelligence, 'zillow_link')
+      || getField(intelligence, 'zillow')
+      || (thread as unknown as Record<string, unknown>)['zillowUrl']
+    const realtorLink = getField(intelligence, 'realtor_url')
+      || getField(intelligence, 'realtor_link')
+      || getField(intelligence, 'realtor')
+      || (thread as unknown as Record<string, unknown>)['realtorUrl']
+    const streetviewLink = getField(intelligence, 'streetview_url')
+      || getField(intelligence, 'streetview_image')
+      || getField(intelligence, 'street_view_image')
+      || (thread as unknown as Record<string, unknown>)['streetviewImage']
+
+    const propertyRows = [
+      { label: 'Address', value: missingLabel(getField(intelligence, 'property_address_full') || thread?.propertyAddress || thread?.subject, '—') },
+      { label: 'Property Type', value: missingLabel(getField(intelligence, 'property_type'), '—') },
+      { label: 'Beds / Baths / Sqft', value: `${missingLabel(getField(intelligence, 'beds'), '—')} / ${missingLabel(getField(intelligence, 'baths'), '—')} / ${missingLabel(getField(intelligence, 'sqft'), '—')}` },
+      { label: 'Year Built', value: missingLabel(getField(intelligence, 'year_built'), '—') },
+      { label: 'Effective Year Built', value: missingLabel(getField(intelligence, 'effective_year_built'), '—') },
+      { label: 'Estimated Value', value: missingLabel(getField(intelligence, 'estimated_value'), '—') },
+      { label: 'Estimated Repair Cost', value: missingLabel(getField(intelligence, 'estimated_repair_cost'), '—') },
+      { label: 'Cash Offer', value: missingLabel(getField(intelligence, 'cash_offer'), '—') },
+      { label: 'Final Acquisition Score', value: missingLabel(getField(intelligence, 'final_acquisition_score'), '—') },
+      { label: 'Street View', value: missingLabel(streetviewLink, '—') },
+      { label: 'Zillow', value: missingLabel(zillowLink, '—') },
+      { label: 'Realtor', value: missingLabel(realtorLink, '—') },
+    ]
+
+    const dealRows = [
+      { label: 'Final Acquisition Score', value: missingLabel(getField(intelligence, 'final_acquisition_score'), '—') },
+      { label: 'Deal Strength Score', value: missingLabel(getField(intelligence, 'deal_strength_score'), '—') },
+      { label: 'Structured Motivation Score', value: missingLabel(getField(intelligence, 'structured_motivation_score'), '—') },
+    ]
+
+    const ownerRows = [
+      { label: 'Owner Display Name', value: missingLabel(getField(intelligence, 'owner_display_name'), '—') },
+      { label: 'Owner Type Guess', value: missingLabel(getField(intelligence, 'owner_type_guess'), '—') },
+      { label: 'Priority Score', value: missingLabel(getField(intelligence, 'priority_score'), '—') },
+      { label: 'Contactability Score', value: missingLabel(getField(intelligence, 'contactability_score'), '—') },
+      { label: 'Financial Pressure Score', value: missingLabel(getField(intelligence, 'financial_pressure_score'), '—') },
+      { label: 'Urgency Score', value: missingLabel(getField(intelligence, 'urgency_score'), '—') },
+      { label: 'Priority Tier', value: missingLabel(getField(intelligence, 'priority_tier'), '—') },
+      { label: 'Best Language', value: missingLabel(getField(intelligence, 'best_language'), '—') },
+      { label: 'Best Contact Window', value: missingLabel(getField(intelligence, 'best_contact_window'), '—') },
+    ]
+
+    const contactRows = [
+      { label: 'Prospect Full Name', value: missingLabel(getField(intelligence, 'prospect_full_name'), '—') },
+      { label: 'Prospect First Name', value: missingLabel(getField(intelligence, 'prospect_first_name'), '—') },
+      { label: 'Language Preference', value: missingLabel(getField(intelligence, 'language_preference'), '—') },
+      { label: 'SMS Eligible', value: missingLabel(getField(intelligence, 'sms_eligible'), '—') },
+      { label: 'Contact Score Final', value: missingLabel(getField(intelligence, 'contact_score_final'), '—') },
+      { label: 'Phone Score Final', value: missingLabel(getField(intelligence, 'phone_score_final'), '—') },
+      { label: 'Est Household Income', value: missingLabel(getField(intelligence, 'est_household_income'), '—') },
+      { label: 'Net Asset Value', value: missingLabel(getField(intelligence, 'net_asset_value'), '—') },
+    ]
+
+    const rawRows = Object.entries(intelligence ?? {})
+      .slice(0, 24)
+      .map(([label, value]) => ({ label, value: missingLabel(value, '—') }))
+
+    return [
+      { id: 'property_snapshot', title: 'Property Snapshot', icon: 'map' as IconName, summary: 'Core property and valuation snapshot', rows: propertyRows },
+      { id: 'deal_scores', title: 'Deal Scores', icon: 'stats' as IconName, summary: 'Acquisition and motivation scoring', rows: dealRows },
+      { id: 'owner_intelligence', title: 'Owner Intelligence', icon: 'user' as IconName, summary: 'Owner profile and urgency signals', rows: ownerRows },
+      { id: 'contact_intelligence', title: 'Contact Intelligence', icon: 'inbox' as IconName, summary: 'Prospect and contact scoring', rows: contactRows },
+      { id: 'raw_metadata', title: 'Raw Metadata', icon: 'settings' as IconName, summary: 'Underlying intelligence payload', rows: rawRows },
+    ]
+  }, [intelligence, thread])
   const sectionById = useMemo(() => {
     const map = new Map<string, (typeof sections)[number]>()
     sections.forEach((section) => map.set(section.id, section))
@@ -328,13 +351,6 @@ export const IntelligencePanel = ({
   }, [sections])
 
   const modeScopeKey = thread ? `${thread.id}:${layoutMode}` : ''
-
-  const activityEvents = useMemo(() => (
-    thread ? getThreadActivityFeed(thread, context, messages) : []
-  ), [thread, context, messages])
-  const autoExpandActivity = useMemo(() => (
-    thread ? shouldAutoExpandActivity(thread, messages, activityEvents) : false
-  ), [thread, messages, activityEvents])
 
   if (!thread) return (
     <aside className="nx-intelligence-panel">
@@ -344,21 +360,9 @@ export const IntelligencePanel = ({
     </aside>
   )
 
-  const allSectionIds = sections.map((section) => section.id).concat('activity')
-  const defaultOpenSectionIds = (() => {
-    if (layoutMode === 'workspace') return autoExpandActivity ? ['deal_intelligence', 'underwriting_offer', 'activity'] : ['deal_intelligence', 'underwriting_offer']
-    if (layoutMode === 'split') return autoExpandActivity ? ['deal_intelligence', 'activity'] : ['deal_intelligence', 'underwriting_offer']
-    return autoExpandActivity ? ['deal_intelligence', 'activity'] : ['deal_intelligence']
-  })()
+  const allSectionIds = sections.map((section) => section.id)
+  const defaultOpenSectionIds = ['property_snapshot', 'deal_scores']
   const openSectionIds = sectionStateByThread[modeScopeKey] ?? defaultOpenSectionIds
-
-  const groupedIds = {
-    dealCore: ['deal_intelligence', 'underwriting_offer', 'buyer_intelligence'],
-    people: ['prospect', 'owner'],
-    reference: ['activity', 'property_details', 'links_tools'],
-    splitOrder: ['deal_intelligence', 'activity', 'prospect', 'owner', 'property_details', 'underwriting_offer', 'buyer_intelligence', 'links_tools'],
-    compactOrder: ['deal_intelligence', 'activity', 'underwriting_offer', 'prospect', 'owner', 'property_details', 'buyer_intelligence', 'links_tools'],
-  } as const
 
   const setOpenSections = (nextIds: string[]) => {
     setSectionStateByThread((current) => ({
@@ -385,12 +389,6 @@ export const IntelligencePanel = ({
   )
 
   const resolveSectionPreview = (id: string, summary: string, rows: Array<{ label: string; value: string }>): string => {
-    if (id === 'activity') {
-      const lastEvent = activityEvents[0]
-      if (!lastEvent) return 'No timeline events yet'
-      return `${formatRelativeTime(lastEvent.timestamp)} · ${activityEvents.length} events · ${trimSummary(lastEvent.summary, 64)}`
-    }
-
     const enriched = rows
       .map((item) => `${item.label} ${missingLabel(item.value, '—')}`)
       .filter((text) => !isMissingValue(text.replace(/^[^ ]+\s*/, '')))
@@ -400,71 +398,47 @@ export const IntelligencePanel = ({
     if (!isMissingValue(summary) && !summary.toLowerCase().includes('unknown')) return summary
 
     const fallbackBySection: Record<string, string> = {
-      deal_intelligence: 'Score, sentiment, and stage are pending enrichment',
-      underwriting_offer: 'MAO and offer strategy are pending',
-      buyer_intelligence: 'No active buyer signals yet',
-      prospect: 'Prospect profile has limited data',
-      owner: 'Owner record is not enriched yet',
-      property_details: 'Property data is still being enriched',
-      links_tools: 'External sources and workflow shortcuts',
+      property_snapshot: 'Property image and valuation summary',
+      deal_scores: 'Acquisition scoring summary',
+      owner_intelligence: 'Owner profile and tiering',
+      contact_intelligence: 'Prospect contactability and score stack',
+      raw_metadata: 'Raw payload from nexus_thread_intelligence_v',
     }
     return fallbackBySection[id] ?? 'Pending enrichment'
   }
 
   const resolveSectionChips = (id: string, rows: Array<{ label: string; value: string }>): string[] => {
-    if (id === 'activity') {
+    if (id === 'deal_scores') {
       return [
-        `${activityEvents.length} events`,
-        `${formatRelativeTime(thread.lastMessageAt)} update`,
+        `Final ${missingLabel(valueByLabel(rows, 'Final Acquisition Score'), '—')}`,
+        `Deal ${missingLabel(valueByLabel(rows, 'Deal Strength Score'), '—')}`,
+        `Motivation ${missingLabel(valueByLabel(rows, 'Structured Motivation Score'), '—')}`,
       ]
     }
-    if (id === 'deal_intelligence') {
+    if (id === 'property_snapshot') {
       return [
-        `AI ${missingLabel(valueByLabel(rows, 'AI Score'), '—')}`,
-        missingLabel(valueByLabel(rows, 'Sentiment'), 'sentiment pending'),
-        missingLabel(valueByLabel(rows, 'Priority'), 'priority pending'),
+        missingLabel(valueByLabel(rows, 'Property Type'), 'type pending'),
+        `Value ${missingLabel(valueByLabel(rows, 'Estimated Value'), '—')}`,
       ]
     }
-    if (id === 'underwriting_offer') {
+    if (id === 'owner_intelligence') {
       return [
-        missingLabel(valueByLabel(rows, 'MAO'), 'MAO pending'),
-        missingLabel(valueByLabel(rows, 'Offer Strategy'), 'strategy pending'),
+        missingLabel(valueByLabel(rows, 'Owner Display Name'), 'owner pending'),
+        `Tier ${missingLabel(valueByLabel(rows, 'Priority Tier'), '—')}`,
       ]
     }
-    if (id === 'buyer_intelligence') {
+    if (id === 'contact_intelligence') {
       return [
-        `${missingLabel(valueByLabel(rows, 'Buyer Match Count'), '0')} matches`,
-        missingLabel(valueByLabel(rows, 'Best Buyer Type'), 'no buyer type'),
+        missingLabel(valueByLabel(rows, 'Prospect Full Name'), 'prospect pending'),
+        missingLabel(valueByLabel(rows, 'Language Preference'), 'language pending'),
       ]
     }
-    if (id === 'prospect') {
-      return [
-        missingLabel(valueByLabel(rows, 'Phone'), 'phone pending'),
-        missingLabel(valueByLabel(rows, 'Language'), 'language pending'),
-      ]
-    }
-    if (id === 'owner') {
-      return [
-        missingLabel(valueByLabel(rows, 'Owner Type'), 'owner type pending'),
-        `Out-of-state ${missingLabel(valueByLabel(rows, 'Out of State Owner'), '—')}`,
-      ]
-    }
-    if (id === 'property_details') {
-      return [
-        missingLabel(valueByLabel(rows, 'Sqft'), 'sqft pending'),
-        missingLabel(valueByLabel(rows, 'Year Built'), 'year pending'),
-      ]
-    }
-    return ['Tools']
+    return ['Metadata']
   }
 
   const renderSectionBody = (section: { id: string; rows: Array<{ label: string; value: string }> }) => {
-    if (section.id === 'activity') {
-      return (
-        <div className={cls('nx-activity-feed-shell', `is-${layoutMode}`)}>
-          <ActivityFeedCard thread={thread} context={context} messages={messages} />
-        </div>
-      )
+    if (section.id === 'property_snapshot') {
+      return <PropertyHeroCard thread={thread} intelligence={intelligence} />
     }
 
     return (
@@ -477,26 +451,6 @@ export const IntelligencePanel = ({
   }
 
   const renderSectionCard = (sectionId: string) => {
-    if (sectionId === 'activity') {
-      const expanded = openSectionIds.includes('activity')
-      const summary = resolveSectionPreview('activity', '', [])
-      const chips = resolveSectionChips('activity', [])
-      return (
-        <AccordionCard
-          key="activity"
-          title="Activity Feed"
-          icon="activity"
-          preview={summary}
-          chips={chips}
-          meta={`${activityEvents.length}`}
-          expanded={expanded}
-          onToggle={() => toggleSection('activity')}
-        >
-          {renderSectionBody({ id: 'activity', rows: [] })}
-        </AccordionCard>
-      )
-    }
-
     const section = sectionById.get(sectionId)
     if (!section) return null
     const expanded = openSectionIds.includes(section.id)
@@ -517,15 +471,6 @@ export const IntelligencePanel = ({
     )
   }
 
-  const renderSectionGroup = (title: string, ids: string[]) => (
-    <section className="nx-intel-group-zone" key={title}>
-      <header>{title}</header>
-      <div className="nx-intel-group-zone__stack">
-        {ids.map((id) => renderSectionCard(id))}
-      </div>
-    </section>
-  )
-
   return (
     <aside className={cls('nx-intelligence-panel', `is-mode-${layoutMode}`)}>
       <header className="nx-intel-header">
@@ -541,76 +486,18 @@ export const IntelligencePanel = ({
       </header>
 
       <div className="nx-intel-scroll-body">
-        {layoutMode === 'workspace' ? (
-          <div className="nx-intel-workspace">
-            <IntelligenceHero
-              thread={thread}
-              context={context}
-              isSuppressed={isSuppressed}
-              onOpenMap={onOpenMap}
-              onOpenDossier={onOpenDossier}
-              onOpenAi={onOpenAi}
-              onExpandAll={() => setOpenSections(allSectionIds)}
-              onCollapseAll={() => setOpenSections([])}
-            />
-
-            <div className="nx-intel-workspace-grid">
-              <div className="nx-intel-workspace-col is-primary">
-                <section className="nx-intel-group-zone">
-                  <header>Property Snapshot</header>
-                  <div className="nx-intel-group-zone__stack">
-                    <PropertyHeroCard thread={thread} context={context} mode={layoutMode} />
-                    <IntelligenceActionRail
-                      mode={layoutMode}
-                      isSuppressed={isSuppressed}
-                      onOpenMap={onOpenMap}
-                      onOpenDossier={onOpenDossier}
-                      onOpenAi={onOpenAi}
-                      onExpandAll={() => setOpenSections(allSectionIds)}
-                      onCollapseAll={() => setOpenSections([])}
-                    />
-                  </div>
-                </section>
-                {renderSectionGroup('Deal Core', groupedIds.dealCore)}
-                {renderSectionGroup('Reference / Evidence', ['activity'])}
-              </div>
-              <div className="nx-intel-workspace-col is-secondary">
-                {renderSectionGroup('People', groupedIds.people)}
-                {renderSectionGroup('Reference Data', ['property_details', 'links_tools'])}
-              </div>
-            </div>
+        <div className={cls('nx-intel-mode-stack', `is-${layoutMode}`)}>
+          <div className="nx-intel-compact-stack">
+            {['property_snapshot', 'deal_scores', 'owner_intelligence', 'contact_intelligence', 'raw_metadata'].map((sectionId) => renderSectionCard(sectionId))}
           </div>
-        ) : (
-          <div className={cls('nx-intel-mode-stack', `is-${layoutMode}`)}>
-            <section className="nx-intel-group-zone is-snapshot-zone">
-              <header>{layoutMode === 'split' ? 'Snapshot' : 'Property Snapshot'}</header>
-              <div className="nx-intel-group-zone__stack">
-                <PropertyHeroCard thread={thread} context={context} mode={layoutMode} />
-                <IntelligenceActionRail
-                  mode={layoutMode}
-                  isSuppressed={isSuppressed}
-                  onOpenMap={onOpenMap}
-                  onOpenDossier={onOpenDossier}
-                  onOpenAi={onOpenAi}
-                  onExpandAll={() => setOpenSections(allSectionIds)}
-                  onCollapseAll={() => setOpenSections([])}
-                />
-              </div>
-            </section>
-
-            {layoutMode === 'split' ? (
-              <>
-                {renderSectionGroup('Deal Core', groupedIds.dealCore)}
-                {renderSectionGroup('People', groupedIds.people)}
-                {renderSectionGroup('Reference / Evidence', groupedIds.reference)}
-              </>
-            ) : (
-              <div className="nx-intel-compact-stack">
-                {groupedIds.compactOrder.map((sectionId) => renderSectionCard(sectionId))}
-              </div>
-            )}
+          <div className="nx-intel-action-rail is-compact">
+            <button type="button" onClick={onOpenMap}><Icon name="map" /><span>Map</span></button>
+            <button type="button" onClick={onOpenDossier}><Icon name="briefing" /><span>Dossier</span></button>
+            <button type="button" onClick={onOpenAi} disabled={isSuppressed}><Icon name="spark" /><span>AI Assist</span></button>
+            <button type="button" onClick={() => setOpenSections(allSectionIds)}><Icon name="maximize" /><span>Expand All</span></button>
+            <button type="button" onClick={() => setOpenSections([])}><Icon name="layout-split" /><span>Collapse All</span></button>
           </div>
-        )}
+        </div>
       </div>
     </aside>
   )

@@ -52,6 +52,7 @@ export interface ThreadMessage {
   direction: 'inbound' | 'outbound' | 'unknown'
   body: string
   createdAt: string
+  timelineAt: string
   deliveredAt: string | null
   deliveryStatus: string
   fromNumber: string
@@ -67,6 +68,7 @@ export interface ThreadMessage {
   source: string
   rawStatus: string
   error: string | null
+  developerMeta?: Record<string, string>
 }
 
 export interface ThreadContextDebug {
@@ -99,6 +101,8 @@ export interface ThreadContext {
   contextMatchQuality: 'high' | 'medium' | 'low' | 'missing'
   contextDebug: ThreadContextDebug
 }
+
+export type ThreadIntelligenceRecord = Record<string, unknown>
 
 export interface SuggestedDraft {
   text: string
@@ -142,18 +146,7 @@ export interface QueueProcessorHealth {
 const QUEUE_PROCESSOR_LAG_MINUTES = 10
 
 const DEV = Boolean(import.meta.env.DEV)
-const MESSAGE_EVENTS_INBOX_PAGE_SIZE = 250
 const MESSAGE_EVENTS_THREAD_PAGE_SIZE = 1000
-const INBOX_THREAD_STATE_TIMEOUT_MS = 3000
-const INBOX_THREAD_STATE_BATCH_SIZE = 40
-
-const chunkArray = <T,>(items: T[], size: number): T[][] => {
-  const out: T[][] = []
-  for (let index = 0; index < items.length; index += size) {
-    out.push(items.slice(index, index + size))
-  }
-  return out
-}
 
 export const getQueueProcessorHealth = async (): Promise<QueueProcessorHealth> => {
   const supabase = getSupabaseClient()
@@ -246,54 +239,9 @@ export const getQueueProcessorHealth = async (): Promise<QueueProcessorHealth> =
   }
 }
 
-const MESSAGE_EVENTS_THREAD_COLUMNS = [
-  'id',
-  'message_event_key',
-  'provider_message_sid',
-  'direction',
-  'event_type',
-  'message_body',
-  'from_phone_number',
-  'to_phone_number',
-  'phone_number_id',
-  'queue_id',
-  'event_timestamp',
-  'created_at',
-  'sent_at',
-  'received_at',
-  'master_owner_id',
-  'prospect_id',
-  'property_id',
-  'textgrid_number_id',
-  'market_id',
-  'source_app',
-  'delivery_status',
-  'raw_carrier_status',
-  'provider_delivery_status',
-  'is_opt_out',
-  'failure_code',
-  'failure_reason',
-  'error_message',
-  'property_address',
-].join(',')
-
-const isMissingColumnError = (error: unknown): boolean => {
-  const code = (error as { code?: string } | null)?.code
-  const message = String((error as { message?: string } | null)?.message ?? '').toLowerCase()
-  return code === '42703' || code === 'PGRST204' || message.includes('column')
-}
-
 // UUID v4 safety guard — prevents inserting 'ph_...' text ids into uuid columns
 const isValidUUID = (v: string): boolean =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v)
-
-const toSentiment = (value: unknown): InboxThread['sentiment'] => {
-  const normalized = normalizeStatus(value)
-  if (normalized === 'hot' || normalized === 'interested' || normalized === 'positive') return 'hot'
-  if (normalized === 'warm') return 'warm'
-  if (normalized === 'cold' || normalized === 'negative') return 'cold'
-  return 'neutral'
-}
 
 const normalizePhone = (value: unknown): string => {
   const raw = asString(value, '').trim()
@@ -1017,314 +965,184 @@ export const getInboxThreads = async (
   options: InboxFetchOptions = {},
 ): Promise<InboxThread[]> => {
   const supabase = getSupabaseClient()
-  console.log('[getInboxThreads] Fetching from Supabase')
+  const PAGE_SIZE = 1000
+  const maxRows = Number.isFinite(options.maxRows ?? Number.NaN)
+    ? Math.max(1, Number(options.maxRows))
+    : 10000
 
-  const events: AnyRecord[] = []
-  let cursorCreatedAt: string | null = null
+  const rows: AnyRecord[] = []
   let page = 0
-  const maxPages = 500
-  const maxRows = options.maxRows ?? Number.POSITIVE_INFINITY
-  let useWildcardSelect = false
 
-  while (page < maxPages) {
-    const remaining = Number.isFinite(maxRows) ? Math.max(0, maxRows - events.length) : MESSAGE_EVENTS_INBOX_PAGE_SIZE
-    if (remaining <= 0) break
+  while (rows.length < maxRows) {
     let query = supabase
-      .from('message_events')
-      .select(useWildcardSelect ? '*' : (MESSAGE_EVENTS_THREAD_COLUMNS as unknown as '*'))
-      .order('created_at', { ascending: false })
-      .limit(Math.min(MESSAGE_EVENTS_INBOX_PAGE_SIZE, remaining))
-
-    if (cursorCreatedAt) {
-      query = query.lt('created_at', cursorCreatedAt)
-    }
+      .from('nexus_inbox_threads_v')
+      .select('*')
+      .order('latest_message_at', { ascending: false })
+      .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1)
 
     if (options.signal) {
       query = query.abortSignal(options.signal)
     }
 
-    const eventsResult = await query
-
-    if (eventsResult.error) {
-      if (!useWildcardSelect && isMissingColumnError(eventsResult.error)) {
-        // Environment schema can differ; retry with wildcard selection.
-        useWildcardSelect = true
-        continue
-      }
-      if (events.length > 0) {
-        if (DEV) {
-          console.warn('[Inbox] message_events page failed after partial load; keeping cached pages', eventsResult.error.message)
-        }
-        break
-      }
-      console.error('[getInboxThreads] Query error:', eventsResult.error)
-      throw new Error(mapErrorMessage(eventsResult.error))
+    const { data, error } = await query
+    if (error) {
+      throw new Error(mapErrorMessage(error))
     }
 
-    const batch = safeArray(eventsResult.data as AnyRecord[])
-    console.log('[getInboxThreads] Got batch of', batch.length, 'events, page', page)
-    if (batch.length === 0) break
-
-    events.push(...batch)
-    if (Number.isFinite(maxRows) && events.length >= maxRows) break
-
-    const last = batch[batch.length - 1]
-    const nextCursor = asIso(last?.['created_at'] ?? last?.['event_timestamp'])
-    if (!nextCursor || nextCursor === cursorCreatedAt) break
-
-    cursorCreatedAt = nextCursor
-    if (batch.length < MESSAGE_EVENTS_INBOX_PAGE_SIZE) break
+    const batch = safeArray(data as AnyRecord[])
+    rows.push(...batch)
+    if (batch.length < PAGE_SIZE) break
     page += 1
   }
 
-  if (DEV) {
-    console.log(`[Inbox] loaded ${events.length} message_events rows for thread grouping`)
-  }
+  const boundedRows = rows.slice(0, maxRows)
 
-  if (events.length === 0) {
-    console.warn('[getInboxThreads] No message events found - returning empty array')
-    return []
-  }
-
-  // ── DEV: log raw message_events schema to diagnose field mapping ─────────
-  if (DEV && events.length > 0) {
-    const sampleCount = Math.min(3, events.length)
-    for (let i = 0; i < sampleCount; i++) {
-      console.log(`[Inbox message_events sample keys][${i}]`, Object.keys(events[i]!))
-      console.log(`[Inbox message_events sample row][${i}]`, events[i])
-      inspectMessageEventShape(events[i]!)
-    }
-  }
-
-  const grouped = new Map<string, { meta: ReturnType<typeof getThreadKeyParts>; rows: AnyRecord[] }>()
-  events.forEach((row, index) => {
-    const meta = getThreadKeyParts(row, index)
-    const bucket = grouped.get(meta.key)
-    if (bucket) {
-      bucket.rows.push(row)
-      return
-    }
-    grouped.set(meta.key, { meta, rows: [row] })
-  })
-
-  const threads: InboxThread[] = []
-  const threadKeys = Array.from(grouped.keys())
-  const stateRowsByKey = new Map<string, AnyRecord>()
-  const queueRowsByPhone = new Map<string, AnyRecord>()
+  const threadKeys = boundedRows
+    .map((row) => asString(row['thread_key'], ''))
+    .filter(Boolean)
+  const intelligenceByThreadKey = new Map<string, AnyRecord>()
 
   if (threadKeys.length > 0) {
-    const stateController = new AbortController()
-    let stateTimedOut = false
-    const stateTimeout = setTimeout(() => {
-      stateTimedOut = true
-      stateController.abort()
-    }, INBOX_THREAD_STATE_TIMEOUT_MS)
-    const abortStateFromParent = () => stateController.abort()
-    options.signal?.addEventListener('abort', abortStateFromParent, { once: true })
+    const uniqueKeys = Array.from(new Set(threadKeys))
+    for (let index = 0; index < uniqueKeys.length; index += 250) {
+      const keyBatch = uniqueKeys.slice(index, index + 250)
+      const { data: intelligenceRows, error: intelligenceError } = await supabase
+        .from('nexus_thread_intelligence_v')
+        .select('thread_key,owner_display_name,property_address_full,cash_offer,estimated_value,final_acquisition_score,streetview_image,zillow_url,zillow_link,zillow,realtor_url,realtor_link,realtor')
+        .in('thread_key', keyBatch)
 
-    try {
-      const stateResponses = await Promise.all(
-        chunkArray(threadKeys, INBOX_THREAD_STATE_BATCH_SIZE).map((keyBatch) => (
-          supabase
-            .from('inbox_thread_state')
-            .select('thread_key,stage,status,priority,is_archived,is_read,is_pinned,last_read_at,archived_at,updated_at')
-            .in('thread_key', keyBatch)
-            .abortSignal(stateController.signal)
-        )),
-      )
-
-      for (const response of stateResponses) {
-        if (response.error) {
-          if (DEV) console.warn('[NEXUS] inbox_thread_state read failed:', mapErrorMessage(response.error))
-          continue
-        }
-
-        for (const row of safeArray(response.data as AnyRecord[])) {
-          const key = asString(row['thread_key'], '')
-          if (key) stateRowsByKey.set(key, row)
-        }
+      if (intelligenceError) {
+        if (DEV) console.warn('[Inbox] intelligence enrichment failed', mapErrorMessage(intelligenceError))
+        continue
       }
-    } catch (error) {
-      if (options.signal?.aborted) throw error
-      if (DEV) {
-        const reason = stateTimedOut
-          ? `timed out after ${INBOX_THREAD_STATE_TIMEOUT_MS}ms`
-          : mapErrorMessage(error)
-        console.warn('[NEXUS] inbox_thread_state read skipped:', reason)
-      }
-    } finally {
-      clearTimeout(stateTimeout)
-      options.signal?.removeEventListener('abort', abortStateFromParent)
+
+      safeArray(intelligenceRows as AnyRecord[]).forEach((row) => {
+        const key = asString(row['thread_key'], '')
+        if (key) intelligenceByThreadKey.set(key, row)
+      })
     }
   }
 
-  const sellerPhones = Array.from(
-    new Set(
-      events
-        .map((row) => normalizePhone(getSellerPhoneFromMessage(row).sellerPhone))
-        .filter(Boolean),
-    ),
-  )
-  for (let index = 0; index < sellerPhones.length; index += 100) {
-    const phoneBatch = sellerPhones.slice(index, index + 100)
-    const { data: queueRows, error: queueError } = await supabase
-      .from('send_queue')
-      .select('id,queue_key,queue_status,to_phone_number,from_phone_number,master_owner_id,prospect_id,property_id,property_address,market_id,seller_first_name,seller_display_name,message_body,message_text,created_at')
-      .in('to_phone_number', phoneBatch)
-      .order('created_at', { ascending: false })
-      .limit(1000)
-
-    if (queueError) {
-      if (DEV) console.warn('[NEXUS] send_queue inbox enrichment failed:', mapErrorMessage(queueError))
-      continue
-    }
-
-    for (const row of safeArray(queueRows as AnyRecord[])) {
-      const phone = normalizePhone(row['to_phone_number'])
-      if (phone && !queueRowsByPhone.has(phone)) queueRowsByPhone.set(phone, row)
-    }
+  if (DEV) {
+    console.log('[Inbox] nexus_inbox_threads_v rows', boundedRows.length)
   }
 
-  for (const [threadKey, bucket] of grouped.entries()) {
-    const sorted = [...bucket.rows].sort(
-      (a, b) => new Date(getMessageTimestamp(b)).getTime() - new Date(getMessageTimestamp(a)).getTime(),
-    )
-    const latest = sorted[0]
-    if (!latest) continue
+  const toStageFromIntent = (uiIntent: string): string => {
+    if (uiIntent === 'outbound_waiting') return 'sent_waiting'
+    if (uiIntent === 'opt_out' || uiIntent === 'hostile_or_legal') return 'dnc_opt_out'
+    if (uiIntent === 'wrong_person') return 'wrong_number'
+    if (uiIntent === 'not_interested') return 'not_interested'
+    if (uiIntent === 'potential_interest') return 'interested'
+    if (uiIntent === 'price_anchor') return 'needs_offer'
+    if (uiIntent === 'info_request') return 'needs_response'
+    if (uiIntent === 'language_switch') return 'needs_response'
+    return 'needs_response'
+  }
 
-    const latestDirection = sorted.map(normalizeMessageDirection).find((d) => d !== 'unknown') ?? 'unknown'
-    const lastInbound = sorted
-      .filter((row) => normalizeMessageDirection(row) === 'inbound')
-      .map((row) => getMessageTimestamp(row))
-      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] ?? null
-    const lastOutbound = sorted
-      .filter((row) => normalizeMessageDirection(row) === 'outbound')
-      .map((row) => getMessageTimestamp(row))
-      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] ?? null
+  const threads: InboxThread[] = boundedRows.map((row, index) => {
+    const threadKey = asString(row['thread_key'], '') || `thread:${index}`
+    const intelligenceRow = intelligenceByThreadKey.get(threadKey)
+    const latestMessageIso = asIso(row['latest_message_at']) ?? new Date().toISOString()
+    const latestDirection = normalizeMessageDirection({ direction: row['latest_direction'] })
+    const sellerPhone = normalizePhone(row['seller_phone'])
+    const ownerDisplayName = asString(getFirst(row, ['owner_display_name', 'seller_display_name', 'owner_name']), '')
+      || asString(getFirst(intelligenceRow ?? {}, ['owner_display_name']), '')
+    const propertyAddressFull = asString(getFirst(row, ['property_address_full', 'property_address']), '')
+      || asString(getFirst(intelligenceRow ?? {}, ['property_address_full']), '')
 
-    const { sellerPhone, sellerPhoneSourceField, canonicalE164, ourNumber, directionUsed } = getSellerPhoneFromMessage(latest)
-    const phoneNumber = sellerPhone
-    const queueRow = queueRowsByPhone.get(normalizePhone(sellerPhone)) ?? null
+    const uiIntent = normalizeStatus(row['ui_intent'] ?? 'needs_review')
+    const priorityBucket = normalizeStatus(row['priority_bucket'] ?? 'priority')
+    const showInPriorityInbox = asBoolean(row['show_in_priority_inbox'], false)
+    const workflowStatus = normalizeStatus(row['status'] ?? 'open')
+    const workflowStage = normalizeStatus(row['stage'] ?? toStageFromIntent(uiIntent))
 
-    const rowWithOwner = sorted.find((row) => asString(row['master_owner_id'], '')) ?? latest
-    const rowWithProspect = sorted.find((row) => asString(row['prospect_id'], '')) ?? latest
-    const rowWithProperty = sorted.find((row) => asString(row['property_id'], '')) ?? latest
+    const isArchived = asBoolean(row['is_archived'], false) || workflowStatus === 'archived'
+    const isRead = asBoolean(row['is_read'], false)
+    const unreadCount = isArchived ? 0 : (isRead ? 0 : 1)
 
-    const resolvedOwnerId = asString(rowWithOwner['master_owner_id'], '') || asString(queueRow?.['master_owner_id'], '')
-    const resolvedProspectId = asString(rowWithProspect['prospect_id'], '') || asString(queueRow?.['prospect_id'], '')
-    const resolvedPropertyId = asString(rowWithProperty['property_id'], '') || asString(queueRow?.['property_id'], '')
-
-    const ownerName =
-      asString(getFirst(latest, ['owner_name', 'full_name', 'name', 'from_name', 'contact_name', 'seller_name']), '') ||
-      asString(queueRow?.['seller_display_name'], '') ||
-      asString(queueRow?.['seller_first_name'], '') ||
-      phoneNumber ||
-      'Unknown owner'
-
-    const propertyAddress =
-      asString(latest['property_address'], '') ||
-      asString(queueRow?.['property_address'], '') ||
-      asString(getFirst(latest, ['address']), '')
-
-    const market =
-      asString(latest['market_id'], '') ||
-      asString(queueRow?.['market_id'], '') ||
-      asString(getFirst(latest, ['market', 'market_id']), 'unknown')
-
-    const stateRow = stateRowsByKey.get(threadKey) ?? null
-    const stateRowFound = Boolean(stateRow)
-
-    const archivedFromEvent = ['archived', 'closed'].includes(normalizeStatus(getFirst(latest, ['status'])))
-    const explicitRequiresResponse = sorted.some((row) => asBoolean(getFirst(row, ['requires_response']), false))
-    const needsResponseFromEvent = (latestDirection === 'inbound' || explicitRequiresResponse) && !archivedFromEvent
-
-    const explicitUnreadCount = sorted.filter((row) => asBoolean(getFirst(row, ['unread']), false)).length
-    const derivedUnread =
-      !!lastInbound && (!lastOutbound || new Date(lastInbound).getTime() > new Date(lastOutbound).getTime())
-    const defaultStatus = latestDirection === 'inbound' ? 'unread' : 'sent'
-    const defaultPriority: InboxThread['priority'] = latestDirection === 'inbound' ? 'urgent' : 'normal'
-    const defaultStage = 'needs_response'
-    const stateStatus = normalizeStatus(stateRow?.['status'] ?? defaultStatus)
-    const isArchived = asBoolean(stateRow?.['is_archived'], false) || stateStatus === 'archived'
-    const isRead = asBoolean(stateRow?.['is_read'], false)
-    const unread = !isRead
-
-    const lastActivityAt = getMessageTimestamp(latest)
-    const preview = getMessageBody(latest) || 'No message preview'
-
-    const sentiment = toSentiment(getFirst(latest, ['sentiment']))
-    const priorityNormalized = normalizeStatus(stateRow?.['priority'] ?? defaultPriority)
     const priority: InboxThread['priority'] =
-      priorityNormalized === 'urgent' || priorityNormalized === 'high' || priorityNormalized === 'normal' || priorityNormalized === 'low'
-        ? priorityNormalized
-        : defaultPriority
+      priorityBucket === 'priority'
+        ? 'urgent'
+        : priorityBucket === 'suppressed' || priorityBucket === 'hidden'
+          ? 'low'
+          : 'normal'
 
-    const status: InboxThread['status'] = isArchived
-      ? 'archived'
-      : unread
-      ? 'unread'
-      : latestDirection === 'inbound'
-      ? 'replied'
-      : 'read'
+    const sentiment: InboxThread['sentiment'] =
+      uiIntent === 'potential_interest' || uiIntent === 'price_anchor'
+        ? 'hot'
+        : uiIntent === 'info_request' || uiIntent === 'language_switch'
+          ? 'warm'
+          : priorityBucket === 'hidden' || priorityBucket === 'suppressed'
+            ? 'cold'
+            : 'neutral'
 
-    const stateStage = asString(stateRow?.['stage'], defaultStage)
-    const needsResponse = !isArchived && (unread || needsResponseFromEvent)
-    const stage = isArchived ? 'Archived' : stateStage === 'needs_response' ? 'Needs Response' : latestDirection === 'inbound' ? 'Replied' : 'Active'
+    const status: InboxThread['status'] =
+      isArchived ? 'archived' : unreadCount > 0 ? 'unread' : 'read'
 
     const thread: InboxThread = {
-      id: asString(latest['id'], threadKey),
-      leadId: resolvedPropertyId || resolvedOwnerId || threadKey,
-      marketId: market || 'unknown',
-      ownerName,
-      subject: propertyAddress || `Thread ${threads.length + 1}`,
-      preview,
+      id: threadKey,
+      leadId: asString(row['property_id'], '') || asString(row['master_owner_id'], '') || threadKey,
+      marketId: asString(row['market'], 'unknown') || 'unknown',
+      ownerName: ownerDisplayName || sellerPhone || 'Unknown owner',
+      subject: propertyAddressFull || `Thread ${index + 1}`,
+      preview: asString(row['latest_message_body'], '') || 'No message preview',
       status,
       priority,
       sentiment,
-      messageCount: sorted.length,
-      lastMessageLabel: formatRelativeTime(lastActivityAt),
-      lastMessageIso: lastActivityAt,
-      unreadCount: unread ? Math.max(1, explicitUnreadCount || (derivedUnread ? 1 : 0)) : 0,
-      aiDraft: needsResponse ? 'Draft response ready for operator review.' : null,
-      labels: [market || 'General', stage],
+      messageCount: asNumber(row['inbound_message_count'], 0) + asNumber(row['outbound_message_count'], 0),
+      lastMessageLabel: formatRelativeTime(latestMessageIso),
+      lastMessageIso: latestMessageIso,
+      unreadCount,
+      aiDraft: showInPriorityInbox ? 'Draft response ready for operator review.' : null,
+      labels: [asString(row['market'], 'unknown'), uiIntent],
       threadKey,
-      groupingMethod: bucket.meta.method,
-      groupingConfidence: bucket.meta.confidence,
-      ownerId: resolvedOwnerId,
-      prospectId: resolvedProspectId,
-      propertyId: resolvedPropertyId,
-      phoneNumber,
-      canonicalE164,
-      sellerPhoneSourceField: sellerPhoneSourceField || undefined,
-      ourNumber: ourNumber || undefined,
-      directionUsed: directionUsed || undefined,
-      messageEventKey: asString(latest['message_event_key'], '') || undefined,
-      providerMessageSid: asString(latest['provider_message_sid'], '') || undefined,
-      queueId: asString(latest['queue_id'], '') || asString(queueRow?.['id'], '') || undefined,
-      phoneNumberId: asString(latest['phone_number_id'], '') || undefined,
-      textgridNumberId: asString(latest['textgrid_number_id'], '') || undefined,
-      isOptOut: latest['is_opt_out'] != null ? Boolean(latest['is_opt_out']) : undefined,
-      deliveryStatus: asString(latest['delivery_status'] ?? latest['provider_delivery_status'] ?? latest['raw_carrier_status'], '') || undefined,
-      providerDeliveryStatus: asString(latest['provider_delivery_status'] ?? latest['raw_carrier_status'], '') || undefined,
-      failureReason: asString(latest['failure_reason'] ?? latest['failure_code'] ?? latest['error_message'], '') || undefined,
-      propertyAddress,
-      market,
-      lastInboundAt: lastInbound,
-      lastOutboundAt: lastOutbound,
-      needsResponse,
-      unread,
-      stateRowFound,
-      threadWorkflowStage: asString(stateRow?.['stage'], '') || undefined,
-      threadWorkflowStatus: asString(stateRow?.['status'], '') || undefined,
-      threadIsRead: stateRow?.['is_read'] == null ? undefined : Boolean(stateRow['is_read']),
-      threadIsArchived: stateRow?.['is_archived'] == null ? undefined : Boolean(stateRow['is_archived']),
-      threadIsPinned: stateRow?.['is_pinned'] == null ? undefined : Boolean(stateRow['is_pinned']),
-      threadLastReadAt: asIso(stateRow?.['last_read_at']),
-      threadArchivedAt: asIso(stateRow?.['archived_at']),
+      ownerId: asString(row['master_owner_id'], '') || undefined,
+      prospectId: asString(row['prospect_id'], '') || undefined,
+      propertyId: asString(row['property_id'], '') || undefined,
+      phoneNumber: sellerPhone || undefined,
+      canonicalE164: sellerPhone || undefined,
+      ourNumber: normalizePhone(row['our_number']) || undefined,
+      sellerPhone: sellerPhone || undefined,
+      thread_key: threadKey,
+      seller_phone: sellerPhone || undefined,
+      our_number: normalizePhone(row['our_number']) || undefined,
+      master_owner_id: asString(row['master_owner_id'], '') || undefined,
+      prospect_id: asString(row['prospect_id'], '') || undefined,
+      property_id: asString(row['property_id'], '') || undefined,
+      directionUsed: latestDirection,
+      propertyAddress: propertyAddressFull || undefined,
+      market: asString(row['market'], 'unknown') || 'unknown',
+      lastInboundAt: latestDirection === 'inbound' ? latestMessageIso : null,
+      lastOutboundAt: latestDirection === 'outbound' ? latestMessageIso : null,
+      needsResponse: showInPriorityInbox,
+      unread: unreadCount > 0,
+      stateRowFound: true,
+      threadWorkflowStage: workflowStage,
+      threadWorkflowStatus: workflowStatus,
+      threadIsRead: isRead,
+      threadIsArchived: isArchived,
+      threadIsPinned: asBoolean(row['is_pinned'], false),
+      threadLastReadAt: null,
+      threadArchivedAt: null,
+      ownerDisplayName: ownerDisplayName || undefined,
+      propertyAddressFull: propertyAddressFull || undefined,
+      latestMessageBody: asString(row['latest_message_body'], '') || undefined,
+      latestMessageAt: latestMessageIso,
+      uiIntent,
+      priorityBucket,
+      workflowStatus,
+      workflowStage,
+      showInPriorityInbox,
+      cashOffer: row['cash_offer'] ?? intelligenceRow?.['cash_offer'] ?? null,
+      estimatedValue: row['estimated_value'] ?? intelligenceRow?.['estimated_value'] ?? null,
+      finalAcquisitionScore: row['final_acquisition_score'] ?? intelligenceRow?.['final_acquisition_score'] ?? null,
+      streetviewImage: intelligenceRow?.['streetview_image'] ?? null,
+      zillowUrl: intelligenceRow?.['zillow_url'] ?? intelligenceRow?.['zillow_link'] ?? intelligenceRow?.['zillow'] ?? null,
+      realtorUrl: intelligenceRow?.['realtor_url'] ?? intelligenceRow?.['realtor_link'] ?? intelligenceRow?.['realtor'] ?? null,
     }
 
-    threads.push(thread)
-  }
+    return thread
+  })
 
   let filtered = [...threads]
 
@@ -1352,6 +1170,8 @@ export const getInboxThreads = async (
   }
 
   filtered.sort((a, b) => {
+    if ((a as AnyRecord)['showInPriorityInbox'] && !(b as AnyRecord)['showInPriorityInbox']) return -1
+    if (!(a as AnyRecord)['showInPriorityInbox'] && (b as AnyRecord)['showInPriorityInbox']) return 1
     if (a.status === 'unread' && b.status !== 'unread') return -1
     if (b.status === 'unread' && a.status !== 'unread') return 1
     return new Date(b.lastMessageIso).getTime() - new Date(a.lastMessageIso).getTime()
@@ -1386,26 +1206,41 @@ export const fetchInboxModel = async (options: InboxFetchOptions = {}): Promise<
 }
 
 const toThreadMessage = (row: AnyRecord): ThreadMessage => {
-  // Use actual confirmed message_events column names
-  const createdAt =
-    asIso(row['event_timestamp'] ?? row['created_at'] ?? row['sent_at'] ?? row['received_at']) ??
+  const timelineAt =
+    asIso(row['timeline_at'] ?? row['created_at'] ?? row['event_timestamp'] ?? row['sent_at'] ?? row['received_at']) ??
     new Date().toISOString()
+  const createdAt =
+    asIso(row['created_at'] ?? row['event_timestamp'] ?? row['sent_at'] ?? row['received_at'] ?? row['timeline_at']) ??
+    timelineAt
   const direction = normalizeMessageDirection(row)
   const deliveryStatus = asString(
-    row['delivery_status'] ?? row['provider_delivery_status'] ?? row['raw_carrier_status'],
+    row['delivery_status'] ?? row['provider_delivery_status'] ?? row['raw_carrier_status'] ?? row['queue_status'] ?? row['status'],
     'unknown',
   )
   const { sellerPhone, canonicalE164: msgCanonical } = getSellerPhoneFromMessage(row)
   const source =
-    asString(row['source_app'], '') ||
+    asString(row['source_app'] ?? row['message_source'], '') ||
     asString(getNestedValue(row, 'metadata.source'), '') ||
     'textgrid'
+
+  const developerMetaEntries = [
+    ['template_id', asString(row['template_id'], '')],
+    ['template_name', asString(row['template_name'], '')],
+    ['use_case', asString(row['use_case'] ?? row['use_case_template'], '')],
+    ['queue_id', asString(row['queue_id'], '')],
+    ['provider_message_sid', asString(row['provider_message_sid'], '')],
+  ].filter(([, value]) => value)
+
+  const developerMeta = developerMetaEntries.length > 0
+    ? Object.fromEntries(developerMetaEntries)
+    : undefined
 
   return {
     id: asString(row['id'], createdAt),
     direction,
     body: asString(row['message_body'], '') || getMessageBody(row),
     createdAt,
+    timelineAt,
     deliveredAt: asIso(row['delivered_at']),
     deliveryStatus,
     fromNumber: normalizePhone(row['from_phone_number']),
@@ -1421,6 +1256,7 @@ const toThreadMessage = (row: AnyRecord): ThreadMessage => {
     source,
     rawStatus: normalizeStatus(row['delivery_status'] ?? row['raw_carrier_status']),
     error: asString(row['error_message'] ?? row['failure_reason'] ?? row['failure_code'], '') || null,
+    developerMeta,
   }
 }
 
@@ -1434,166 +1270,43 @@ export const getThreadMessagesForThread = async (
   options: ThreadMessageFetchOptions = {},
 ): Promise<ThreadMessage[]> => {
   const supabase = getSupabaseClient()
-  const threadPhone = normalizePhone(thread.canonicalE164 || thread.phoneNumber)
-  const propertyId = asString(thread.propertyId, '')
-  const ownerId = asString(thread.ownerId, '')
-  const prospectId = asString(thread.prospectId, '')
+  const threadKey = asString(thread.threadKey, '') || asString(thread.id, '')
+  if (!threadKey) return []
 
-  const applyThreadFilters = (
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    query: any,
-    activeThread: InboxThread,
-    normalizedPhone: string,
-    threadPropertyId: string,
-    threadOwnerId: string,
-    threadProspectId: string,
-  ) => {
-    const threadKey = asString(activeThread.threadKey, '')
-
-    if (threadKey.startsWith('phone:')) {
-      const [, phone] = threadKey.split(':')
-      if (phone) {
-        return query.or(`from_phone_number.eq.${safeFilterValue(phone)},to_phone_number.eq.${safeFilterValue(phone)}`)
-      }
-    }
-
-    if (threadKey.startsWith('phone_property:')) {
-      const [, phone, keyPropertyId] = threadKey.split(':')
-      if (phone && keyPropertyId) {
-        return query
-          .or(`from_phone_number.eq.${safeFilterValue(phone)},to_phone_number.eq.${safeFilterValue(phone)}`)
-          .eq('property_id', keyPropertyId)
-      }
-    }
-
-    if (threadKey.startsWith('phone_owner:')) {
-      const [, phone, keyOwnerId] = threadKey.split(':')
-      if (phone && keyOwnerId) {
-        return query
-          .or(`from_phone_number.eq.${safeFilterValue(phone)},to_phone_number.eq.${safeFilterValue(phone)}`)
-          .eq('master_owner_id', keyOwnerId)
-      }
-    }
-
-    if (threadKey.startsWith('phone_prospect:')) {
-      const [, phone, keyProspectId] = threadKey.split(':')
-      if (phone && keyProspectId) {
-        return query
-          .or(`from_phone_number.eq.${safeFilterValue(phone)},to_phone_number.eq.${safeFilterValue(phone)}`)
-          .eq('prospect_id', keyProspectId)
-      }
-    }
-
-    if (threadKey.startsWith('property:')) {
-      const [, keyPropertyId] = threadKey.split(':')
-      if (keyPropertyId) {
-        return query.eq('property_id', keyPropertyId)
-      }
-    }
-
-    if (threadKey.startsWith('owner:')) {
-      const [, keyOwnerId] = threadKey.split(':')
-      if (keyOwnerId) {
-        return query.eq('master_owner_id', keyOwnerId)
-      }
-    }
-
-    if (threadKey.startsWith('prospect:')) {
-      const [, keyProspectId] = threadKey.split(':')
-      if (keyProspectId) {
-        return query.eq('prospect_id', keyProspectId)
-      }
-    }
-
-    if (normalizedPhone && threadPropertyId) {
-      return query
-        .or(`from_phone_number.eq.${safeFilterValue(normalizedPhone)},to_phone_number.eq.${safeFilterValue(normalizedPhone)}`)
-        .eq('property_id', threadPropertyId)
-    }
-
-    if (normalizedPhone && threadOwnerId) {
-      return query
-        .or(`from_phone_number.eq.${safeFilterValue(normalizedPhone)},to_phone_number.eq.${safeFilterValue(normalizedPhone)}`)
-        .eq('master_owner_id', threadOwnerId)
-    }
-
-    if (normalizedPhone && threadProspectId) {
-      return query
-        .or(`from_phone_number.eq.${safeFilterValue(normalizedPhone)},to_phone_number.eq.${safeFilterValue(normalizedPhone)}`)
-        .eq('prospect_id', threadProspectId)
-    }
-
-    if (normalizedPhone) {
-      return query.or(
-        `from_phone_number.eq.${safeFilterValue(normalizedPhone)},to_phone_number.eq.${safeFilterValue(normalizedPhone)}`,
-      )
-    }
-
-    if (threadPropertyId) return query.eq('property_id', threadPropertyId)
-    if (threadOwnerId) return query.eq('master_owner_id', threadOwnerId)
-    if (threadProspectId) return query.eq('prospect_id', threadProspectId)
-
-    const idVal = safeFilterValue(activeThread.id)
-    const orParts = [`id.eq.${idVal}`]
-    const keyVal = asString(activeThread.threadKey, '')
-    if (keyVal) orParts.push(`message_event_key.eq.${safeFilterValue(keyVal)}`)
-    return query.or(orParts.join(','))
-  }
-
-  const rows: AnyRecord[] = []
-  let cursorCreatedAt: string | null = null
-  let page = 0
-  const maxPages = Math.max(1, options.maxPages ?? 250)
+  const pageSize = MESSAGE_EVENTS_THREAD_PAGE_SIZE
+  const maxPages = Math.max(1, options.maxPages ?? 50)
   const maxMessages = options.maxMessages && options.maxMessages > 0 ? options.maxMessages : null
 
-  while (page < maxPages) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let query: any = supabase
-      .from('message_events')
+  const rows: AnyRecord[] = []
+  for (let page = 0; page < maxPages; page += 1) {
+    const { data, error } = await supabase
+      .from('nexus_thread_messages_v')
       .select('*')
-      .order('created_at', { ascending: false })
-      .limit(MESSAGE_EVENTS_THREAD_PAGE_SIZE)
+      .eq('thread_key', threadKey)
+      .order('timeline_at', { ascending: true })
+      .order('created_at', { ascending: true })
+      .range(page * pageSize, page * pageSize + pageSize - 1)
 
-    if (cursorCreatedAt) {
-      query = query.lt('created_at', cursorCreatedAt)
-    }
-
-    query = applyThreadFilters(query, thread, threadPhone, propertyId, ownerId, prospectId)
-
-    const { data, error } = await query
     if (error) throw new Error(mapErrorMessage(error))
 
     const batch = safeArray(data as AnyRecord[])
-    if (batch.length === 0) break
     rows.push(...batch)
-
-    if (maxMessages !== null && rows.length >= maxMessages) {
-      break
-    }
-
-    const last = batch[batch.length - 1]
-    const oldest = asIso(last?.['created_at'])
-    if (!oldest) break
-    cursorCreatedAt = oldest
-    page += 1
-
-    if (batch.length < MESSAGE_EVENTS_THREAD_PAGE_SIZE) break
+    if (maxMessages !== null && rows.length >= maxMessages) break
+    if (batch.length < pageSize) break
   }
 
-  const deduped = Array.from(
-    new Map(rows.map((row, index) => [asString(row['id'], `${asString(row['created_at'], '')}:${index}`), row])).values(),
-  )
-  const bounded = maxMessages !== null ? deduped.slice(0, maxMessages) : deduped
+  const bounded = maxMessages !== null ? rows.slice(0, maxMessages) : rows
+  const mapped = bounded.map(toThreadMessage)
 
   if (DEV) {
-    console.log(
-      `[getThreadMessagesForThread] phone=${threadPhone} propertyId=${propertyId} ownerId=${ownerId} pages=${page} → ${deduped.length} rows`,
-    )
+    console.log(`[getThreadMessagesForThread] thread_key=${threadKey} → ${mapped.length} rows from nexus_thread_messages_v`)
   }
 
-  return bounded
-    .map(toThreadMessage)
-    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+  return mapped.sort((a, b) => {
+    const aTs = new Date(a.timelineAt || a.createdAt).getTime()
+    const bTs = new Date(b.timelineAt || b.createdAt).getTime()
+    return aTs - bTs
+  })
 }
 
 export const getThreadMessages = async (threadIdOrKey: string): Promise<ThreadMessage[]> => {
@@ -1615,6 +1328,29 @@ export const getThreadMessages = async (threadIdOrKey: string): Promise<ThreadMe
     aiDraft: null,
     labels: [],
   })
+}
+
+export const getThreadIntelligence = async (thread: InboxThread): Promise<ThreadIntelligenceRecord | null> => {
+  const supabase = getSupabaseClient()
+  const threadKey = asString(thread.threadKey, '') || asString(thread.id, '')
+  if (!threadKey) return null
+
+  const { data, error } = await supabase
+    .from('nexus_thread_intelligence_v')
+    .select('*')
+    .eq('thread_key', threadKey)
+    .limit(1)
+
+  if (error) {
+    if (DEV) console.warn('[getThreadIntelligence] query failed', mapErrorMessage(error))
+    return null
+  }
+
+  const row = safeArray(data as AnyRecord[])[0] ?? null
+  if (DEV) {
+    console.log('[getThreadIntelligence]', { threadKey, found: Boolean(row) })
+  }
+  return row
 }
 
 export const getThreadContext = async (thread: InboxThread): Promise<ThreadContext> => {

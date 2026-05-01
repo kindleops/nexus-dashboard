@@ -25,6 +25,14 @@ const fallback = (value: unknown, placeholder = 'Unknown') => {
 const titleCase = (value: string) =>
   value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
 
+const normalizeDeliveryBadge = (message: ThreadMessage): 'failed' | 'pending' | 'delivered' | 'unknown' => {
+  const status = String(message.deliveryStatus || message.rawStatus || '').toLowerCase()
+  if (status.includes('fail') || status.includes('error') || status.includes('undeliver')) return 'failed'
+  if (status.includes('delivered') || status.includes('sent')) return 'delivered'
+  if (status.includes('queue') || status.includes('pending') || status.includes('schedule') || status.includes('approval')) return 'pending'
+  return 'unknown'
+}
+
 type ThreadDealFields = InboxWorkflowThread & {
   askingPrice?: unknown
   dealValue?: unknown
@@ -109,9 +117,19 @@ export const ChatThread = ({
             <span className="nx-bubble-time">
               {formatRelativeTime(msg.createdAt)}
               {msg.direction === 'outbound' && msg.deliveryStatus && (
-                <b>{titleCase(msg.deliveryStatus)}</b>
+                <b className={cls('nx-delivery-badge', `is-${normalizeDeliveryBadge(msg)}`)}>{titleCase(msg.deliveryStatus)}</b>
               )}
             </span>
+            {msg.developerMeta && Object.keys(msg.developerMeta).length > 0 && (
+              <details className="nx-message-dev-meta">
+                <summary>Developer metadata</summary>
+                <div className="nx-message-dev-meta__grid">
+                  {Object.entries(msg.developerMeta).map(([key, value]) => (
+                    <span key={key}><small>{key}</small><b>{String(value)}</b></span>
+                  ))}
+                </div>
+              </details>
+            )}
           </div>
         ))}
       </div>

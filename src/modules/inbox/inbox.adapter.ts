@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import type { CommandCenterStore } from '../../domain/types'
 import { formatRelativeTime } from '../../shared/formatters'
 import { fetchInboxModel } from '../../lib/data/inboxData'
 import { isDev, shouldUseSupabase, useSupabaseData } from '../../lib/data/shared'
 import type { InboxWorkflowThread } from '../../lib/data/inboxWorkflowData'
 import { hasSupabaseEnv, supabaseAnonKeyPresent, supabaseUrlPresent } from '../../lib/supabaseClient'
+import { getSupabaseClient } from '../../lib/supabaseClient'
 
 const LIVE_INBOX_TIMEOUT_MS = 30000
 let liveInboxRequest: Promise<InboxModel> | null = null
@@ -95,6 +96,21 @@ export interface InboxThread {
   threadIsPinned?: boolean
   threadLastReadAt?: string | null
   threadArchivedAt?: string | null
+  ownerDisplayName?: string
+  propertyAddressFull?: string
+  latestMessageBody?: string
+  latestMessageAt?: string
+  uiIntent?: string
+  priorityBucket?: string
+  workflowStatus?: string
+  workflowStage?: string
+  showInPriorityInbox?: boolean
+  cashOffer?: unknown
+  estimatedValue?: unknown
+  finalAcquisitionScore?: unknown
+  streetviewImage?: string | null
+  zillowUrl?: string | null
+  realtorUrl?: string | null
 }
 
 export interface InboxModel {
@@ -209,8 +225,8 @@ export const toWorkflowThread = (t: InboxThread): InboxWorkflowThread => {
     lastInboundAt: t.lastInboundAt ?? null,
     lastOutboundAt: t.lastOutboundAt ?? null,
     lastMessageAt: lastAt,
-    lastMessageBody: t.preview,
-    lastDirection: 'unknown',
+    lastMessageBody: t.latestMessageBody || t.preview,
+    lastDirection: (t.directionUsed === 'inbound' || t.directionUsed === 'outbound' ? t.directionUsed : 'unknown'),
     updatedAt: lastAt,
     queueStatus: t.queueId ? 'queued' : null,
   }
@@ -236,6 +252,21 @@ export const useInboxData = () => {
   const [data, setData] = useState<InboxModel>(EMPTY_MODEL)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<unknown>(null)
+
+  const refresh = useCallback(async () => {
+    try {
+      const model = await loadInbox()
+      setData(model ?? EMPTY_MODEL)
+      setError(null)
+      return model
+    } catch (err) {
+      setError(err)
+      if (isDev) {
+        console.error('[NEXUS] useInboxData refresh failed', err)
+      }
+      return EMPTY_MODEL
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -266,8 +297,33 @@ export const useInboxData = () => {
           console.log('[useInboxData] Loading complete')
         }
       })
-    return () => { cancelled = true }
-  }, [])
 
-  return { data, loading, error }
+    if (shouldUseSupabase()) {
+      const supabase = getSupabaseClient()
+      let refreshTimeout: ReturnType<typeof setTimeout> | null = null
+      const triggerRefresh = () => {
+        if (refreshTimeout) clearTimeout(refreshTimeout)
+        refreshTimeout = setTimeout(() => {
+          if (!cancelled) void refresh()
+        }, 250)
+      }
+
+      const channel = supabase
+        .channel('nexus-inbox-realtime')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'inbox_thread_state' }, triggerRefresh)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'message_events' }, triggerRefresh)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'send_queue' }, triggerRefresh)
+        .subscribe()
+
+      return () => {
+        cancelled = true
+        if (refreshTimeout) clearTimeout(refreshTimeout)
+        void supabase.removeChannel(channel)
+      }
+    }
+
+    return () => { cancelled = true }
+  }, [refresh])
+
+  return { data, loading, error, refresh }
 }
