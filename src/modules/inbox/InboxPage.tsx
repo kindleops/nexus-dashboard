@@ -2,11 +2,14 @@ import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { pushRoutePath } from '../../app/router'
 import { useInboxData, toWorkflowThread } from './inbox.adapter'
 import {
-  archiveThread,
-  pinThread,
-  unpinThread,
   updateThreadStage,
   updateThreadStatus,
+  starThread,
+  unstarThread,
+  pinThread,
+  unpinThread,
+  unarchiveThread,
+  archiveThread,
   type InboxStage,
 } from '../../lib/data/inboxWorkflowData'
 import {
@@ -28,6 +31,7 @@ import { ChatThread } from './components/ChatThread'
 import { Composer } from './components/Composer'
 import { ComposerTranslationBar } from './components/ComposerTranslationBar'
 import { IntelligencePanel } from './components/IntelligencePanel'
+import { InboxActivityPanel } from './components/InboxActivityPanel'
 import { InboxCommandMap } from './InboxCommandMap'
 import { InboxUtilityDrawer, MapDossierDrawer } from './components/InboxUtilityDrawer'
 import { AdvancedFiltersPopover } from './components/AdvancedFiltersPopover'
@@ -735,6 +739,7 @@ export default function InboxPage() {
         onOpenAi={() => setActiveOverlay('ai')}
         onOpenKeys={() => setActiveOverlay('keys')}
         onOpenKpis={() => pushRoutePath('/dashboard/kpis')}
+        onOpenActivity={() => setActiveOverlay('activity')}
         onResetLayout={() => setLayoutState(resetLayoutMode)}
       />
 
@@ -747,6 +752,7 @@ export default function InboxPage() {
             onSelect={handleSelect}
             savedPreset={savedPreset}
             onApplySavedPreset={applySavedPreset}
+            onThreadAction={handleThreadAction}
             viewCounts={viewCounts}
             onOpenAdvancedFilters={() => setActiveOverlay('filters')}
             loadingError={DEV && data.liveFetchStatus === 'error' ? data.liveFetchError : null}
@@ -764,6 +770,7 @@ export default function InboxPage() {
             onSelect={handleSelect}
             savedPreset={rightSavedPreset}
             onApplySavedPreset={applyRightSavedPreset}
+            onThreadAction={handleThreadAction}
             viewCounts={viewCounts}
             onOpenAdvancedFilters={() => setActiveOverlay('filters')}
             loadingError={null}

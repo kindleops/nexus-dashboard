@@ -118,6 +118,33 @@ export interface InboxThread {
   master_owner_id?: string
   prospect_id?: string
   property_id?: string
+  // Seller details
+  sellerFirstName?: string
+  sellerLastName?: string
+  ownerType?: string
+  contactLanguage?: string
+  bestPhone?: string
+  phoneConfidence?: number
+  // Property details
+  beds?: string | number
+  baths?: string | number
+  sqft?: string | number
+  yearBuilt?: string | number
+  effectiveYear?: string | number
+  equityAmount?: number
+  equityPercent?: number
+  estimatedRepairCost?: number
+  motivationScore?: number
+  podioTags?: string[]
+  isOwnerOccupied?: boolean
+  isAbsentee?: boolean
+  isVacant?: boolean
+  hasLien?: boolean
+  isProbate?: boolean
+  isTaxDelinquent?: boolean
+  // Deal
+  dealNextStep?: string
+  motivationSummary?: string
 }
 
 export interface InboxModel {

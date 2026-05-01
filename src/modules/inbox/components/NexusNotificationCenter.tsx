@@ -1,5 +1,4 @@
-/* eslint-disable react-refresh/only-export-components */
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import type { QueueProcessorHealth } from '../../../lib/data/inboxData'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
@@ -196,6 +195,18 @@ export const NexusNotificationCenter = ({
       }))
   ), [dismissedIds, notifications, readIds])
 
+  const toastItems = useMemo(() => enriched.filter((item) => item.status !== 'read').slice(0, 3), [enriched])
+
+  // Phase 2: Auto-dismiss toasts after 3 seconds
+  useEffect(() => {
+    const timers = toastItems.map(item => {
+      return setTimeout(() => {
+        setDismissedIds(prev => prev.includes(item.id) ? prev : [...prev, item.id])
+      }, 3000)
+    })
+    return () => timers.forEach(clearTimeout)
+  }, [toastItems])
+
   const unreadCount = enriched.filter((item) => item.status !== 'read').length
   const filtered = enriched.filter((item) => {
     if (activeSpace !== 'All' && item.command_space !== activeSpace && !(activeSpace === 'Errors' && item.severity === 'critical')) return false
@@ -203,7 +214,6 @@ export const NexusNotificationCenter = ({
     if (showCriticalOnly && item.severity !== 'critical') return false
     return true
   })
-  const toastItems = enriched.filter((item) => item.status !== 'read').slice(0, 3)
 
   return (
     <>

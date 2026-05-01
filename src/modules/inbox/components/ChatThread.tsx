@@ -119,25 +119,18 @@ export const ChatThread = ({
           <div key={msg.id} className={cls('nx-bubble-wrap', msg.direction === 'inbound' ? 'is-inbound' : 'is-outbound')}>
             <div className="nx-chat-bubble">
               {msg.body}
+              
+              <div className="nx-bubble-meta-badge">
+                <time>{formatRelativeTime(msg.createdAt)}</time>
+                {msg.direction === 'outbound' && msg.deliveryStatus && (
+                  <b className={cls('nx-delivery-dot', `is-${normalizeDeliveryBadge(msg)}`)} title={titleCase(msg.deliveryStatus)} />
+                )}
+              </div>
             </div>
-            <span className="nx-bubble-time">
-              {formatRelativeTime(msg.createdAt)}
-              {msg.direction === 'outbound' && msg.deliveryStatus && (
-                <b className={cls('nx-delivery-badge', `is-${normalizeDeliveryBadge(msg)}`)}>
-                  {titleCase(msg.deliveryStatus)}
-                </b>
-              )}
-            </span>
-            {msg.developerMeta && Object.keys(msg.developerMeta).length > 0 && (
-              <details className="nx-message-dev-meta">
-                <summary>Dev info</summary>
-                <div className="nx-message-dev-meta__grid">
-                  {Object.entries(msg.developerMeta).map(([key, value]) => (
-                    <span key={key}><small>{key}</small><b>{String(value)}</b></span>
-                  ))}
-                </div>
-              </details>
-            )}
+            {/* Tooltip and footer can remain or be simplified */}
+            <div className="nx-bubble-footer" style={{ opacity: 0.5, fontSize: '10px' }}>
+               <span>{new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+            </div>
           </div>
         ))}
         {messages.length === 0 && !loading && (

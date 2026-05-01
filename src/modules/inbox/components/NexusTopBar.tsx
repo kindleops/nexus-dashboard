@@ -32,6 +32,7 @@ interface NexusTopBarProps {
   onOpenAi: () => void
   onOpenKeys: () => void
   onOpenKpis: () => void
+  onOpenActivity: () => void
   onResetLayout: () => void
 }
 
@@ -99,6 +100,7 @@ export const NexusTopBar = ({
   onOpenAi,
   onOpenKeys,
   onOpenKpis,
+  onOpenActivity,
   onResetLayout,
 }: NexusTopBarProps) => {
   const [statusOpen, setStatusOpen] = useState(false)
@@ -235,6 +237,8 @@ export const NexusTopBar = ({
           )}
         </div>
 
+        {/* Theme toggle temporarily disabled per requirements */}
+        {/*
         <button
           type="button"
           className="nx-icon-control"
@@ -244,6 +248,18 @@ export const NexusTopBar = ({
         >
           <Icon name={theme === 'light' ? 'moon' : 'palette'} />
         </button>
+        */}
+
+        <div className="nx-notification-control">
+          <button
+            type="button"
+            className="nx-notification-button"
+            onClick={onOpenActivity}
+            title="Activity Log"
+          >
+            <Icon name="activity" />
+          </button>
+        </div>
 
         <div className="nx-notification-control">
           <button

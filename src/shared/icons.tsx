@@ -55,6 +55,7 @@ export type IconName =
   | 'drag'
   | 'volume'
   | 'moon'
+  | 'globe'
 
 interface IconProps extends SVGProps<SVGSVGElement> {
   name: IconName
@@ -443,6 +444,14 @@ export const Icon = ({ name, ...props }: IconProps) => {
       return (
         <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
           <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" {...commonProps} />
+        </svg>
+      )
+    case 'globe':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <circle cx="12" cy="12" r="9" {...commonProps} />
+          <path d="M3.6 9h16.8M3.6 15h16.8" {...commonProps} />
+          <path d="M12 3a17 17 0 0 0 0 18M12 3a17 17 0 0 1 0 18" {...commonProps} />
         </svg>
       )
   }

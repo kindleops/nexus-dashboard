@@ -4,6 +4,9 @@ import { TemplatePopover } from './TemplatePopover'
 import type { InboxThread } from '../inbox.adapter'
 import type { ThreadContext } from '../../../lib/data/inboxData'
 
+const cls = (...tokens: Array<string | false | null | undefined>) =>
+  tokens.filter(Boolean).join(' ')
+
 type IconName = Parameters<typeof Icon>[0]['name']
 type ComposerTool = {
   id: string
@@ -29,6 +32,8 @@ interface ComposerProps {
   onReplaceTemplate: (text: string) => void
   onSendTemplate: (text: string) => void
   onScheduleTemplate: () => void
+  onTranslate?: () => void
+  isTranslating?: boolean
   disabled?: boolean
   disabledReason?: string
 }
@@ -79,6 +84,8 @@ export const Composer = ({
   onReplaceTemplate,
   onSendTemplate,
   onScheduleTemplate,
+  onTranslate,
+  isTranslating = false,
   disabled = false,
   disabledReason,
 }: ComposerProps) => {
@@ -100,6 +107,7 @@ export const Composer = ({
   const tools: ComposerTool[] = [
     { id: 'templates', label: 'Templates', icon: 'file-text', action: () => setTemplatePopoverOpen(true), disabled: false },
     { id: 'ai-assist', label: 'AI Assist', icon: 'spark', action: onAI, disabled: false },
+    { id: 'translate', label: isTranslating ? 'Original' : 'Translate', icon: 'globe', action: onTranslate ?? (() => {}), disabled: false },
     { id: 'offer', label: 'Offer', icon: 'zap', action: onOffer ?? (() => {}), disabled },
     { id: 'schedule', label: 'Schedule', icon: 'calendar', action: onOpenSchedule, disabled },
     { id: 'notes', label: 'Notes', icon: 'file-text', action: () => {}, disabled: false },
@@ -229,13 +237,18 @@ export const Composer = ({
   return (
     <div className="nx-sticky-composer">
       {/* Utility action row */}
+      {/* Utility action row - Phase 2: Hidden until hover/focus */}
       <div className="nx-composer-utility-row">
         {tools.map(tool => (
           <button
             key={tool.id}
             ref={tool.id === 'templates' ? templatesButtonRef : undefined}
             type="button"
-            className={`nx-utility-btn${tool.id === 'templates' && templatePopoverOpen ? ' is-active' : ''}`}
+            className={cls(
+              'nx-utility-btn',
+              tool.id === 'templates' && templatePopoverOpen && 'is-active',
+              tool.id === 'translate' && isTranslating && 'is-translating-active'
+            )}
             onClick={tool.action}
             disabled={tool.disabled}
           >

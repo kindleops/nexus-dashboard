@@ -2,6 +2,7 @@ import type { InboxThread } from '../../modules/inbox/inbox.adapter'
 import { getSupabaseClient } from '../supabaseClient'
 import { getInboxThreads, getThreadMessagesForThread, normalizeMessageDirection } from './inboxData'
 import { asBoolean, asIso, asString, getSupabaseErrorMessage, mapErrorMessage, normalizeStatus, safeArray, type AnyRecord } from './shared'
+import { logInboxActivity } from './inboxActivityData'
 
 const DEV = Boolean(import.meta.env.DEV)
 const SENT_MESSAGES_PAGE_SIZE = 1000
@@ -524,6 +525,7 @@ const persistWorkflowPatch = async (
     }
     if (patch.isPinned != null) payload['is_pinned'] = patch.isPinned
     if (patch.priority) payload['priority'] = patch.priority
+    if ((patch as any).isStarred != null) payload['is_starred'] = (patch as any).isStarred
     if (patch.isArchived != null) payload['archived_at'] = patch.isArchived ? now : null
     payload['is_urgent'] = (patch.priority ?? thread.priority) === 'urgent'
 
@@ -689,7 +691,21 @@ export const fetchSentMessages = async (params: InboxThreadsQuery = {}): Promise
 
 export const updateThreadStage = async (thread: InboxThread, stage: InboxStage): Promise<WorkflowMutationResult> => {
   const status: InboxWorkflowStatus = stage === 'archived' ? 'archived' : stage === 'dnc_opt_out' ? 'suppressed' : 'open'
-  return persistWorkflowPatch(thread, { inboxStage: stage, inboxStatus: status, isArchived: stage === 'archived' })
+  const result = await persistWorkflowPatch(thread, { inboxStage: stage, inboxStatus: status, isArchived: stage === 'archived' })
+  
+  if (result.ok) {
+    void logInboxActivity({
+      event_type: 'stage_change',
+      thread_key: result.threadKey,
+      actor: 'operator',
+      title: 'Stage Updated',
+      description: `Changed stage to ${stage.replace(/_/g, ' ')}`,
+      metadata: { old_stage: thread.workflowStage, new_stage: stage },
+      undo_payload: { thread_key: result.threadKey, stage: thread.workflowStage },
+    })
+  }
+  
+  return result
 }
 
 export const updateThreadStatus = async (thread: InboxThread, status: InboxWorkflowStatus): Promise<WorkflowMutationResult> => {
@@ -698,11 +714,35 @@ export const updateThreadStatus = async (thread: InboxThread, status: InboxWorkf
 }
 
 export const updateThreadPriority = async (thread: InboxThread, priority: InboxPriority): Promise<WorkflowMutationResult> => {
-  return persistWorkflowPatch(thread, { priority })
+  const result = await persistWorkflowPatch(thread, { priority })
+  if (result.ok) {
+    void logInboxActivity({
+      event_type: 'priority_change' as any,
+      thread_key: result.threadKey,
+      actor: 'operator',
+      title: 'Priority Changed',
+      description: `Set priority to ${priority}`,
+      metadata: { old_priority: thread.priority, new_priority: priority },
+      undo_payload: { thread_key: result.threadKey, priority: thread.priority },
+    })
+  }
+  return result
 }
 
 export const archiveThread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
-  return persistWorkflowPatch(thread, { isArchived: true, inboxStatus: 'archived', inboxStage: 'archived' })
+  const result = await persistWorkflowPatch(thread, { isArchived: true, inboxStatus: 'archived', inboxStage: 'archived' })
+  if (result.ok) {
+    void logInboxActivity({
+      event_type: 'archive_thread',
+      thread_key: result.threadKey,
+      actor: 'operator',
+      title: 'Thread Archived',
+      description: `Archived thread for ${thread.ownerName}`,
+      metadata: { owner_name: thread.ownerName },
+      undo_payload: { thread_key: result.threadKey, action: 'unarchive' },
+    })
+  }
+  return result
 }
 
 export const unarchiveThread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
@@ -730,4 +770,12 @@ export const pinThread = async (thread: InboxThread): Promise<WorkflowMutationRe
 
 export const unpinThread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
   return persistWorkflowPatch(thread, { isPinned: false })
+}
+
+export const starThread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
+  return persistWorkflowPatch(thread, { isStarred: true } as any)
+}
+
+export const unstarThread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
+  return persistWorkflowPatch(thread, { isStarred: false } as any)
 }

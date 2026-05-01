@@ -1008,7 +1008,42 @@ export const getInboxThreads = async (
       const keyBatch = uniqueKeys.slice(index, index + 250)
       const { data: intelligenceRows, error: intelligenceError } = await supabase
         .from('nexus_thread_intelligence_v')
-        .select('thread_key,owner_display_name,property_address_full,cash_offer,estimated_value,final_acquisition_score,streetview_image,zillow_url,zillow_link,zillow,realtor_url,realtor_link,realtor')
+        .select(`
+          thread_key,
+          owner_display_name,
+          seller_first_name,
+          seller_last_name,
+          owner_type,
+          contact_language,
+          best_phone,
+          phone_confidence,
+          property_address_full,
+          property_id,
+          beds,
+          baths,
+          sqft,
+          year_built,
+          effective_year_built,
+          estimated_value,
+          cash_offer,
+          equity_amount,
+          equity_percent,
+          estimated_repair_cost,
+          final_acquisition_score,
+          motivation_score,
+          motivation_summary,
+          deal_next_step,
+          podio_tags,
+          is_owner_occupied,
+          is_absentee,
+          is_vacant,
+          has_lien,
+          is_probate,
+          is_tax_delinquent,
+          streetview_image,
+          zillow_url,
+          realtor_url
+        `)
         .in('thread_key', keyBatch)
 
       if (intelligenceError) {
@@ -1122,6 +1157,31 @@ export const getInboxThreads = async (
       streetviewImage: (intelligenceRow?.['streetview_image'] as string) ?? null,
       zillowUrl: (intelligenceRow?.['zillow_url'] ?? intelligenceRow?.['zillow_link'] ?? intelligenceRow?.['zillow']) as string ?? null,
       realtorUrl: (intelligenceRow?.['realtor_url'] ?? intelligenceRow?.['realtor_link'] ?? intelligenceRow?.['realtor']) as string ?? null,
+      // Newly Hydrated Fields
+      sellerFirstName: asString(intelligenceRow?.['seller_first_name'], ''),
+      sellerLastName: asString(intelligenceRow?.['seller_last_name'], ''),
+      ownerType: asString(intelligenceRow?.['owner_type'], ''),
+      contactLanguage: asString(intelligenceRow?.['contact_language'], ''),
+      bestPhone: asString(intelligenceRow?.['best_phone'], ''),
+      phoneConfidence: asNumber(intelligenceRow?.['phone_confidence'], 0),
+      beds: intelligenceRow?.['beds'] as string | number,
+      baths: intelligenceRow?.['baths'] as string | number,
+      sqft: intelligenceRow?.['sqft'] as string | number,
+      yearBuilt: intelligenceRow?.['year_built'] as string | number,
+      effectiveYear: intelligenceRow?.['effective_year_built'] as string | number,
+      equityAmount: asNumber(intelligenceRow?.['equity_amount'], 0),
+      equityPercent: asNumber(intelligenceRow?.['equity_percent'], 0),
+      estimatedRepairCost: asNumber(intelligenceRow?.['estimated_repair_cost'], 0),
+      motivationScore: asNumber(intelligenceRow?.['motivation_score'], 0),
+      motivationSummary: asString(intelligenceRow?.['motivation_summary'], ''),
+      dealNextStep: asString(intelligenceRow?.['deal_next_step'], ''),
+      podioTags: safeArray(intelligenceRow?.['podio_tags'] as string[]),
+      isOwnerOccupied: asBoolean(intelligenceRow?.['is_owner_occupied'], false),
+      isAbsentee: asBoolean(intelligenceRow?.['is_absentee'], false),
+      isVacant: asBoolean(intelligenceRow?.['is_vacant'], false),
+      hasLien: asBoolean(intelligenceRow?.['has_lien'], false),
+      isProbate: asBoolean(intelligenceRow?.['is_probate'], false),
+      isTaxDelinquent: asBoolean(intelligenceRow?.['is_tax_delinquent'], false),
     }
 
     return thread

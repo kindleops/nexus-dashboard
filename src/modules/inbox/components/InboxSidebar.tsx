@@ -37,6 +37,7 @@ interface InboxSidebarProps {
   visibleThreadCount: number
   canLoadMore: boolean
   onLoadMore: () => void
+  onThreadAction?: (id: string, action: 'star' | 'pin' | 'archive') => void
 }
 
 const fallback = (value: unknown, placeholder = '') => {
@@ -72,9 +73,10 @@ interface ConversationRowProps {
   thread: InboxWorkflowThread
   selected: boolean
   onSelect: (id: string) => void
+  onAction?: (id: string, action: 'star' | 'pin' | 'archive') => void
 }
 
-export const ConversationRow = memo(({ thread, selected, onSelect }: ConversationRowProps) => {
+export const ConversationRow = memo(({ thread, selected, onSelect, onAction }: ConversationRowProps) => {
   const row = thread as unknown as Record<string, unknown>
   const ownerName = fallback(row.ownerDisplayName ?? thread.ownerName ?? thread.phoneNumber, 'Unknown Seller')
   const propertyAddress = fallback(row.propertyAddressFull ?? thread.propertyAddress, '')
@@ -124,6 +126,34 @@ export const ConversationRow = memo(({ thread, selected, onSelect }: Conversatio
               <span className="nx-market-tag">{market}</span>
             )}
           </span>
+          
+          {/* Phase 2/3: Hover Actions */}
+          <div className="nx-conversation-row__hover-actions" onClick={(e) => e.stopPropagation()}>
+             <button 
+               type="button" 
+               title="Star" 
+               className={cls("nx-hover-action-btn", thread.priority === 'urgent' && "is-active")}
+               onClick={() => onAction?.(thread.id, 'star')}
+             >
+               <Icon name="star" />
+             </button>
+             <button 
+               type="button" 
+               title="Pin" 
+               className={cls("nx-hover-action-btn", thread.isPinned && "is-active")}
+               onClick={() => onAction?.(thread.id, 'pin')}
+             >
+               <Icon name="pin" />
+             </button>
+             <button 
+               type="button" 
+               title="Archive" 
+               className="nx-hover-action-btn"
+               onClick={() => onAction?.(thread.id, 'archive')}
+             >
+               <Icon name="archive" />
+             </button>
+          </div>
         </div>
       </span>
     </button>
@@ -142,6 +172,7 @@ export const ConversationList = ({
   activeViewFilter: InboxViewSelectValue
   selectedId: string | null
   onSelect: (id: string) => void
+  onAction?: (id: string, action: 'star' | 'pin' | 'archive') => void
 }) => (
   <div className="nx-conversation-list">
     {threads.length > 0 ? (
@@ -151,6 +182,7 @@ export const ConversationList = ({
           thread={thread}
           selected={selectedId === thread.id}
           onSelect={onSelect}
+          onAction={onAction}
         />
       ))
     ) : (
@@ -191,7 +223,8 @@ export const InboxSidebar = ({
           </button>
         </div>
 
-        <section className="nx-priority-command-card">
+        <section className={cls('nx-priority-command-card', `is-mode-${activeViewFilter}`)}>
+          <div className="nx-priority-command-card__liquid-bg" />
           <div className="nx-priority-command-card__left">
             <span className="nx-priority-command-card__title">
               {activeLabel} Inbox
@@ -257,6 +290,7 @@ export const InboxSidebar = ({
         activeViewFilter={activeViewFilter}
         selectedId={selectedId}
         onSelect={onSelect}
+        onAction={onThreadAction}
       />
 
       {canLoadMore && (
