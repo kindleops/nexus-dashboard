@@ -4,10 +4,8 @@ import { Icon } from '../../../shared/icons'
 import { formatRelativeTime } from '../../../shared/formatters'
 import {
   type InboxSavedFilterPreset,
-  type InboxStageSelectValue,
   type InboxViewSelectValue,
   savedFilterOptions,
-  stageOptions,
 } from '../inbox-ui-helpers'
 import { getStatusVisual, statusStyleVars } from '../status-visuals'
 
@@ -39,17 +37,6 @@ interface InboxSidebarProps {
   visibleThreadCount: number
   canLoadMore: boolean
   onLoadMore: () => void
-  selectedThreadIds: string[]
-  onToggleThreadSelection: (id: string) => void
-  onSelectAllVisible: () => void
-  onBulkReplyAll: () => void
-  onBulkStageChange: (stage: InboxStageSelectValue) => void
-  onBulkStatusChange: (status: 'open' | 'read' | 'unread' | 'archived' | 'suppressed') => void
-  onBulkArchiveToggle: () => void
-  onBulkPinToggle: () => void
-  onBulkStarToggle: () => void
-  starredThreadIds: string[]
-  onToggleStarThread: (id: string) => void
 }
 
 const fallback = (value: unknown, placeholder = '') => {
@@ -68,36 +55,7 @@ const readClassifier = (thread: InboxWorkflowThread) => {
   return { uiIntent, priorityBucket, stage }
 }
 
-// Only show a deal metric chip if the value is a real number/currency, not unknown
-const formatCurrencyIfReal = (value: unknown): string | null => {
-  if (value === null || value === undefined || value === '' || value === 'Unknown') return null
-  const numeric = Number(String(value).replace(/[,$\s]/g, ''))
-  if (!Number.isFinite(numeric) || numeric <= 0) return null
-  return `$${Math.round(numeric).toLocaleString()}`
-}
 
-const formatScoreIfReal = (value: unknown): string | null => {
-  if (value === null || value === undefined || value === '' || value === 'Unknown') return null
-  const numeric = Number(String(value))
-  if (!Number.isFinite(numeric)) return null
-  return String(Math.round(numeric))
-}
-
-// Check if intent is meaningfully different from stage (avoids duplication)
-const isIntentMeaningfullyDifferent = (uiIntent: string, stage: string): boolean => {
-  if (!uiIntent) return false
-  const normalized = uiIntent.replace(/_/g, '')
-  const stageNorm = stage.replace(/_/g, '')
-  return normalized !== stageNorm && uiIntent !== 'needs_review' && uiIntent !== 'outbound_waiting'
-}
-
-const priorityTone = (thread: InboxWorkflowThread) => {
-  if (thread.isOptOut || thread.inboxStatus === 'suppressed') return 'suppressed'
-  if (thread.priority === 'urgent' || thread.inboxStage === 'needs_response') return 'urgent'
-  if (thread.priority === 'high') return 'high'
-  if (thread.inboxStage === 'interested' || thread.inboxStage === 'needs_offer') return 'qualified'
-  return 'normal'
-}
 
 const primaryPresetOptions = savedFilterOptions.filter((option) => (
   option.value === 'my_priority' ||
@@ -114,32 +72,17 @@ interface ConversationRowProps {
   thread: InboxWorkflowThread
   selected: boolean
   onSelect: (id: string) => void
-  isChecked: boolean
-  isStarred: boolean
-  onToggleCheck: (id: string) => void
-  onToggleStar: (id: string) => void
 }
 
-export const ConversationRow = memo(({ thread, selected, onSelect, isChecked, isStarred, onToggleCheck, onToggleStar }: ConversationRowProps) => {
+export const ConversationRow = memo(({ thread, selected, onSelect }: ConversationRowProps) => {
   const row = thread as unknown as Record<string, unknown>
   const ownerName = fallback(row.ownerDisplayName ?? thread.ownerName ?? thread.phoneNumber, 'Unknown Seller')
-  const phoneNumber = fallback(thread.phoneNumber || thread.canonicalE164, '')
   const propertyAddress = fallback(row.propertyAddressFull ?? thread.propertyAddress, '')
   const latestMessageBody = fallback(row.latestMessageBody ?? thread.lastMessageBody ?? thread.preview, '')
-  const { uiIntent, priorityBucket, stage } = readClassifier(thread)
-  const isSuppressed = thread.isOptOut || thread.inboxStatus === 'suppressed' || priorityBucket === 'suppressed'
+  const { uiIntent } = readClassifier(thread)
+  const isSuppressed = thread.isOptOut || thread.inboxStatus === 'suppressed' || readClassifier(thread).priorityBucket === 'suppressed'
   const visual = getStatusVisual(thread.inboxStage, isSuppressed)
-
-  // Deal metrics — only show if real values exist
-  const cashOffer = formatCurrencyIfReal(row.cashOffer ?? row['cash_offer'])
-  const estimatedValue = formatCurrencyIfReal(row.estimatedValue ?? row['estimated_value'])
-  const acquisitionScore = formatScoreIfReal(row.finalAcquisitionScore ?? row['final_acquisition_score'])
-
-  const hasDealMetrics = cashOffer || estimatedValue || acquisitionScore
-  const showIntentChip = isIntentMeaningfullyDifferent(uiIntent, stage)
   const market = marketLabel(thread)
-  const initial = ownerName.slice(0, 1).toUpperCase()
-  const tone = priorityTone(thread)
 
   return (
     <button
@@ -148,38 +91,24 @@ export const ConversationRow = memo(({ thread, selected, onSelect, isChecked, is
         'nx-conversation-row',
         selected && 'is-selected',
         `intent-${uiIntent || 'default'}`,
-        priorityBucket && `bucket-${priorityBucket}`,
       )}
       onClick={() => onSelect(thread.id)}
       style={statusStyleVars(visual)}
     >
-      <span className="nx-conversation-row__select" onClick={(event) => { event.stopPropagation(); onToggleCheck(thread.id) }}>
-        <input
-          type="checkbox"
-          checked={isChecked}
-          onChange={() => onToggleCheck(thread.id)}
-          aria-label="Select thread"
-        />
-      </span>
-      <span className={cls('nx-conversation-avatar', `is-${tone}`)}>{initial}</span>
       <span className="nx-conversation-main">
-        {/* Row 1: Name, Time, Star, Dot */}
+        {/* Row 1: Name & Time */}
         <span className="nx-conversation-row__top">
           <strong>{ownerName}</strong>
           <div className="nx-row-end-actions">
             <time>{formatRelativeTime(thread.lastMessageAt || thread.lastMessageIso)}</time>
-            <span className="nx-conversation-row__star" onClick={(event) => { event.stopPropagation(); onToggleStar(thread.id) }}>
-              <Icon name="star" className={cls(isStarred && 'is-active')} />
-            </span>
             <i className="nx-priority-dot" style={{ background: visual.dot, boxShadow: `0 0 10px ${visual.pulse}` }} />
           </div>
         </span>
 
-        {/* Row 2: Phone & Address */}
-        {(phoneNumber || propertyAddress) && (
+        {/* Row 2: Address */}
+        {propertyAddress && (
           <span className="nx-conversation-row__sub-row">
-            {phoneNumber && <span className="nx-conversation-row__phone">{phoneNumber}</span>}
-            {propertyAddress && <span className="nx-conversation-row__address">{propertyAddress}</span>}
+            <span className="nx-conversation-row__address">{propertyAddress}</span>
           </span>
         )}
 
@@ -188,7 +117,7 @@ export const ConversationRow = memo(({ thread, selected, onSelect, isChecked, is
           <span className="nx-conversation-row__preview">{latestMessageBody}</span>
         )}
 
-        {/* Row 4: Meta & Metrics */}
+        {/* Row 4: Meta */}
         <div className="nx-conversation-row__footer">
           <span className="nx-conversation-row__meta">
             {market && (
@@ -198,17 +127,7 @@ export const ConversationRow = memo(({ thread, selected, onSelect, isChecked, is
               <i className="nx-status-dot" style={{ background: visual.dot }} />
               {visual.label}
             </span>
-            {showIntentChip && (
-              <span className="nx-stage-pill nx-intent-pill">{uiIntent.replaceAll('_', ' ')}</span>
-            )}
           </span>
-          {hasDealMetrics && (
-            <span className="nx-conversation-row__deal-metrics">
-              {cashOffer && <span className="nx-deal-chip nx-deal-chip--offer">Offer {cashOffer}</span>}
-              {estimatedValue && <span className="nx-deal-chip nx-deal-chip--value">Value {estimatedValue}</span>}
-              {acquisitionScore && <span className="nx-deal-chip nx-deal-chip--score">Score {acquisitionScore}</span>}
-            </span>
-          )}
         </div>
       </span>
     </button>
@@ -222,19 +141,11 @@ export const ConversationList = ({
   activeViewFilter,
   selectedId,
   onSelect,
-  selectedThreadIds,
-  onToggleThreadSelection,
-  starredThreadIds,
-  onToggleStarThread,
 }: {
   threads: InboxWorkflowThread[]
   activeViewFilter: InboxViewSelectValue
   selectedId: string | null
   onSelect: (id: string) => void
-  selectedThreadIds: string[]
-  onToggleThreadSelection: (id: string) => void
-  starredThreadIds: string[]
-  onToggleStarThread: (id: string) => void
 }) => (
   <div className="nx-conversation-list">
     {threads.length > 0 ? (
@@ -242,12 +153,8 @@ export const ConversationList = ({
         <ConversationRow
           key={thread.threadKey || thread.id}
           thread={thread}
-          selected={thread.id === selectedId}
+          selected={selectedId === thread.id}
           onSelect={onSelect}
-          isChecked={selectedThreadIds.includes(thread.id)}
-          isStarred={starredThreadIds.includes(thread.id)}
-          onToggleCheck={onToggleThreadSelection}
-          onToggleStar={onToggleStarThread}
         />
       ))
     ) : (
@@ -273,19 +180,7 @@ export const InboxSidebar = ({
   visibleThreadCount,
   canLoadMore,
   onLoadMore,
-  selectedThreadIds,
-  onToggleThreadSelection,
-  onSelectAllVisible,
-  onBulkReplyAll,
-  onBulkStageChange,
-  onBulkStatusChange,
-  onBulkArchiveToggle,
-  onBulkPinToggle,
-  onBulkStarToggle,
-  starredThreadIds,
-  onToggleStarThread,
 }: InboxSidebarProps) => {
-  const selectedCount = selectedThreadIds.length
   const priorityCount = viewCounts.priority ?? 0
 
   return (
@@ -300,8 +195,14 @@ export const InboxSidebar = ({
 
         <section className="nx-priority-command-card">
           <div className="nx-priority-command-card__left">
-            <span className="nx-priority-command-card__title">Smart Inbox</span>
-            <p className="nx-priority-command-card__sub">Actionable signals &amp; urgent replies</p>
+            <span className="nx-priority-command-card__title">
+              {savedFilterOptions.find(o => o.value === savedPreset)?.label || 'Smart'} Inbox
+            </span>
+            <p className="nx-priority-command-card__sub">
+              {savedPreset === 'my_priority' 
+                ? 'Actionable signals & urgent replies' 
+                : `Active filter: ${savedFilterOptions.find(o => o.value === savedPreset)?.label || 'Custom'}`}
+            </p>
           </div>
           <strong className="nx-priority-command-card__count">{priorityCount}</strong>
         </section>
@@ -351,50 +252,6 @@ export const InboxSidebar = ({
             <span>{loadingError}</span>
           </div>
         )}
-
-        {selectedCount > 0 && (
-        <div className="nx-bulk-toolbar">
-          <button type="button" className="nx-filter-pill" onClick={onSelectAllVisible}>
-            Select visible ({visibleThreadCount})
-          </button>
-          <span>{selectedCount} selected</span>
-          <button type="button" className="nx-filter-pill" disabled={selectedCount === 0} onClick={onBulkReplyAll}>
-            Reply all
-          </button>
-          <button type="button" className="nx-filter-pill" disabled={selectedCount === 0} onClick={onBulkArchiveToggle}>
-            Archive
-          </button>
-          <button type="button" className="nx-filter-pill" disabled={selectedCount === 0} onClick={onBulkPinToggle}>
-            Pin
-          </button>
-          <button type="button" className="nx-filter-pill" disabled={selectedCount === 0} onClick={onBulkStarToggle}>
-            Star
-          </button>
-          <label>
-            <span>Stage</span>
-            <select disabled={selectedCount === 0} onChange={(event) => onBulkStageChange(event.target.value as InboxStageSelectValue)}>
-              <option value="">Set stage</option>
-              {stageOptions.map((option) => (
-                <option key={`bulk-stage-${option.value}`} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>Status</span>
-            <select
-              disabled={selectedCount === 0}
-              onChange={(event) => onBulkStatusChange(event.target.value as 'open' | 'read' | 'unread' | 'archived' | 'suppressed')}
-            >
-              <option value="">Set status</option>
-              <option value="open">Open</option>
-              <option value="read">Read</option>
-              <option value="unread">Unread</option>
-              <option value="archived">Archived</option>
-              <option value="suppressed">Suppressed</option>
-            </select>
-          </label>
-        </div>
-        )}
       </div>
 
       <ConversationList
@@ -402,10 +259,6 @@ export const InboxSidebar = ({
         activeViewFilter={activeViewFilter}
         selectedId={selectedId}
         onSelect={onSelect}
-        selectedThreadIds={selectedThreadIds}
-        onToggleThreadSelection={onToggleThreadSelection}
-        starredThreadIds={starredThreadIds}
-        onToggleStarThread={onToggleStarThread}
       />
 
       {canLoadMore && (

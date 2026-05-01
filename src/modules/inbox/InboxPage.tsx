@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { pushRoutePath } from '../../app/router'
 import { useInboxData, toWorkflowThread } from './inbox.adapter'
 import {
@@ -118,7 +118,7 @@ export default function InboxPage() {
   const [selectedMessages, setSelectedMessages] = useState<ThreadMessage[]>([])
   const [pendingMessagesByThread, setPendingMessagesByThread] = useState<Record<string, ThreadMessage[]>>({})
   const [visibleThreadCount, setVisibleThreadCount] = useState(1000)
-  const [selectedThreadIds, setSelectedThreadIds] = useState<string[]>([])
+
   const [starredThreadIds, setStarredThreadIds] = useState<string[]>([])
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [threadContext, setThreadContext] = useState<ThreadContext | null>(null)
@@ -194,11 +194,6 @@ export default function InboxPage() {
     }, {})
   ), [threads])
   const selectedSuppressed = useMemo(() => (selected ? isSuppressedThread(selected) : false), [selected])
-  const selectedThreadMap = useMemo(() => {
-    const map = new Map<string, (typeof threads)[number]>()
-    threads.forEach((thread) => map.set(thread.id, thread))
-    return map
-  }, [threads])
 
   const selectedPendingMessages = useMemo(() => {
     if (!selected) return []
@@ -305,9 +300,9 @@ export default function InboxPage() {
     window.localStorage.setItem(STARRED_THREADS_STORAGE_KEY, JSON.stringify(starredThreadIds))
   }, [starredThreadIds])
 
-  useEffect(() => {
-    setSelectedThreadIds((current) => current.filter((id) => filtered.some((thread) => thread.id === id)))
-  }, [filtered])
+
+
+  const prevSelectedIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!selected) {
@@ -320,19 +315,25 @@ export default function InboxPage() {
       setOriginalDraftBeforeTranslation(null)
       setDetectedThreadLanguage(null)
       setTranslationError(null)
+      prevSelectedIdRef.current = null
       return
     }
 
-    setThreadTranslations({})
-    setThreadViewMode('original')
-    setTranslatedDraftPreview(null)
-    setOriginalDraftBeforeTranslation(null)
-    setDetectedThreadLanguage(null)
-    setTranslationError(null)
+    const isNewSelection = prevSelectedIdRef.current !== selected.id
+    prevSelectedIdRef.current = selected.id
+
+    if (isNewSelection) {
+      setThreadTranslations({})
+      setThreadViewMode('original')
+      setTranslatedDraftPreview(null)
+      setOriginalDraftBeforeTranslation(null)
+      setDetectedThreadLanguage(null)
+      setTranslationError(null)
+      setMessagesLoading(true)
+      setContextLoading(true)
+    }
 
     let active = true
-    setMessagesLoading(true)
-    setContextLoading(true)
 
     Promise.all([
       getThreadMessagesForThread(selected),
@@ -574,9 +575,13 @@ export default function InboxPage() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [announceLayout, layoutState.activeOverlay, layoutState.mapMode, layoutState.leftPanelMode, layoutState.inboxMode, setActiveOverlay])
 
-  const handleWorkflowMutation = useCallback(async (label: string, mutation: () => Promise<unknown>) => {
+  const handleWorkflowMutation = useCallback(async (label: string, mutation: () => Promise<any>) => {
     try {
-      await mutation()
+      const result = await mutation()
+      if (result && 'ok' in result && !result.ok) {
+        emitNotification({ title: 'Error', detail: result.errorMessage || 'Unknown error', severity: 'critical' })
+        return
+      }
       await refreshInbox()
       emitNotification({ title: label, detail: 'Action completed successfully', severity: 'success' })
     } catch (err) {
@@ -617,81 +622,7 @@ export default function InboxPage() {
     ))
   }, [])
 
-  const handleToggleThreadSelection = useCallback((threadId: string) => {
-    setSelectedThreadIds((current) => (
-      current.includes(threadId)
-        ? current.filter((id) => id !== threadId)
-        : [...current, threadId]
-    ))
-  }, [])
 
-  const handleSelectAllVisible = useCallback(() => {
-    const visibleIds = filtered.slice(0, visibleThreadCount).map((thread) => thread.id)
-    setSelectedThreadIds(visibleIds)
-  }, [filtered, visibleThreadCount])
-
-  const selectedThreads = useMemo(() => (
-    selectedThreadIds
-      .map((id) => selectedThreadMap.get(id))
-      .filter((thread): thread is NonNullable<typeof thread> => Boolean(thread))
-  ), [selectedThreadIds, selectedThreadMap])
-
-  const handleBulkReplyAll = useCallback(async () => {
-    if (selectedThreads.length === 0) return
-    const text = window.prompt('Reply all message')?.trim()
-    if (!text) return
-
-    const results = await Promise.all(selectedThreads.map((thread) => sendInboxMessageNow(thread, text)))
-    const successCount = results.filter((result) => result.ok).length
-    emitNotification({
-      title: 'Bulk Reply',
-      detail: `${successCount}/${selectedThreads.length} queued for immediate send`,
-      severity: successCount === selectedThreads.length ? 'success' : 'warning',
-    })
-  }, [selectedThreads])
-
-  const handleBulkStageChange = useCallback((stage: InboxStageSelectValue) => {
-    if (!stage || stage === 'all_stages') return
-    const workflowStageMap: Partial<Record<InboxStageSelectValue, InboxStage>> = {
-      needs_response: 'needs_response',
-      qualified: 'interested',
-      suppressed: 'dnc_opt_out',
-      closed: 'closed_converted',
-      offer_sent: 'needs_offer',
-    }
-    const normalizedStage = workflowStageMap[stage]
-    if (!normalizedStage) return
-    selectedThreads.forEach((thread) => {
-      void handleWorkflowMutation('Stage Updated', () => updateThreadStage(thread, normalizedStage))
-    })
-  }, [handleWorkflowMutation, selectedThreads])
-
-  const handleBulkStatusChange = useCallback((status: 'open' | 'read' | 'unread' | 'archived' | 'suppressed') => {
-    if (!status) return
-    selectedThreads.forEach((thread) => {
-      void handleWorkflowMutation('Status Updated', () => updateThreadStatus(thread, status))
-    })
-  }, [handleWorkflowMutation, selectedThreads])
-
-  const handleBulkArchiveToggle = useCallback(() => {
-    selectedThreads.forEach((thread) => {
-      void handleWorkflowMutation('Thread Archived', () => archiveThread(thread))
-    })
-  }, [handleWorkflowMutation, selectedThreads])
-
-  const handleBulkPinToggle = useCallback(() => {
-    selectedThreads.forEach((thread) => {
-      void handleWorkflowMutation(thread.isPinned ? 'Thread Unpinned' : 'Thread Pinned', () => (
-        thread.isPinned ? unpinThread(thread) : pinThread(thread)
-      ))
-    })
-  }, [handleWorkflowMutation, selectedThreads])
-
-  const handleBulkStarToggle = useCallback(() => {
-    selectedThreadIds.forEach((threadId) => {
-      handleToggleStar(threadId)
-    })
-  }, [handleToggleStar, selectedThreadIds])
 
   const handleSend = useCallback(async (text: string) => {
     if (!selected || !text.trim()) return
@@ -822,17 +753,6 @@ export default function InboxPage() {
             visibleThreadCount={visibleThreadCount}
             canLoadMore={visibleThreadCount < filtered.length}
             onLoadMore={() => setVisibleThreadCount((current) => Math.min(filtered.length, current + 1000))}
-            selectedThreadIds={selectedThreadIds}
-            onToggleThreadSelection={handleToggleThreadSelection}
-            onSelectAllVisible={handleSelectAllVisible}
-            onBulkReplyAll={handleBulkReplyAll}
-            onBulkStageChange={handleBulkStageChange}
-            onBulkStatusChange={handleBulkStatusChange}
-            onBulkArchiveToggle={handleBulkArchiveToggle}
-            onBulkPinToggle={handleBulkPinToggle}
-            onBulkStarToggle={handleBulkStarToggle}
-            starredThreadIds={starredThreadIds}
-            onToggleStarThread={handleToggleStar}
           />
         )}
 
@@ -850,17 +770,6 @@ export default function InboxPage() {
             visibleThreadCount={visibleThreadCount}
             canLoadMore={visibleThreadCount < rightFiltered.length}
             onLoadMore={() => setVisibleThreadCount((current) => Math.min(rightFiltered.length, current + 1000))}
-            selectedThreadIds={selectedThreadIds}
-            onToggleThreadSelection={handleToggleThreadSelection}
-            onSelectAllVisible={handleSelectAllVisible}
-            onBulkReplyAll={handleBulkReplyAll}
-            onBulkStageChange={handleBulkStageChange}
-            onBulkStatusChange={handleBulkStatusChange}
-            onBulkArchiveToggle={handleBulkArchiveToggle}
-            onBulkPinToggle={handleBulkPinToggle}
-            onBulkStarToggle={handleBulkStarToggle}
-            starredThreadIds={starredThreadIds}
-            onToggleStarThread={handleToggleStar}
           />
         )}
 

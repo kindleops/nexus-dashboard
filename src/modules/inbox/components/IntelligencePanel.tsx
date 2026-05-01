@@ -112,6 +112,57 @@ const IntelRow = ({ label, value }: { label: string; value: string }) => (
   </div>
 )
 
+const PropertyVisual = ({
+  streetview,
+  liveStreetViewEmbedUrl,
+  mapsStreetViewUrl,
+  propertyType,
+}: {
+  streetview: string | null
+  liveStreetViewEmbedUrl: string | null
+  mapsStreetViewUrl: string | null
+  propertyType: string
+}) => {
+  if (liveStreetViewEmbedUrl) {
+    return (
+      <>
+        <iframe
+          className="nx-property-hero-media__image"
+          src={liveStreetViewEmbedUrl}
+          title="Live Street View"
+          loading="lazy"
+          referrerPolicy="no-referrer-when-downgrade"
+          allowFullScreen
+        />
+        {mapsStreetViewUrl && (
+          <a className="nx-property-hero-media__cta" href={mapsStreetViewUrl} target="_blank" rel="noreferrer">
+            Open Live Street View
+          </a>
+        )}
+      </>
+    )
+  }
+
+  if (streetview && streetview.startsWith('http')) {
+    return <img className="nx-property-hero-media__image" src={streetview} alt="Street view" loading="lazy" />
+  }
+
+  return (
+    <div className="nx-property-fallback">
+      <div className="nx-property-fallback__bg" />
+      <div className="nx-property-fallback__content">
+        <div className="nx-property-fallback__icon">
+          <Icon name="map" />
+        </div>
+        <div className="nx-property-fallback__info">
+          <span className="nx-property-fallback__label">Property Visual Unavailable</span>
+          <span className="nx-property-fallback__type">{propertyType || 'Residential Property'}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 const getField = (record: ThreadIntelligenceRecord | null, key: string): unknown => record?.[key]
 
 const PropertyHeroCard = ({
@@ -151,34 +202,18 @@ const PropertyHeroCard = ({
     { icon: '🎯', label: 'Final Score', value: missingLabel(getField(intelligence, 'final_acquisition_score'), '—') },
   ]
 
+  const propertyType = normalizeText(getField(intelligence, 'property_type')) || 'Residential'
+
   return (
     <section className="nx-property-hero-card is-compact">
       <div className="nx-property-hero-media" aria-label="Street view snapshot">
         <span className="nx-property-hero-media__label">Property Snapshot</span>
-        {liveStreetViewEmbedUrl ? (
-          <>
-            <iframe
-              className="nx-property-hero-media__image"
-              src={liveStreetViewEmbedUrl}
-              title="Live Street View"
-              loading="lazy"
-              referrerPolicy="no-referrer-when-downgrade"
-              allowFullScreen
-            />
-            {mapsStreetViewUrl && (
-              <a className="nx-property-hero-media__cta" href={mapsStreetViewUrl} target="_blank" rel="noreferrer">
-                Open Live Street View
-              </a>
-            )}
-          </>
-        ) : streetview ? (
-          <img className="nx-property-hero-media__image" src={streetview} alt="Street view" loading="lazy" />
-        ) : (
-          <div className="nx-property-hero-media__image" role="img" aria-label="Property media placeholder">
-            <Icon name="map" />
-            <span>{missingLabel(getField(intelligence, 'property_type'), 'Property profile')}</span>
-          </div>
-        )}
+        <PropertyVisual
+          streetview={streetview}
+          liveStreetViewEmbedUrl={liveStreetViewEmbedUrl}
+          mapsStreetViewUrl={mapsStreetViewUrl}
+          propertyType={propertyType}
+        />
       </div>
       <div className="nx-property-hero-head">
         <strong>{address}</strong>
@@ -481,6 +516,34 @@ export const IntelligencePanel = (props: IntelligencePanelProps) => {
     )
   }
 
+  const renderPremiumQuickLinks = () => {
+    const address = (getField(intelligence, 'property_address_full') || thread.propertyAddress || thread.subject || '') as string
+    if (!address || typeof address !== 'string' || address.length < 5) return null
+
+    const encodedAddress = encodeURIComponent(address)
+    const zillowUrl = (getField(intelligence, 'zillow_url') || getField(intelligence, 'zillow_link') || `https://www.zillow.com/homes/${encodedAddress}_rb/`) as string
+    const realtorUrl = (getField(intelligence, 'realtor_url') || getField(intelligence, 'realtor_link') || `https://www.realtor.com/realestateandhomes-search/${encodedAddress}`) as string
+    const googleSearchUrl = `https://www.google.com/search?q=${encodedAddress}`
+    const streetViewUrl = `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`
+
+    return (
+      <div className="nx-premium-quick-links" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', padding: '12px', background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+        <a href={zillowUrl} target="_blank" rel="noreferrer" className="nx-utility-btn" style={{ justifyContent: 'center' }}>
+          <Icon name="arrow-up-right" /> Zillow
+        </a>
+        <a href={realtorUrl} target="_blank" rel="noreferrer" className="nx-utility-btn" style={{ justifyContent: 'center' }}>
+          <Icon name="arrow-up-right" /> Realtor
+        </a>
+        <a href={googleSearchUrl} target="_blank" rel="noreferrer" className="nx-utility-btn" style={{ justifyContent: 'center' }}>
+          <Icon name="search" /> Google
+        </a>
+        <a href={streetViewUrl} target="_blank" rel="noreferrer" className="nx-utility-btn" style={{ justifyContent: 'center' }}>
+          <Icon name="map" /> Street View
+        </a>
+      </div>
+    )
+  }
+
   return (
     <aside className={cls('nx-intelligence-panel', `is-mode-${layoutMode}`)}>
       <header className="nx-intel-header">
@@ -505,6 +568,7 @@ export const IntelligencePanel = (props: IntelligencePanelProps) => {
             <button type="button" className="nx-intel-action-btn" onClick={onOpenDossier}><Icon name="briefing" /><span>Dossier</span></button>
             <button type="button" className="nx-intel-action-btn" onClick={onOpenAi} disabled={isSuppressed}><Icon name="spark" /><span>AI Assist</span></button>
           </div>
+          {renderPremiumQuickLinks()}
           <div className="nx-intel-expand-row">
             <button type="button" className="nx-intel-expand-btn" onClick={() => setOpenSections(allSectionIds)}><Icon name="maximize" /><span>Expand All</span></button>
             <button type="button" className="nx-intel-expand-btn" onClick={() => setOpenSections([])}><Icon name="layout-split" /><span>Collapse All</span></button>
