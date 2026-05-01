@@ -1080,10 +1080,16 @@ export const getInboxThreads = async (
     const latestMessageIso = asIso(row['latest_message_at']) ?? new Date().toISOString()
     const latestDirection = normalizeMessageDirection({ direction: row['latest_direction'] })
     const sellerPhone = normalizePhone(row['seller_phone'])
+    const sellerFirstName = asString(intelligenceRow?.['seller_first_name'], '')
+    const sellerLastName = asString(intelligenceRow?.['seller_last_name'], '')
+    const combinedName = [sellerFirstName, sellerLastName].filter(Boolean).join(' ')
+
     const ownerDisplayName = asString(getFirst(row, ['owner_display_name', 'seller_display_name', 'owner_name']), '')
+      || combinedName
       || asString(getFirst(intelligenceRow ?? {}, ['owner_display_name']), '')
+
     const propertyAddressFull = asString(getFirst(row, ['property_address_full', 'property_address']), '')
-      || asString(getFirst(intelligenceRow ?? {}, ['property_address_full']), '')
+      || asString(getFirst(intelligenceRow ?? {}, ['property_address_full', 'address']), '')
 
     const uiIntent = normalizeStatus(row['ui_intent'] ?? 'needs_review')
     const priorityBucket = normalizeStatus(row['priority_bucket'] ?? 'priority')
@@ -1092,6 +1098,7 @@ export const getInboxThreads = async (
     const workflowStage = normalizeStatus(row['stage'] ?? toStageFromIntent(uiIntent))
 
     const isArchived = asBoolean(row['is_archived'], false) || workflowStatus === 'archived'
+    const isPinned = asBoolean(row['is_pinned'], false)
     const isRead = asBoolean(row['is_read'], false)
     const unreadCount = isArchived ? 0 : (isRead ? 0 : 1)
 
@@ -1118,8 +1125,8 @@ export const getInboxThreads = async (
       id: threadKey,
       leadId: asString(row['property_id'], '') || asString(row['master_owner_id'], '') || threadKey,
       marketId: asString(row['market'], 'unknown') || 'unknown',
-      ownerName: ownerDisplayName || sellerPhone || 'Unknown owner',
-      subject: propertyAddressFull || `Thread ${index + 1}`,
+      ownerName: ownerDisplayName || sellerPhone || 'Unknown Seller',
+      subject: propertyAddressFull || 'No Address',
       preview: asString(row['latest_message_body'], '') || 'No message preview',
       status,
       priority,

@@ -167,6 +167,7 @@ export const ConversationList = ({
   activeViewFilter,
   selectedId,
   onSelect,
+  onAction,
 }: {
   threads: InboxWorkflowThread[]
   activeViewFilter: InboxViewSelectValue
@@ -208,6 +209,7 @@ export const InboxSidebar = ({
   visibleThreadCount,
   canLoadMore,
   onLoadMore,
+  onThreadAction,
 }: InboxSidebarProps) => {
   const activePresetConfig = savedFilterOptions.find(o => o.value === savedPreset)
   const activeLabel = activePresetConfig?.label || 'Smart'

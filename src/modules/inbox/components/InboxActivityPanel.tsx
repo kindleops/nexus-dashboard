@@ -3,8 +3,6 @@ import { Icon } from '../../../shared/icons'
 import { formatRelativeTime } from '../../../shared/formatters'
 import { fetchInboxActivity, undoInboxActivity, type InboxActivityEvent } from '../../../lib/data/inboxActivityData'
 
-const cls = (...tokens: Array<string | false | null | undefined>) =>
-  tokens.filter(Boolean).join(' ')
 
 export const InboxActivityPanel = ({
   threadKey,

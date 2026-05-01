@@ -1,6 +1,5 @@
-import { useMemo, useState, type ReactNode } from 'react'
-import type { ThreadContext } from '../../../lib/data/inboxData'
-import type { ThreadIntelligenceRecord, ThreadMessage } from '../../../lib/data/inboxData'
+import { useState } from 'react'
+import type { ThreadContext, ThreadIntelligenceRecord, ThreadMessage } from '../../../lib/data/inboxData'
 import type { InboxStage, InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import type { PanelMode } from '../inbox-layout-state'
 import {
@@ -8,7 +7,7 @@ import {
   buildPropertyExternalLinks,
 } from '../inbox-normalization'
 import { Icon } from '../../../shared/icons'
-import type { IconName } from '../../../shared/icons'
+import { formatRelativeTime } from '../../../shared/formatters'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
@@ -85,12 +84,6 @@ const missingLabel = (value: unknown, placeholder = '—') => (
   isMissingValue(value) ? placeholder : normalizeText(value)
 )
 
-const buildStreetViewUrl = (address?: string | null): string | null => {
-  if (!address) return null
-  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY
-  if (!apiKey) return null
-  return `https://maps.googleapis.com/maps/api/streetview?size=600x300&location=${encodeURIComponent(address)}&fov=70&key=${apiKey}`
-}
 
 const IntelRow = ({ label, value, icon }: { label: string; value: string | number; icon?: string }) => (
   <div className="nx-intel-pill">
@@ -156,7 +149,7 @@ const PropertySnapshotCard = ({
   )
 }
 
-const DealIntelligenceCard = ({ thread, intelligence }: { thread: InboxWorkflowThread, intelligence: any }) => (
+const DealIntelligenceCard = ({ thread }: { thread: InboxWorkflowThread, intelligence: any }) => (
   <section className="nx-intel-card">
     <div className="nx-intel-card__header">
        <Icon name="stats" />
@@ -208,7 +201,6 @@ const AutomationMetadataCard = ({ thread, intelligence }: { thread: InboxWorkflo
   </section>
 )
 
-const asString = (v: any, fallback = '—') => (v ? String(v) : fallback)
 
 export const IntelligencePanel = (props: IntelligencePanelProps) => {
   const {

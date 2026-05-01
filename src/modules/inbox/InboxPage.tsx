@@ -8,9 +8,9 @@ import {
   unstarThread,
   pinThread,
   unpinThread,
-  unarchiveThread,
   archiveThread,
   type InboxStage,
+  type InboxWorkflowThread,
 } from '../../lib/data/inboxWorkflowData'
 import {
   getQueueProcessorHealth,
@@ -593,6 +593,25 @@ export default function InboxPage() {
     }
   }, [refreshInbox])
 
+  const handleThreadAction = useCallback(async (target: string | InboxWorkflowThread, action: string) => {
+    const thread = typeof target === 'string' ? threads.find((t) => t.id === target) : target
+    if (!thread) return
+
+    let label = ''
+    let mutation = async () => ({ ok: true })
+
+    switch (action) {
+      case 'star': label = 'Thread Starred'; mutation = () => starThread(thread); break
+      case 'unstar': label = 'Thread Unstarred'; mutation = () => unstarThread(thread); break
+      case 'pin': label = 'Thread Pinned'; mutation = () => pinThread(thread); break
+      case 'unpin': label = 'Thread Unpinned'; mutation = () => unpinThread(thread); break
+      case 'archive': label = 'Thread Archived'; mutation = () => archiveThread(thread); break
+      case 'unarchive': label = 'Thread Unarchived'; mutation = () => updateThreadStatus(thread, 'open'); break
+    }
+
+    void handleWorkflowMutation(label, mutation)
+  }, [handleWorkflowMutation, threads])
+
   const handleSelect = useCallback((id: string) => {
     setSelectedId(id)
     setSearchQuery('')
@@ -915,6 +934,18 @@ export default function InboxPage() {
         }}
         onClose={() => setActiveOverlay(null)}
       />
+
+      {activeOverlay === 'activity' && (
+        <InboxActivityPanel 
+          threadKey={selected?.threadKey} 
+          onClose={() => setActiveOverlay(null)} 
+          onViewThread={(key) => {
+            const t = threads.find(thread => thread.threadKey === key);
+            if (t) handleSelect(t.id);
+            setActiveOverlay(null);
+          }}
+        />
+      )}
 
       {aiOpen && <InboxUtilityDrawer type="ai" thread={selected} onClose={() => setActiveOverlay(null)} />}
       {keysOpen && <InboxUtilityDrawer type="keys" thread={selected} onClose={() => setActiveOverlay(null)} />}
