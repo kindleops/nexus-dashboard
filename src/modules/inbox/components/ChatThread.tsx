@@ -17,7 +17,7 @@ interface ChatThreadProps {
   onToggleArchive?: () => void
 }
 
-const fallback = (value: unknown, placeholder = 'Unknown') => {
+const fallback = (value: unknown, placeholder = '') => {
   const text = String(value ?? '').trim()
   return text || placeholder
 }
@@ -33,11 +33,6 @@ const normalizeDeliveryBadge = (message: ThreadMessage): 'failed' | 'pending' | 
   return 'unknown'
 }
 
-type ThreadDealFields = InboxWorkflowThread & {
-  askingPrice?: unknown
-  dealValue?: unknown
-}
-
 export const ChatThread = ({
   thread,
   messages,
@@ -51,7 +46,7 @@ export const ChatThread = ({
   if (!thread) return (
     <div className="nx-chat-container is-empty">
       <div className="nx-inbox__workspace-empty">
-        <p>Select a thread to view the conversation history.</p>
+        <p>Select a thread to view the conversation.</p>
       </div>
     </div>
   )
@@ -65,22 +60,33 @@ export const ChatThread = ({
     </div>
   )
 
+  const ownerName = fallback(thread.ownerName, 'Unknown Seller')
+  const phoneNumber = fallback(thread.phoneNumber || thread.canonicalE164, '')
+  const propertyAddress = fallback(thread.propertyAddress || thread.subject, '')
+  const market = fallback(thread.market || thread.marketId, '')
+  const stageName = isSuppressed ? 'Suppressed' : titleCase(thread.inboxStage)
+  const stageClass = isSuppressed ? 'is-dnc_opt_out' : `is-${thread.inboxStage}`
+
   return (
     <div className="nx-chat-container">
       <header className="nx-chat-header">
         <div className="nx-chat-header__info">
-          <span className="nx-chat-header__name">{fallback(thread.ownerName, 'Unknown Seller')}</span>
-          <span className="nx-chat-header__subject">{fallback(thread.propertyAddress || thread.subject, 'Property Unknown')}</span>
+          <div className="nx-chat-header__name-row">
+            <span className="nx-chat-header__name">{ownerName}</span>
+            {phoneNumber && (
+              <span className="nx-chat-header__phone">{phoneNumber}</span>
+            )}
+          </div>
+          {propertyAddress && (
+            <span className="nx-chat-header__address">{propertyAddress}</span>
+          )}
           <div className="nx-thread-meta-line">
-            <span className="nx-market-tag">{fallback(thread.market || thread.marketId, 'Market Unknown')}</span>
-            <span className="nx-thread-value">Asking: {fallback((thread as ThreadDealFields).askingPrice || (thread as ThreadDealFields).dealValue, 'Unknown')}</span>
-            {isSuppressed && <span className="nx-suppression-badge">Opted Out / Suppressed</span>}
+            {market && <span className="nx-market-tag">{market}</span>}
+            <span className={cls('nx-stage-pill', stageClass)}>{stageName}</span>
+            {isSuppressed && <span className="nx-suppression-badge">Opted Out</span>}
           </div>
         </div>
         <div className="nx-chat-header__actions">
-          <span className={cls('nx-stage-pill', `is-${isSuppressed ? 'dnc_opt_out' : thread.inboxStage}`)}>
-            {isSuppressed ? 'Suppressed' : titleCase(thread.inboxStage)}
-          </span>
           <button
             type="button"
             className={cls('nx-chat-action', isStarred && 'is-active')}
@@ -117,12 +123,14 @@ export const ChatThread = ({
             <span className="nx-bubble-time">
               {formatRelativeTime(msg.createdAt)}
               {msg.direction === 'outbound' && msg.deliveryStatus && (
-                <b className={cls('nx-delivery-badge', `is-${normalizeDeliveryBadge(msg)}`)}>{titleCase(msg.deliveryStatus)}</b>
+                <b className={cls('nx-delivery-badge', `is-${normalizeDeliveryBadge(msg)}`)}>
+                  {titleCase(msg.deliveryStatus)}
+                </b>
               )}
             </span>
             {msg.developerMeta && Object.keys(msg.developerMeta).length > 0 && (
               <details className="nx-message-dev-meta">
-                <summary>Developer metadata</summary>
+                <summary>Dev info</summary>
                 <div className="nx-message-dev-meta__grid">
                   {Object.entries(msg.developerMeta).map(([key, value]) => (
                     <span key={key}><small>{key}</small><b>{String(value)}</b></span>
@@ -132,6 +140,11 @@ export const ChatThread = ({
             )}
           </div>
         ))}
+        {messages.length === 0 && !loading && (
+          <div className="nx-inbox__messages-empty">
+            <p>No messages in this thread yet.</p>
+          </div>
+        )}
       </div>
     </div>
   )

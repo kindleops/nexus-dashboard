@@ -1136,9 +1136,9 @@ export const getInboxThreads = async (
       cashOffer: row['cash_offer'] ?? intelligenceRow?.['cash_offer'] ?? null,
       estimatedValue: row['estimated_value'] ?? intelligenceRow?.['estimated_value'] ?? null,
       finalAcquisitionScore: row['final_acquisition_score'] ?? intelligenceRow?.['final_acquisition_score'] ?? null,
-      streetviewImage: intelligenceRow?.['streetview_image'] ?? null,
-      zillowUrl: intelligenceRow?.['zillow_url'] ?? intelligenceRow?.['zillow_link'] ?? intelligenceRow?.['zillow'] ?? null,
-      realtorUrl: intelligenceRow?.['realtor_url'] ?? intelligenceRow?.['realtor_link'] ?? intelligenceRow?.['realtor'] ?? null,
+      streetviewImage: (intelligenceRow?.['streetview_image'] as string) ?? null,
+      zillowUrl: (intelligenceRow?.['zillow_url'] ?? intelligenceRow?.['zillow_link'] ?? intelligenceRow?.['zillow']) as string ?? null,
+      realtorUrl: (intelligenceRow?.['realtor_url'] ?? intelligenceRow?.['realtor_link'] ?? intelligenceRow?.['realtor']) as string ?? null,
     }
 
     return thread
@@ -1170,8 +1170,8 @@ export const getInboxThreads = async (
   }
 
   filtered.sort((a, b) => {
-    if ((a as AnyRecord)['showInPriorityInbox'] && !(b as AnyRecord)['showInPriorityInbox']) return -1
-    if (!(a as AnyRecord)['showInPriorityInbox'] && (b as AnyRecord)['showInPriorityInbox']) return 1
+    if ((a as unknown as AnyRecord)['showInPriorityInbox'] && !(b as unknown as AnyRecord)['showInPriorityInbox']) return -1
+    if (!(a as unknown as AnyRecord)['showInPriorityInbox'] && (b as unknown as AnyRecord)['showInPriorityInbox']) return 1
     if (a.status === 'unread' && b.status !== 'unread') return -1
     if (b.status === 'unread' && a.status !== 'unread') return 1
     return new Date(b.lastMessageIso).getTime() - new Date(a.lastMessageIso).getTime()

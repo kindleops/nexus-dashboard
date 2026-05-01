@@ -103,6 +103,7 @@ export const setDoubleSidedInboxFilters = (
 })
 
 export const getLayoutClassNames = (state: InboxLayoutState): string[] => [
+  'is-operator-rebuild',
   `is-theme-${state.theme}`,
   state.theme === 'light' && 'is-light-mode',
   `is-left-${state.leftPanelMode}`,

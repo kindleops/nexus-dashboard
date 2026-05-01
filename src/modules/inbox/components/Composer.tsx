@@ -13,6 +13,9 @@ type ComposerTool = {
   disabled: boolean
 }
 
+// Voice/microphone recording state
+type MicState = 'idle' | 'recording' | 'processing'
+
 interface ComposerProps {
   draftText: string
   setDraftText: (t: string) => void
@@ -79,7 +82,7 @@ export const Composer = ({
   disabled = false,
   disabledReason,
 }: ComposerProps) => {
-  const [isListening, setIsListening] = useState(false)
+  const [micState, setMicState] = useState<MicState>('idle')
   const [voiceUnsupported, setVoiceUnsupported] = useState(false)
   const [templatePopoverOpen, setTemplatePopoverOpen] = useState(false)
   const [voiceLevel, setVoiceLevel] = useState(0)
@@ -90,6 +93,10 @@ export const Composer = ({
   const analyserRef = useRef<AnalyserNode | null>(null)
   const animationFrameRef = useRef<number | undefined>(undefined)
 
+  const isListening = micState === 'recording'
+  const isProcessing = micState === 'processing'
+  const hasDraft = draftText.trim().length > 0
+
   const tools: ComposerTool[] = [
     { id: 'templates', label: 'Templates', icon: 'file-text', action: () => setTemplatePopoverOpen(true), disabled: false },
     { id: 'ai-assist', label: 'AI Assist', icon: 'spark', action: onAI, disabled: false },
@@ -97,6 +104,11 @@ export const Composer = ({
     { id: 'schedule', label: 'Schedule', icon: 'calendar', action: onOpenSchedule, disabled },
     { id: 'notes', label: 'Notes', icon: 'file-text', action: () => {}, disabled: false },
   ]
+
+  // Expose unused params to avoid lint errors
+  void thread
+  void threadContext
+  void onScheduleTemplate
 
   const stopVoiceAnalysis = () => {
     if (animationFrameRef.current) {
@@ -141,14 +153,14 @@ export const Composer = ({
   const stopVoice = () => {
     recognitionRef.current?.stop()
     recognitionRef.current = null
-    setIsListening(false)
+    setMicState('idle')
     stopVoiceAnalysis()
     setTranscription('')
   }
 
   const toggleVoice = () => {
     if (disabled) return
-    if (isListening) {
+    if (isListening || isProcessing) {
       stopVoice()
       return
     }
@@ -166,26 +178,20 @@ export const Composer = ({
     recognition.lang = 'en-US'
     recognition.onresult = (event) => {
       const transcript: string[] = []
-      let finalTranscript = ''
 
       for (let index = 0; index < event.results.length; index += 1) {
         const result = event.results[index]
         transcript.push(result[0].transcript.trim())
-
-        if (result.isFinal) {
-          finalTranscript += result[0].transcript
-        }
       }
 
       const currentTranscript = transcript.join(' ').trim()
       setTranscription(currentTranscript)
 
-      // Clean up transcription (basic punctuation and capitalization)
       const cleanedTranscript = currentTranscript
-        .replace(/\bi\b/g, 'I') // Capitalize "I"
-        .replace(/(\w)\s*([.!?])/g, '$1$2') // Remove space before punctuation
-        .replace(/([.!?])\s*(\w)/g, '$1 $2') // Add space after punctuation
-        .replace(/\s+/g, ' ') // Normalize spaces
+        .replace(/\bi\b/g, 'I')
+        .replace(/(\w)\s*([.!?])/g, '$1$2')
+        .replace(/([.!?])\s*(\w)/g, '$1 $2')
+        .replace(/\s+/g, ' ')
         .trim()
 
       const nextText = [baseDraftRef.current, cleanedTranscript].filter(Boolean).join(' ').trim()
@@ -193,39 +199,61 @@ export const Composer = ({
     }
     recognition.onerror = () => {
       recognitionRef.current = null
-      setIsListening(false)
+      setMicState('idle')
       stopVoiceAnalysis()
       setTranscription('')
     }
     recognition.onend = () => {
       recognitionRef.current = null
-      setIsListening(false)
+      setMicState('processing')
       stopVoiceAnalysis()
       setTranscription('')
+      // Brief processing state for UX, then go idle
+      setTimeout(() => setMicState('idle'), 600)
     }
     recognitionRef.current = recognition
     recognition.start()
     setVoiceUnsupported(false)
-    setIsListening(true)
+    setMicState('recording')
     startVoiceAnalysis()
   }
 
+  const micTitle = voiceUnsupported
+    ? 'Voice dictation not supported in this browser'
+    : isProcessing
+      ? 'Processing…'
+      : isListening
+        ? 'Stop recording'
+        : 'Talk to type'
+
   return (
     <div className="nx-sticky-composer">
+      {/* Utility action row */}
       <div className="nx-composer-utility-row">
         {tools.map(tool => (
-          <button key={tool.id} ref={tool.id === 'templates' ? templatesButtonRef : undefined} type="button" className="nx-utility-btn" onClick={tool.action} disabled={tool.disabled}>
-            <Icon name={tool.icon} style={{ width: 14, marginRight: 6 }} />
+          <button
+            key={tool.id}
+            ref={tool.id === 'templates' ? templatesButtonRef : undefined}
+            type="button"
+            className={`nx-utility-btn${tool.id === 'templates' && templatePopoverOpen ? ' is-active' : ''}`}
+            onClick={tool.action}
+            disabled={tool.disabled}
+          >
+            <Icon name={tool.icon} style={{ width: 13, marginRight: 5 }} />
             {tool.label}
           </button>
         ))}
       </div>
-      
-      <div className={isListening ? 'nx-composer-input-area is-listening' : 'nx-composer-input-area'} aria-disabled={disabled}>
+
+      {/* Main input area */}
+      <div
+        className={`nx-composer-input-area${isListening ? ' is-listening' : ''}`}
+        aria-disabled={disabled}
+      >
         <button type="button" className="nx-composer-icon-btn" title="Attach file" disabled={disabled}>
           <Icon name="paperclip" />
         </button>
-        <textarea 
+        <textarea
           placeholder={disabled ? disabledReason ?? 'Messaging disabled for this thread' : 'Type a message…'}
           value={draftText}
           onChange={e => setDraftText(e.target.value)}
@@ -243,52 +271,67 @@ export const Composer = ({
             }
           }}
         />
+
+        {/* Mic button */}
         <button
           type="button"
-          className={isListening ? 'nx-composer-icon-btn nx-voice-button is-listening' : 'nx-composer-icon-btn nx-voice-button'}
-          title={voiceUnsupported ? 'Voice dictation is not supported in this browser' : isListening ? 'Stop talk to type' : 'Talk to type'}
+          className={`nx-composer-icon-btn nx-voice-button${isListening ? ' is-listening' : ''}${isProcessing ? ' is-processing' : ''}`}
+          title={micTitle}
           disabled={disabled}
           onClick={toggleVoice}
           aria-pressed={isListening}
+          aria-label={micTitle}
         >
-          <span className="nx-voice-rings" aria-hidden="true">
-            <i />
-            <i />
-            <i />
-          </span>
-          <span className="nx-voice-waveform" aria-hidden="true">
-            {Array.from({ length: 5 }, (_, i) => (
-              <span
-                key={i}
-                className="nx-voice-waveform-bar"
-                style={{
-                  height: `${Math.max(4, voiceLevel * 20 + 4)}px`,
-                  animationDelay: `${i * 0.1}s`
-                }}
-              />
-            ))}
-          </span>
-          <Icon name="mic" />
+          {/* Animated rings when listening */}
+          {isListening && (
+            <span className="nx-voice-rings" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+            </span>
+          )}
+          {/* Waveform bars when listening */}
+          {isListening ? (
+            <span className="nx-voice-waveform" aria-hidden="true">
+              {Array.from({ length: 5 }, (_, i) => (
+                <span
+                  key={i}
+                  className="nx-voice-waveform-bar"
+                  style={{
+                    height: `${Math.max(4, voiceLevel * 22 + 4)}px`,
+                    animationDelay: `${i * 0.1}s`,
+                  }}
+                />
+              ))}
+            </span>
+          ) : (
+            <Icon name="mic" />
+          )}
         </button>
-        <button 
+
+        {/* Send button — glows when text is ready */}
+        <button
           type="button"
-          className="nx-send-button"
-          disabled={disabled || !draftText.trim()}
+          className={`nx-send-button${hasDraft && !disabled ? ' is-ready' : ''}`}
+          disabled={disabled || !hasDraft}
           onClick={() => {
-            if (disabled || !draftText.trim()) return
+            if (disabled || !hasDraft) return
             onSend(draftText)
             setDraftText('')
           }}
+          aria-label="Send message"
+          title="Send (⌘ Enter)"
         >
           <Icon name="send" style={{ width: 18 }} />
         </button>
       </div>
 
+      {/* Live transcription banner */}
       {isListening && transcription && (
         <div className="nx-voice-transcription">
           <div className="nx-voice-transcription__label">
             <Icon name="mic" />
-            <span>Listening...</span>
+            <span>Listening…</span>
           </div>
           <div className="nx-voice-transcription__text">
             {transcription}
@@ -296,6 +339,7 @@ export const Composer = ({
         </div>
       )}
 
+      {/* Template popover/modal */}
       <TemplatePopover
         open={templatePopoverOpen}
         anchorRef={templatesButtonRef as React.RefObject<HTMLElement>}

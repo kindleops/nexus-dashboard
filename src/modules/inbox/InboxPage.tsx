@@ -59,6 +59,8 @@ import {
   type InboxViewSelectValue,
 } from './inbox-ui-helpers'
 import './inbox-premium.css'
+import './inbox-rebuild.css'
+import './inbox-polish.css'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
@@ -115,7 +117,7 @@ export default function InboxPage() {
   const [draftText, setDraftText] = useState('')
   const [selectedMessages, setSelectedMessages] = useState<ThreadMessage[]>([])
   const [pendingMessagesByThread, setPendingMessagesByThread] = useState<Record<string, ThreadMessage[]>>({})
-  const [visibleThreadCount, setVisibleThreadCount] = useState(250)
+  const [visibleThreadCount, setVisibleThreadCount] = useState(1000)
   const [selectedThreadIds, setSelectedThreadIds] = useState<string[]>([])
   const [starredThreadIds, setStarredThreadIds] = useState<string[]>([])
   const [messagesLoading, setMessagesLoading] = useState(false)
@@ -283,7 +285,7 @@ export default function InboxPage() {
   }, [])
 
   useEffect(() => {
-    setVisibleThreadCount(250)
+    setVisibleThreadCount(1000)
   }, [searchQuery, stageFilter, viewFilter, advancedFilters])
 
   useEffect(() => {
@@ -776,7 +778,7 @@ export default function InboxPage() {
   const isDoubleSided = inboxMode === 'full_double'
 
   return (
-    <div className={cls('nx-premium-inbox', ...layoutClasses)}>
+    <div className={cls('nx-premium-inbox nx-inbox', ...layoutClasses)}>
       <NexusTopBar
         searchQuery={searchQuery}
         onSearchQueryChange={setSearchQuery}
@@ -819,7 +821,7 @@ export default function InboxPage() {
             loadingError={DEV && data.liveFetchStatus === 'error' ? data.liveFetchError : null}
             visibleThreadCount={visibleThreadCount}
             canLoadMore={visibleThreadCount < filtered.length}
-            onLoadMore={() => setVisibleThreadCount((current) => Math.min(filtered.length, current + 250))}
+            onLoadMore={() => setVisibleThreadCount((current) => Math.min(filtered.length, current + 1000))}
             selectedThreadIds={selectedThreadIds}
             onToggleThreadSelection={handleToggleThreadSelection}
             onSelectAllVisible={handleSelectAllVisible}
@@ -847,7 +849,7 @@ export default function InboxPage() {
             loadingError={null}
             visibleThreadCount={visibleThreadCount}
             canLoadMore={visibleThreadCount < rightFiltered.length}
-            onLoadMore={() => setVisibleThreadCount((current) => Math.min(rightFiltered.length, current + 250))}
+            onLoadMore={() => setVisibleThreadCount((current) => Math.min(rightFiltered.length, current + 1000))}
             selectedThreadIds={selectedThreadIds}
             onToggleThreadSelection={handleToggleThreadSelection}
             onSelectAllVisible={handleSelectAllVisible}

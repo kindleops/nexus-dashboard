@@ -111,6 +111,13 @@ export interface InboxThread {
   streetviewImage?: string | null
   zillowUrl?: string | null
   realtorUrl?: string | null
+  sellerPhone?: string
+  thread_key?: string
+  seller_phone?: string
+  our_number?: string
+  master_owner_id?: string
+  prospect_id?: string
+  property_id?: string
 }
 
 export interface InboxModel {
@@ -270,10 +277,10 @@ export const useInboxData = () => {
 
   useEffect(() => {
     let cancelled = false
-    console.log('[useInboxData] Hook mounted, calling loadInbox()')
+    if (isDev) console.log('[useInboxData] Hook mounted, calling loadInbox()')
     loadInbox()
       .then((model) => {
-        console.log('[useInboxData] loadInbox returned', {
+        if (isDev) console.log('[useInboxData] loadInbox returned', {
           threadCount: model?.threads?.length,
           dataMode: model?.dataMode,
           liveFetchStatus: model?.liveFetchStatus,
@@ -281,7 +288,7 @@ export const useInboxData = () => {
         })
         if (!cancelled) {
           setData(model ?? EMPTY_MODEL)
-          console.log('[useInboxData] Data state updated')
+          if (isDev) console.log('[useInboxData] Data state updated')
         }
       })
       .catch((err) => {
@@ -294,7 +301,7 @@ export const useInboxData = () => {
       .finally(() => {
         if (!cancelled) {
           setLoading(false)
-          console.log('[useInboxData] Loading complete')
+          if (isDev) console.log('[useInboxData] Loading complete')
         }
       })
 

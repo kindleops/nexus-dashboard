@@ -441,9 +441,19 @@ export const IntelligencePanel = (props: IntelligencePanelProps) => {
       return <PropertyHeroCard thread={thread} intelligence={intelligence} />
     }
 
+    // For data sections, hide rows that are purely '—' or missing to reduce noise
+    const visibleRows = section.rows.filter((item) => !isMissingValue(item.value) && item.value !== '—')
+    if (visibleRows.length === 0) {
+      return (
+        <div className="nx-intel-grid">
+          <div className="nx-intel-empty-section">No data enriched yet</div>
+        </div>
+      )
+    }
+
     return (
       <div className="nx-intel-grid">
-        {section.rows.map((item) => (
+        {visibleRows.map((item) => (
           <IntelRow key={`${section.id}-${item.label}`} label={item.label} value={item.value} />
         ))}
       </div>
@@ -490,12 +500,14 @@ export const IntelligencePanel = (props: IntelligencePanelProps) => {
           <div className="nx-intel-compact-stack">
             {['property_snapshot', 'deal_scores', 'owner_intelligence', 'contact_intelligence', 'raw_metadata'].map((sectionId) => renderSectionCard(sectionId))}
           </div>
-          <div className="nx-intel-action-rail is-compact">
-            <button type="button" onClick={onOpenMap}><Icon name="map" /><span>Map</span></button>
-            <button type="button" onClick={onOpenDossier}><Icon name="briefing" /><span>Dossier</span></button>
-            <button type="button" onClick={onOpenAi} disabled={isSuppressed}><Icon name="spark" /><span>AI Assist</span></button>
-            <button type="button" onClick={() => setOpenSections(allSectionIds)}><Icon name="maximize" /><span>Expand All</span></button>
-            <button type="button" onClick={() => setOpenSections([])}><Icon name="layout-split" /><span>Collapse All</span></button>
+          <div className="nx-intel-action-rail">
+            <button type="button" className="nx-intel-action-btn" onClick={onOpenMap}><Icon name="map" /><span>Map</span></button>
+            <button type="button" className="nx-intel-action-btn" onClick={onOpenDossier}><Icon name="briefing" /><span>Dossier</span></button>
+            <button type="button" className="nx-intel-action-btn" onClick={onOpenAi} disabled={isSuppressed}><Icon name="spark" /><span>AI Assist</span></button>
+          </div>
+          <div className="nx-intel-expand-row">
+            <button type="button" className="nx-intel-expand-btn" onClick={() => setOpenSections(allSectionIds)}><Icon name="maximize" /><span>Expand All</span></button>
+            <button type="button" className="nx-intel-expand-btn" onClick={() => setOpenSections([])}><Icon name="layout-split" /><span>Collapse All</span></button>
           </div>
         </div>
       </div>

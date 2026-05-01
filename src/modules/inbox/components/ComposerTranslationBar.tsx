@@ -41,76 +41,78 @@ export const ComposerTranslationBar = ({
   onUseDraftTranslation,
   onRevertDraft,
 }: ComposerTranslationBarProps) => {
-  const languageMeta = sellerLanguageCode ? `${sellerLanguageLabel} (${sellerLanguageCode})` : sellerLanguageLabel
 
   return (
-    <div className="nx-translation-bar" role="region" aria-label="Translation controls">
-      <div className="nx-translation-bar__row">
-        <div className="nx-translation-bar__seller-language">
-          <span className="nx-translation-bar__label">Seller language</span>
-          <strong>{languageMeta}</strong>
+    <div className="nx-translation-strip" role="region" aria-label="Translation controls">
+      <div className="nx-translation-strip__row">
+        {/* Language indicator */}
+        <div className="nx-translation-strip__lang">
+          <span className="nx-translation-strip__lang-label">S:</span>
+          <span className="nx-translation-strip__lang-value">{sellerLanguageCode?.toUpperCase() || sellerLanguageLabel}</span>
         </div>
 
-        <div className="nx-translation-bar__actions">
-          <div className="nx-translation-toggle" role="tablist" aria-label="Thread language view">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={threadViewMode === 'original'}
-              className={threadViewMode === 'original' ? 'is-active' : ''}
-              onClick={() => onSetThreadViewMode('original')}
-            >
-              Original
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={threadViewMode === 'translated'}
-              className={threadViewMode === 'translated' ? 'is-active' : ''}
-              onClick={() => onSetThreadViewMode('translated')}
-              disabled={!hasThreadTranslations}
-              title={hasThreadTranslations ? 'Show translated inbound messages' : 'Translate thread to enable'}
-            >
-              Translated
-            </button>
-          </div>
-
+        {/* Segmented view toggle */}
+        <div className="nx-translation-toggle-seg" role="tablist" aria-label="Thread language view">
           <button
             type="button"
-            className="nx-translation-btn"
+            role="tab"
+            aria-selected={threadViewMode === 'original'}
+            className={threadViewMode === 'original' ? 'is-active' : ''}
+            onClick={() => onSetThreadViewMode('original')}
+          >
+            Orig
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={threadViewMode === 'translated'}
+            className={threadViewMode === 'translated' ? 'is-active' : ''}
+            onClick={() => onSetThreadViewMode('translated')}
+            disabled={!hasThreadTranslations}
+          >
+            Trans
+          </button>
+        </div>
+
+        {/* Action buttons */}
+        <div className="nx-translation-strip__actions">
+          <button
+            type="button"
+            className="nx-translation-strip__btn"
             disabled={isSellerLanguageEnglish || !hasInboundMessages || isThreadTranslating}
             onClick={onTranslateThread}
-            title={
-              isSellerLanguageEnglish
-                ? 'Thread is already in English'
-                : !hasInboundMessages
-                  ? 'No inbound seller messages to translate'
-                  : 'Translate inbound seller messages to English'
-            }
           >
-            <Icon name="spark" style={{ width: 14, marginRight: 6 }} />
-            {isThreadTranslating ? 'Translating Thread...' : 'Translate Thread'}
+            {isThreadTranslating ? (
+              <span className="nx-translation-strip__spinner" />
+            ) : (
+              <Icon name="spark" style={{ width: 12 }} />
+            )}
+            Thread
           </button>
 
           <button
             type="button"
-            className="nx-translation-btn"
+            className="nx-translation-strip__btn"
             disabled={!hasDraftText || isDraftTranslating}
             onClick={onTranslateDraft}
-            title={hasDraftText ? 'Translate draft to seller language' : 'Type a draft to translate'}
           >
-            <Icon name="send" style={{ width: 14, marginRight: 6 }} />
-            {isDraftTranslating ? 'Translating Draft...' : 'Translate Draft'}
+            {isDraftTranslating ? (
+              <span className="nx-translation-strip__spinner" />
+            ) : (
+              <Icon name="send" style={{ width: 12 }} />
+            )}
+            Draft
           </button>
 
           {canRevertDraft && (
-            <button type="button" className="nx-translation-btn is-quiet" onClick={onRevertDraft}>
-              Revert Draft
+            <button type="button" className="nx-translation-strip__btn is-quiet" onClick={onRevertDraft}>
+              Undo
             </button>
           )}
         </div>
       </div>
 
+      {/* Draft preview */}
       {translatedDraftPreview && (
         <div className="nx-translation-draft-preview">
           <div className="nx-translation-draft-preview__header">
@@ -121,15 +123,10 @@ export const ComposerTranslationBar = ({
         </div>
       )}
 
+      {/* Error */}
       {translationError && (
         <div className="nx-translation-error" role="status">
           {translationError}
-        </div>
-      )}
-
-      {isSellerLanguageEnglish && (
-        <div className="nx-translation-hint" role="status">
-          Thread appears to be English; thread translation is unnecessary.
         </div>
       )}
     </div>
