@@ -3,6 +3,10 @@ import type { ThreadContext } from '../../../lib/data/inboxData'
 import type { ThreadIntelligenceRecord, ThreadMessage } from '../../../lib/data/inboxData'
 import type { InboxStage, InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import type { PanelMode } from '../inbox-layout-state'
+import {
+  normalizePropertySnapshot,
+  buildPropertyExternalLinks,
+} from '../inbox-normalization'
 import { Icon } from '../../../shared/icons'
 import type { IconName } from '../../../shared/icons'
 import { formatRelativeTime } from '../../../shared/formatters'
@@ -69,11 +73,6 @@ interface IntelligencePanelProps {
   onOpenDossier: () => void
   onOpenAi: () => void
   onStageChange?: (stage: InboxStage) => void
-}
-
-const fallback = (value: unknown, placeholder = 'Not available yet') => {
-  const text = String(value ?? '').trim()
-  return text || placeholder
 }
 
 const normalizeText = (value: unknown): string => String(value ?? '').trim()
@@ -172,37 +171,32 @@ const PropertyHeroCard = ({
   thread: InboxWorkflowThread
   intelligence: ThreadIntelligenceRecord | null
 }) => {
-  const address = fallback(getField(intelligence, 'property_address_full') || thread.propertyAddress || thread.subject, 'Property Unknown')
-  const streetview = normalizeText(
-    getField(intelligence, 'streetview_image')
-    || getField(intelligence, 'street_view_image')
-    || getField(intelligence, 'streetview_url')
-    || (thread as unknown as Record<string, unknown>)['streetviewImage']
-    || '',
-  )
-  const lat = normalizeText(getField(intelligence, 'latitude') || getField(intelligence, 'lat') || getField(intelligence, 'property_latitude'))
-  const lng = normalizeText(getField(intelligence, 'longitude') || getField(intelligence, 'lng') || getField(intelligence, 'property_longitude'))
-  const location = lat && lng ? `${lat},${lng}` : address
+  const snapshot = normalizePropertySnapshot(intelligence, thread)
+  const address = snapshot.fullAddress || 'Property Unknown'
+  const streetview = snapshot.streetViewUrl || (thread as any).streetviewImage
+  
+  const location = address
   const mapsStreetViewUrl = location
     ? `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${encodeURIComponent(location)}`
     : null
   const liveStreetViewEmbedUrl = GOOGLE_MAPS_API_KEY && location
     ? `https://www.google.com/maps/embed/v1/streetview?${new URLSearchParams({ key: GOOGLE_MAPS_API_KEY, location, heading: '210', pitch: '0', fov: '80' }).toString()}`
     : null
-  const stats: Array<{ icon: string; label: string; value: string }> = [
-    { icon: '🏷', label: 'Type', value: missingLabel(getField(intelligence, 'property_type'), '—') },
-    { icon: '🛏', label: 'Beds', value: missingLabel(getField(intelligence, 'beds'), '—') },
-    { icon: '🛁', label: 'Baths', value: missingLabel(getField(intelligence, 'baths'), '—') },
-    { icon: '📐', label: 'Sqft', value: missingLabel(getField(intelligence, 'sqft'), '—') },
-    { icon: '🗓', label: 'Year Built', value: missingLabel(getField(intelligence, 'year_built'), '—') },
-    { icon: '🗓', label: 'Effective Year', value: missingLabel(getField(intelligence, 'effective_year_built'), '—') },
-    { icon: '💰', label: 'Estimated Value', value: missingLabel(getField(intelligence, 'estimated_value'), '—') },
-    { icon: '🛠', label: 'Repair Cost', value: missingLabel(getField(intelligence, 'estimated_repair_cost'), '—') },
-    { icon: '⚡', label: 'Cash Offer', value: missingLabel(getField(intelligence, 'cash_offer'), '—') },
-    { icon: '🎯', label: 'Final Score', value: missingLabel(getField(intelligence, 'final_acquisition_score'), '—') },
-  ]
 
-  const propertyType = normalizeText(getField(intelligence, 'property_type')) || 'Residential'
+  const stats: Array<{ icon: string; label: string; value: string }> = [
+    { icon: '🏷', label: 'Type', value: snapshot.propertyType },
+    { icon: '🛏', label: 'Beds', value: snapshot.beds },
+    { icon: '🛁', label: 'Baths', value: snapshot.baths },
+    { icon: '📐', label: 'Sqft', value: snapshot.sqft },
+    { icon: '🗓', label: 'Year Built', value: snapshot.yearBuilt },
+    { icon: '🗓', label: 'Effective Year', value: snapshot.effectiveYear },
+    { icon: '💰', label: 'Estimated Value', value: snapshot.estimatedValue },
+    { icon: '🛠', label: 'Repair Cost', value: snapshot.repairCost },
+    { icon: '⚡', label: 'Cash Offer', value: snapshot.cashOffer },
+    { icon: '🎯', label: 'Final Score', value: snapshot.finalScore },
+  ].filter(s => !isMissingValue(s.value))
+
+  const propertyType = snapshot.propertyType || 'Residential'
 
   return (
     <section className="nx-property-hero-card is-compact">
@@ -217,11 +211,11 @@ const PropertyHeroCard = ({
       </div>
       <div className="nx-property-hero-head">
         <strong>{address}</strong>
-        <span>{missingLabel(getField(intelligence, 'market') || thread.market || thread.marketId, 'Market pending')}</span>
+        <span>{missingLabel(snapshot.market || thread.market || thread.marketId, 'Market pending')}</span>
       </div>
       <div className="nx-property-hero-strip">
-        <span className={cls('nx-stage-pill', stageToneClass(thread.inboxStage))}>{missingLabel(getField(intelligence, 'priority_tier'), thread.inboxStage.replace(/_/g, ' '))}</span>
-        <span className={cls('nx-pri-pill', `is-${thread.priority || 'unknown'}`)}>Priority {missingLabel(getField(intelligence, 'priority_score'), '—')}</span>
+        <span className={cls('nx-stage-pill', stageToneClass(thread.inboxStage))}>{thread.inboxStage.replace(/_/g, ' ')}</span>
+        <span className={cls('nx-pri-pill', `is-${thread.priority || 'unknown'}`)}>Priority {thread.priority}</span>
         <span className="nx-property-hero-strip__time">Updated {formatRelativeTime(thread.lastMessageAt)}</span>
       </div>
       <div className="nx-property-hero-stats">
@@ -229,7 +223,7 @@ const PropertyHeroCard = ({
           <span key={item.label} className="nx-property-pill">
             <i>{item.icon}</i>
             <small>{item.label}</small>
-            <b className={isMissingValue(item.value) ? 'is-missing' : undefined}>{missingLabel(item.value, '—')}</b>
+            <b>{item.value}</b>
           </span>
         ))}
       </div>
@@ -310,39 +304,11 @@ export const IntelligencePanel = (props: IntelligencePanelProps) => {
   const [sectionStateByThread, setSectionStateByThread] = useState<Record<string, string[]>>({})
   const layoutMode = resolvePanelLayoutMode(panelMode)
   const sections = useMemo(() => {
-    const zillowLink = getField(intelligence, 'zillow_url')
-      || getField(intelligence, 'zillow_link')
-      || getField(intelligence, 'zillow')
-      || (thread as unknown as Record<string, unknown>)['zillowUrl']
-    const realtorLink = getField(intelligence, 'realtor_url')
-      || getField(intelligence, 'realtor_link')
-      || getField(intelligence, 'realtor')
-      || (thread as unknown as Record<string, unknown>)['realtorUrl']
-    const streetviewLink = getField(intelligence, 'streetview_url')
-      || getField(intelligence, 'streetview_image')
-      || getField(intelligence, 'street_view_image')
-      || (thread as unknown as Record<string, unknown>)['streetviewImage']
-
-    const propertyRows = [
-      { label: 'Address', value: missingLabel(getField(intelligence, 'property_address_full') || thread?.propertyAddress || thread?.subject, '—') },
-      { label: 'Property Type', value: missingLabel(getField(intelligence, 'property_type'), '—') },
-      { label: 'Beds / Baths / Sqft', value: `${missingLabel(getField(intelligence, 'beds'), '—')} / ${missingLabel(getField(intelligence, 'baths'), '—')} / ${missingLabel(getField(intelligence, 'sqft'), '—')}` },
-      { label: 'Year Built', value: missingLabel(getField(intelligence, 'year_built'), '—') },
-      { label: 'Effective Year Built', value: missingLabel(getField(intelligence, 'effective_year_built'), '—') },
-      { label: 'Estimated Value', value: missingLabel(getField(intelligence, 'estimated_value'), '—') },
-      { label: 'Estimated Repair Cost', value: missingLabel(getField(intelligence, 'estimated_repair_cost'), '—') },
-      { label: 'Cash Offer', value: missingLabel(getField(intelligence, 'cash_offer'), '—') },
-      { label: 'Final Acquisition Score', value: missingLabel(getField(intelligence, 'final_acquisition_score'), '—') },
-      { label: 'Street View', value: missingLabel(streetviewLink, '—') },
-      { label: 'Zillow', value: missingLabel(zillowLink, '—') },
-      { label: 'Realtor', value: missingLabel(realtorLink, '—') },
-    ]
-
     const dealRows = [
       { label: 'Final Acquisition Score', value: missingLabel(getField(intelligence, 'final_acquisition_score'), '—') },
       { label: 'Deal Strength Score', value: missingLabel(getField(intelligence, 'deal_strength_score'), '—') },
       { label: 'Structured Motivation Score', value: missingLabel(getField(intelligence, 'structured_motivation_score'), '—') },
-    ]
+    ].filter(r => !isMissingValue(r.value))
 
     const ownerRows = [
       { label: 'Owner Display Name', value: missingLabel(getField(intelligence, 'owner_display_name'), '—') },
@@ -354,29 +320,25 @@ export const IntelligencePanel = (props: IntelligencePanelProps) => {
       { label: 'Priority Tier', value: missingLabel(getField(intelligence, 'priority_tier'), '—') },
       { label: 'Best Language', value: missingLabel(getField(intelligence, 'best_language'), '—') },
       { label: 'Best Contact Window', value: missingLabel(getField(intelligence, 'best_contact_window'), '—') },
-    ]
-
-    const contactRows = [
       { label: 'Prospect Full Name', value: missingLabel(getField(intelligence, 'prospect_full_name'), '—') },
-      { label: 'Prospect First Name', value: missingLabel(getField(intelligence, 'prospect_first_name'), '—') },
       { label: 'Language Preference', value: missingLabel(getField(intelligence, 'language_preference'), '—') },
       { label: 'SMS Eligible', value: missingLabel(getField(intelligence, 'sms_eligible'), '—') },
       { label: 'Contact Score Final', value: missingLabel(getField(intelligence, 'contact_score_final'), '—') },
       { label: 'Phone Score Final', value: missingLabel(getField(intelligence, 'phone_score_final'), '—') },
       { label: 'Est Household Income', value: missingLabel(getField(intelligence, 'est_household_income'), '—') },
       { label: 'Net Asset Value', value: missingLabel(getField(intelligence, 'net_asset_value'), '—') },
-    ]
+    ].filter(r => !isMissingValue(r.value))
 
     const rawRows = Object.entries(intelligence ?? {})
       .slice(0, 24)
       .map(([label, value]) => ({ label, value: missingLabel(value, '—') }))
+      .filter(r => !isMissingValue(r.value))
 
     return [
-      { id: 'property_snapshot', title: 'Property Snapshot', icon: 'map' as IconName, summary: 'Core property and valuation snapshot', rows: propertyRows },
-      { id: 'deal_scores', title: 'Deal Scores', icon: 'stats' as IconName, summary: 'Acquisition and motivation scoring', rows: dealRows },
-      { id: 'owner_intelligence', title: 'Owner Intelligence', icon: 'user' as IconName, summary: 'Owner profile and urgency signals', rows: ownerRows },
-      { id: 'contact_intelligence', title: 'Contact Intelligence', icon: 'inbox' as IconName, summary: 'Prospect and contact scoring', rows: contactRows },
-      { id: 'raw_metadata', title: 'Raw Metadata', icon: 'settings' as IconName, summary: 'Underlying intelligence payload', rows: rawRows },
+      { id: 'property_snapshot', title: 'Property Snapshot', icon: 'map' as IconName, summary: 'Core property and valuation snapshot', rows: [] },
+      { id: 'deal_intelligence', title: 'Deal Intelligence', icon: 'stats' as IconName, summary: 'Acquisition and motivation scoring', rows: dealRows },
+      { id: 'owner_contact', title: 'Owner / Contact', icon: 'user' as IconName, summary: 'Owner profile and contact signals', rows: ownerRows },
+      { id: 'metadata_automation', title: 'Metadata / Automation', icon: 'settings' as IconName, summary: 'Underlying intelligence payload', rows: rawRows },
     ]
   }, [intelligence, thread])
   const sectionById = useMemo(() => {
@@ -396,7 +358,7 @@ export const IntelligencePanel = (props: IntelligencePanelProps) => {
   )
 
   const allSectionIds = sections.map((section) => section.id)
-  const defaultOpenSectionIds = ['property_snapshot', 'deal_scores']
+  const defaultOpenSectionIds = ['property_snapshot', 'deal_intelligence']
   const openSectionIds = sectionStateByThread[modeScopeKey] ?? defaultOpenSectionIds
 
   const setOpenSections = (nextIds: string[]) => {
@@ -434,16 +396,15 @@ export const IntelligencePanel = (props: IntelligencePanelProps) => {
 
     const fallbackBySection: Record<string, string> = {
       property_snapshot: 'Property image and valuation summary',
-      deal_scores: 'Acquisition scoring summary',
-      owner_intelligence: 'Owner profile and tiering',
-      contact_intelligence: 'Prospect contactability and score stack',
-      raw_metadata: 'Raw payload from nexus_thread_intelligence_v',
+      deal_intelligence: 'Acquisition scoring summary',
+      owner_contact: 'Owner profile and contact signals',
+      metadata_automation: 'Raw payload from nexus_thread_intelligence_v',
     }
     return fallbackBySection[id] ?? 'Pending enrichment'
   }
 
   const resolveSectionChips = (id: string, rows: Array<{ label: string; value: string }>): string[] => {
-    if (id === 'deal_scores') {
+    if (id === 'deal_intelligence') {
       return [
         `Final ${missingLabel(valueByLabel(rows, 'Final Acquisition Score'), '—')}`,
         `Deal ${missingLabel(valueByLabel(rows, 'Deal Strength Score'), '—')}`,
@@ -451,21 +412,16 @@ export const IntelligencePanel = (props: IntelligencePanelProps) => {
       ]
     }
     if (id === 'property_snapshot') {
+      const snapshot = normalizePropertySnapshot(intelligence, thread)
       return [
-        missingLabel(valueByLabel(rows, 'Property Type'), 'type pending'),
-        `Value ${missingLabel(valueByLabel(rows, 'Estimated Value'), '—')}`,
+        missingLabel(snapshot.propertyType, 'type pending'),
+        `Value ${missingLabel(snapshot.estimatedValue, '—')}`,
       ]
     }
-    if (id === 'owner_intelligence') {
+    if (id === 'owner_contact') {
       return [
         missingLabel(valueByLabel(rows, 'Owner Display Name'), 'owner pending'),
         `Tier ${missingLabel(valueByLabel(rows, 'Priority Tier'), '—')}`,
-      ]
-    }
-    if (id === 'contact_intelligence') {
-      return [
-        missingLabel(valueByLabel(rows, 'Prospect Full Name'), 'prospect pending'),
-        missingLabel(valueByLabel(rows, 'Language Preference'), 'language pending'),
       ]
     }
     return ['Metadata']
@@ -520,24 +476,20 @@ export const IntelligencePanel = (props: IntelligencePanelProps) => {
     const address = (getField(intelligence, 'property_address_full') || thread.propertyAddress || thread.subject || '') as string
     if (!address || typeof address !== 'string' || address.length < 5) return null
 
-    const encodedAddress = encodeURIComponent(address)
-    const zillowUrl = (getField(intelligence, 'zillow_url') || getField(intelligence, 'zillow_link') || `https://www.zillow.com/homes/${encodedAddress}_rb/`) as string
-    const realtorUrl = (getField(intelligence, 'realtor_url') || getField(intelligence, 'realtor_link') || `https://www.realtor.com/realestateandhomes-search/${encodedAddress}`) as string
-    const googleSearchUrl = `https://www.google.com/search?q=${encodedAddress}`
-    const streetViewUrl = `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`
+    const links = buildPropertyExternalLinks(address)
 
     return (
       <div className="nx-premium-quick-links" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', padding: '12px', background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-        <a href={zillowUrl} target="_blank" rel="noreferrer" className="nx-utility-btn" style={{ justifyContent: 'center' }}>
+        <a href={links.zillow || '#'} target="_blank" rel="noreferrer" className={cls('nx-utility-btn', !links.zillow && 'is-disabled')} style={{ justifyContent: 'center' }}>
           <Icon name="arrow-up-right" /> Zillow
         </a>
-        <a href={realtorUrl} target="_blank" rel="noreferrer" className="nx-utility-btn" style={{ justifyContent: 'center' }}>
+        <a href={links.realtor || '#'} target="_blank" rel="noreferrer" className={cls('nx-utility-btn', !links.realtor && 'is-disabled')} style={{ justifyContent: 'center' }}>
           <Icon name="arrow-up-right" /> Realtor
         </a>
-        <a href={googleSearchUrl} target="_blank" rel="noreferrer" className="nx-utility-btn" style={{ justifyContent: 'center' }}>
+        <a href={links.googleSearch || '#'} target="_blank" rel="noreferrer" className={cls('nx-utility-btn', !links.googleSearch && 'is-disabled')} style={{ justifyContent: 'center' }}>
           <Icon name="search" /> Google
         </a>
-        <a href={streetViewUrl} target="_blank" rel="noreferrer" className="nx-utility-btn" style={{ justifyContent: 'center' }}>
+        <a href={links.streetView || '#'} target="_blank" rel="noreferrer" className={cls('nx-utility-btn', !links.streetView && 'is-disabled')} style={{ justifyContent: 'center' }}>
           <Icon name="map" /> Street View
         </a>
       </div>
@@ -561,7 +513,7 @@ export const IntelligencePanel = (props: IntelligencePanelProps) => {
       <div className="nx-intel-scroll-body">
         <div className={cls('nx-intel-mode-stack', `is-${layoutMode}`)}>
           <div className="nx-intel-compact-stack">
-            {['property_snapshot', 'deal_scores', 'owner_intelligence', 'contact_intelligence', 'raw_metadata'].map((sectionId) => renderSectionCard(sectionId))}
+            {['property_snapshot', 'deal_intelligence', 'owner_contact', 'metadata_automation'].map((sectionId) => renderSectionCard(sectionId))}
           </div>
           <div className="nx-intel-action-rail">
             <button type="button" className="nx-intel-action-btn" onClick={onOpenMap}><Icon name="map" /><span>Map</span></button>

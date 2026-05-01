@@ -1102,37 +1102,20 @@ export const getInboxThreads = async (
       phoneNumber: sellerPhone || undefined,
       canonicalE164: sellerPhone || undefined,
       ourNumber: normalizePhone(row['our_number']) || undefined,
-      sellerPhone: sellerPhone || undefined,
-      thread_key: threadKey,
-      seller_phone: sellerPhone || undefined,
-      our_number: normalizePhone(row['our_number']) || undefined,
-      master_owner_id: asString(row['master_owner_id'], '') || undefined,
-      prospect_id: asString(row['prospect_id'], '') || undefined,
-      property_id: asString(row['property_id'], '') || undefined,
-      directionUsed: latestDirection,
-      propertyAddress: propertyAddressFull || undefined,
       market: asString(row['market'], 'unknown') || 'unknown',
       lastInboundAt: latestDirection === 'inbound' ? latestMessageIso : null,
       lastOutboundAt: latestDirection === 'outbound' ? latestMessageIso : null,
       needsResponse: showInPriorityInbox,
       unread: unreadCount > 0,
-      stateRowFound: true,
-      threadWorkflowStage: workflowStage,
-      threadWorkflowStatus: workflowStatus,
-      threadIsRead: isRead,
-      threadIsArchived: isArchived,
-      threadIsPinned: asBoolean(row['is_pinned'], false),
-      threadLastReadAt: null,
-      threadArchivedAt: null,
-      ownerDisplayName: ownerDisplayName || undefined,
-      propertyAddressFull: propertyAddressFull || undefined,
-      latestMessageBody: asString(row['latest_message_body'], '') || undefined,
-      latestMessageAt: latestMessageIso,
       uiIntent,
       priorityBucket,
       workflowStatus,
       workflowStage,
       showInPriorityInbox,
+      ownerDisplayName,
+      propertyAddressFull,
+      latestMessageBody: asString(row['latest_message_body'], '') || undefined,
+      latestMessageAt: latestMessageIso,
       cashOffer: row['cash_offer'] ?? intelligenceRow?.['cash_offer'] ?? null,
       estimatedValue: row['estimated_value'] ?? intelligenceRow?.['estimated_value'] ?? null,
       finalAcquisitionScore: row['final_acquisition_score'] ?? intelligenceRow?.['final_acquisition_score'] ?? null,
@@ -1213,10 +1196,19 @@ const toThreadMessage = (row: AnyRecord): ThreadMessage => {
     asIso(row['created_at'] ?? row['event_timestamp'] ?? row['sent_at'] ?? row['received_at'] ?? row['timeline_at']) ??
     timelineAt
   const direction = normalizeMessageDirection(row)
-  const deliveryStatus = asString(
+  
+  const status = asString(
     row['delivery_status'] ?? row['provider_delivery_status'] ?? row['raw_carrier_status'] ?? row['queue_status'] ?? row['status'],
     'unknown',
-  )
+  ).toLowerCase()
+  
+  let deliveryStatus = 'pending'
+  if (status.includes('deliver')) deliveryStatus = 'delivered'
+  else if (status.includes('sent') || status === 'success') deliveryStatus = 'sent'
+  else if (status.includes('fail') || status.includes('undeliv')) deliveryStatus = 'failed'
+  else if (status.includes('queue')) deliveryStatus = 'queued'
+  else if (status === 'pending') deliveryStatus = 'pending'
+
   const { sellerPhone, canonicalE164: msgCanonical } = getSellerPhoneFromMessage(row)
   const source =
     asString(row['source_app'] ?? row['message_source'], '') ||

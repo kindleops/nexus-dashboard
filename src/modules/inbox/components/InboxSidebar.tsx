@@ -106,27 +106,23 @@ export const ConversationRow = memo(({ thread, selected, onSelect }: Conversatio
         </span>
 
         {/* Row 2: Address */}
-        {propertyAddress && (
-          <span className="nx-conversation-row__sub-row">
-            <span className="nx-conversation-row__address">{propertyAddress}</span>
-          </span>
-        )}
+        <span className="nx-conversation-row__sub-row">
+          <span className="nx-conversation-row__address">{propertyAddress || 'No Address'}</span>
+        </span>
 
         {/* Row 3: Preview */}
-        {latestMessageBody && (
-          <span className="nx-conversation-row__preview">{latestMessageBody}</span>
-        )}
+        <span className="nx-conversation-row__preview">{latestMessageBody}</span>
 
         {/* Row 4: Meta */}
         <div className="nx-conversation-row__footer">
           <span className="nx-conversation-row__meta">
-            {market && (
-              <span className="nx-market-tag">{market}</span>
-            )}
             <span className="nx-stage-pill nx-status-pill" style={{ '--pill-color': visual.color, '--pill-bg': visual.bg, '--pill-border': visual.border } as Record<string, string>}>
               <i className="nx-status-dot" style={{ background: visual.dot }} />
               {visual.label}
             </span>
+            {market && (
+              <span className="nx-market-tag">{market}</span>
+            )}
           </span>
         </div>
       </span>
@@ -181,13 +177,15 @@ export const InboxSidebar = ({
   canLoadMore,
   onLoadMore,
 }: InboxSidebarProps) => {
-  const priorityCount = viewCounts.priority ?? 0
+  const activePresetConfig = savedFilterOptions.find(o => o.value === savedPreset)
+  const activeLabel = activePresetConfig?.label || 'Smart'
+  const activeCount = viewCounts[activeViewFilter] ?? threads.length
 
   return (
     <aside className="nx-sidebar">
       <div className="nx-sidebar__top">
         <div className="nx-sidebar__label-row">
-          <span className="nx-section-label">PRIORITY INBOX</span>
+          <span className="nx-section-label">{activeLabel.toUpperCase()} INBOX</span>
           <button type="button" className="nx-sidebar__icon-button" title="Inbox settings">
             <Icon name="settings" />
           </button>
@@ -196,15 +194,15 @@ export const InboxSidebar = ({
         <section className="nx-priority-command-card">
           <div className="nx-priority-command-card__left">
             <span className="nx-priority-command-card__title">
-              {savedFilterOptions.find(o => o.value === savedPreset)?.label || 'Smart'} Inbox
+              {activeLabel} Inbox
             </span>
             <p className="nx-priority-command-card__sub">
               {savedPreset === 'my_priority' 
                 ? 'Actionable signals & urgent replies' 
-                : `Active filter: ${savedFilterOptions.find(o => o.value === savedPreset)?.label || 'Custom'}`}
+                : `Viewing ${activeLabel.toLowerCase()} threads and signals`}
             </p>
           </div>
-          <strong className="nx-priority-command-card__count">{priorityCount}</strong>
+          <strong className="nx-priority-command-card__count">{activeCount}</strong>
         </section>
 
         <div className="nx-sidebar__saved-filters">

@@ -260,16 +260,20 @@ const matchesStageSelection = (thread: InboxWorkflowThread, stage: InboxStageSel
 }
 
 const matchesViewSelection = (thread: InboxWorkflowThread, view: InboxViewSelectValue): boolean => {
+  if (view === 'all') return true
+  
   const uiIntent = toLower(getField(thread, 'uiIntent') || getField(thread, 'ui_intent'))
   const priorityBucket = toLower(getField(thread, 'priorityBucket') || getField(thread, 'priority_bucket'))
   const showInPriority = Boolean(getField(thread, 'showInPriorityInbox') ?? getField(thread, 'show_in_priority_inbox'))
+  const isArchived = Boolean(thread.isArchived || thread.inboxStatus === 'archived')
+  const isSuppressed = isSuppressedThread(thread)
 
-  if (view === 'all') return true
-  if (view === 'priority') return showInPriority
-  if (view === 'active') return priorityBucket !== 'hidden' && priorityBucket !== 'suppressed' && uiIntent !== 'outbound_waiting'
-  if (view === 'waiting') return uiIntent === 'outbound_waiting'
-  if (view === 'hidden') return priorityBucket === 'hidden'
-  if (view === 'suppressed') return priorityBucket === 'suppressed'
+  if (view === 'priority') return showInPriority && !isArchived
+  if (view === 'active') return !isArchived && !isSuppressed && uiIntent !== 'outbound_waiting'
+  if (view === 'waiting') return uiIntent === 'outbound_waiting' && !isArchived
+  if (view === 'hidden') return priorityBucket === 'hidden' && !isArchived
+  if (view === 'suppressed') return isSuppressed && !isArchived
+  
   return true
 }
 
