@@ -100,23 +100,25 @@ export const AdvancedFiltersPopover = ({
         </header>
 
         <div className="nx-filter-modal__body">
-          <FilterGroup title="Stage / Status">
+          <FilterGroup title="Workflow Controls">
             <label>
-              <span>Stage</span>
-              <select value={stageFilter} onChange={(event) => setStageFilter(event.target.value as InboxStageSelectValue)}>
-                {stageOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
-            </label>
-            <label>
-              <span>Status / View</span>
+              <span>Inbox Status</span>
               <select value={viewFilter} onChange={(event) => setViewFilter(event.target.value as InboxViewSelectValue)}>
-                {viewOptions.map((option) => {
+                {inboxStatusOptions.map((option) => {
                   const c = viewCounts[option.value]
                   const label = c === null || c === undefined ? '—' : String(c)
                   return (
                     <option key={option.value} value={option.value}>{option.label} ({label})</option>
                   )
                 })}
+                <option value="all">All (—)</option>
+              </select>
+            </label>
+            <label>
+              <span>Seller Stage</span>
+              <select value={stageFilter} onChange={(event) => setStageFilter(event.target.value as InboxStageSelectValue)}>
+                <option value="all_stages">Any Stage</option>
+                {sellerStageOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
             </label>
           </FilterGroup>

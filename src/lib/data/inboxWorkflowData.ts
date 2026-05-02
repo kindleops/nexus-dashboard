@@ -7,35 +7,31 @@ import { logInboxActivity } from './inboxActivityData'
 const DEV = Boolean(import.meta.env.DEV)
 const SENT_MESSAGES_PAGE_SIZE = 1000
 
-export type InboxStage =
+export type InboxStatus =
   | 'new_reply'
-  | 'needs_response'
+  | 'needs_review'
   | 'ai_draft_ready'
-  | 'queued_reply'
-  | 'sent_waiting'
-  | 'interested'
-  | 'needs_offer'
-  | 'needs_call'
-  | 'nurture'
-  | 'not_interested'
-  | 'wrong_number'
-  | 'dnc_opt_out'
-  | 'archived'
-  | 'closed_converted'
-
-export type InboxWorkflowStatus =
-  | 'open'
-  | 'unread'
-  | 'read'
-  | 'pending'
   | 'queued'
-  | 'sent'
-  | 'scheduled'
-  | 'failed'
-  | 'archived'
+  | 'waiting'
   | 'suppressed'
-  | 'hidden'
   | 'closed'
+
+export type SellerStage =
+  | 'ownership_check'
+  | 'interest_probe'
+  | 'seller_response'
+  | 'price_discovery'
+  | 'condition_details'
+  | 'offer_reveal'
+  | 'negotiation'
+  | 'contract_path'
+  | 'dead_suppressed'
+
+// Aliases to prevent massive breakage during transition
+export type InboxStage = SellerStage
+export type InboxWorkflowStatus = InboxStatus
+
+export type AutomationState = 'active' | 'paused' | 'completed' | 'manual_control'
 
 export type InboxPriority = 'urgent' | 'high' | 'normal' | 'low'
 
@@ -54,8 +50,8 @@ export interface InboxThreadsQuery {
   search?: string
   market?: string
   direction?: 'all' | 'inbound' | 'outbound'
-  stage?: InboxStage | 'all'
-  status?: InboxWorkflowStatus | 'all'
+  stage?: string | 'all'
+  status?: InboxStatus | 'all'
   priority?: InboxPriority | 'all'
   read?: 'all' | 'read' | 'unread'
   hasPropertyLink?: boolean
@@ -68,8 +64,12 @@ export interface InboxThreadsQuery {
 
 export interface InboxThreadWorkflow {
   threadKey: string
-  inboxStatus: InboxWorkflowStatus
-  inboxStage: InboxStage
+  inboxStatus: InboxStatus
+  conversationStage: SellerStage
+  // Backwards compat
+  inboxStage: SellerStage
+  automationState: AutomationState
+  nextSystemAction: string
   isArchived: boolean
   isRead: boolean
   isPinned: boolean
@@ -168,78 +168,69 @@ const chunk = <T,>(items: T[], size: number): T[][] => {
   return out
 }
 
-const inferStage = (
-  input: {
-    isArchived: boolean
-    needsResponse: boolean
-    hasAiDraft: boolean
-    queueStatus: string | null
-    suppressed: boolean
-    failed: boolean
-  },
-): InboxStage => {
-  if (input.isArchived) return 'archived'
-  if (input.suppressed) return 'dnc_opt_out'
-  if (input.failed) return 'needs_response'
-  if (input.queueStatus === 'scheduled') return 'queued_reply'
-  if (input.queueStatus === 'queued' || input.queueStatus === 'approval') return 'queued_reply'
-  if (input.needsResponse) return 'needs_response'
-  if (input.hasAiDraft) return 'ai_draft_ready'
-  return 'sent_waiting'
+const inferInboxStatus = (
+  thread: InboxThread,
+  queueRow: AnyRecord | null,
+): InboxStatus => {
+  const isArchived = Boolean(thread.isArchived || thread.status === 'archived')
+  if (isArchived) return 'closed'
+  
+  if (thread.isOptOut) return 'suppressed'
+  
+  const queueStatus = normalizeStatus(queueRow?.['queue_status'] ?? queueRow?.['status'] ?? '')
+  if (queueStatus === 'queued' || queueStatus === 'scheduled' || queueStatus === 'approval') return 'queued'
+  
+  if (thread.aiDraft) return 'ai_draft_ready'
+  
+  const lastInboundTs = thread.lastInboundAt ? new Date(thread.lastInboundAt).getTime() : 0
+  const lastOutboundTs = thread.lastOutboundAt ? new Date(thread.lastOutboundAt).getTime() : 0
+  const needsResponse = lastInboundTs > lastOutboundTs || (lastInboundTs === lastOutboundTs && normalizeMessageDirection({ direction: thread.directionUsed }) === 'inbound')
+  
+  if (needsResponse) {
+    if (thread.uiIntent === 'info_request' || thread.uiIntent === 'language_switch') return 'needs_review'
+    return 'new_reply'
+  }
+  
+  if (lastOutboundTs > 0) return 'waiting'
+  
+  return 'needs_review'
 }
 
-const inferStatus = (
-  input: {
-    isArchived: boolean
-    unread: boolean
-    queueStatus: string | null
-    failed: boolean
-    suppressed: boolean
-  },
-): InboxWorkflowStatus => {
-  if (input.isArchived) return 'archived'
-  if (input.suppressed) return 'suppressed'
-  if (input.failed) return 'failed'
-  if (input.queueStatus === 'scheduled') return 'scheduled'
-  if (input.queueStatus === 'queued' || input.queueStatus === 'approval') return 'queued'
-  if (input.queueStatus === 'sent' || input.queueStatus === 'delivered') return 'sent'
-  if (input.unread) return 'unread'
-  return 'open'
+const inferSellerStage = (thread: InboxThread): SellerStage => {
+  if (thread.isOptOut) return 'dead_suppressed'
+  
+  const rawStage = asString((thread as any).current_stage || (thread as any).stage_code || (thread as any).workflowStage || thread.inboxStage, '').toLowerCase()
+  if (rawStage.includes('owner')) return 'ownership_check'
+  if (rawStage.includes('probe') || rawStage.includes('interest')) return 'interest_probe'
+  if (rawStage.includes('discovery') || rawStage.includes('price')) return 'price_discovery'
+  if (rawStage.includes('details') || rawStage.includes('condition')) return 'condition_details'
+  if (rawStage.includes('reveal') || rawStage.includes('offer')) return 'offer_reveal'
+  if (rawStage.includes('negotiat')) return 'negotiation'
+  if (rawStage.includes('contract') || rawStage.includes('path')) return 'contract_path'
+  
+  // Fallback to template use case
+  const useCase = asString(thread.templateUseCase || (thread as any).template_use_case, '').toLowerCase()
+  if (useCase.includes('initial')) return 'ownership_check'
+  if (useCase.includes('follow')) return 'interest_probe'
+  if (useCase.includes('offer')) return 'offer_reveal'
+  
+  return 'ownership_check'
 }
 
-const buildMessageEventFilter = (thread: InboxThread): string => {
-  const terms: string[] = []
-  if (thread.ownerId) terms.push(`master_owner_id.eq.${safeFilterValue(thread.ownerId)}`)
-  if (thread.prospectId) terms.push(`prospect_id.eq.${safeFilterValue(thread.prospectId)}`)
-  if (thread.propertyId) terms.push(`property_id.eq.${safeFilterValue(thread.propertyId)}`)
-
-  const phones = [thread.canonicalE164, thread.phoneNumber].flatMap((p) => buildPhoneVariants(normalizePhone(p)))
-  for (const phone of phones) {
-    terms.push(`from_phone_number.eq.${safeFilterValue(phone)}`)
-    terms.push(`to_phone_number.eq.${safeFilterValue(phone)}`)
-  }
-
-  if (terms.length === 0) {
-    const key = safeFilterValue(toThreadKey(thread))
-    terms.push(`message_event_key.eq.${key}`)
-    terms.push(`queue_id.eq.${key}`)
-  }
-
-  return Array.from(new Set(terms)).join(',')
+const getAutomationState = (thread: InboxThread): AutomationState => {
+  if (thread.isArchived || thread.isOptOut || thread.status === 'archived') return 'completed'
+  if (thread.uiIntent === 'info_request' || thread.uiIntent === 'needs_review') return 'manual_control'
+  return 'active'
 }
 
-const queueStateForThread = (thread: InboxThread, queueRows: AnyRecord[]): AnyRecord | null => {
-  const tPhone = normalizePhone(thread.canonicalE164 || thread.phoneNumber)
-  for (const row of queueRows) {
-    const byProperty = thread.propertyId && asString(row['property_id'], '') === thread.propertyId
-    const byOwner = thread.ownerId && asString(row['master_owner_id'], '') === thread.ownerId
-    const byProspect = thread.prospectId && asString(row['prospect_id'], '') === thread.prospectId
-    const rowTo = normalizePhone(row['to_phone_number'])
-    const rowPhone = normalizePhone(row['phone_number'])
-    const byPhone = Boolean(tPhone && (rowTo === tPhone || rowPhone === tPhone))
-    if (byProperty || byOwner || byProspect || byPhone) return row
-  }
-  return null
+const getNextSystemAction = (status: InboxStatus): string => {
+  if (status === 'ai_draft_ready') return 'Review AI draft and approve for send.'
+  if (status === 'new_reply') return 'Analyze intent and categorize seller.'
+  if (status === 'waiting') return 'Monitor for inbound reply or followup trigger.'
+  if (status === 'queued') return 'Message scheduled for next delivery window.'
+  if (status === 'suppressed') return 'Suppression active. No further actions.'
+  if (status === 'closed') return 'Thread closed. No active workflow.'
+  return 'Manual operator intervention recommended.'
 }
 
 const withWorkflowState = (
@@ -249,45 +240,28 @@ const withWorkflowState = (
 ): InboxWorkflowThread => {
   const hasStateRow = Boolean(stateRow)
   const queueStatus = normalizeStatus(queueRow?.['queue_status'] ?? queueRow?.['status'] ?? '') || null
-  const failed = ['failed', 'error', 'undelivered'].includes(normalizeStatus(thread.deliveryStatus)) ||
-    ['failed', 'error', 'undelivered'].includes(normalizeStatus(queueRow?.['queue_status']))
-  const lastInboundTs = thread.lastInboundAt ? new Date(thread.lastInboundAt).getTime() : 0
-  const lastOutboundTs = thread.lastOutboundAt ? new Date(thread.lastOutboundAt).getTime() : 0
-  const latestInbound = lastInboundTs > lastOutboundTs || (lastInboundTs === lastOutboundTs && normalizeMessageDirection({ direction: thread.directionUsed }) === 'inbound')
+  
+  const isArchived = hasStateRow ? asBoolean(stateRow?.['is_archived'], false) : Boolean(thread.isArchived || thread.status === 'archived')
+  const isRead = hasStateRow ? asBoolean(stateRow?.['is_read'], false) : !thread.unread
+  
+  const inboxStatus = hasStateRow 
+    ? (normalizeStatus(stateRow?.['status']) as InboxStatus || inferInboxStatus(thread, queueRow))
+    : inferInboxStatus(thread, queueRow)
+    
+  const conversationStage = hasStateRow
+    ? (normalizeStatus(stateRow?.['stage']) as SellerStage || inferSellerStage(thread))
+    : inferSellerStage(thread)
 
-  const isArchived = hasStateRow ? asBoolean(stateRow?.['is_archived'], false) : false
-  const isRead = hasStateRow ? asBoolean(stateRow?.['is_read'], false) : false
-  const status = hasStateRow
-    ? ((normalizeStatus(stateRow?.['status']) as InboxWorkflowStatus) ||
-      inferStatus({
-        isArchived,
-        unread: !isRead,
-        queueStatus,
-        failed,
-        suppressed: Boolean(thread.isOptOut),
-      }))
-    : (latestInbound ? 'unread' : 'sent')
-
-  const stage = hasStateRow
-    ? ((normalizeStatus(stateRow?.['stage']) as InboxStage) ||
-      inferStage({
-        isArchived,
-        needsResponse: Boolean(thread.needsResponse),
-        hasAiDraft: Boolean(thread.aiDraft),
-        queueStatus,
-        suppressed: Boolean(thread.isOptOut),
-        failed,
-      }))
-    : 'needs_response'
-
-  const lastDirection = normalizeMessageDirection({ direction: thread.directionUsed })
   const lastMessageAt = thread.lastMessageIso || new Date().toISOString()
 
   return {
     ...thread,
     threadKey: toThreadKey(thread),
-    inboxStatus: status,
-    inboxStage: stage,
+    inboxStatus,
+    conversationStage,
+    inboxStage: conversationStage,
+    automationState: getAutomationState(thread),
+    nextSystemAction: getNextSystemAction(inboxStatus),
     isArchived,
     isRead,
     isPinned: asBoolean(stateRow?.['is_pinned'], false),
@@ -296,12 +270,12 @@ const withWorkflowState = (
     isSuppressed: asBoolean(stateRow?.['is_suppressed'], false),
     priority: hasStateRow
       ? ((normalizeStatus(stateRow?.['priority']) as InboxPriority) || thread.priority)
-      : (latestInbound ? 'urgent' : 'normal'),
+      : (inboxStatus === 'new_reply' ? 'urgent' : 'normal'),
     lastInboundAt: asIso(stateRow?.['last_inbound_at']) ?? thread.lastInboundAt ?? null,
     lastOutboundAt: asIso(stateRow?.['last_outbound_at']) ?? thread.lastOutboundAt ?? null,
     lastMessageAt,
     lastMessageBody: thread.preview,
-    lastDirection,
+    lastDirection: normalizeMessageDirection({ direction: thread.directionUsed }),
     updatedAt: asIso(stateRow?.['updated_at']) ?? lastMessageAt,
     queueStatus,
   }
@@ -318,7 +292,7 @@ const matchesSearch = (thread: InboxWorkflowThread, search: string): boolean => 
     thread.propertyAddress,
     thread.market,
     thread.marketId,
-    thread.inboxStage,
+    thread.conversationStage,
     thread.inboxStatus,
   ]
   return tokens.filter(Boolean).some((value) => String(value).toLowerCase().includes(q))
@@ -330,11 +304,9 @@ const applyThreadFilters = (threads: InboxWorkflowThread[], params: InboxThreads
   if (params.tab && params.tab !== 'all') {
     filtered = filtered.filter((thread) => {
       if (params.tab === 'priority') return thread.priority === 'urgent' || thread.priority === 'high'
-      if (params.tab === 'needs_response') return thread.inboxStage === 'needs_response' || thread.needsResponse
-      if (params.tab === 'sent') return thread.inboxStatus === 'sent' || thread.inboxStage === 'sent_waiting'
-      if (params.tab === 'queued') return thread.inboxStatus === 'queued' || thread.inboxStage === 'queued_reply'
-      if (params.tab === 'scheduled') return thread.inboxStatus === 'scheduled'
-      if (params.tab === 'failed') return thread.inboxStatus === 'failed'
+      if (params.tab === 'needs_response') return thread.inboxStatus === 'new_reply' || thread.inboxStatus === 'needs_review'
+      if (params.tab === 'sent') return thread.inboxStatus === 'waiting'
+      if (params.tab === 'queued') return thread.inboxStatus === 'queued'
       if (params.tab === 'archived') return thread.isArchived
       return true
     })
@@ -346,7 +318,7 @@ const applyThreadFilters = (threads: InboxWorkflowThread[], params: InboxThreads
 
   if (params.market) filtered = filtered.filter((thread) => (thread.market || thread.marketId) === params.market)
   if (params.direction && params.direction !== 'all') filtered = filtered.filter((thread) => thread.lastDirection === params.direction)
-  if (params.stage && params.stage !== 'all') filtered = filtered.filter((thread) => thread.inboxStage === params.stage)
+  if (params.stage && params.stage !== 'all') filtered = filtered.filter((thread) => thread.conversationStage === params.stage)
   if (params.status && params.status !== 'all') filtered = filtered.filter((thread) => thread.inboxStatus === params.status)
   if (params.priority && params.priority !== 'all') filtered = filtered.filter((thread) => thread.priority === params.priority)
   if (params.read === 'read') filtered = filtered.filter((thread) => thread.isRead)
@@ -428,32 +400,26 @@ export const deriveThreadStateFromEvents = (events: AnyRecord[], queueRows: AnyR
   const latestInbound = sorted.find((row) => normalizeStatus(row['direction']) === 'inbound')
   const latestOutbound = sorted.find((row) => normalizeStatus(row['direction']) === 'outbound')
   const queue = queueRows[0] ?? null
-  const queueStatus = normalizeStatus(queue?.['queue_status'] ?? queue?.['status']) || null
 
   const lastInboundAt = asIso(latestInbound?.['event_timestamp'] ?? latestInbound?.['created_at']) ?? null
   const lastOutboundAt = asIso(latestOutbound?.['event_timestamp'] ?? latestOutbound?.['created_at']) ?? null
-  const needsResponse = Boolean(lastInboundAt && (!lastOutboundAt || new Date(lastInboundAt).getTime() > new Date(lastOutboundAt).getTime()))
-
-  const inboxStage = inferStage({
+  
+  // Mock thread for inference
+  const mockThread: any = {
     isArchived: normalizeStatus(last?.['status']) === 'archived',
-    needsResponse,
-    hasAiDraft: false,
-    queueStatus,
-    suppressed: asBoolean(last?.['is_opt_out'], false),
-    failed: ['failed', 'error'].includes(normalizeStatus(last?.['delivery_status'])),
-  })
+    isOptOut: asBoolean(last?.['is_opt_out'], false),
+    lastInboundAt,
+    lastOutboundAt,
+    directionUsed: normalizeStatus(last?.['direction'])
+  }
 
-  const inboxStatus = inferStatus({
-    isArchived: normalizeStatus(last?.['status']) === 'archived',
-    unread: asBoolean(last?.['unread'], needsResponse),
-    queueStatus,
-    failed: ['failed', 'error'].includes(normalizeStatus(last?.['delivery_status'])),
-    suppressed: asBoolean(last?.['is_opt_out'], false),
-  })
+  const inboxStatus = inferInboxStatus(mockThread, queue)
+  const conversationStage = inferSellerStage(mockThread)
 
   return {
-    inboxStage,
     inboxStatus,
+    conversationStage,
+    inboxStage: conversationStage,
     lastInboundAt,
     lastOutboundAt,
     lastDirection: normalizeMessageDirection(last ?? {}),
@@ -480,9 +446,12 @@ export const getThreadWorkflowState = async (thread: InboxThread): Promise<Inbox
 
   return {
     threadKey: toThreadKey(thread),
-    inboxStatus: (inferred.inboxStatus as InboxWorkflowStatus) ?? 'open',
-    inboxStage: (inferred.inboxStage as InboxStage) ?? 'needs_response',
-    isArchived: (inferred.inboxStatus as InboxWorkflowStatus) === 'archived',
+    inboxStatus: inferred.inboxStatus ?? 'needs_review',
+    conversationStage: inferred.conversationStage ?? 'ownership_check',
+    inboxStage: inferred.conversationStage ?? 'ownership_check',
+    automationState: getAutomationState(thread),
+    nextSystemAction: getNextSystemAction(inferred.inboxStatus ?? 'needs_review'),
+    isArchived: (inferred.inboxStatus as InboxStatus) === 'closed',
     isRead: !thread.unread,
     isPinned: false,
     isStarred: false,
@@ -501,11 +470,19 @@ export const getThreadWorkflowState = async (thread: InboxThread): Promise<Inbox
 
 const persistWorkflowPatch = async (
   thread: InboxThread,
-  patch: Partial<Pick<InboxThreadWorkflow, 'inboxStatus' | 'inboxStage' | 'isArchived' | 'isRead' | 'isPinned' | 'isStarred' | 'isHidden' | 'isSuppressed' | 'priority'>>,
+  patch: Partial<Pick<InboxThreadWorkflow, 'inboxStatus' | 'conversationStage' | 'isArchived' | 'isRead' | 'isPinned' | 'isStarred' | 'isHidden' | 'isSuppressed' | 'priority'>>,
 ): Promise<WorkflowMutationResult> => {
   const supabase = getSupabaseClient()
   const now = new Date().toISOString()
   const threadKey = toThreadKey(thread)
+  
+  if (DEV) {
+    console.log(`[NexusWorkflowStatus]`, {
+      thread_key: threadKey.slice(-8),
+      patch,
+      action: 'persist_start'
+    })
+  }
 
   if (await tableExists('inbox_thread_state')) {
     const payload: AnyRecord = {
@@ -525,13 +502,11 @@ const persistWorkflowPatch = async (
       },
     }
     if (patch.inboxStatus) payload['status'] = patch.inboxStatus
-    if (patch.inboxStage) payload['stage'] = patch.inboxStage
+    if (patch.conversationStage) payload['stage'] = patch.conversationStage
     if (patch.isArchived != null) payload['is_archived'] = patch.isArchived
     if (patch.isRead != null) {
       payload['is_read'] = patch.isRead
       payload['last_read_at'] = patch.isRead ? now : null
-      if (patch.inboxStatus === 'read' && patch.isRead) payload['status'] = 'read'
-      if (patch.inboxStatus === 'unread' && !patch.isRead) payload['status'] = 'unread'
     }
     if (patch.isPinned != null) payload['is_pinned'] = patch.isPinned
     if (patch.priority) payload['priority'] = patch.priority
@@ -707,28 +682,31 @@ export const fetchSentMessages = async (params: InboxThreadsQuery = {}): Promise
   return filtered
 }
 
-export const updateThreadStage = async (thread: InboxThread, stage: InboxStage): Promise<WorkflowMutationResult> => {
-  const status: InboxWorkflowStatus = stage === 'archived' ? 'archived' : stage === 'dnc_opt_out' ? 'suppressed' : 'open'
-  const result = await persistWorkflowPatch(thread, { inboxStage: stage, inboxStatus: status, isArchived: stage === 'archived' })
+export const updateThreadStage = async (thread: InboxThread, stage: SellerStage): Promise<WorkflowMutationResult> => {
+  const patch: Partial<InboxThreadWorkflow> = { conversationStage: stage }
+  if (stage === 'dead_suppressed') {
+    patch.inboxStatus = 'suppressed'
+    patch.isSuppressed = true
+  }
+  const result = await persistWorkflowPatch(thread, patch as any)
   
   if (result.ok) {
     void logInboxActivity({
       event_type: 'stage_change',
       thread_key: result.threadKey,
       actor: 'operator',
-      title: 'Stage Updated',
-      description: `Changed stage to ${stage.replace(/_/g, ' ')}`,
-      metadata: { old_stage: thread.workflowStage, new_stage: stage },
-      undo_payload: { thread_key: result.threadKey, stage: thread.workflowStage },
+      title: 'Seller Stage Updated',
+      description: `Seller moved to ${stage.replace(/_/g, ' ')}`,
+      metadata: { old_stage: (thread as any).conversationStage, new_stage: stage },
+      undo_payload: { thread_key: result.threadKey, stage: (thread as any).conversationStage },
     })
   }
   
   return result
 }
 
-export const updateThreadStatus = async (thread: InboxThread, status: InboxWorkflowStatus): Promise<WorkflowMutationResult> => {
-  const archived = status === 'archived'
-  return persistWorkflowPatch(thread, { inboxStatus: status, isArchived: archived, inboxStage: archived ? 'archived' : 'needs_response' })
+export const updateThreadStatus = async (thread: InboxThread, status: InboxStatus): Promise<WorkflowMutationResult> => {
+  return persistWorkflowPatch(thread, { inboxStatus: status })
 }
 
 export const updateThreadPriority = async (thread: InboxThread, priority: InboxPriority): Promise<WorkflowMutationResult> => {
@@ -748,7 +726,7 @@ export const updateThreadPriority = async (thread: InboxThread, priority: InboxP
 }
 
 export const archiveThread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
-  const result = await persistWorkflowPatch(thread, { isArchived: true, inboxStatus: 'archived', inboxStage: 'archived' })
+  const result = await persistWorkflowPatch(thread, { isArchived: true, inboxStatus: 'closed' })
   if (result.ok) {
     void logInboxActivity({
       event_type: 'archive_thread',
@@ -769,17 +747,16 @@ export const unarchiveThread = async (thread: InboxThread): Promise<WorkflowMuta
   const needsResponse = lastIn > lastOut
   return persistWorkflowPatch(thread, {
     isArchived: false,
-    inboxStatus: needsResponse ? 'unread' : 'open',
-    inboxStage: needsResponse ? 'needs_response' : 'sent_waiting',
+    inboxStatus: needsResponse ? 'new_reply' : 'waiting',
   })
 }
 
 export const markThreadRead = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
-  return persistWorkflowPatch(thread, { isRead: true, inboxStatus: 'read' })
+  return persistWorkflowPatch(thread, { isRead: true })
 }
 
 export const markThreadUnread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
-  return persistWorkflowPatch(thread, { isRead: false, inboxStatus: 'unread' })
+  return persistWorkflowPatch(thread, { isRead: false })
 }
 
 export const pinThread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
@@ -799,17 +776,17 @@ export const unstarThread = async (thread: InboxThread): Promise<WorkflowMutatio
 }
 
 export const hideThread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
-  return persistWorkflowPatch(thread, { isHidden: true, inboxStatus: 'hidden' })
+  return persistWorkflowPatch(thread, { isHidden: true })
 }
 
 export const unhideThread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
-  return persistWorkflowPatch(thread, { isHidden: false, inboxStatus: 'open' })
+  return persistWorkflowPatch(thread, { isHidden: false })
 }
 
 export const suppressThread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
-  return persistWorkflowPatch(thread, { isSuppressed: true, inboxStatus: 'suppressed' })
+  return persistWorkflowPatch(thread, { isSuppressed: true, inboxStatus: 'suppressed', conversationStage: 'dead_suppressed' })
 }
 
 export const unsuppressThread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
-  return persistWorkflowPatch(thread, { isSuppressed: false, inboxStatus: 'open' })
+  return persistWorkflowPatch(thread, { isSuppressed: false, inboxStatus: 'needs_review' })
 }

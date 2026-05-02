@@ -82,6 +82,13 @@ export const KpiEntryButton = ({ onClick }: { onClick: () => void }) => (
   </button>
 )
 
+const WorkflowChip = ({ label, value, color }: { label: string; value: string; color?: string }) => (
+  <div className="nx-workflow-chip">
+    <small>{label}</small>
+    <strong style={color ? { color } : undefined}>{value}</strong>
+  </div>
+)
+
 export const NexusTopBar = ({
   searchQuery,
   onSearchQueryChange,
@@ -89,8 +96,6 @@ export const NexusTopBar = ({
   onSelectSearchResult,
   selectedThread,
   isSuppressed,
-  onStageChange,
-  statusCounts,
   notificationCount,
   queueProcessorHealth,
   queueProcessorHealthLoading,
@@ -108,14 +113,7 @@ export const NexusTopBar = ({
   onResetLayout,
 }: NexusTopBarProps) => {
   const DEV = Boolean(import.meta.env.DEV)
-  const [statusOpen, setStatusOpen] = useState(false)
-
-  useEffect(() => {
-    if (DEV && statusOpen) {
-      console.log(`[NexusPopover]`, { name: 'ThreadStatus', action: 'open', open: true })
-    }
-  }, [statusOpen, DEV])
-
+  
   useEffect(() => {
     if (DEV && activeOverlay) {
       console.log(`[NexusPopover]`, { name: activeOverlay, action: 'open', open: true })
@@ -125,8 +123,7 @@ export const NexusTopBar = ({
   const showSearchResults = searchQuery.trim().length > 0
   const processorStatus = queueProcessorHealth?.status ?? 'unknown'
   const processorLabel = processorStatus === 'healthy' ? 'Healthy' : processorStatus === 'lagging' ? 'Delayed' : 'Unknown'
-  const selectedStage = selectedThread?.inboxStage ?? 'needs_response'
-  const statusVisual = getStatusVisual(selectedStage, isSuppressed)
+  
   const notifications = buildInboxNotifications({ unreadCount: notificationCount, selectedThread, queueProcessorHealth })
   const unreadNotifications = notifications.filter((item) => item.status !== 'read').length
   
@@ -134,6 +131,10 @@ export const NexusTopBar = ({
     if (notification.related_thread_id) onSelectSearchResult(notification.related_thread_id)
     onCloseOverlay()
   }
+
+  const inboxStatus = getStatusVisual(selectedThread?.inboxStatus).label
+  const sellerStage = getSellerStageVisual(selectedThread?.conversationStage).label
+  const autoState = selectedThread ? automationStateVisuals[selectedThread.automationState] : null
 
   return (
     <header className="nx-topbar">
@@ -148,60 +149,13 @@ export const NexusTopBar = ({
           </div>
         </div>
 
-        <div className="nx-stage-control" style={statusStyleVars(statusVisual)}>
-          <button
-            type="button"
-            className="nx-stage-orbit"
-            onClick={() => setStatusOpen((open) => !open)}
-            disabled={!selectedThread}
-            aria-expanded={statusOpen}
-            aria-label="Thread status"
-          >
-          <span className="nx-stage-orbit__halo nx-status-dot" />
-          <span className="nx-stage-orbit__copy">
-            <small>Status</small>
-            <strong>{stageLabel(selectedThread, isSuppressed)}</strong>
-          </span>
-          <Icon name="chevron-down" />
-          </button>
-
-          {statusOpen && (
-            <div className="nx-status-menu nx-liquid-panel">
-              {inboxStatusOptions.map((option) => {
-                const selected = option.value === selectedStage || (isSuppressed && option.value === 'dnc_opt_out')
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    className={cls(selected && 'is-selected')}
-                    style={statusStyleVars(option)}
-                    onClick={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      setStatusOpen(false)
-                      if (DEV) console.log(`[NexusPopover]`, { name: 'ThreadStatus', action: 'close', open: false })
-                      console.log(`[NexusInboxActionNoRefresh]`, {
-                        action: `stage_change_${option.value}`,
-                        thread_id: selectedThread?.id.slice(-8),
-                        optimistic: true,
-                        preventedDefault: true,
-                        stoppedPropagation: true
-                      })
-                      onStageChange(option.value)
-                    }}
-                  >
-                    <i className="nx-status-dot" />
-                    <span>
-                      <strong>{option.label}</strong>
-                      <small>{option.description}</small>
-                    </span>
-                    <b>{statusCounts[option.value] ?? 0}</b>
-                  </button>
-                )
-              })}
-            </div>
-          )}
-        </div>
+        {selectedThread && (
+          <div className="nx-topbar-workflow-chips">
+            <WorkflowChip label="Inbox" value={inboxStatus} />
+            <WorkflowChip label="Stage" value={sellerStage} />
+            {autoState && <WorkflowChip label="Automation" value={autoState.label} color={autoState.color} />}
+          </div>
+        )}
       </div>
 
       <div className="nx-global-search">

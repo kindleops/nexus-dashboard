@@ -65,8 +65,8 @@ export const ChatThread = ({
   const phoneNumber = fallback(thread.phoneNumber || thread.canonicalE164, '')
   const propertyAddress = resolveThreadAddressLine(thread)
   const market = resolveThreadMarketBadge(thread)
-  const stageName = isSuppressed ? 'Suppressed' : titleCase(thread.inboxStage)
-  const stageClass = isSuppressed ? 'is-dnc_opt_out' : `is-${thread.inboxStage}`
+  const statusVisual = getStatusVisual(thread.inboxStatus)
+  const stageVisual = getSellerStageVisual(thread.conversationStage)
 
   return (
     <div className="nx-chat-container">
@@ -83,7 +83,12 @@ export const ChatThread = ({
           )}
           <div className="nx-thread-meta-line">
             {market && <span className="nx-market-tag">{market}</span>}
-            <span className={cls('nx-stage-pill', stageClass)}>{stageName}</span>
+            <span className="nx-stage-pill" style={{ '--pill-color': statusVisual.color, '--pill-bg': statusVisual.bg, '--pill-border': statusVisual.border } as any}>
+              {statusVisual.label}
+            </span>
+            <span className="nx-stage-pill nx-conv-stage-pill">
+              {stageVisual.label}
+            </span>
             {isSuppressed && <span className="nx-suppression-badge">Opted Out</span>}
           </div>
         </div>

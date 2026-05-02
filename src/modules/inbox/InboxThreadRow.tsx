@@ -18,7 +18,7 @@ export const InboxThreadRow = ({
 }) => {
   const chips = [
     thread.priority,
-    thread.queueStatus || thread.inboxStage,
+    thread.inboxStatus,
   ].filter(Boolean).slice(0, 2)
 
   return (
@@ -47,8 +47,9 @@ export const InboxThreadRow = ({
 
       <div className="nx-thread-row__meta">
         {chips.map((chip) => (
-          <span key={chip} className={statusClass(chip)}>{chip}</span>
+          <span key={chip} className={statusClass(chip)}>{chip.replace(/_/g, ' ')}</span>
         ))}
+        <span className="nx-thread-badge nx-thread-badge--stage">{thread.conversationStage.replace(/_/g, ' ')}</span>
         {thread.isPinned && <span className="nx-thread-row__pin">Pinned</span>}
       </div>
 

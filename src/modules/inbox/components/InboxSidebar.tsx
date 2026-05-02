@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useCallback } from 'react'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
 import { formatRelativeTime } from '../../../shared/formatters'
@@ -10,7 +10,7 @@ import {
   type InboxViewSelectValue,
   savedFilterOptions,
 } from '../inbox-ui-helpers'
-import { getStatusVisual, statusStyleVars } from '../status-visuals'
+import { getStatusVisual, getSellerStageVisual, statusStyleVars, automationStateVisuals } from '../status-visuals'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
@@ -54,11 +54,8 @@ const readClassifier = (thread: InboxWorkflowThread) => {
   const row = thread as unknown as Record<string, unknown>
   const uiIntent = String(row.uiIntent ?? row.ui_intent ?? '').trim().toLowerCase()
   const priorityBucket = String(row.priorityBucket ?? row.priority_bucket ?? '').trim().toLowerCase()
-  const stage = String(row.workflowStage ?? row.stage ?? thread.inboxStage).trim().toLowerCase() || 'needs_response'
-  return { uiIntent, priorityBucket, stage }
+  return { uiIntent, priorityBucket }
 }
-
-
 
 const primaryPresetOptions = savedFilterOptions.filter((option) => (
   option.value === 'my_priority' ||
@@ -88,13 +85,12 @@ export const ConversationRow = memo(({
   onSelect, 
   onAction 
 }: ConversationRowProps) => {
-  const row = thread as unknown as Record<string, unknown>
   const ownerName = resolveThreadPrimaryName(thread)
   const propertyAddress = resolveThreadAddressLine(thread)
-  const latestMessageBody = fallback(row.latestMessageBody ?? thread.lastMessageBody ?? thread.preview, '')
+  const latestMessageBody = fallback(thread.lastMessageBody || thread.preview, '')
   const { uiIntent } = readClassifier(thread)
-  const isSuppressed = thread.isOptOut || thread.inboxStatus === 'suppressed' || readClassifier(thread).priorityBucket === 'suppressed'
-  const visual = getStatusVisual(thread.inboxStage, isSuppressed)
+  const visual = getStatusVisual(thread.inboxStatus)
+  const stageVisual = getSellerStageVisual(thread.conversationStage)
   const market = resolveThreadMarketBadge(thread)
 
   const handleAction = (e: React.MouseEvent, action: string) => {
@@ -157,6 +153,9 @@ export const ConversationRow = memo(({
             <span className="nx-stage-pill nx-status-pill" style={{ '--pill-color': visual.color, '--pill-bg': visual.bg, '--pill-border': visual.border } as Record<string, string>}>
               <i className="nx-status-dot" style={{ background: visual.dot }} />
               {visual.label}
+            </span>
+            <span className="nx-stage-pill nx-conv-stage-pill">
+              {stageVisual.label}
             </span>
             <span className="nx-market-tag">{market}</span>
           </div>

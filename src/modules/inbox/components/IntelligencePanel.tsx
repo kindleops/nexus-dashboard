@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import type { ThreadContext, ThreadIntelligenceRecord, ThreadMessage } from '../../../lib/data/inboxData'
-import type { InboxStage, InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
+import type { InboxStatus, SellerStage, InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import type { PanelMode } from '../inbox-layout-state'
 import {
   normalizePropertySnapshot,
@@ -8,74 +8,125 @@ import {
 } from '../inbox-normalization'
 import { Icon } from '../../../shared/icons'
 import { formatRelativeTime } from '../../../shared/formatters'
+import {
+  automationStateVisuals,
+  getSellerStageVisual,
+  getStatusVisual,
+  inboxStatusOptions,
+  sellerStageOptions,
+  statusStyleVars,
+} from '../status-visuals'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
 
-const STAGE_OPTIONS: { value: InboxStage; label: string; color: string }[] = [
-  { value: 'new_reply', label: 'New Reply', color: '#0a84ff' },
-  { value: 'needs_response', label: 'Needs Response', color: '#ffd60a' },
-  { value: 'ai_draft_ready', label: 'AI Draft Ready', color: '#30d158' },
-  { value: 'queued_reply', label: 'Queued Reply', color: '#5e5ce6' },
-  { value: 'sent_waiting', label: 'Sent / Waiting', color: '#64d2ff' },
-  { value: 'interested', label: 'Interested', color: '#30d158' },
-  { value: 'needs_offer', label: 'Needs Offer', color: '#ff9f0a' },
-  { value: 'needs_call', label: 'Needs Call', color: '#ff6961' },
-  { value: 'nurture', label: 'Nurture', color: '#aab3c5' },
-  { value: 'not_interested', label: 'Not Interested', color: '#6f7a8d' },
-  { value: 'wrong_number', label: 'Wrong Number', color: '#6f7a8d' },
-  { value: 'dnc_opt_out', label: 'DNC / Opt Out', color: '#ff453a' },
-  { value: 'archived', label: 'Archived', color: '#6f7a8d' },
-  { value: 'closed_converted', label: 'Closed / Converted', color: '#34c759' },
-]
+const WorkflowControlCard = ({
+  thread,
+  onStatusChange,
+  onStageChange,
+}: {
+  thread: InboxWorkflowThread
+  onStatusChange: (status: InboxStatus) => void
+  onStageChange: (stage: SellerStage) => void
+}) => {
+  const [statusOpen, setStatusOpen] = useState(false)
+  const statusVisual = getStatusVisual(thread.inboxStatus)
+  const stageVisual = getSellerStageVisual(thread.conversationStage)
+  const autoVisual = automationStateVisuals[thread.automationState]
+  const DEV = Boolean(import.meta.env.DEV)
 
-const StageSelector = ({ stage, onChange }: { stage: InboxStage; onChange: (s: InboxStage) => void }) => {
-  const [open, setOpen] = useState(false)
-  const current = STAGE_OPTIONS.find((o) => o.value === stage) ?? STAGE_OPTIONS[0]
+  const handleStatusChange = (status: InboxStatus) => {
+    if (DEV) {
+      console.log(`[NexusWorkflowStatus]`, {
+        action: 'status_change',
+        thread_id: thread.id.slice(-8),
+        old_status: thread.inboxStatus,
+        new_status: status
+      })
+    }
+    onStatusChange(status)
+    setStatusOpen(false)
+  }
 
   return (
-    <div className="nx-stage-selector">
-      <button 
-        type="button" 
-        className="nx-stage-btn" 
-        onClick={(e) => {
-          e.preventDefault()
-          e.stopPropagation()
-          setOpen((v) => !v)
-        }}
-      >
-        <span className="nx-stage-dot" style={{ background: current.color }} />
-        {current.label}
-        <Icon name="chevron-down" />
-      </button>
-      {open && (
-        <div className="nx-stage-dropdown">
-          {STAGE_OPTIONS.map((opt) => (
+    <section className="nx-intel-card nx-workflow-card">
+      <header className="nx-intel-card__header-static">
+        <strong>Workflow Control</strong>
+      </header>
+
+      <div className="nx-workflow-body">
+        {/* Row 1: Inbox Status (Operational) */}
+        <div className="nx-workflow-row">
+          <label>Inbox Status</label>
+          <div className="nx-status-dropdown-wrap">
             <button
-              key={opt.value}
               type="button"
-              className={cls('nx-stage-option', stage === opt.value && 'is-active')}
-              onClick={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                console.log(`[NexusInboxActionNoRefresh]`, {
-                  action: `stage_change_${opt.value}`,
-                  thread_id: 'unknown_panel',
-                  optimistic: true,
-                  preventedDefault: true,
-                  stoppedPropagation: true
-                })
-                onChange(opt.value)
-                setOpen(false)
-              }}
+              className="nx-workflow-status-btn"
+              style={statusStyleVars(statusVisual)}
+              onClick={() => setStatusOpen(!statusOpen)}
             >
-              <span className="nx-stage-dot" style={{ background: opt.color }} />
-              {opt.label}
+              <i className="nx-status-dot" />
+              <span>{statusVisual.label}</span>
+              <Icon name="chevron-down" />
             </button>
-          ))}
+            {statusOpen && (
+              <div className="nx-status-menu nx-liquid-panel">
+                {inboxStatusOptions.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    className={cls(opt.value === thread.inboxStatus && 'is-selected')}
+                    style={statusStyleVars(opt)}
+                    onClick={() => handleStatusChange(opt.value as InboxStatus)}
+                  >
+                    <i className="nx-status-dot" />
+                    <span>
+                      <strong>{opt.label}</strong>
+                      <small>{opt.description}</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
-      )}
-    </div>
+
+        {/* Row 2: Seller Stage (Automated Flow) */}
+        <div className="nx-workflow-row">
+          <label>Seller Stage</label>
+          <div className="nx-stage-indicator">
+            <div className="nx-stage-progress">
+              {sellerStageOptions.map((opt, idx) => {
+                const isCurrent = opt.value === thread.conversationStage
+                const isPast = !isCurrent && sellerStageOptions.findIndex(o => o.value === thread.conversationStage) > idx
+                return (
+                  <div 
+                    key={opt.value} 
+                    className={cls('nx-stage-step', isCurrent && 'is-current', isPast && 'is-past')}
+                    title={opt.label}
+                  />
+                )
+              })}
+            </div>
+            <strong className="nx-stage-current-label">{stageVisual.label}</strong>
+          </div>
+        </div>
+
+        {/* Row 3: Automation State */}
+        <div className="nx-workflow-row">
+          <label>Automation</label>
+          <span className="nx-auto-pill" style={{ '--auto-color': autoVisual.color } as any}>
+            {autoVisual.label}
+          </span>
+        </div>
+
+        {/* Row 4: Next Action */}
+        <div className="nx-workflow-row nx-next-action-row">
+          <Icon name="spark" />
+          <p>{thread.nextSystemAction}</p>
+        </div>
+      </div>
+    </section>
   )
 }
 
@@ -90,7 +141,8 @@ interface IntelligencePanelProps {
   onOpenMap: () => void
   onOpenDossier: () => void
   onOpenAi: () => void
-  onStageChange?: (stage: InboxStage) => void
+  onStatusChange: (status: InboxStatus) => void
+  onStageChange: (stage: SellerStage) => void
 }
 
 const normalizeText = (value: unknown): string => String(value ?? '').trim()
@@ -231,11 +283,11 @@ const OwnerContactCard = ({ thread, intelligence }: { thread: InboxWorkflowThrea
 const AutomationMetadataCard = ({ thread, intelligence }: { thread: InboxWorkflowThread, intelligence: any }) => (
   <CollapsibleIntelCard title="Automation / Metadata" icon="settings" defaultExpanded={false}>
     <div className="nx-intel-grid">
-       <IntelRow label="Current Stage" value={thread.inboxStage} />
+       <IntelRow label="Record Status" value={thread.inboxStatus} />
+       <IntelRow label="Conv Stage" value={thread.conversationStage} />
        <IntelRow label="Auto-Reply" value={(intelligence as any)?.auto_reply_status || '—'} />
        <IntelRow label="Queue Health" value={(thread as any).queueStatus || 'Healthy'} />
        <IntelRow label="Last Status" value={thread.deliveryStatus || '—'} />
-       <IntelRow label="Source" value={(intelligence as any)?.source_app || '—'} />
        <IntelRow label="Record ID" value={thread.id} />
     </div>
   </CollapsibleIntelCard>
@@ -252,6 +304,7 @@ export const IntelligencePanel = (props: IntelligencePanelProps) => {
     onOpenMap,
     onOpenDossier,
     onOpenAi,
+    onStatusChange,
     onStageChange,
   } = props
 
@@ -267,26 +320,26 @@ export const IntelligencePanel = (props: IntelligencePanelProps) => {
     <aside className={cls('nx-intelligence-panel', `is-mode-${panelMode}`)}>
       <header className="nx-intel-header">
         <span className="nx-section-label">INTELLIGENCE</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          {onStageChange && (
-            <StageSelector stage={thread.inboxStage} onChange={onStageChange} />
-          )}
-          <button 
-            type="button" 
-            className="nx-intel-collapse" 
-            onClick={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              onCollapse()
-            }} 
-            title="Collapse intelligence panel"
-          >
-            <Icon name="chevron-right" />
-          </button>
-        </div>
+        <button 
+          type="button" 
+          className="nx-intel-collapse" 
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onCollapse()
+          }} 
+          title="Collapse intelligence panel"
+        >
+          <Icon name="chevron-right" />
+        </button>
       </header>
 
       <div className="nx-intel-scroll-body">
+         <WorkflowControlCard 
+            thread={thread} 
+            onStatusChange={onStatusChange} 
+            onStageChange={onStageChange} 
+         />
          <PropertySnapshotCard thread={thread} intelligence={intelligence} />
          <DealIntelligenceCard thread={thread} />
          <OwnerContactCard thread={thread} intelligence={intelligence} />

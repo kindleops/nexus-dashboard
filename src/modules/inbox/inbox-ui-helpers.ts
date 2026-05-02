@@ -185,19 +185,6 @@ export interface RightPanelSection {
   rows: Array<{ label: string; value: string }>
 }
 
-export const stageOptions: Array<{ value: InboxStageSelectValue; label: string }> = [
-  { value: 'all_stages', label: 'All Stages' },
-  { value: 'ownership_confirmation', label: 'Ownership Confirmation' },
-  { value: 'consider_selling', label: 'Consider Selling' },
-  { value: 'asking_price', label: 'Asking Price' },
-  { value: 'condition_probe', label: 'Condition Probe' },
-  { value: 'offer_sent', label: 'Offer Sent' },
-  { value: 'needs_response', label: 'Needs Response' },
-  { value: 'qualified', label: 'Qualified' },
-  { value: 'suppressed', label: 'Suppressed' },
-  { value: 'closed', label: 'Closed' },
-]
-
 export const viewOptions: Array<{ value: InboxViewSelectValue; label: string }> = [
   { value: 'priority', label: 'Priority' },
   { value: 'active', label: 'Active' },

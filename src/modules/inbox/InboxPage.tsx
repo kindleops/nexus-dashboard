@@ -155,8 +155,8 @@ export default function InboxPage() {
 
   const advancedFilterOptions = useMemo(() => getAdvancedFilterOptions(threads), [threads])
   const statusCounts = useMemo(() => (
-    threads.reduce<Partial<Record<InboxStage, number>>>((counts, thread) => {
-      counts[thread.inboxStage] = (counts[thread.inboxStage] ?? 0) + 1
+    threads.reduce<Partial<Record<InboxStatus, number>>>((counts, thread) => {
+      counts[thread.inboxStatus] = (counts[thread.inboxStatus] ?? 0) + 1
       return counts
     }, {})
   ), [threads])
@@ -699,12 +699,12 @@ export default function InboxPage() {
       case 'archive':
         label = 'Thread Archived'
         mutation = () => archiveThread(thread)
-        optimistic = { isArchived: true, inboxStatus: 'archived', inboxStage: 'archived' }
+        optimistic = { isArchived: true, inboxStatus: 'closed' }
         break
       case 'unarchive':
         label = 'Thread Restored'
         mutation = () => unarchiveThread(thread)
-        optimistic = { isArchived: false, inboxStatus: 'open' }
+        optimistic = { isArchived: false, inboxStatus: 'needs_review' }
         break
       case 'star':
         label = 'Thread Starred'
@@ -729,12 +729,12 @@ export default function InboxPage() {
       case 'read':
         label = 'Marked Read'
         mutation = () => markThreadRead(thread)
-        optimistic = { isRead: true, unread: false, inboxStatus: 'read' }
+        optimistic = { isRead: true, unread: false, inboxStatus: 'closed' }
         break
       case 'unread':
         label = 'Marked Unread'
         mutation = () => markThreadUnread(thread)
-        optimistic = { isRead: false, unread: true, inboxStatus: 'unread' }
+        optimistic = { isRead: false, unread: true, inboxStatus: 'new_reply' }
         break
       default:
         return
@@ -748,7 +748,6 @@ export default function InboxPage() {
         thread_id: thread.id.slice(-8),
         optimistic: true,
         persisted: false,
-        preventedDefault: true,
         stoppedPropagation: true
       })
     }
@@ -761,7 +760,7 @@ export default function InboxPage() {
             onClick: () => {
               setOptimisticPatches(prev => ({
                 ...prev,
-                [thread.id]: { ...prev[thread.id], isArchived: false, inboxStatus: 'open', inboxStage: 'needs_response' },
+                [thread.id]: { ...prev[thread.id], isArchived: false, inboxStatus: 'new_reply' },
               }))
               console.log(`[NexusInboxActionNoRefresh]`, {
                 action: 'undo_archive',
@@ -775,14 +774,31 @@ export default function InboxPage() {
           }
         : undefined,
     })
-  }, [threads, handleWorkflowMutation])
+  }, [threads, handleWorkflowMutation, DEV])
 
-  const handleStageChange = useCallback(async (stage: InboxStage) => {
+  const handleStatusChange = useCallback(async (status: InboxStatus) => {
     if (!selected) return
-    setOptimisticPatches(prev => ({ ...prev, [selected.id]: { ...prev[selected.id], inboxStage: stage } }))
+    setOptimisticPatches(prev => ({ ...prev, [selected.id]: { ...prev[selected.id], inboxStatus: status } }))
     
     if (DEV) {
-      console.log(`[NexusInboxActionNoRefresh]`, {
+      console.log(`[NexusWorkflowStatus]`, {
+        action: `status_change_${status}`,
+        thread_id: selected.id.slice(-8),
+        optimistic: true,
+        preventedDefault: true,
+        stoppedPropagation: true
+      })
+    }
+
+    await handleWorkflowMutation(`Status: ${status.replace(/_/g, ' ')}`, () => updateThreadStatus(selected, status), { skipRefresh: true })
+  }, [selected, handleWorkflowMutation, DEV])
+
+  const handleStageChange = useCallback(async (stage: SellerStage) => {
+    if (!selected) return
+    setOptimisticPatches(prev => ({ ...prev, [selected.id]: { ...prev[selected.id], conversationStage: stage } }))
+    
+    if (DEV) {
+      console.log(`[NexusWorkflowStatus]`, {
         action: `stage_change_${stage}`,
         thread_id: selected.id.slice(-8),
         optimistic: true,
@@ -792,7 +808,7 @@ export default function InboxPage() {
     }
 
     await handleWorkflowMutation(`Stage: ${stage.replace(/_/g, ' ')}`, () => updateThreadStage(selected, stage), { skipRefresh: true })
-  }, [selected, handleWorkflowMutation])
+  }, [selected, handleWorkflowMutation, DEV])
 
   const handleToggleStar = useCallback(() => {
     if (!selected) return
@@ -908,8 +924,6 @@ export default function InboxPage() {
         onSelectSearchResult={handleSelect}
         selectedThread={selected}
         isSuppressed={selectedSuppressed}
-        onStageChange={handleStageChange}
-        statusCounts={statusCounts}
         notificationCount={data.unreadCount}
         queueProcessorHealth={queueProcessorHealth}
         queueProcessorHealthLoading={queueProcessorHealthLoading}
@@ -1087,6 +1101,7 @@ export default function InboxPage() {
             onOpenMap={() => setLayoutState(openMapMode)}
             onOpenDossier={() => setActiveOverlay('dossier')}
             onOpenAi={() => setActiveOverlay('ai')}
+            onStatusChange={handleStatusChange}
             onStageChange={handleStageChange}
           />
         ) : null}

@@ -1,4 +1,4 @@
-import type { InboxStage } from '../../lib/data/inboxWorkflowData'
+import type { InboxStatus, SellerStage, AutomationState } from '../../lib/data/inboxWorkflowData'
 
 export interface StatusVisual {
   label: string
@@ -10,41 +10,24 @@ export interface StatusVisual {
   description: string
 }
 
-export const statusDescriptions: Record<InboxStage, string> = {
-  new_reply: 'Fresh seller response ready for triage.',
-  needs_response: 'Operator response is needed now.',
-  ai_draft_ready: 'AI drafted a response for review.',
-  queued_reply: 'Reply is queued or has been auto-sent.',
-  sent_waiting: 'Outbound sent, waiting for seller movement.',
-  interested: 'Seller is open or qualified for acquisition.',
-  needs_offer: 'Deal needs pricing or an offer action.',
-  needs_call: 'Call, appointment, or schedule action is next.',
-  nurture: 'Keep warm with lower urgency follow-up.',
-  not_interested: 'Seller declined or is low-value for now.',
-  wrong_number: 'Contact mismatch or wrong person.',
-  dnc_opt_out: 'Suppressed for compliance.',
-  archived: 'Closed out of active inbox flow.',
-  closed_converted: 'Deal is closed, dead, or converted.',
-}
-
-const statusVisuals: Record<InboxStage, StatusVisual> = {
+export const inboxStatusVisuals: Record<InboxStatus, StatusVisual> = {
   new_reply: {
-    label: 'New Lead',
+    label: 'New Reply',
     color: '#0a84ff',
     bg: 'rgba(10,132,255,0.14)',
     border: 'rgba(10,132,255,0.42)',
     dot: '#0a84ff',
     pulse: 'rgba(10,132,255,0.42)',
-    description: statusDescriptions.new_reply,
+    description: 'Fresh inbound message ready for triage.',
   },
-  needs_response: {
-    label: 'Needs Response',
-    color: '#ff453a',
-    bg: 'rgba(255,69,58,0.13)',
-    border: 'rgba(255,69,58,0.42)',
-    dot: '#ff453a',
-    pulse: 'rgba(255,69,58,0.42)',
-    description: statusDescriptions.needs_response,
+  needs_review: {
+    label: 'Needs Review',
+    color: '#ff9f43',
+    bg: 'rgba(255,159,67,0.12)',
+    border: 'rgba(255,159,67,0.34)',
+    dot: '#ff9f43',
+    pulse: 'rgba(255,159,67,0.32)',
+    description: 'Complexity requires operator review.',
   },
   ai_draft_ready: {
     label: 'Auto Reply Ready',
@@ -53,125 +36,170 @@ const statusVisuals: Record<InboxStage, StatusVisual> = {
     border: 'rgba(167,139,250,0.42)',
     dot: '#a78bfa',
     pulse: 'rgba(167,139,250,0.42)',
-    description: statusDescriptions.ai_draft_ready,
+    description: 'AI draft ready for approval.',
   },
-  queued_reply: {
-    label: 'Auto Reply Sent',
+  queued: {
+    label: 'Queued',
     color: '#5bb6ff',
     bg: 'rgba(91,182,255,0.14)',
     border: 'rgba(91,182,255,0.4)',
     dot: '#5bb6ff',
     pulse: 'rgba(91,182,255,0.4)',
-    description: statusDescriptions.queued_reply,
+    description: 'Message scheduled or sending.',
   },
-  sent_waiting: {
-    label: 'Follow-Up Watch',
+  waiting: {
+    label: 'Waiting',
     color: '#ffd60a',
     bg: 'rgba(255,214,10,0.12)',
     border: 'rgba(255,214,10,0.38)',
     dot: '#ffd60a',
     pulse: 'rgba(255,214,10,0.38)',
-    description: statusDescriptions.sent_waiting,
+    description: 'Awaiting seller response.',
   },
-  interested: {
-    label: 'Qualified',
-    color: '#0a84ff',
-    bg: 'rgba(10,132,255,0.18)',
-    border: 'rgba(10,132,255,0.5)',
-    dot: '#0a84ff',
-    pulse: 'rgba(10,132,255,0.5)',
-    description: statusDescriptions.interested,
-  },
-  needs_offer: {
-    label: 'Offer Needed',
-    color: '#f7b733',
-    bg: 'rgba(247,183,51,0.14)',
-    border: 'rgba(247,183,51,0.42)',
-    dot: '#f7b733',
-    pulse: 'rgba(247,183,51,0.42)',
-    description: statusDescriptions.needs_offer,
-  },
-  needs_call: {
-    label: 'Scheduled',
-    color: '#7c8cff',
-    bg: 'rgba(124,140,255,0.14)',
-    border: 'rgba(124,140,255,0.42)',
-    dot: '#7c8cff',
-    pulse: 'rgba(124,140,255,0.42)',
-    description: statusDescriptions.needs_call,
-  },
-  nurture: {
-    label: 'Nurture',
-    color: '#94a3b8',
-    bg: 'rgba(148,163,184,0.12)',
-    border: 'rgba(148,163,184,0.28)',
-    dot: '#94a3b8',
-    pulse: 'rgba(148,163,184,0.25)',
-    description: statusDescriptions.nurture,
-  },
-  not_interested: {
-    label: 'Not Interested',
-    color: '#8a96a8',
-    bg: 'rgba(138,150,168,0.1)',
-    border: 'rgba(138,150,168,0.25)',
-    dot: '#8a96a8',
-    pulse: 'rgba(138,150,168,0.22)',
-    description: statusDescriptions.not_interested,
-  },
-  wrong_number: {
-    label: 'Wrong Person',
-    color: '#ff9f43',
-    bg: 'rgba(255,159,67,0.12)',
-    border: 'rgba(255,159,67,0.34)',
-    dot: '#ff9f43',
-    pulse: 'rgba(255,159,67,0.32)',
-    description: statusDescriptions.wrong_number,
-  },
-  dnc_opt_out: {
+  suppressed: {
     label: 'Suppressed',
     color: '#ff6b64',
     bg: 'rgba(255,69,58,0.1)',
     border: 'rgba(255,69,58,0.28)',
     dot: '#ff453a',
     pulse: 'rgba(255,69,58,0.28)',
-    description: statusDescriptions.dnc_opt_out,
+    description: 'Compliance suppression active.',
   },
-  archived: {
-    label: 'Archived',
+  closed: {
+    label: 'Closed',
     color: '#7d8797',
     bg: 'rgba(125,135,151,0.1)',
     border: 'rgba(125,135,151,0.24)',
     dot: '#7d8797',
     pulse: 'rgba(125,135,151,0.2)',
-    description: statusDescriptions.archived,
-  },
-  closed_converted: {
-    label: 'Closed / Dead',
-    color: '#687386',
-    bg: 'rgba(31,41,55,0.22)',
-    border: 'rgba(104,115,134,0.28)',
-    dot: '#687386',
-    pulse: 'rgba(104,115,134,0.22)',
-    description: statusDescriptions.closed_converted,
+    description: 'Thread completed or archived.',
   },
 }
 
-export const inboxStatusOptions = Object.entries(statusVisuals).map(([value, visual]) => ({
-  value: value as InboxStage,
+export const sellerStageVisuals: Record<SellerStage, StatusVisual> = {
+  ownership_check: {
+    label: 'Ownership Check',
+    color: '#0a84ff',
+    bg: 'rgba(10,132,255,0.1)',
+    border: 'rgba(10,132,255,0.2)',
+    dot: '#0a84ff',
+    pulse: 'rgba(10,132,255,0.2)',
+    description: 'Verifying property ownership.',
+  },
+  interest_probe: {
+    label: 'Interest Probe',
+    color: '#0a84ff',
+    bg: 'rgba(10,132,255,0.1)',
+    border: 'rgba(10,132,255,0.2)',
+    dot: '#0a84ff',
+    pulse: 'rgba(10,132,255,0.2)',
+    description: 'Gauging interest in selling.',
+  },
+  seller_response: {
+    label: 'Seller Response',
+    color: '#0a84ff',
+    bg: 'rgba(10,132,255,0.1)',
+    border: 'rgba(10,132,255,0.2)',
+    dot: '#0a84ff',
+    pulse: 'rgba(10,132,255,0.2)',
+    description: 'Seller engaged in conversation.',
+  },
+  price_discovery: {
+    label: 'Price Discovery',
+    color: '#0a84ff',
+    bg: 'rgba(10,132,255,0.1)',
+    border: 'rgba(10,132,255,0.2)',
+    dot: '#0a84ff',
+    pulse: 'rgba(10,132,255,0.2)',
+    description: 'Identifying price expectations.',
+  },
+  condition_details: {
+    label: 'Condition / Details',
+    color: '#0a84ff',
+    bg: 'rgba(10,132,255,0.1)',
+    border: 'rgba(10,132,255,0.2)',
+    dot: '#0a84ff',
+    pulse: 'rgba(10,132,255,0.2)',
+    description: 'Gathering property details.',
+  },
+  offer_reveal: {
+    label: 'Offer Reveal',
+    color: '#30d158',
+    bg: 'rgba(48,209,88,0.1)',
+    border: 'rgba(48,209,88,0.2)',
+    dot: '#30d158',
+    pulse: 'rgba(48,209,88,0.2)',
+    description: 'Presenting acquisition offer.',
+  },
+  negotiation: {
+    label: 'Negotiation',
+    color: '#30d158',
+    bg: 'rgba(48,209,88,0.1)',
+    border: 'rgba(48,209,88,0.2)',
+    dot: '#30d158',
+    pulse: 'rgba(48,209,88,0.2)',
+    description: 'Terms negotiation in progress.',
+  },
+  contract_path: {
+    label: 'Contract Path',
+    color: '#30d158',
+    bg: 'rgba(48,209,88,0.1)',
+    border: 'rgba(48,209,88,0.2)',
+    dot: '#30d158',
+    pulse: 'rgba(48,209,88,0.2)',
+    description: 'Moving toward executed contract.',
+  },
+  dead_suppressed: {
+    label: 'Dead / Suppressed',
+    color: '#7d8797',
+    bg: 'rgba(125,135,151,0.1)',
+    border: 'rgba(125,135,151,0.2)',
+    dot: '#7d8797',
+    pulse: 'rgba(125,135,151,0.2)',
+    description: 'Lead dead or suppressed.',
+  },
+}
+
+export const automationStateVisuals: Record<AutomationState, { label: string; color: string }> = {
+  active: { label: 'Automation Active', color: '#30d158' },
+  paused: { label: 'Automation Paused', color: '#ffd60a' },
+  completed: { label: 'Automation Completed', color: '#7d8797' },
+  manual_control: { label: 'Manual Control', color: '#ff9f43' },
+}
+
+export const inboxStatusOptions = Object.entries(inboxStatusVisuals).map(([value, visual]) => ({
+  value: value as InboxStatus,
   ...visual,
 }))
 
-export const getStatusVisual = (status?: string | null, suppressed = false): StatusVisual => {
-  if (suppressed) return statusVisuals.dnc_opt_out
-  const key = (status || 'new_reply') as InboxStage
-  return statusVisuals[key] ?? {
+export const sellerStageOptions = Object.entries(sellerStageVisuals).map(([value, visual]) => ({
+  value: value as SellerStage,
+  ...visual,
+}))
+
+export const getStatusVisual = (status?: string | null): StatusVisual => {
+  const key = (status || 'new_reply') as InboxStatus
+  return inboxStatusVisuals[key] ?? {
     label: String(status || 'Unknown').replaceAll('_', ' '),
     color: '#94a3b8',
     bg: 'rgba(148,163,184,0.12)',
     border: 'rgba(148,163,184,0.24)',
     dot: '#94a3b8',
     pulse: 'rgba(148,163,184,0.22)',
-    description: 'No workflow metadata available yet.',
+    description: 'Unknown status.',
+  }
+}
+
+export const getSellerStageVisual = (stage?: string | null): StatusVisual => {
+  const key = (stage || 'ownership_check') as SellerStage
+  return sellerStageVisuals[key] ?? {
+    label: String(stage || 'Unknown').replaceAll('_', ' '),
+    color: '#94a3b8',
+    bg: 'rgba(148,163,184,0.12)',
+    border: 'rgba(148,163,184,0.24)',
+    dot: '#94a3b8',
+    pulse: 'rgba(148,163,184,0.22)',
+    description: 'Unknown stage.',
   }
 }
 
