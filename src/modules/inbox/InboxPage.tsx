@@ -106,7 +106,7 @@ const isEnglishLanguage = (languageCode: string | null): boolean => {
 }
 
 export default function InboxPage() {
-  const { data, loading: dataLoading, refresh: refreshInbox } = useInboxData()
+  const { data, loading: dataLoading, refresh: refreshInbox, loadMore } = useInboxData()
   const DEV = Boolean(import.meta.env.DEV)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [stageFilter, setStageFilter] = useState<InboxStageSelectValue>('all_stages')
