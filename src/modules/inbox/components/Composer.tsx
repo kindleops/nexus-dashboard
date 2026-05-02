@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Icon } from '../../../shared/icons'
 import { TemplatePopover } from './TemplatePopover'
 import type { InboxThread } from '../inbox.adapter'
@@ -25,7 +26,6 @@ interface ComposerProps {
   onSend: (text: string) => void
   onOpenSchedule: () => void
   onAI: () => void
-  onOffer?: () => void
   thread: InboxThread | null
   threadContext: ThreadContext | null
   onInsertTemplate: (text: string) => void
@@ -77,7 +77,6 @@ export const Composer = ({
   onSend,
   onOpenSchedule,
   onAI,
-  onOffer,
   thread,
   threadContext,
   onInsertTemplate,
@@ -92,10 +91,11 @@ export const Composer = ({
   const [micState, setMicState] = useState<MicState>('idle')
   const [voiceUnsupported, setVoiceUnsupported] = useState(false)
   const [templatePopoverOpen, setTemplatePopoverOpen] = useState(false)
+  const [offerGlassOpen, setOfferGlassOpen] = useState(false)
+  const [notesGlassOpen, setNotesGlassOpen] = useState(false)
   const [voiceLevel, setVoiceLevel] = useState(0)
   const [transcription, setTranscription] = useState('')
   const [isHovered, setIsHovered] = useState(false)
-  const [isFocused, setIsFocused] = useState(false)
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
   const baseDraftRef = useRef('')
   const analyserRef = useRef<AnalyserNode | null>(null)
@@ -109,9 +109,9 @@ export const Composer = ({
     { id: 'templates', label: 'Templates', icon: 'file-text', action: () => setTemplatePopoverOpen(true), disabled: false },
     { id: 'ai-assist', label: 'AI Assist', icon: 'spark', action: onAI, disabled: false },
     { id: 'translate', label: isTranslating ? 'Original' : 'Translate', icon: 'globe', action: onTranslate ?? (() => {}), disabled: false },
-    { id: 'offer', label: 'Offer', icon: 'zap', action: onOffer ?? (() => {}), disabled },
+    { id: 'offer', label: 'Offer', icon: 'zap', action: () => setOfferGlassOpen(true), disabled },
     { id: 'schedule', label: 'Schedule', icon: 'calendar', action: onOpenSchedule, disabled },
-    { id: 'notes', label: 'Notes', icon: 'file-text', action: () => {}, disabled: false },
+    { id: 'notes', label: 'Notes', icon: 'file-text', action: () => setNotesGlassOpen(true), disabled: false },
   ]
 
   // Expose unused params to avoid lint errors
@@ -235,11 +235,11 @@ export const Composer = ({
         ? 'Stop recording'
         : 'Talk to type'
 
-  const showUtilities = isHovered || isFocused || templatePopoverOpen || hasDraft || isListening
+  const showUtilities = isHovered || templatePopoverOpen || offerGlassOpen || notesGlassOpen
 
   return (
     <div 
-      className={cls("nx-sticky-composer", showUtilities && "show-utilities")}
+      className={cls('nx-sticky-composer', showUtilities && 'show-utilities')}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
@@ -277,8 +277,8 @@ export const Composer = ({
           onChange={e => setDraftText(e.target.value)}
           rows={1}
           disabled={disabled}
-          onFocus={() => setIsFocused(true)}
-          onBlur={() => setIsFocused(false)}
+          onFocus={() => {}}
+          onBlur={() => {}}
           onInput={(e) => {
             const target = e.target as HTMLTextAreaElement
             target.style.height = 'auto'
@@ -367,6 +367,69 @@ export const Composer = ({
         onReplace={onReplaceTemplate}
         onSendNow={onSendTemplate}
       />
+
+      {typeof document !== 'undefined' && offerGlassOpen
+        ? createPortal(
+            <div
+              className="nx-composer-glass-overlay"
+              role="presentation"
+              onMouseDown={() => setOfferGlassOpen(false)}
+            >
+              <div
+                className="nx-composer-glass-panel"
+                role="dialog"
+                aria-label="Offer workflow"
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <header className="nx-composer-glass-panel__head">
+                  <strong>Offer workflow</strong>
+                  <button type="button" className="nx-composer-glass-panel__close" onClick={() => setOfferGlassOpen(false)} aria-label="Close">
+                    <Icon name="close" />
+                  </button>
+                </header>
+                <p className="nx-composer-glass-panel__body">Offer workflow coming soon. Structured bids and revision history will land here.</p>
+                <button type="button" className="nx-composer-glass-panel__ok" onClick={() => setOfferGlassOpen(false)}>
+                  OK
+                </button>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
+      {typeof document !== 'undefined' && notesGlassOpen
+        ? createPortal(
+            <div
+              className="nx-composer-glass-overlay"
+              role="presentation"
+              onMouseDown={() => setNotesGlassOpen(false)}
+            >
+              <div
+                className="nx-composer-glass-panel"
+                role="dialog"
+                aria-label="Thread notes"
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <header className="nx-composer-glass-panel__head">
+                  <strong>Thread notes</strong>
+                  <button type="button" className="nx-composer-glass-panel__close" onClick={() => setNotesGlassOpen(false)} aria-label="Close">
+                    <Icon name="close" />
+                  </button>
+                </header>
+                <div className="nx-composer-glass-panel__body">
+                  <p>Jot context for this thread. Synced notes will appear here in a future release.</p>
+                  {thread?.id && (
+                    <small className="nx-composer-glass-panel__meta">Thread · {thread.id.slice(-8)}</small>
+                  )}
+                </div>
+                <button type="button" className="nx-composer-glass-panel__ok" onClick={() => setNotesGlassOpen(false)}>
+                  Done
+                </button>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }

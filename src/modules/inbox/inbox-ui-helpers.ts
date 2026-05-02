@@ -1,4 +1,9 @@
-import type { ThreadContext, ThreadMessage } from '../../lib/data/inboxData'
+import {
+  resolveInboxSellerName,
+  resolveInboxPropertyAddress,
+  type ThreadContext,
+  type ThreadMessage,
+} from '../../lib/data/inboxData'
 import type { InboxWorkflowThread } from '../../lib/data/inboxWorkflowData'
 import type { IconName } from '../../shared/icons'
 
@@ -226,6 +231,25 @@ const getField = (thread: InboxWorkflowThread, key: string): unknown => {
   return row[key] ?? row[key.charAt(0).toUpperCase() + key.slice(1)] ?? row[key.toLowerCase()]
 }
 
+export const resolveThreadPrimaryName = (thread: InboxWorkflowThread): string => {
+  return resolveInboxSellerName(thread as unknown as Record<string, unknown>)
+}
+
+export const resolveThreadAddressLine = (thread: InboxWorkflowThread): string => {
+  return resolveInboxPropertyAddress(thread as unknown as Record<string, unknown>)
+}
+
+export const resolveThreadMarketBadge = (thread: InboxWorkflowThread): string => {
+  const row = thread as unknown as Record<string, unknown>
+  const market = String(thread.market ?? thread.marketId ?? row.market ?? '').trim()
+  if (market) return market
+  const city = String(row.property_city ?? row.property_address_city ?? '').trim()
+  const st = String(row.property_state ?? row.property_address_state ?? row.state ?? '').trim()
+  if (city && st) return `${city}, ${st}`
+  if (st) return st
+  return 'Unknown'
+}
+
 const numberOrNull = (value: unknown): number | null => {
   if (value === null || value === undefined) return null
   const raw = String(value).replace(/[,$\s]/g, '')
@@ -392,7 +416,12 @@ const matchesSearch = (thread: InboxWorkflowThread, query: string): boolean => {
   if (!query.trim()) return true
   const q = toLower(query)
   return [
+    resolveThreadPrimaryName(thread),
+    resolveThreadAddressLine(thread),
     thread.ownerName,
+    getField(thread, 'owner_display_name'),
+    getField(thread, 'seller_name'),
+    getField(thread, 'contact_name'),
     thread.phoneNumber,
     thread.canonicalE164,
     thread.propertyAddress,
@@ -405,13 +434,27 @@ const matchesSearch = (thread: InboxWorkflowThread, query: string): boolean => {
   ].some((value) => toLower(value).includes(q))
 }
 
-export const applyInboxFilters = (threads: InboxWorkflowThread[], state: InboxFilterState): InboxWorkflowThread[] =>
-  threads.filter((thread) => (
+export interface ApplyInboxFiltersOptions {
+  /** Supabase already filtered by the active view tab. */
+  skipViewFilter?: boolean
+  /** Supabase already filtered by `stage` when it maps to a persisted workflow stage. */
+  skipStageFilter?: boolean
+}
+
+export const applyInboxFilters = (
+  threads: InboxWorkflowThread[],
+  state: InboxFilterState,
+  options: ApplyInboxFiltersOptions = {},
+): InboxWorkflowThread[] => {
+  const skipView = options.skipViewFilter === true
+  const skipStage = options.skipStageFilter === true
+  return threads.filter((thread) => (
     matchesSearch(thread, state.search) &&
-    matchesStageSelection(thread, state.stage) &&
-    matchesViewSelection(thread, state.view) &&
+    (skipStage || matchesStageSelection(thread, state.stage)) &&
+    (skipView || matchesViewSelection(thread, state.view)) &&
     matchesAdvancedFilters(thread, state.advanced)
   ))
+}
 
 export const getPriorityInboxThreads = (threads: InboxWorkflowThread[]): InboxWorkflowThread[] =>
   threads.filter(isPriorityCandidate)

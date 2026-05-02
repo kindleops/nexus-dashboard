@@ -183,12 +183,16 @@ export const TemplatePopover = ({
       className="nx-template-modal-overlay"
       role="presentation"
       aria-hidden="false"
+      onMouseDown={(event) => {
+        if (event.target === popoverRef.current) onClose()
+      }}
     >
       <div
-        className="nx-template-modal"
+        className="nx-template-modal nx-liquid-panel"
         role="dialog"
         aria-label="Template Library"
         aria-modal="true"
+        onMouseDown={(event) => event.stopPropagation()}
       >
         {/* Header */}
         <div className="nx-tpl-header">
@@ -214,7 +218,7 @@ export const TemplatePopover = ({
         {/* Search */}
         <div className="nx-tpl-search-row">
           <div className="nx-tpl-search-wrap">
-            <Icon name="search" />
+          
             <input
               ref={searchRef}
               type="text"

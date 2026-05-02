@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "setup:inbox": "node scripts/setup-inbox.mjs"
+    "setup:inbox": "node scripts/setup-inbox.mjs",
+    "proof:inbox": "node scripts/proof/inbox-proof.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.104.1",
@@ -21,6 +22,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
+    "@playwright/test": "^1.59.1",
     "@types/node": "^24.12.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

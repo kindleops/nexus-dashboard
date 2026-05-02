@@ -565,7 +565,7 @@ const persistWorkflowPatch = async (
 }
 
 export const fetchInboxThreads = async (params: InboxThreadsQuery = {}): Promise<InboxWorkflowThread[]> => {
-  const base = await getInboxThreads({ query: params.search })
+  const { threads: base } = await getInboxThreads({ query: params.search })
   const supabase = getSupabaseClient()
 
   const stateRowsByKey = new Map<string, AnyRecord>()

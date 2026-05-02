@@ -17,9 +17,10 @@ interface AdvancedFiltersPopoverProps {
   advancedFilters: InboxAdvancedFilters
   onAdvancedFiltersChange: (patch: Partial<InboxAdvancedFilters>) => void
   advancedFilterOptions: AdvancedFilterOptions
-  viewCounts: Record<InboxViewSelectValue, number>
+  viewCounts: Record<string, number | null | undefined>
   onReset: () => void
   onClose: () => void
+  onApply?: () => void
 }
 
 const numberInput = (value: number | undefined): string => (value === undefined ? '' : String(value))
@@ -58,6 +59,7 @@ export const AdvancedFiltersPopover = ({
   viewCounts,
   onReset,
   onClose,
+  onApply,
 }: AdvancedFiltersPopoverProps) => {
   const patch = useCallback((next: Partial<InboxAdvancedFilters>) => {
     onAdvancedFiltersChange(next)
@@ -95,9 +97,13 @@ export const AdvancedFiltersPopover = ({
             <label>
               <span>Status / View</span>
               <select value={viewFilter} onChange={(event) => setViewFilter(event.target.value as InboxViewSelectValue)}>
-                {viewOptions.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label} ({viewCounts[option.value] ?? 0})</option>
-                ))}
+                {viewOptions.map((option) => {
+                  const c = viewCounts[option.value]
+                  const label = c === null || c === undefined ? '—' : String(c)
+                  return (
+                    <option key={option.value} value={option.value}>{option.label} ({label})</option>
+                  )
+                })}
               </select>
             </label>
           </FilterGroup>
@@ -171,8 +177,21 @@ export const AdvancedFiltersPopover = ({
 
         <footer className="nx-filter-modal__footer">
           <button type="button" onClick={onReset}>Reset</button>
-          <button type="button">Save View</button>
-          <button type="button" className="nx-primary-action" onClick={onClose}>Apply Filters</button>
+          <div className="nx-filter-modal__footer-actions">
+            <button type="button" disabled title="Save View is not available yet">
+              Save View
+            </button>
+            <button
+              type="button"
+              className="nx-primary-action"
+              onClick={() => {
+                onApply?.()
+                onClose()
+              }}
+            >
+              Apply Filters
+            </button>
+          </div>
         </footer>
       </section>
     </div>

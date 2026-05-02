@@ -1,16 +1,17 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { pushRoutePath } from '../../app/router'
 import { useInboxData, toWorkflowThread } from './inbox.adapter'
 import {
   updateThreadStage,
-  updateThreadStatus,
   starThread,
   unstarThread,
   pinThread,
   unpinThread,
   archiveThread,
-  hideThread,
-  unhideThread,
+  unarchiveThread,
+  markThreadRead,
+  markThreadUnread,
   type InboxStage,
   type InboxWorkflowThread,
 } from '../../lib/data/inboxWorkflowData'
@@ -20,6 +21,7 @@ import {
   getThreadMessagesForThread,
   getThreadContext,
   sendInboxMessageNow,
+  SERVER_INBOX_THREAD_STAGE_VALUES,
   type QueueProcessorHealth,
   type ThreadIntelligenceRecord,
   type ThreadMessage,
@@ -59,6 +61,7 @@ import {
   getInboxViewCounts,
   getSavedPresetConfig,
   isSuppressedThread,
+  type ApplyInboxFiltersOptions,
   type InboxAdvancedFilters,
   type InboxSavedFilterPreset,
   type InboxStageSelectValue,
@@ -151,20 +154,72 @@ export default function InboxPage() {
   }, [rawThreads, optimisticPatches])
 
   const advancedFilterOptions = useMemo(() => getAdvancedFilterOptions(threads), [threads])
-  const viewCounts = useMemo(() => getInboxViewCounts(threads), [threads])
+  const statusCounts = useMemo(() => (
+    threads.reduce<Partial<Record<InboxStage, number>>>((counts, thread) => {
+      counts[thread.inboxStage] = (counts[thread.inboxStage] ?? 0) + 1
+      return counts
+    }, {})
+  ), [threads])
+
+  const viewCounts = useMemo(() => {
+    const local = getInboxViewCounts(threads)
+    const pick = (backend: number | null | undefined, localVal: number) => {
+      if (data.dataMode !== 'live') return localVal
+      if (backend !== null && backend !== undefined) return backend
+      return null
+    }
+    const priority = pick(data.priorityInboxCount, local.priority)
+    const active = pick(data.activeInboxCount, local.active)
+    const waiting = pick(data.waitingInboxCount, local.waiting)
+    const all = pick(data.allInboxCount, local.all)
+    return {
+      ...local,
+      priority,
+      active,
+      waiting,
+      all,
+      my_priority: priority,
+      new_inbounds: active,
+      offer_needed: waiting,
+      review_required: all,
+      active_conversations: active,
+      waiting_for_reply: waiting,
+      all_threads: all,
+      archived_leads: statusCounts.archived ?? 0,
+    }
+  }, [threads, data, statusCounts, data.dataMode])
+
+  const serverFilterOptions: ApplyInboxFiltersOptions = useMemo(() => {
+    const live = data.dataMode === 'live'
+    const double = layoutState.inboxMode === 'full_double'
+    return {
+      skipViewFilter: live && !double,
+      skipStageFilter: live && !double && stageFilter !== 'all_stages' && SERVER_INBOX_THREAD_STAGE_VALUES.has(stageFilter),
+    }
+  }, [data.dataMode, layoutState.inboxMode, stageFilter])
+
   const filtered = useMemo(() => (
     applyInboxFilters(threads, {
       search: searchQuery,
       stage: stageFilter,
       view: viewFilter,
       advanced: advancedFilters,
-    })
-  ), [threads, searchQuery, stageFilter, viewFilter, advancedFilters])
+    }, serverFilterOptions)
+  ), [threads, searchQuery, stageFilter, viewFilter, advancedFilters, serverFilterOptions])
 
   const handleLoadMore = useCallback(async () => {
     await loadMore()
     setVisibleThreadCount(prev => prev + 200)
   }, [loadMore])
+
+  const rightServerFilterOptions: ApplyInboxFiltersOptions = useMemo(() => {
+    const live = data.dataMode === 'live'
+    const double = layoutState.inboxMode === 'full_double'
+    return {
+      skipViewFilter: live && !double,
+      skipStageFilter: live && !double && rightStageFilter !== 'all_stages' && SERVER_INBOX_THREAD_STAGE_VALUES.has(rightStageFilter),
+    }
+  }, [data.dataMode, layoutState.inboxMode, rightStageFilter])
 
   const rightFiltered = useMemo(() => (
     applyInboxFilters(threads, {
@@ -172,8 +227,8 @@ export default function InboxPage() {
       stage: rightStageFilter,
       view: rightViewFilter,
       advanced: rightAdvancedFilters,
-    })
-  ), [threads, rightStageFilter, rightViewFilter, rightAdvancedFilters])
+    }, rightServerFilterOptions)
+  ), [threads, rightStageFilter, rightViewFilter, rightAdvancedFilters, rightServerFilterOptions])
 
   const searchResults = useMemo(() => (
     searchQuery.trim()
@@ -201,12 +256,6 @@ export default function InboxPage() {
     })
   }, [DEV, filtered, threads.length, viewFilter])
 
-  const statusCounts = useMemo(() => (
-    threads.reduce<Partial<Record<InboxStage, number>>>((counts, thread) => {
-      counts[thread.inboxStage] = (counts[thread.inboxStage] ?? 0) + 1
-      return counts
-    }, {})
-  ), [threads])
   const selectedSuppressed = useMemo(() => (selected ? isSuppressedThread(selected) : false), [selected])
 
   const selectedPendingMessages = useMemo(() => {
@@ -293,9 +342,16 @@ export default function InboxPage() {
     emitNotification({ title: message, detail: 'NEXUS layout updated', severity: 'success' })
   }, [])
 
+  const liveThreadQuery = useMemo(() => ({
+    view: layoutState.inboxMode === 'full_double' ? 'all' : viewFilter,
+    stage: stageFilter,
+    query: searchQuery,
+  }), [layoutState.inboxMode, viewFilter, stageFilter, searchQuery])
+
   useEffect(() => {
     setVisibleThreadCount(1000)
-  }, [searchQuery, stageFilter, viewFilter, advancedFilters])
+    refreshInbox({ filters: liveThreadQuery })
+  }, [liveThreadQuery, refreshInbox])
 
 
 
@@ -572,14 +628,22 @@ export default function InboxPage() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [announceLayout, layoutState.activeOverlay, layoutState.mapMode, layoutState.leftPanelMode, layoutState.inboxMode, setActiveOverlay])
 
-  const handleWorkflowMutation = useCallback(async (label: string, mutation: () => Promise<any>, options?: { action?: { label: string, onClick: () => void } }) => {
+  const handleWorkflowMutation = useCallback(async (label: string, mutation: () => Promise<any>, options?: { action?: { label: string, onClick: () => void }, skipRefresh?: boolean }) => {
     try {
+      if (DEV) console.log(`[NexusInbox] Mutation Triggered: ${label}`, { options })
       const result = await mutation()
+      if (DEV) console.log(`[NexusInbox] Mutation Result: ${label}`, result)
+      
       if (result && 'ok' in result && !result.ok) {
         emitNotification({ title: 'Error', detail: result.errorMessage || 'Unknown error', severity: 'critical' })
         return
       }
-      await refreshInbox()
+      if (!options?.skipRefresh) {
+        if (DEV) console.log(`[NexusInbox] Refreshing data for: ${label}`)
+        await refreshInbox({ filters: liveThreadQuery })
+      } else {
+        if (DEV) console.log(`[NexusInbox] Skipping refresh (optimistic only) for: ${label}`)
+      }
       emitNotification({ 
         title: label, 
         detail: 'Action completed successfully', 
@@ -589,82 +653,105 @@ export default function InboxPage() {
     } catch (err) {
       emitNotification({ title: 'Error', detail: String(err), severity: 'critical' })
     }
-  }, [refreshInbox])
+  }, [refreshInbox, liveThreadQuery])
 
   const handleThreadAction = useCallback(async (target: string | InboxWorkflowThread, action: string) => {
     const thread = typeof target === 'string' ? threads.find((t) => t.id === target) : target
     if (!thread) return
 
     let label = ''
-    let mutation = async () => ({ ok: true })
+    let mutation = async () => ({ ok: true, threadKey: thread.id })
+    let optimistic: Partial<InboxWorkflowThread> = {}
 
     switch (action) {
-      case 'star': label = 'Thread Starred'; mutation = () => starThread(thread); setOptimisticPatches(p => ({...p, [thread.id]: { ...p[thread.id], isStarred: true }})); break
-      case 'unstar': label = 'Thread Unstarred'; mutation = () => unstarThread(thread); setOptimisticPatches(p => ({...p, [thread.id]: { ...p[thread.id], isStarred: false }})); break
-      case 'pin': label = 'Thread Pinned'; mutation = () => pinThread(thread); setOptimisticPatches(p => ({...p, [thread.id]: { ...p[thread.id], isPinned: true }})); break
-      case 'unpin': label = 'Thread Unpinned'; mutation = () => unpinThread(thread); setOptimisticPatches(p => ({...p, [thread.id]: { ...p[thread.id], isPinned: false }})); break
-      case 'archive': label = 'Thread Archived'; mutation = () => archiveThread(thread); setOptimisticPatches(p => ({...p, [thread.id]: { ...p[thread.id], isArchived: true, inboxStatus: 'archived' }})); break
-      case 'unarchive': label = 'Thread Unarchived'; mutation = () => updateThreadStatus(thread, 'open'); setOptimisticPatches(p => ({...p, [thread.id]: { ...p[thread.id], isArchived: false, inboxStatus: 'open' }})); break
-      case 'hide': label = 'Thread Hidden'; mutation = () => hideThread(thread); setOptimisticPatches(p => ({...p, [thread.id]: { ...p[thread.id], isHidden: true, inboxStatus: 'hidden' }})); break
-      case 'unhide': label = 'Thread Unhidden'; mutation = () => unhideThread(thread); setOptimisticPatches(p => ({...p, [thread.id]: { ...p[thread.id], isHidden: false, inboxStatus: 'open' }})); break
+      case 'archive':
+        label = 'Thread Archived'
+        mutation = () => archiveThread(thread)
+        optimistic = { isArchived: true, inboxStatus: 'archived', inboxStage: 'archived' }
+        break
+      case 'unarchive':
+        label = 'Thread Restored'
+        mutation = () => unarchiveThread(thread)
+        optimistic = { isArchived: false, inboxStatus: 'open' }
+        break
+      case 'star':
+        label = 'Thread Starred'
+        mutation = () => starThread(thread)
+        optimistic = { isStarred: true }
+        break
+      case 'unstar':
+        label = 'Star Removed'
+        mutation = () => unstarThread(thread)
+        optimistic = { isStarred: false }
+        break
+      case 'pin':
+        label = 'Thread Pinned'
+        mutation = () => pinThread(thread)
+        optimistic = { isPinned: true }
+        break
+      case 'unpin':
+        label = 'Pin Removed'
+        mutation = () => unpinThread(thread)
+        optimistic = { isPinned: false }
+        break
+      case 'read':
+        label = 'Marked Read'
+        mutation = () => markThreadRead(thread)
+        optimistic = { isRead: true, unread: false, inboxStatus: 'read' }
+        break
+      case 'unread':
+        label = 'Marked Unread'
+        mutation = () => markThreadUnread(thread)
+        optimistic = { isRead: false, unread: true, inboxStatus: 'unread' }
+        break
+      default:
+        return
     }
 
-    if (action === 'archive') {
-      void handleWorkflowMutation(label, mutation, {
-        action: {
-          label: 'Undo',
-          onClick: () => handleThreadAction(thread, 'unarchive')
-        }
-      })
-    } else {
-      void handleWorkflowMutation(label, mutation)
-    }
-  }, [handleWorkflowMutation, threads])
+    setOptimisticPatches(prev => ({ ...prev, [thread.id]: { ...prev[thread.id], ...optimistic } }))
+    await handleWorkflowMutation(label, mutation, {
+      skipRefresh: true,
+      action: action === 'archive'
+        ? {
+            label: 'Undo',
+            onClick: () => {
+              setOptimisticPatches(prev => ({
+                ...prev,
+                [thread.id]: { ...prev[thread.id], isArchived: false, inboxStatus: 'open', inboxStage: 'needs_response' },
+              }))
+              void handleWorkflowMutation('Thread Restored', () => unarchiveThread(thread), { skipRefresh: true })
+            },
+          }
+        : undefined,
+    })
+  }, [threads, handleWorkflowMutation])
+
+  const handleStageChange = useCallback(async (stage: InboxStage) => {
+    if (!selected) return
+    setOptimisticPatches(prev => ({ ...prev, [selected.id]: { ...prev[selected.id], inboxStage: stage } }))
+    await handleWorkflowMutation(`Stage: ${stage.replace(/_/g, ' ')}`, () => updateThreadStage(selected, stage), { skipRefresh: true })
+  }, [selected, handleWorkflowMutation])
+
+  const handleToggleStar = useCallback(() => {
+    if (!selected) return
+    handleThreadAction(selected, selected.isStarred ? 'unstar' : 'star')
+  }, [handleThreadAction, selected])
+
+  const handleTogglePin = useCallback(() => {
+    if (!selected) return
+    handleThreadAction(selected, selected.isPinned ? 'unpin' : 'pin')
+  }, [handleThreadAction, selected])
+
+  const handleToggleArchive = useCallback(() => {
+    if (!selected) return
+    handleThreadAction(selected, selected.isArchived ? 'unarchive' : 'archive')
+  }, [handleThreadAction, selected])
 
   const handleSelect = useCallback((id: string) => {
     setSelectedId(id)
     setSearchQuery('')
     setLayoutState((current) => ({ ...current, selectedThreadId: id }))
   }, [])
-
-  const handleStageChange = useCallback((stage: InboxStage) => {
-    if (!selected) return
-    const status = stage === 'archived' ? 'archived' : stage === 'dnc_opt_out' ? 'suppressed' : 'open'
-    setOptimisticPatches(prev => ({ ...prev, [selected.id]: { ...prev[selected.id], inboxStage: stage, inboxStatus: status as any, isArchived: stage === 'archived', isSuppressed: stage === 'dnc_opt_out' } }))
-    void handleWorkflowMutation('Stage Updated', () => updateThreadStage(selected, stage))
-  }, [handleWorkflowMutation, selected])
-
-  const handleToggleStar = useCallback(() => {
-    if (!selected) return
-    const nextStarred = !selected.isStarred
-    setOptimisticPatches(prev => ({ ...prev, [selected.id]: { ...prev[selected.id], isStarred: nextStarred } }))
-    void handleWorkflowMutation(nextStarred ? 'Thread Starred' : 'Thread Unstarred', () => (
-      nextStarred ? starThread(selected) : unstarThread(selected)
-    ))
-  }, [handleWorkflowMutation, selected])
-
-  const handleTogglePin = useCallback(() => {
-    if (!selected) return
-    setOptimisticPatches(prev => ({ ...prev, [selected.id]: { ...prev[selected.id], isPinned: !selected.isPinned } }))
-    void handleWorkflowMutation(selected.isPinned ? 'Thread Unpinned' : 'Thread Pinned', () => (
-      selected.isPinned ? unpinThread(selected) : pinThread(selected)
-    ))
-  }, [handleWorkflowMutation, selected])
-
-  const handleToggleArchive = useCallback(() => {
-    if (!selected) return
-    setOptimisticPatches(prev => ({ ...prev, [selected.id]: { ...prev[selected.id], isArchived: !selected.isArchived, inboxStatus: !selected.isArchived ? 'archived' : 'open' } }))
-    void handleWorkflowMutation(
-      selected.isArchived ? 'Thread Unarchived' : 'Thread Archived', 
-      () => (selected.isArchived ? updateThreadStatus(selected, 'open') : archiveThread(selected)),
-      !selected.isArchived ? {
-        action: {
-          label: 'Undo',
-          onClick: () => handleToggleArchive()
-        }
-      } : undefined
-    )
-  }, [handleWorkflowMutation, selected])
 
   const handleSend = useCallback(async (text: string) => {
     if (!selected || !text.trim()) return
@@ -869,10 +956,9 @@ export default function InboxPage() {
             onSend={handleSend}
             onOpenSchedule={() => setSchedulePanelOpen(true)}
             onAI={() => setActiveOverlay('ai')}
-            onOffer={() => setActiveOverlay('ai')}
             thread={selected}
             threadContext={threadContext}
-            onInsertTemplate={(text) => setDraftText(text)}
+            onInsertTemplate={(text) => setDraftText(prev => prev ? `${prev}\n\n${text}` : text)}
             onReplaceTemplate={(text) => setDraftText(text)}
             onSendTemplate={handleSend}
             onScheduleTemplate={() => setSchedulePanelOpen(true)}
@@ -956,19 +1042,23 @@ export default function InboxPage() {
           setAdvancedFilters({ outOfStateOwner: 'all' })
         }}
         onClose={() => setActiveOverlay(null)}
+        onApply={() => { void refreshInbox({ filters: liveThreadQuery }) }}
       />
 
-      {activeOverlay === 'activity' && (
-        <InboxActivityPanel 
-          threadKey={selected?.threadKey} 
-          onClose={() => setActiveOverlay(null)} 
-          onViewThread={(key) => {
-            const t = threads.find(thread => thread.threadKey === key);
-            if (t) handleSelect(t.id);
-            setActiveOverlay(null);
-          }}
-        />
-      )}
+      {activeOverlay === 'activity' && typeof document !== 'undefined'
+        ? createPortal(
+            <InboxActivityPanel
+              threadKey={selected?.threadKey}
+              onClose={() => setActiveOverlay(null)}
+              onViewThread={(key) => {
+                const t = threads.find((thread) => thread.threadKey === key)
+                if (t) handleSelect(t.id)
+                setActiveOverlay(null)
+              }}
+            />,
+            document.body,
+          )
+        : null}
 
       {aiOpen && <InboxUtilityDrawer type="ai" thread={selected} onClose={() => setActiveOverlay(null)} />}
       {keysOpen && <InboxUtilityDrawer type="keys" thread={selected} onClose={() => setActiveOverlay(null)} />}

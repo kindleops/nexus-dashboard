@@ -2,6 +2,7 @@ import type { ThreadMessage } from '../../../lib/data/inboxData'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
 import { formatRelativeTime } from '../../../shared/formatters'
+import { resolveThreadAddressLine, resolveThreadMarketBadge, resolveThreadPrimaryName } from '../inbox-ui-helpers'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
@@ -60,10 +61,10 @@ export const ChatThread = ({
     </div>
   )
 
-  const ownerName = fallback(thread.ownerName, 'Unknown Seller')
+  const ownerName = resolveThreadPrimaryName(thread)
   const phoneNumber = fallback(thread.phoneNumber || thread.canonicalE164, '')
-  const propertyAddress = fallback(thread.propertyAddress || thread.subject, '')
-  const market = fallback(thread.market || thread.marketId, '')
+  const propertyAddress = resolveThreadAddressLine(thread)
+  const market = resolveThreadMarketBadge(thread)
   const stageName = isSuppressed ? 'Suppressed' : titleCase(thread.inboxStage)
   const stageClass = isSuppressed ? 'is-dnc_opt_out' : `is-${thread.inboxStage}`
 
@@ -119,6 +120,13 @@ export const ChatThread = ({
           <div key={msg.id} className={cls('nx-bubble-wrap', msg.direction === 'inbound' ? 'is-inbound' : 'is-outbound')}>
             <div className="nx-chat-bubble">
               {msg.body}
+              
+              <div className="nx-bubble-actions">
+                <button type="button" title="Copy text" onClick={() => navigator.clipboard.writeText(msg.body)}><Icon name="layers" /></button>
+                <button type="button" title="Forward"><Icon name="send" /></button>
+                <button type="button" title="Translate"><Icon name="globe" /></button>
+                <button type="button" title="More"><Icon name="more" /></button>
+              </div>
             </div>
 
             <div className="nx-bubble-footer">

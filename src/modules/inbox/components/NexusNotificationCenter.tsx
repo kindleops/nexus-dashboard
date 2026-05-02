@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import type { QueueProcessorHealth } from '../../../lib/data/inboxData'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
@@ -232,71 +233,74 @@ export const NexusNotificationCenter = ({
         ))}
       </div>
 
-      {open && (
-        <section className="nx-notification-center nx-liquid-panel" aria-label="Notification center">
-          <header>
-            <div>
-              <span>Command Space</span>
-              <strong>Notifications</strong>
-            </div>
-            <button type="button" onClick={onClose} aria-label="Close notifications">
-              <Icon name="close" />
-            </button>
-          </header>
-
-          <div className="nx-notification-center__tools">
-            <button type="button" className={showUnreadOnly ? 'is-active' : ''} onClick={() => setShowUnreadOnly((value) => !value)}>
-              Unread {unreadCount}
-            </button>
-            <button type="button" className={showCriticalOnly ? 'is-active' : ''} onClick={() => setShowCriticalOnly((value) => !value)}>
-              Critical
-            </button>
-            <button type="button" onClick={() => setReadIds(enriched.map((item) => item.id))}>
-              Mark all read
-            </button>
-          </div>
-
-          <div className="nx-notification-tabs" role="tablist" aria-label="Command spaces">
-            {commandSpaces.map((space) => (
-              <button
-                key={space}
-                type="button"
-                className={activeSpace === space ? 'is-active' : ''}
-                onClick={() => setActiveSpace(space)}
-              >
-                {space}
-              </button>
-            ))}
-          </div>
-
-          <div className="nx-notification-list">
-            {filtered.map((item) => (
-              <article key={item.id} className={cls('nx-notification-card', `is-${item.severity}`, item.status === 'read' && 'is-read')}>
-                <button
-                  type="button"
-                  className="nx-notification-card__main"
-                  onClick={() => {
-                    setReadIds((ids) => ids.includes(item.id) ? ids : [...ids, item.id])
-                    onOpenRecord(item)
-                  }}
-                >
-                  <span className="nx-notification-card__icon"><Icon name={notificationIcon(item.severity)} /></span>
-                  <span>
-                    <small>{item.command_space} · {item.source} · {item.created_at ? formatRelativeTime(item.created_at) : 'Now'}</small>
-                    <strong>{item.title}</strong>
-                    <em>{item.body}</em>
-                  </span>
-                  <b>{item.action_label}</b>
-                </button>
-                <button type="button" onClick={() => setDismissedIds((ids) => [...ids, item.id])} aria-label="Dismiss notification">
+      {open && typeof document !== 'undefined'
+        ? createPortal(
+            <section className="nx-notification-center nx-liquid-panel" aria-label="Notification center">
+              <header>
+                <div>
+                  <span>Command Space</span>
+                  <strong>Notifications</strong>
+                </div>
+                <button type="button" onClick={onClose} aria-label="Close notifications">
                   <Icon name="close" />
                 </button>
-              </article>
-            ))}
-            {filtered.length === 0 && <p className="nx-notification-empty">No notifications match this command space.</p>}
-          </div>
-        </section>
-      )}
+              </header>
+
+              <div className="nx-notification-center__tools">
+                <button type="button" className={showUnreadOnly ? 'is-active' : ''} onClick={() => setShowUnreadOnly((value) => !value)}>
+                  Unread {unreadCount}
+                </button>
+                <button type="button" className={showCriticalOnly ? 'is-active' : ''} onClick={() => setShowCriticalOnly((value) => !value)}>
+                  Critical
+                </button>
+                <button type="button" onClick={() => setReadIds(enriched.map((item) => item.id))}>
+                  Mark all read
+                </button>
+              </div>
+
+              <div className="nx-notification-tabs" role="tablist" aria-label="Command spaces">
+                {commandSpaces.map((space) => (
+                  <button
+                    key={space}
+                    type="button"
+                    className={activeSpace === space ? 'is-active' : ''}
+                    onClick={() => setActiveSpace(space)}
+                  >
+                    {space}
+                  </button>
+                ))}
+              </div>
+
+              <div className="nx-notification-list">
+                {filtered.map((item) => (
+                  <article key={item.id} className={cls('nx-notification-card', `is-${item.severity}`, item.status === 'read' && 'is-read')}>
+                    <button
+                      type="button"
+                      className="nx-notification-card__main"
+                      onClick={() => {
+                        setReadIds((ids) => ids.includes(item.id) ? ids : [...ids, item.id])
+                        onOpenRecord(item)
+                      }}
+                    >
+                      <span className="nx-notification-card__icon"><Icon name={notificationIcon(item.severity)} /></span>
+                      <span>
+                        <small>{item.command_space} · {item.source} · {item.created_at ? formatRelativeTime(item.created_at) : 'Now'}</small>
+                        <strong>{item.title}</strong>
+                        <em>{item.body}</em>
+                      </span>
+                      <b>{item.action_label}</b>
+                    </button>
+                    <button type="button" onClick={() => setDismissedIds((ids) => [...ids, item.id])} aria-label="Dismiss notification">
+                      <Icon name="close" />
+                    </button>
+                  </article>
+                ))}
+                {filtered.length === 0 && <p className="nx-notification-empty">No notifications match this command space.</p>}
+              </div>
+            </section>,
+            document.body,
+          )
+        : null}
     </>
   )
 }

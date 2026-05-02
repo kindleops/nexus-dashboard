@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import type { CommandCenterStore } from '../../domain/types'
 import { formatRelativeTime } from '../../shared/formatters'
 import { fetchInboxModel, type InboxFetchOptions } from '../../lib/data/inboxData'
@@ -8,7 +8,6 @@ import { hasSupabaseEnv, supabaseAnonKeyPresent, supabaseUrlPresent } from '../.
 import { getSupabaseClient } from '../../lib/supabaseClient'
 
 const LIVE_INBOX_TIMEOUT_MS = 30000
-let liveInboxRequest: Promise<InboxModel> | null = null
 
 const withTimeout = async <T,>(
   run: (signal: AbortSignal) => Promise<T>,
@@ -46,6 +45,11 @@ const emptyLiveErrorModel = (liveFetchError: string): InboxModel => {
     messageEventsCount: null,
     messageEventsRawCount: null,
     groupedThreadCount: null,
+    priorityInboxCount: null,
+    activeInboxCount: null,
+    waitingInboxCount: null,
+    allInboxCount: null,
+    unreadThreadsCount: null,
     sendQueueCount: null,
     lastLiveFetchAt: new Date().toISOString(),
   }
@@ -157,6 +161,7 @@ export interface InboxThread {
 
 export interface InboxModel {
   threads: InboxThread[]
+  /** Non-archived threads where `is_read` is false (notification bell). */
   unreadCount: number
   urgentCount: number
   totalCount: number
@@ -167,6 +172,11 @@ export interface InboxModel {
   messageEventsCount: number | null
   messageEventsRawCount: number | null
   groupedThreadCount: number | null
+  priorityInboxCount: number | null
+  activeInboxCount: number | null
+  waitingInboxCount: number | null
+  allInboxCount: number | null
+  unreadThreadsCount: number | null
   sendQueueCount: number | null
   lastLiveFetchAt: string | null
 }
@@ -187,18 +197,33 @@ export const adaptInboxModel = (store: CommandCenterStore): InboxModel => {
     return new Date(b.lastMessageIso).getTime() - new Date(a.lastMessageIso).getTime()
   })
 
+  const unreadThreads = threads.filter((t) => t.unreadCount > 0).length
+  const priorityThreads = threads.filter((t) => Boolean(t.showInPriorityInbox)).length
+  const waitingThreads = threads.filter((t) => t.uiIntent === 'outbound_waiting').length
+  const activeThreads = threads.filter((t) => (
+    t.status !== 'archived' &&
+    t.priorityBucket !== 'hidden' &&
+    t.priorityBucket !== 'suppressed' &&
+    t.uiIntent !== 'outbound_waiting'
+  )).length
+
   return {
     threads,
-    unreadCount: threads.filter((t) => t.unreadCount > 0).length,
+    unreadCount: unreadThreads,
     urgentCount: threads.filter((t) => t.priority === 'urgent').length,
     totalCount: threads.length,
     aiDraftCount: threads.filter((t) => t.aiDraft !== null).length,
     dataMode: 'mock_preview',
     liveFetchStatus: 'disabled',
     liveFetchError: null,
-    messageEventsCount: null,
-    messageEventsRawCount: null,
-    groupedThreadCount: null,
+    messageEventsCount: activeThreads,
+    messageEventsRawCount: waitingThreads,
+    groupedThreadCount: threads.length,
+    priorityInboxCount: priorityThreads,
+    activeInboxCount: activeThreads,
+    waitingInboxCount: waitingThreads,
+    allInboxCount: threads.length,
+    unreadThreadsCount: unreadThreads,
     sendQueueCount: null,
     lastLiveFetchAt: null,
   }
@@ -226,21 +251,11 @@ export const loadInbox = async (options: InboxFetchOptions = {}): Promise<InboxM
 
   if (shouldUseSupabase()) {
     try {
-      if (options.offset) {
-        return await fetchInboxModel(options)
-      }
-
-      if (!liveInboxRequest) {
-        liveInboxRequest = withTimeout(
-          (signal) => fetchInboxModel({ ...options, signal }),
-          LIVE_INBOX_TIMEOUT_MS,
-          `Live Inbox request timed out after ${LIVE_INBOX_TIMEOUT_MS}ms`,
-        ).finally(() => {
-          liveInboxRequest = null
-        })
-      }
-
-      const result = await liveInboxRequest
+      const result = await withTimeout(
+        (signal) => fetchInboxModel({ ...options, signal }),
+        LIVE_INBOX_TIMEOUT_MS,
+        `Live Inbox request timed out after ${LIVE_INBOX_TIMEOUT_MS}ms`,
+      )
       if (isDev) console.log('[NexusInbox] Data source: live', { threadCount: result.threads.length })
       return result
     } catch (error) {
@@ -296,6 +311,11 @@ const EMPTY_MODEL: InboxModel = {
   messageEventsCount: null,
   messageEventsRawCount: null,
   groupedThreadCount: null,
+  priorityInboxCount: null,
+  activeInboxCount: null,
+  waitingInboxCount: null,
+  allInboxCount: null,
+  unreadThreadsCount: null,
   sendQueueCount: null,
   lastLiveFetchAt: null,
 }
@@ -304,11 +324,17 @@ export const useInboxData = () => {
   const [data, setData] = useState<InboxModel>(EMPTY_MODEL)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<unknown>(null)
+  const lastFetchRef = useRef<InboxFetchOptions>({})
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (options: InboxFetchOptions = {}) => {
     setLoading(true)
     try {
-      const model = await loadInbox()
+      lastFetchRef.current = {
+        ...lastFetchRef.current,
+        ...options,
+        filters: options.filters !== undefined ? options.filters : lastFetchRef.current.filters,
+      }
+      const model = await loadInbox(lastFetchRef.current)
       setData(model ?? EMPTY_MODEL)
       setError(null)
       return model
@@ -323,20 +349,25 @@ export const useInboxData = () => {
     }
   }, [])
 
-  const loadMore = useCallback(async () => {
+  const loadMore = useCallback(async (options: InboxFetchOptions = {}) => {
     if (loading) return
     setLoading(true)
     try {
-      const model = await loadInbox({ offset: data.threads.length, maxRows: 200 })
+      const model = await loadInbox({ 
+        ...lastFetchRef.current,
+        ...options,
+        filters: lastFetchRef.current.filters,
+        offset: data.threads.length, 
+        maxRows: 200 
+      })
       if (model && model.threads.length > 0) {
         setData((prev) => {
-          // Deduplicate by threadKey/id
           const existingIds = new Set(prev.threads.map(t => t.id))
           const newThreads = model.threads.filter(t => !existingIds.has(t.id))
+          if (newThreads.length === 0) return prev
           return {
             ...prev,
             threads: [...prev.threads, ...newThreads],
-            lastLiveFetchAt: model.lastLiveFetchAt
           }
         })
       }

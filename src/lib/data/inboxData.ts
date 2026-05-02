@@ -10,6 +10,7 @@ import {
   mapErrorMessage,
   normalizeStatus,
   safeArray,
+  shouldUseSupabase,
   type AnyRecord,
 } from './shared'
 
@@ -40,12 +41,15 @@ export interface InboxThreadFilters {
   status?: 'all' | 'unread' | 'read' | 'replied' | 'archived'
   priority?: 'all' | 'urgent' | 'high' | 'normal' | 'low'
   query?: string
+  view?: string
+  stage?: string
 }
 
 export interface InboxFetchOptions {
   signal?: AbortSignal
   maxRows?: number
   offset?: number
+  filters?: InboxThreadFilters
 }
 
 export interface ThreadMessage {
@@ -148,6 +152,138 @@ const QUEUE_PROCESSOR_LAG_MINUTES = 10
 
 const DEV = Boolean(import.meta.env.DEV)
 const MESSAGE_EVENTS_THREAD_PAGE_SIZE = 1000
+
+/** Values that map 1:1 to `nexus_inbox_threads_v.stage` / `inbox_thread_state.stage`. */
+export const SERVER_INBOX_THREAD_STAGE_VALUES = new Set([
+  'new_reply',
+  'needs_response',
+  'ai_draft_ready',
+  'queued_reply',
+  'sent_waiting',
+  'interested',
+  'needs_offer',
+  'needs_call',
+  'nurture',
+  'not_interested',
+  'wrong_number',
+  'dnc_opt_out',
+  'archived',
+  'closed_converted',
+])
+
+export const formatDisplayPhone = (raw: string): string => {
+  const digits = raw.replace(/\D/g, '')
+  if (digits.length === 10) {
+    return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
+  }
+  if (digits.length === 11 && digits.startsWith('1')) {
+    return `+1 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`
+  }
+  return raw.startsWith('+') ? raw : `+${digits}`
+}
+
+/**
+ * Checks if a string looks like a raw E.164 phone number (e.g. +16127433952).
+ * These are treated as poor display names if any real name field exists.
+ */
+const isRawE164 = (val: string): boolean => /^\+1\d{10}$/.test(val) || /^\+\d{10,15}$/.test(val)
+
+export const resolveInboxSellerNameWithSource = (row: Record<string, unknown>): { value: string; source: string } => {
+  const firstName = asString(row.first_name || row.firstName || row.seller_first_name || row.sellerFirstName || row.prospect_first_name || row.prospectFirstName)
+  const lastName = asString(row.last_name || row.lastName || row.seller_last_name || row.sellerLastName || row.prospect_last_name || row.prospectLastName)
+  const ownerFirstName = asString(row.owner_first_name || row.ownerFirstName)
+  const ownerLastName = asString(row.owner_last_name || row.ownerLastName)
+
+  const meta = (row.metadata || {}) as Record<string, unknown>
+
+  const candidates: Array<{ val: unknown; source: string }> = [
+    { val: row.owner_display_name || row.ownerDisplayName, source: 'owner_display_name' },
+    { val: row.seller_display_name || row.sellerDisplayName, source: 'seller_display_name' },
+    { val: row.seller_name || row.sellerName, source: 'seller_name' },
+    { val: row.owner_name || row.ownerName, source: 'owner_name' },
+    { val: row.prospect_full_name || row.prospectFullName, source: 'prospect_full_name' },
+    { val: row.primary_owner_name || row.primaryOwnerName, source: 'primary_owner_name' },
+    { val: row.contact_name || row.contactName, source: 'contact_name' },
+    { val: firstName && lastName ? `${firstName} ${lastName}` : firstName || null, source: 'prospect_names' },
+    { val: ownerFirstName && ownerLastName ? `${ownerFirstName} ${ownerLastName}` : ownerFirstName || null, source: 'owner_names' },
+    { val: row.property_owner_name || row.propertyOwnerName, source: 'property_owner_name' },
+    { val: row.prospect_cnam || row.prospectCnam, source: 'prospect_cnam' },
+    { val: meta.owner_name || meta.ownerName || meta.seller_name || meta.contact_name, source: 'metadata_name' },
+  ]
+
+  for (const candidate of candidates) {
+    const text = asString(candidate.val, '').trim()
+    if (text && !isRawE164(text) && text.toLowerCase() !== 'unknown' && text.toLowerCase() !== 'unknown seller') {
+      return { value: text, source: candidate.source }
+    }
+  }
+
+  // Final fallbacks
+  const phoneRaw = asString(row.phoneNumber || row.phoneNumberId || row.canonicalE164 || row.seller_phone || row.phone || row.prospect_phone, '').trim()
+  if (phoneRaw) return { value: formatDisplayPhone(phoneRaw), source: 'phone_fallback' }
+
+  return { value: 'Unknown Seller', source: 'none' }
+}
+
+export const resolveInboxSellerName = (row: Record<string, unknown>): string => 
+  resolveInboxSellerNameWithSource(row).value
+
+export const resolveInboxPropertyAddressWithSource = (row: Record<string, unknown>): { value: string; source: string } => {
+  const street = asString(row.property_address_street || row.street || row.address_line_1 || row.property_street)
+  const city = asString(row.property_address_city || row.property_city || row.city || row.property_city)
+  const state = asString(row.property_address_state || row.property_state || row.state || row.property_state)
+  const zip = asString(row.property_address_zip || row.property_zip || row.zip || row.postal_code || row.property_zip)
+  
+  const combined = [street, city, state, zip].map(s => s.trim()).filter(Boolean).join(', ')
+  const meta = (row.metadata || {}) as Record<string, unknown>
+
+  const candidates: Array<{ val: unknown; source: string }> = [
+    { val: row.property_address_full || row.propertyAddressFull, source: 'property_address_full' },
+    { val: row.property_address || row.propertyAddress, source: 'property_address' },
+    { val: row.address, source: 'address' },
+    { val: meta.property_address || meta.address || meta.propertyAddress, source: 'metadata_address' },
+    { val: combined, source: 'combined_fields' },
+  ]
+
+  for (const candidate of candidates) {
+    const text = asString(candidate.val, '').trim()
+    if (text && text.toLowerCase() !== 'no address' && text.toLowerCase() !== 'unknown') {
+      return { value: text, source: candidate.source }
+    }
+  }
+
+  return { value: 'No Address', source: 'none' }
+}
+
+export const resolveInboxPropertyAddress = (row: Record<string, unknown>): string =>
+  resolveInboxPropertyAddressWithSource(row).value
+
+const applyInboxViewServerFilters = (query: any, view: string | undefined): any => {
+  if (!view || view === 'all') return query
+  let q = query
+  if (view === 'priority') {
+    q = q.eq('show_in_priority_inbox', true).eq('is_archived', false)
+  } else if (view === 'active') {
+    q = q
+      .eq('is_archived', false)
+      .not('priority_bucket', 'eq', 'hidden')
+      .not('priority_bucket', 'eq', 'suppressed')
+      .not('ui_intent', 'eq', 'outbound_waiting')
+  } else if (view === 'waiting') {
+    q = q.eq('ui_intent', 'outbound_waiting').eq('is_archived', false)
+  } else if (view === 'archived') {
+    q = q.eq('is_archived', true)
+  } else if (view === 'suppressed') {
+    q = q.eq('priority_bucket', 'suppressed')
+  } else if (view === 'hidden') {
+    q = q.eq('priority_bucket', 'hidden')
+  } else if (view === 'starred') {
+    q = q.eq('is_starred', true)
+  } else if (view === 'pinned') {
+    q = q.eq('is_pinned', true)
+  }
+  return q
+}
 
 export const getQueueProcessorHealth = async (): Promise<QueueProcessorHealth> => {
   const supabase = getSupabaseClient()
@@ -964,14 +1100,29 @@ const runFilteredQuery = async (
 export const getInboxThreads = async (
   filters: InboxThreadFilters = {},
   options: InboxFetchOptions = {},
-): Promise<InboxThread[]> => {
+): Promise<{ threads: InboxThread[], totalAvailable: number }> => {
   const supabase = getSupabaseClient()
   const PAGE_SIZE = 1000
   const maxRows = Number.isFinite(options.maxRows ?? Number.NaN)
     ? Math.max(1, Number(options.maxRows))
     : 200
-  const startOffset = options.offset ?? 0
+  const filterState = options.filters ?? filters
+  
+  // Base query for counts with filters
+  let countQuery = supabase.from('nexus_inbox_threads_v').select('*', { count: 'exact', head: true })
+  countQuery = applyInboxViewServerFilters(countQuery, filterState.view)
 
+  if (
+    filterState.stage &&
+    filterState.stage !== 'all_stages' &&
+    SERVER_INBOX_THREAD_STAGE_VALUES.has(filterState.stage)
+  ) {
+    countQuery = countQuery.eq('stage', filterState.stage)
+  }
+
+  const { count: totalAvailable } = await countQuery
+
+  const startOffset = options.offset ?? 0
   const rows: AnyRecord[] = []
   let page = 0
 
@@ -984,6 +1135,16 @@ export const getInboxThreads = async (
       .select('*')
       .order('latest_message_at', { ascending: false })
       .range(rangeStart, rangeEnd)
+
+    query = applyInboxViewServerFilters(query, filterState.view)
+
+    if (
+      filterState.stage &&
+      filterState.stage !== 'all_stages' &&
+      SERVER_INBOX_THREAD_STAGE_VALUES.has(filterState.stage)
+    ) {
+      query = query.eq('stage', filterState.stage)
+    }
 
     if (options.signal) {
       query = query.abortSignal(options.signal)
@@ -998,6 +1159,17 @@ export const getInboxThreads = async (
     rows.push(...batch)
     if (batch.length < PAGE_SIZE) break
     page += 1
+  }
+
+  if (DEV) {
+    console.log('[NexusInbox] dataset summary', { 
+      offset: startOffset, 
+      limit: maxRows, 
+      returned: rows.length, 
+      totalAvailable,
+      hasMore: (totalAvailable ?? 0) > (startOffset + rows.length),
+      source: 'nexus_inbox_threads_v' 
+    })
   }
 
   const boundedRows = rows.slice(0, maxRows)
@@ -1085,16 +1257,13 @@ export const getInboxThreads = async (
     const latestMessageIso = asIso(row['latest_message_at']) ?? new Date().toISOString()
     const latestDirection = normalizeMessageDirection({ direction: row['latest_direction'] })
     const sellerPhone = normalizePhone(row['seller_phone'])
-    const sellerFirstName = asString(intelligenceRow?.['seller_first_name'], '')
-    const sellerLastName = asString(intelligenceRow?.['seller_last_name'], '')
-    const combinedName = [sellerFirstName, sellerLastName].filter(Boolean).join(' ')
 
-    const ownerDisplayName = asString(getFirst(row, ['owner_display_name', 'seller_display_name', 'owner_name']), '')
-      || combinedName
-      || asString(getFirst(intelligenceRow ?? {}, ['owner_display_name']), '')
+    const mergedRow = { ...row, ...intelligenceRow }
+    const nameRes = resolveInboxSellerNameWithSource(mergedRow as Record<string, unknown>)
+    const addrRes = resolveInboxPropertyAddressWithSource(mergedRow as Record<string, unknown>)
 
-    const propertyAddressFull = asString(getFirst(row, ['property_address_full', 'property_address']), '')
-      || asString(getFirst(intelligenceRow ?? {}, ['property_address_full', 'address']), '')
+    const ownerDisplayName = nameRes.value
+    const propertyAddressFull = addrRes.value
 
     const uiIntent = normalizeStatus(row['ui_intent'] ?? 'needs_review')
     const priorityBucket = normalizeStatus(row['priority_bucket'] ?? 'priority')
@@ -1130,8 +1299,8 @@ export const getInboxThreads = async (
       id: threadKey,
       leadId: asString(row['property_id'], '') || asString(row['master_owner_id'], '') || threadKey,
       marketId: asString(row['market'], 'unknown') || 'unknown',
-      ownerName: ownerDisplayName || sellerPhone || 'Unknown Seller',
-      subject: propertyAddressFull || 'No Address',
+      ownerName: ownerDisplayName,
+      subject: propertyAddressFull,
       preview: asString(row['latest_message_body'], '') || 'No message preview',
       status,
       priority,
@@ -1240,44 +1409,79 @@ export const getInboxThreads = async (
     return new Date(b.lastMessageIso).getTime() - new Date(a.lastMessageIso).getTime()
   })
 
-  return filtered
+  return { threads: filtered, totalAvailable: totalAvailable ?? filtered.length }
 }
 
 export const fetchInboxModel = async (options: InboxFetchOptions = {}): Promise<InboxModel> => {
   const lastLiveFetchAt = new Date().toISOString()
-  const limit = options.maxRows ?? 200
-  const offset = options.offset ?? 0
-
-  if (DEV) {
-    console.log('[NexusInbox] source: nexus_inbox_threads_v')
-    console.log('[NexusInbox] requested limit:', limit)
-    console.log('[NexusInbox] requested offset:', offset)
-  }
-
-  const threads = await getInboxThreads({}, options)
   
   if (DEV) {
-    // Mask sensitive phone numbers in thread keys if present (e.g. +16125551234 -> +1612***1234)
-    const maskId = (id: string) => id.replace(/(\+\d{1,2}\d{3})\d{4}(\d{4})/, '$1****$2')
-    console.log('[NexusInbox] returned row count:', threads.length)
-    console.log('[NexusInbox] fallback/mock/live status:', 'live')
-    console.log('[NexusInbox] first thread key/id:', maskId(threads[0]?.threadKey || threads[0]?.id || 'none'))
+    console.log('[NexusInbox] fetchInboxModel start', { 
+      hasUrl: !!import.meta.env.VITE_SUPABASE_URL,
+      hasKey: !!import.meta.env.VITE_SUPABASE_ANON_KEY,
+      useSupabase: shouldUseSupabase(),
+      options
+    })
   }
 
-  const groupedThreadCount = threads.length
+  const { threads } = await getInboxThreads(options.filters || {}, options)
+  
+  // Real counts from backend (aligned with applyInboxViewServerFilters)
+  const supabase = getSupabaseClient()
+  const priorityBase = supabase.from('nexus_inbox_threads_v').select('thread_key', { count: 'exact', head: true }).eq('show_in_priority_inbox', true).eq('is_archived', false)
+  const activeBase = supabase
+    .from('nexus_inbox_threads_v')
+    .select('thread_key', { count: 'exact', head: true })
+    .eq('is_archived', false)
+    .not('priority_bucket', 'eq', 'hidden')
+    .not('priority_bucket', 'eq', 'suppressed')
+    .not('ui_intent', 'eq', 'outbound_waiting')
+  const waitingBase = supabase
+    .from('nexus_inbox_threads_v')
+    .select('thread_key', { count: 'exact', head: true })
+    .eq('ui_intent', 'outbound_waiting')
+    .eq('is_archived', false)
+  const allBase = supabase.from('nexus_inbox_threads_v').select('thread_key', { count: 'exact', head: true })
+  const unreadBase = supabase.from('nexus_inbox_threads_v').select('thread_key', { count: 'exact', head: true }).eq('is_archived', false).eq('is_read', false)
+
+  const [priorityCount, activeCount, waitingCount, allCount, unreadThreads] = await Promise.all([
+    priorityBase,
+    activeBase,
+    waitingBase,
+    allBase,
+    unreadBase,
+  ])
+
+  const safeCount = (res: { count: number | null }) => (res.count === null ? null : res.count)
+
+  if (DEV) {
+    console.log('[NexusInbox] Raw Backend Counts:', {
+      priority: priorityCount.count,
+      active: activeCount.count,
+      waiting: waitingCount.count,
+      all: allCount.count,
+      unread: unreadThreads.count,
+      errors: [priorityCount.error, activeCount.error, waitingCount.error, allCount.error, unreadThreads.error].filter(Boolean),
+    })
+  }
 
   return {
     threads,
-    unreadCount: threads.filter((thread) => thread.unreadCount > 0).length,
-    urgentCount: threads.filter((thread) => thread.priority === 'urgent').length,
-    totalCount: threads.length,
+    unreadCount: safeCount(unreadThreads) ?? threads.filter((thread) => thread.unreadCount > 0).length,
+    urgentCount: safeCount(priorityCount) ?? threads.filter((thread) => thread.priority === 'urgent').length,
+    totalCount: safeCount(allCount) ?? threads.length,
     aiDraftCount: threads.filter((thread) => thread.aiDraft !== null).length,
     dataMode: 'live',
     liveFetchStatus: 'active',
     liveFetchError: null,
-    messageEventsCount: null,
-    messageEventsRawCount: null,
-    groupedThreadCount,
+    messageEventsCount: safeCount(activeCount),
+    messageEventsRawCount: safeCount(waitingCount),
+    groupedThreadCount: safeCount(allCount),
+    priorityInboxCount: safeCount(priorityCount),
+    activeInboxCount: safeCount(activeCount),
+    waitingInboxCount: safeCount(waitingCount),
+    allInboxCount: safeCount(allCount),
+    unreadThreadsCount: safeCount(unreadThreads),
     sendQueueCount: null,
     lastLiveFetchAt,
   }

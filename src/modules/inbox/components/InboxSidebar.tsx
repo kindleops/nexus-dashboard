@@ -3,6 +3,9 @@ import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
 import { formatRelativeTime } from '../../../shared/formatters'
 import {
+  resolveThreadAddressLine,
+  resolveThreadMarketBadge,
+  resolveThreadPrimaryName,
   type InboxSavedFilterPreset,
   type InboxViewSelectValue,
   savedFilterOptions,
@@ -31,7 +34,7 @@ interface InboxSidebarProps {
   onSelect: (id: string) => void
   savedPreset: InboxSavedFilterPreset
   onApplySavedPreset: (preset: InboxSavedFilterPreset) => void
-  viewCounts: Record<InboxViewSelectValue, number>
+  viewCounts: Record<string, number | null | undefined>
   onOpenAdvancedFilters: () => void
   loadingError: string | null
   visibleThreadCount: number
@@ -44,9 +47,6 @@ const fallback = (value: unknown, placeholder = '') => {
   const text = String(value ?? '').trim()
   return text || placeholder
 }
-
-const marketLabel = (thread: InboxWorkflowThread) =>
-  fallback(thread.market || thread.marketId, '')
 
 const readClassifier = (thread: InboxWorkflowThread) => {
   const row = thread as unknown as Record<string, unknown>
@@ -79,13 +79,13 @@ interface ConversationRowProps {
 
 export const ConversationRow = memo(({ thread, selected, isStarred, onSelect, onAction }: ConversationRowProps) => {
   const row = thread as unknown as Record<string, unknown>
-  const ownerName = fallback(row.ownerDisplayName ?? thread.ownerName ?? thread.phoneNumber, 'Unknown Seller')
-  const propertyAddress = fallback(row.propertyAddressFull ?? thread.propertyAddress, '')
+  const ownerName = resolveThreadPrimaryName(thread)
+  const propertyAddress = resolveThreadAddressLine(thread)
   const latestMessageBody = fallback(row.latestMessageBody ?? thread.lastMessageBody ?? thread.preview, '')
   const { uiIntent } = readClassifier(thread)
   const isSuppressed = thread.isOptOut || thread.inboxStatus === 'suppressed' || readClassifier(thread).priorityBucket === 'suppressed'
   const visual = getStatusVisual(thread.inboxStage, isSuppressed)
-  const market = marketLabel(thread)
+  const market = resolveThreadMarketBadge(thread)
 
   return (
     <button
@@ -112,7 +112,7 @@ export const ConversationRow = memo(({ thread, selected, isStarred, onSelect, on
 
         {/* Row 2: Address */}
         <div className="nx-conversation-row__sub-row">
-          <span className="nx-conversation-row__address">{propertyAddress || 'No Address'}</span>
+          <span className="nx-conversation-row__address">{propertyAddress}</span>
         </div>
 
         {/* Row 3: Preview */}
@@ -125,9 +125,7 @@ export const ConversationRow = memo(({ thread, selected, isStarred, onSelect, on
               <i className="nx-status-dot" style={{ background: visual.dot }} />
               {visual.label}
             </span>
-            {market && (
-              <span className="nx-market-tag">{market}</span>
-            )}
+            <span className="nx-market-tag">{market}</span>
           </div>
           
           <div className="nx-conversation-row__hover-actions" onClick={(e) => e.stopPropagation()}>
@@ -216,7 +214,12 @@ export const InboxSidebar = ({
 }: InboxSidebarProps) => {
   const activePresetConfig = savedFilterOptions.find(o => o.value === savedPreset)
   const activeLabel = activePresetConfig?.label || 'Smart'
-  const activeCount = viewCounts[activeViewFilter] ?? threads.length
+  const rawActiveCount = viewCounts[activeViewFilter]
+  const activeCount = rawActiveCount === null || rawActiveCount === undefined ? null : rawActiveCount
+  const formatCount = (value: number | null | undefined) => {
+    if (value === null || value === undefined) return '—'
+    return String(value)
+  }
 
   return (
     <aside className="nx-sidebar">
@@ -240,7 +243,7 @@ export const InboxSidebar = ({
                 : `Viewing ${activeLabel.toLowerCase()} threads and signals`}
             </p>
           </div>
-          <strong className="nx-priority-command-card__count">{activeCount}</strong>
+          <strong className="nx-priority-command-card__count">{formatCount(activeCount)}</strong>
         </section>
 
         <div className="nx-sidebar__saved-filters">
@@ -255,7 +258,7 @@ export const InboxSidebar = ({
                   onClick={() => onApplySavedPreset(option.value as InboxSavedFilterPreset)}
                 >
                   <span className="nx-mode-tab__label">{option.label}</span>
-                  <span className="nx-mode-tab__count">{viewCounts[option.value as keyof typeof viewCounts] ?? 0}</span>
+                  <span className="nx-mode-tab__count">{formatCount(viewCounts[option.value])}</span>
                 </button>
               ))}
             </div>
