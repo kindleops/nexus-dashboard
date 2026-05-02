@@ -30,7 +30,11 @@ export const ActivityFeedFilters = ({ filters, onChange }: ActivityFeedFiltersPr
           key={category.value}
           type="button"
           className={cls('nx-activity-filter-chip', filters.category === category.value && 'is-active')}
-          onClick={() => onChange({ category: category.value })}
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onChange({ category: category.value })
+          }}
         >
           {category.label}
         </button>

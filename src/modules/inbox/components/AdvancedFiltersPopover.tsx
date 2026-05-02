@@ -1,4 +1,5 @@
 import { useCallback, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { Icon } from '../../../shared/icons'
 import type {
   InboxAdvancedFilters,
@@ -67,10 +68,10 @@ export const AdvancedFiltersPopover = ({
 
   if (!open) return null
 
-  return (
+  return createPortal(
     <div className="nx-filter-overlay" role="presentation" onMouseDown={onClose}>
       <section
-        className="nx-filter-modal nx-liquid-panel"
+        className="nx-filter-modal"
         role="dialog"
         aria-modal="true"
         aria-label="Advanced filters"
@@ -176,15 +177,34 @@ export const AdvancedFiltersPopover = ({
         </div>
 
         <footer className="nx-filter-modal__footer">
-          <button type="button" onClick={onReset}>Reset</button>
+          <button 
+            type="button" 
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onReset()
+            }}
+          >
+            Reset
+          </button>
           <div className="nx-filter-modal__footer-actions">
-            <button type="button" disabled title="Save View is not available yet">
+            <button 
+              type="button" 
+              disabled 
+              title="Save View is not available yet"
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+              }}
+            >
               Save View
             </button>
             <button
               type="button"
               className="nx-primary-action"
-              onClick={() => {
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
                 onApply?.()
                 onClose()
               }}
@@ -194,6 +214,7 @@ export const AdvancedFiltersPopover = ({
           </div>
         </footer>
       </section>
-    </div>
+    </div>,
+    document.body
   )
 }

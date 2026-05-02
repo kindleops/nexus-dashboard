@@ -92,7 +92,18 @@ export const ChatThread = ({
             type="button"
             className={cls('nx-chat-action', isStarred && 'is-active')}
             title={isStarred ? 'Unstar thread' : 'Star thread'}
-            onClick={onToggleStar}
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              console.log(`[NexusInboxActionNoRefresh]`, {
+                action: isStarred ? 'unstar' : 'star',
+                thread_id: thread.id.slice(-8),
+                optimistic: true,
+                preventedDefault: true,
+                stoppedPropagation: true
+              })
+              onToggleStar?.()
+            }}
           >
             <Icon name="star" />
           </button>
@@ -100,7 +111,18 @@ export const ChatThread = ({
             type="button"
             className={cls('nx-chat-action', thread.isPinned && 'is-active')}
             title={thread.isPinned ? 'Unpin thread' : 'Pin thread'}
-            onClick={onTogglePin}
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              console.log(`[NexusInboxActionNoRefresh]`, {
+                action: thread.isPinned ? 'unpin' : 'pin',
+                thread_id: thread.id.slice(-8),
+                optimistic: true,
+                preventedDefault: true,
+                stoppedPropagation: true
+              })
+              onTogglePin?.()
+            }}
           >
             <Icon name="pin" />
           </button>
@@ -108,7 +130,18 @@ export const ChatThread = ({
             type="button"
             className="nx-chat-action"
             title={thread.isArchived ? 'Unarchive thread' : 'Archive thread'}
-            onClick={onToggleArchive}
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              console.log(`[NexusInboxActionNoRefresh]`, {
+                action: thread.isArchived ? 'unarchive' : 'archive',
+                thread_id: thread.id.slice(-8),
+                optimistic: true,
+                preventedDefault: true,
+                stoppedPropagation: true
+              })
+              onToggleArchive?.()
+            }}
           >
             <Icon name="archive" />
           </button>
@@ -122,7 +155,17 @@ export const ChatThread = ({
               {msg.body}
               
               <div className="nx-bubble-actions">
-                <button type="button" title="Copy text" onClick={() => navigator.clipboard.writeText(msg.body)}><Icon name="layers" /></button>
+                <button 
+                  type="button" 
+                  title="Copy text" 
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    navigator.clipboard.writeText(msg.body)
+                  }}
+                >
+                  <Icon name="layers" />
+                </button>
                 <button type="button" title="Forward"><Icon name="send" /></button>
                 <button type="button" title="Translate"><Icon name="globe" /></button>
                 <button type="button" title="More"><Icon name="more" /></button>

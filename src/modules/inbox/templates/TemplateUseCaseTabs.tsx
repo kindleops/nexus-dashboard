@@ -15,7 +15,11 @@ export const TemplateUseCaseTabs = ({
       role="tab"
       aria-selected={value === 'all'}
       className={`nx-template-use-case ${value === 'all' ? 'is-active' : ''}`}
-      onClick={() => onChange('all')}
+      onClick={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        onChange('all')
+      }}
     >
       All
     </button>
@@ -26,7 +30,11 @@ export const TemplateUseCaseTabs = ({
         role="tab"
         aria-selected={value === category.slug}
         className={`nx-template-use-case ${value === category.slug ? 'is-active' : ''}`}
-        onClick={() => onChange(category.slug)}
+        onClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          onChange(category.slug)
+        }}
       >
         <span>{category.label}</span>
         <small>{category.count}</small>

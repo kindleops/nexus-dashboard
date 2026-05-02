@@ -58,7 +58,11 @@ export const ComposerTranslationBar = ({
             role="tab"
             aria-selected={threadViewMode === 'original'}
             className={threadViewMode === 'original' ? 'is-active' : ''}
-            onClick={() => onSetThreadViewMode('original')}
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onSetThreadViewMode('original')
+            }}
           >
             Orig
           </button>
@@ -67,7 +71,11 @@ export const ComposerTranslationBar = ({
             role="tab"
             aria-selected={threadViewMode === 'translated'}
             className={threadViewMode === 'translated' ? 'is-active' : ''}
-            onClick={() => onSetThreadViewMode('translated')}
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onSetThreadViewMode('translated')
+            }}
             disabled={!hasThreadTranslations}
           >
             Trans
@@ -80,7 +88,11 @@ export const ComposerTranslationBar = ({
             type="button"
             className="nx-translation-strip__btn"
             disabled={isSellerLanguageEnglish || !hasInboundMessages || isThreadTranslating}
-            onClick={onTranslateThread}
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onTranslateThread()
+            }}
           >
             {isThreadTranslating ? (
               <span className="nx-translation-strip__spinner" />
@@ -94,7 +106,11 @@ export const ComposerTranslationBar = ({
             type="button"
             className="nx-translation-strip__btn"
             disabled={!hasDraftText || isDraftTranslating}
-            onClick={onTranslateDraft}
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onTranslateDraft()
+            }}
           >
             {isDraftTranslating ? (
               <span className="nx-translation-strip__spinner" />
@@ -105,7 +121,15 @@ export const ComposerTranslationBar = ({
           </button>
 
           {canRevertDraft && (
-            <button type="button" className="nx-translation-strip__btn is-quiet" onClick={onRevertDraft}>
+            <button 
+              type="button" 
+              className="nx-translation-strip__btn is-quiet" 
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                onRevertDraft()
+              }}
+            >
               Undo
             </button>
           )}
@@ -117,7 +141,16 @@ export const ComposerTranslationBar = ({
         <div className="nx-translation-draft-preview">
           <div className="nx-translation-draft-preview__header">
             <span>Translated draft ready</span>
-            <button type="button" onClick={onUseDraftTranslation}>Use Translation</button>
+            <button 
+              type="button" 
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                onUseDraftTranslation()
+              }}
+            >
+              Use Translation
+            </button>
           </div>
           <p>{translatedDraftPreview}</p>
         </div>

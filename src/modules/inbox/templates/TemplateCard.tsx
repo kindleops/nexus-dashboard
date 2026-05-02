@@ -18,7 +18,11 @@ export const TemplateCard = ({
     <button
       type="button"
       className={`nx-template-card ${selected ? 'is-selected' : ''}`}
-      onClick={onSelect}
+      onClick={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        onSelect()
+      }}
     >
       <div className="nx-template-card__head">
         <strong>{template.useCase}</strong>

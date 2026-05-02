@@ -36,11 +36,13 @@ interface InboxSidebarProps {
   onApplySavedPreset: (preset: InboxSavedFilterPreset) => void
   viewCounts: Record<string, number | null | undefined>
   onOpenAdvancedFilters: () => void
+  onClearFilters?: () => void
   loadingError: string | null
   visibleThreadCount: number
   canLoadMore: boolean
   onLoadMore: () => void
   onThreadAction?: (id: string, action: 'star' | 'unstar' | 'pin' | 'unpin' | 'archive' | 'hide') => void
+  recentlyUpdatedThreadIds?: Set<string>
 }
 
 const fallback = (value: unknown, placeholder = '') => {
@@ -73,11 +75,19 @@ interface ConversationRowProps {
   thread: InboxWorkflowThread
   selected: boolean
   isStarred: boolean
+  isRecentlyUpdated?: boolean
   onSelect: (id: string) => void
   onAction?: (id: string, action: 'star' | 'unstar' | 'pin' | 'unpin' | 'archive' | 'hide') => void
 }
 
-export const ConversationRow = memo(({ thread, selected, isStarred, onSelect, onAction }: ConversationRowProps) => {
+export const ConversationRow = memo(({ 
+  thread, 
+  selected, 
+  isStarred, 
+  isRecentlyUpdated,
+  onSelect, 
+  onAction 
+}: ConversationRowProps) => {
   const row = thread as unknown as Record<string, unknown>
   const ownerName = resolveThreadPrimaryName(thread)
   const propertyAddress = resolveThreadAddressLine(thread)
@@ -87,15 +97,38 @@ export const ConversationRow = memo(({ thread, selected, isStarred, onSelect, on
   const visual = getStatusVisual(thread.inboxStage, isSuppressed)
   const market = resolveThreadMarketBadge(thread)
 
+  const handleAction = (e: React.MouseEvent, action: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (onAction) {
+      console.log(`[NexusInboxActionNoRefresh]`, {
+        action,
+        thread_id: thread.id.slice(-8),
+        optimistic: true,
+        preventedDefault: true,
+        stoppedPropagation: true
+      })
+      onAction(thread.id, action as any)
+    }
+  }
+
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       className={cls(
         'nx-conversation-row',
         selected && 'is-selected',
+        isRecentlyUpdated && 'is-updated',
         `intent-${uiIntent || 'default'}`,
       )}
       onClick={() => onSelect(thread.id)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onSelect(thread.id)
+        }
+      }}
       style={statusStyleVars(visual)}
     >
       <div className="nx-conversation-row__content">
@@ -128,12 +161,12 @@ export const ConversationRow = memo(({ thread, selected, isStarred, onSelect, on
             <span className="nx-market-tag">{market}</span>
           </div>
           
-          <div className="nx-conversation-row__hover-actions" onClick={(e) => e.stopPropagation()}>
+          <div className="nx-conversation-row__hover-actions">
              <button 
                type="button" 
                title={isStarred ? "Unstar" : "Star"} 
                className={cls("nx-hover-action-btn", isStarred && "is-active")}
-               onClick={() => onAction?.(thread.id, isStarred ? 'unstar' : 'star')}
+               onClick={(e) => handleAction(e, isStarred ? 'unstar' : 'star')}
              >
                <Icon name="star" />
              </button>
@@ -141,7 +174,7 @@ export const ConversationRow = memo(({ thread, selected, isStarred, onSelect, on
                type="button" 
                title={thread.isPinned ? "Unpin" : "Pin"} 
                className={cls("nx-hover-action-btn", thread.isPinned && "is-active")}
-               onClick={() => onAction?.(thread.id, thread.isPinned ? 'unpin' : 'pin')}
+               onClick={(e) => handleAction(e, thread.isPinned ? 'unpin' : 'pin')}
              >
                <Icon name="pin" />
              </button>
@@ -149,14 +182,14 @@ export const ConversationRow = memo(({ thread, selected, isStarred, onSelect, on
                type="button" 
                title="Archive" 
                className="nx-hover-action-btn"
-               onClick={() => onAction?.(thread.id, 'archive')}
+               onClick={(e) => handleAction(e, 'archive')}
              >
                <Icon name="archive" />
              </button>
           </div>
         </div>
       </div>
-    </button>
+    </div>
   )
 })
 
@@ -168,12 +201,14 @@ export const ConversationList = ({
   selectedId,
   onSelect,
   onAction,
+  recentlyUpdatedThreadIds = new Set(),
 }: {
   threads: InboxWorkflowThread[]
   activeViewFilter: InboxViewSelectValue
   selectedId: string | null
   onSelect: (id: string) => void
   onAction?: (id: string, action: 'star' | 'unstar' | 'pin' | 'unpin' | 'archive' | 'hide') => void
+  recentlyUpdatedThreadIds?: Set<string>
 }) => (
   <div className="nx-conversation-list">
     {threads.length > 0 ? (
@@ -183,6 +218,7 @@ export const ConversationList = ({
           thread={thread}
           selected={selectedId === thread.id}
           isStarred={thread.isStarred}
+          isRecentlyUpdated={recentlyUpdatedThreadIds.has(thread.id) || recentlyUpdatedThreadIds.has(thread.threadKey || '')}
           onSelect={onSelect}
           onAction={onAction}
         />
@@ -206,11 +242,13 @@ export const InboxSidebar = ({
   onApplySavedPreset,
   viewCounts,
   onOpenAdvancedFilters,
+  onClearFilters,
   loadingError,
   visibleThreadCount,
   canLoadMore,
   onLoadMore,
   onThreadAction,
+  recentlyUpdatedThreadIds = new Set(),
 }: InboxSidebarProps) => {
   const activePresetConfig = savedFilterOptions.find(o => o.value === savedPreset)
   const activeLabel = activePresetConfig?.label || 'Smart'
@@ -226,7 +264,15 @@ export const InboxSidebar = ({
       <div className="nx-sidebar__top">
         <div className="nx-sidebar__label-row">
           <span className="nx-section-label">{activeLabel.toUpperCase()} INBOX</span>
-          <button type="button" className="nx-sidebar__icon-button" title="Inbox settings">
+          <button 
+            type="button" 
+            className="nx-sidebar__icon-button" 
+            title="Inbox settings"
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+            }}
+          >
             <Icon name="settings" />
           </button>
         </div>
@@ -255,7 +301,11 @@ export const InboxSidebar = ({
                   key={option.value}
                   type="button"
                   className={cls('nx-mode-tab', savedPreset === option.value && 'is-active')}
-                  onClick={() => onApplySavedPreset(option.value as InboxSavedFilterPreset)}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    onApplySavedPreset(option.value as InboxSavedFilterPreset)
+                  }}
                 >
                   <span className="nx-mode-tab__label">{option.label}</span>
                   <span className="nx-mode-tab__count">{formatCount(viewCounts[option.value])}</span>
@@ -287,6 +337,20 @@ export const InboxSidebar = ({
           Advanced Filters
           <Icon name="chevron-right" />
         </button>
+        {onClearFilters && (
+          <button
+            type="button"
+            className="nx-sidebar__clear-btn"
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onClearFilters()
+            }}
+            title="Clear all filters"
+          >
+            Clear
+          </button>
+        )}
       </div>
 
       {loadingError && (
@@ -302,6 +366,7 @@ export const InboxSidebar = ({
         selectedId={selectedId}
         onSelect={onSelect}
         onAction={onThreadAction}
+        recentlyUpdatedThreadIds={recentlyUpdatedThreadIds}
       />
 
       {canLoadMore && (

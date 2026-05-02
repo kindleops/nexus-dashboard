@@ -160,7 +160,11 @@ export function InboxCommandPalette({ open, onClose, hasThread, commands }: Prop
                         disabled && 'is-disabled',
                       )}
                       onMouseEnter={() => { if (!disabled) setActiveIdx(idx) }}
-                      onClick={() => { if (!disabled) { cmd.action(); onClose() } }}
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        if (!disabled) { cmd.action(); onClose() }
+                      }}
                       tabIndex={-1}
                     >
                       <span className="nx-icp__item-label">{cmd.label}</span>

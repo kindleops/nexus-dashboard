@@ -32,7 +32,15 @@ export const TemplateLibraryDrawer = ({
           <span>SMS Templates</span>
           <h2>Template Library</h2>
         </div>
-        <button type="button" className="nx-inbox__conv-btn nx-inbox__conv-btn--ghost" onClick={onClose}>
+        <button 
+          type="button" 
+          className="nx-inbox__conv-btn nx-inbox__conv-btn--ghost" 
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onClose()
+          }}
+        >
           Close
         </button>
       </header>

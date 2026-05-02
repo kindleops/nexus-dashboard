@@ -111,7 +111,11 @@ const FilterChip = ({ label, active, onClick }: { label: string; active: boolean
   <button
     type="button"
     className={`nx-tpl-chip${active ? ' is-active' : ''}`}
-    onClick={onClick}
+    onClick={(e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      onClick()
+    }}
   >
     {label}
   </button>
@@ -312,7 +316,12 @@ export const TemplatePopover = ({
                   <button
                     type="button"
                     className="nx-tpl-action nx-tpl-action--insert"
-                    onClick={() => { onInsert(template.content); onClose() }}
+                    onClick={(e) => { 
+                      e.preventDefault()
+                      e.stopPropagation()
+                      onInsert(template.content)
+                      onClose() 
+                    }}
                   >
                     <Icon name="check" />
                     Insert
@@ -320,7 +329,12 @@ export const TemplatePopover = ({
                   <button
                     type="button"
                     className="nx-tpl-action nx-tpl-action--replace"
-                    onClick={() => { onReplace(template.content); onClose() }}
+                    onClick={(e) => { 
+                      e.preventDefault()
+                      e.stopPropagation()
+                      onReplace(template.content)
+                      onClose() 
+                    }}
                   >
                     <Icon name="palette" />
                     Replace
@@ -328,7 +342,12 @@ export const TemplatePopover = ({
                   <button
                     type="button"
                     className="nx-tpl-action nx-tpl-action--send"
-                    onClick={() => { onSendNow(template.content); onClose() }}
+                    onClick={(e) => { 
+                      e.preventDefault()
+                      e.stopPropagation()
+                      onSendNow(template.content)
+                      onClose() 
+                    }}
                   >
                     <Icon name="send" />
                     Send Now

@@ -27,7 +27,11 @@ export const InboxStatusTabs = ({
           role="tab"
           aria-selected={value === tab.id}
           className={`nx-inbox-status-tab ${value === tab.id ? 'is-active' : ''}`}
-          onClick={() => onChange(tab.id)}
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onChange(tab.id)
+          }}
         >
           {tab.label}
         </button>

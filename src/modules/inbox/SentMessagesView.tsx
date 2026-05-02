@@ -25,7 +25,17 @@ export const SentMessagesView = ({
             <span>From {item.fromNumber || 'unknown'}</span>
             {item.providerMessageId && <span>Provider {item.providerMessageId}</span>}
             {item.failedReason && <span className="nx-sent-item__failed">{item.failedReason}</span>}
-            <button type="button" className="nx-inline-button" onClick={() => onOpenThread(item.threadKey)}>Open Thread</button>
+            <button 
+              type="button" 
+              className="nx-inline-button" 
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                onOpenThread(item.threadKey)
+              }}
+            >
+              Open Thread
+            </button>
           </div>
         </div>
       ))}

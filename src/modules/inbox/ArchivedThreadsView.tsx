@@ -23,7 +23,15 @@ export const ArchivedThreadsView = ({
             onSelect={() => onSelect(thread.id)}
             onArchive={() => onUnarchive(thread)}
           />
-          <button type="button" className="nx-inline-button" onClick={() => onUnarchive(thread)}>
+          <button 
+            type="button" 
+            className="nx-inline-button" 
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onUnarchive(thread)
+            }}
+          >
             Unarchive
           </button>
         </div>

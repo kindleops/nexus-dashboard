@@ -247,13 +247,36 @@ export const NexusNotificationCenter = ({
               </header>
 
               <div className="nx-notification-center__tools">
-                <button type="button" className={showUnreadOnly ? 'is-active' : ''} onClick={() => setShowUnreadOnly((value) => !value)}>
+                <button 
+                  type="button" 
+                  className={showUnreadOnly ? 'is-active' : ''} 
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setShowUnreadOnly((value) => !value)
+                  }}
+                >
                   Unread {unreadCount}
                 </button>
-                <button type="button" className={showCriticalOnly ? 'is-active' : ''} onClick={() => setShowCriticalOnly((value) => !value)}>
+                <button 
+                  type="button" 
+                  className={showCriticalOnly ? 'is-active' : ''} 
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setShowCriticalOnly((value) => !value)
+                  }}
+                >
                   Critical
                 </button>
-                <button type="button" onClick={() => setReadIds(enriched.map((item) => item.id))}>
+                <button 
+                  type="button" 
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setReadIds(enriched.map((item) => item.id))
+                  }}
+                >
                   Mark all read
                 </button>
               </div>
@@ -264,7 +287,11 @@ export const NexusNotificationCenter = ({
                     key={space}
                     type="button"
                     className={activeSpace === space ? 'is-active' : ''}
-                    onClick={() => setActiveSpace(space)}
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setActiveSpace(space)
+                    }}
                   >
                     {space}
                   </button>
@@ -277,7 +304,9 @@ export const NexusNotificationCenter = ({
                     <button
                       type="button"
                       className="nx-notification-card__main"
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
                         setReadIds((ids) => ids.includes(item.id) ? ids : [...ids, item.id])
                         onOpenRecord(item)
                       }}
@@ -290,7 +319,15 @@ export const NexusNotificationCenter = ({
                       </span>
                       <b>{item.action_label}</b>
                     </button>
-                    <button type="button" onClick={() => setDismissedIds((ids) => [...ids, item.id])} aria-label="Dismiss notification">
+                    <button 
+                      type="button" 
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        setDismissedIds((ids) => [...ids, item.id])
+                      }} 
+                      aria-label="Dismiss notification"
+                    >
                       <Icon name="close" />
                     </button>
                   </article>

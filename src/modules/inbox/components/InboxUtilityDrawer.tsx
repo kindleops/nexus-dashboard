@@ -40,10 +40,18 @@ export const MapDossierDrawer = ({
           {title}
         </span>
         <div>
-          <button type="button" onClick={onToggleFull} title={full ? 'Split view' : 'Full view'}>
+          <button 
+            type="button" 
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onToggleFull(); }} 
+            title={full ? 'Split view' : 'Full view'}
+          >
             <Icon name={full ? 'layout-split' : 'maximize'} />
           </button>
-          <button type="button" onClick={onClose} title="Close">
+          <button 
+            type="button" 
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClose(); }} 
+            title="Close"
+          >
             <Icon name="close" />
           </button>
         </div>
@@ -103,10 +111,14 @@ export const InboxUtilityDrawer = ({
     <aside className="nx-utility-drawer">
       <header>
         <span>
-          <Icon name={type === 'ai' ? 'brain' : 'key'} />
+          <Icon name={type === 'ai' ? 'spark' : 'key'} />
           {title}
         </span>
-        <button type="button" onClick={onClose} title="Close">
+        <button 
+          type="button" 
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClose(); }} 
+          title="Close"
+        >
           <Icon name="close" />
         </button>
       </header>

@@ -43,6 +43,7 @@ export interface InboxThreadFilters {
   query?: string
   view?: string
   stage?: string
+  advanced?: Record<string, any>
 }
 
 export interface InboxFetchOptions {
@@ -281,7 +282,72 @@ const applyInboxViewServerFilters = (query: any, view: string | undefined): any 
     q = q.eq('is_starred', true)
   } else if (view === 'pinned') {
     q = q.eq('is_pinned', true)
+  } else if (view === 'sent') {
+    q = q.eq('ui_intent', 'sent').eq('is_archived', false)
+  } else if (view === 'queued') {
+    q = q.eq('ui_intent', 'queued').eq('is_archived', false)
+  } else if (view === 'failed') {
+    q = q.eq('ui_intent', 'failed').eq('is_archived', false)
   }
+  return q
+}
+
+const applyInboxSearchServerFilter = (query: any, text: string | undefined): any => {
+  if (!text || !text.trim()) return query
+  const term = `%${text.trim()}%`
+  return query.or(
+    `owner_display_name.ilike.${term},` +
+    `prospect_full_name.ilike.${term},` +
+    `property_address_full.ilike.${term},` +
+    `seller_phone.ilike.${term},` +
+    `thread_key.ilike.${term}`
+  )
+}
+
+const applyInboxAdvancedServerFilters = (query: any, filters: Record<string, any> | undefined): any => {
+  if (!filters) return query
+  let q = query
+
+  if (filters.market) q = q.ilike('market', `%${filters.market}%`)
+  if (filters.state) q = q.eq('property_address_state', filters.state)
+  if (filters.zip) q = q.eq('property_address_zip', filters.zip)
+  if (filters.propertyType) q = q.eq('property_type', filters.propertyType)
+  
+  if (filters.bedsMin !== undefined) q = q.gte('beds', filters.bedsMin)
+  if (filters.bathsMin !== undefined) q = q.gte('baths', filters.bathsMin)
+  
+  if (filters.estimatedValueMin !== undefined) q = q.gte('estimated_value', filters.estimatedValueMin)
+  if (filters.estimatedValueMax !== undefined) q = q.lte('estimated_value', filters.estimatedValueMax)
+  
+  if (filters.repairCostMin !== undefined) q = q.gte('estimated_repair_cost', filters.repairCostMin)
+  if (filters.repairCostMax !== undefined) q = q.lte('estimated_repair_cost', filters.repairCostMax)
+  
+  if (filters.cashOfferMin !== undefined) q = q.gte('cash_offer', filters.cashOfferMin)
+  if (filters.cashOfferMax !== undefined) q = q.lte('cash_offer', filters.cashOfferMax)
+  
+  if (filters.householdIncomeMin !== undefined) q = q.gte('est_household_income', filters.householdIncomeMin)
+  if (filters.householdIncomeMax !== undefined) q = q.lte('est_household_income', filters.householdIncomeMax)
+  
+  if (filters.netAssetValueMin !== undefined) q = q.gte('net_asset_value', filters.netAssetValueMin)
+  if (filters.netAssetValueMax !== undefined) q = q.lte('net_asset_value', filters.netAssetValueMax)
+  
+  if (filters.ownerType) q = q.eq('owner_type_guess', filters.ownerType)
+  if (filters.bestContactWindow) q = q.ilike('best_contact_window', `%${filters.bestContactWindow}%`)
+  
+  if (filters.priority) {
+    const bucket = filters.priority === 'urgent' ? 'priority' : filters.priority
+    q = q.eq('priority_bucket', bucket)
+  }
+  
+  if (filters.aiScoreMin !== undefined) q = q.gte('final_acquisition_score', filters.aiScoreMin)
+  if (filters.motivationMin !== undefined) q = q.gte('structured_motivation_score', filters.motivationMin)
+  
+  if (filters.persona) q = q.eq('agent_persona', filters.persona)
+  if (filters.language) q = q.eq('best_language', filters.language)
+  
+  if (filters.activityDateFrom) q = q.gte('latest_message_at', filters.activityDateFrom)
+  if (filters.activityDateTo) q = q.lte('latest_message_at', filters.activityDateTo)
+
   return q
 }
 
@@ -1111,6 +1177,8 @@ export const getInboxThreads = async (
   // Base query for counts with filters
   let countQuery = supabase.from('nexus_inbox_threads_v').select('*', { count: 'exact', head: true })
   countQuery = applyInboxViewServerFilters(countQuery, filterState.view)
+  countQuery = applyInboxSearchServerFilter(countQuery, filterState.query)
+  countQuery = applyInboxAdvancedServerFilters(countQuery, filterState.advanced)
 
   if (
     filterState.stage &&
@@ -1137,6 +1205,8 @@ export const getInboxThreads = async (
       .range(rangeStart, rangeEnd)
 
     query = applyInboxViewServerFilters(query, filterState.view)
+    query = applyInboxSearchServerFilter(query, filterState.query)
+    query = applyInboxAdvancedServerFilters(query, filterState.advanced)
 
     if (
       filterState.stage &&
@@ -1162,13 +1232,14 @@ export const getInboxThreads = async (
   }
 
   if (DEV) {
-    console.log('[NexusInbox] dataset summary', { 
+    console.log('[NexusInboxFilterQuery]', { 
+      mode: filterState.view || 'all',
+      filters: filterState,
       offset: startOffset, 
       limit: maxRows, 
       returned: rows.length, 
       totalAvailable,
-      hasMore: (totalAvailable ?? 0) > (startOffset + rows.length),
-      source: 'nexus_inbox_threads_v' 
+      queryApplied: true
     })
   }
 
@@ -1428,6 +1499,7 @@ export const fetchInboxModel = async (options: InboxFetchOptions = {}): Promise<
   
   // Real counts from backend (aligned with applyInboxViewServerFilters)
   const supabase = getSupabaseClient()
+  
   const priorityBase = supabase.from('nexus_inbox_threads_v').select('thread_key', { count: 'exact', head: true }).eq('show_in_priority_inbox', true).eq('is_archived', false)
   const activeBase = supabase
     .from('nexus_inbox_threads_v')
@@ -1443,46 +1515,91 @@ export const fetchInboxModel = async (options: InboxFetchOptions = {}): Promise<
     .eq('is_archived', false)
   const allBase = supabase.from('nexus_inbox_threads_v').select('thread_key', { count: 'exact', head: true })
   const unreadBase = supabase.from('nexus_inbox_threads_v').select('thread_key', { count: 'exact', head: true }).eq('is_archived', false).eq('is_read', false)
+  const archivedBase = supabase.from('nexus_inbox_threads_v').select('thread_key', { count: 'exact', head: true }).eq('is_archived', true)
+  const hiddenBase = supabase.from('nexus_inbox_threads_v').select('thread_key', { count: 'exact', head: true }).eq('is_archived', false).eq('priority_bucket', 'hidden')
+  const suppressedBase = supabase.from('nexus_inbox_threads_v').select('thread_key', { count: 'exact', head: true }).eq('is_archived', false).eq('priority_bucket', 'suppressed')
 
-  const [priorityCount, activeCount, waitingCount, allCount, unreadThreads] = await Promise.all([
+  const [
+    priorityRes, 
+    activeRes, 
+    waitingRes, 
+    allRes, 
+    unreadRes,
+    archivedRes,
+    hiddenRes,
+    suppressedRes
+  ] = await Promise.all([
     priorityBase,
     activeBase,
     waitingBase,
     allBase,
     unreadBase,
+    archivedBase,
+    hiddenBase,
+    suppressedBase,
   ])
 
   const safeCount = (res: { count: number | null }) => (res.count === null ? null : res.count)
+  
+  const rawCounts = {
+    priority: safeCount(priorityRes),
+    active: safeCount(activeRes),
+    waiting: safeCount(waitingRes),
+    all: safeCount(allRes),
+    unread: safeCount(unreadRes),
+    archived: safeCount(archivedRes),
+    hidden: safeCount(hiddenRes),
+    suppressed: safeCount(suppressedRes),
+  }
+
+  let resolvedActive = rawCounts.active
+  let activeFallbackUsed = false
+
+  if (resolvedActive === null && rawCounts.all !== null && rawCounts.archived !== null) {
+    // Fallback: active = all - archived - waiting - hidden - suppressed
+    const waiting = rawCounts.waiting ?? 0
+    const hidden = rawCounts.hidden ?? 0
+    const suppressed = rawCounts.suppressed ?? 0
+    resolvedActive = rawCounts.all - rawCounts.archived - waiting - hidden - suppressed
+    activeFallbackUsed = true
+  }
+
+  const resolvedCounts = {
+    ...rawCounts,
+    active: resolvedActive,
+  }
 
   if (DEV) {
-    console.log('[NexusInbox] Raw Backend Counts:', {
-      priority: priorityCount.count,
-      active: activeCount.count,
-      waiting: waitingCount.count,
-      all: allCount.count,
-      unread: unreadThreads.count,
-      errors: [priorityCount.error, activeCount.error, waitingCount.error, allCount.error, unreadThreads.error].filter(Boolean),
+    console.log('[NexusInboxCountsResolved]', {
+      rawCounts,
+      resolvedCounts,
+      source: 'live',
+      activeFallbackUsed,
+      filters: options.filters
     })
   }
 
   return {
     threads,
-    unreadCount: safeCount(unreadThreads) ?? threads.filter((thread) => thread.unreadCount > 0).length,
-    urgentCount: safeCount(priorityCount) ?? threads.filter((thread) => thread.priority === 'urgent').length,
-    totalCount: safeCount(allCount) ?? threads.length,
+    unreadCount: resolvedCounts.unread ?? threads.filter((thread) => thread.unreadCount > 0).length,
+    urgentCount: resolvedCounts.priority ?? threads.filter((thread) => thread.priority === 'urgent').length,
+    totalCount: resolvedCounts.all ?? threads.length,
     aiDraftCount: threads.filter((thread) => thread.aiDraft !== null).length,
     dataMode: 'live',
     liveFetchStatus: 'active',
     liveFetchError: null,
-    messageEventsCount: safeCount(activeCount),
-    messageEventsRawCount: safeCount(waitingCount),
-    groupedThreadCount: safeCount(allCount),
-    priorityInboxCount: safeCount(priorityCount),
-    activeInboxCount: safeCount(activeCount),
-    waitingInboxCount: safeCount(waitingCount),
-    allInboxCount: safeCount(allCount),
-    unreadThreadsCount: safeCount(unreadThreads),
+    messageEventsCount: resolvedCounts.active,
+    messageEventsRawCount: resolvedCounts.waiting,
+    groupedThreadCount: resolvedCounts.all,
+    priorityInboxCount: resolvedCounts.priority,
+    activeInboxCount: resolvedCounts.active,
+    waitingInboxCount: resolvedCounts.waiting,
+    allInboxCount: resolvedCounts.all,
+    unreadThreadsCount: resolvedCounts.unread,
     sendQueueCount: null,
+    archivedThreadsCount: resolvedCounts.archived,
+    hiddenThreadsCount: resolvedCounts.hidden,
+    suppressedThreadsCount: resolvedCounts.suppressed,
     lastLiveFetchAt,
   }
 }

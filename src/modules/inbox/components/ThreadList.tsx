@@ -73,7 +73,15 @@ export const ThreadList = memo(({
         <div className="nx-rail-title-row">
           <h1>Inbox</h1>
           <div className="nx-header-actions">
-            <button className="nx-icon-button" onClick={() => setFilterOpen(!filterOpen)}>
+            <button 
+              type="button" 
+              className="nx-icon-button" 
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setFilterOpen(!filterOpen)
+              }}
+            >
               <Icon name="filter" style={{width: 16}} />
             </button>
           </div>
@@ -93,8 +101,13 @@ export const ThreadList = memo(({
           {(['all', 'lead', 'qualified', 'offer'] as InboxStatusTab[]).map(stage => (
             <button 
               key={stage}
+              type="button"
               className={cls('nx-stage-filter', workflowTab === stage && 'is-active')}
-              onClick={() => setWorkflowTab(stage)}
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setWorkflowTab(stage)
+              }}
             >
               {stage}
             </button>

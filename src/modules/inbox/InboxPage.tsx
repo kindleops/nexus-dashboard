@@ -109,7 +109,7 @@ const isEnglishLanguage = (languageCode: string | null): boolean => {
 }
 
 export default function InboxPage() {
-  const { data, loading: dataLoading, refresh: refreshInbox, loadMore } = useInboxData()
+  const { data, loading: dataLoading, refresh: refreshInbox, loadMore, recentlyUpdatedThreadIds } = useInboxData()
   const DEV = Boolean(import.meta.env.DEV)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [stageFilter, setStageFilter] = useState<InboxStageSelectValue>('all_stages')
@@ -166,18 +166,23 @@ export default function InboxPage() {
     const pick = (backend: number | null | undefined, localVal: number) => {
       if (data.dataMode !== 'live') return localVal
       if (backend !== null && backend !== undefined) return backend
+      // Do NOT fallback to localVal 0 if we are in live mode but backend is still loading/null
       return null
     }
+
     const priority = pick(data.priorityInboxCount, local.priority)
     const active = pick(data.activeInboxCount, local.active)
     const waiting = pick(data.waitingInboxCount, local.waiting)
     const all = pick(data.allInboxCount, local.all)
+    const unread = pick(data.unreadThreadsCount, local.needs_response)
+
     return {
       ...local,
       priority,
       active,
       waiting,
       all,
+      unread,
       my_priority: priority,
       new_inbounds: active,
       offer_needed: waiting,
@@ -185,9 +190,11 @@ export default function InboxPage() {
       active_conversations: active,
       waiting_for_reply: waiting,
       all_threads: all,
-      archived_leads: statusCounts.archived ?? 0,
+      archived_leads: pick(data.archivedThreadsCount, local.archived),
+      wrong_numbers: pick(data.hiddenThreadsCount, local.hidden),
+      suppressed: pick(data.suppressedThreadsCount, local.suppressed),
     }
-  }, [threads, data, statusCounts, data.dataMode])
+  }, [threads, data, data.dataMode])
 
   const serverFilterOptions: ApplyInboxFiltersOptions = useMemo(() => {
     const live = data.dataMode === 'live'
@@ -319,6 +326,14 @@ export default function InboxPage() {
   }, [displayedMessages, threadTranslations, threadViewMode])
 
   const applySavedPreset = useCallback((preset: InboxSavedFilterPreset) => {
+    if (DEV) {
+      console.log(`[NexusInboxActionNoRefresh]`, {
+        action: `apply_preset_${preset}`,
+        optimistic: true,
+        preventedDefault: true,
+        stoppedPropagation: true
+      })
+    }
     setSavedPreset(preset)
     const config = getSavedPresetConfig(preset)
     if (config.stage) setStageFilter(config.stage)
@@ -327,6 +342,14 @@ export default function InboxPage() {
   }, [])
 
   const applyRightSavedPreset = useCallback((preset: InboxSavedFilterPreset) => {
+    if (DEV) {
+      console.log(`[NexusInboxActionNoRefresh]`, {
+        action: `apply_right_preset_${preset}`,
+        optimistic: true,
+        preventedDefault: true,
+        stoppedPropagation: true
+      })
+    }
     setRightSavedPreset(preset)
     const config = getSavedPresetConfig(preset)
     if (config.stage) setRightStageFilter(config.stage)
@@ -342,11 +365,20 @@ export default function InboxPage() {
     emitNotification({ title: message, detail: 'NEXUS layout updated', severity: 'success' })
   }, [])
 
+  const handleResetFilters = useCallback(() => {
+    setSearchQuery('')
+    setStageFilter('all_stages')
+    setViewFilter('priority')
+    setAdvancedFilters({ outOfStateOwner: 'all' })
+    setSavedPreset('my_priority')
+  }, [])
+
   const liveThreadQuery = useMemo(() => ({
     view: layoutState.inboxMode === 'full_double' ? 'all' : viewFilter,
     stage: stageFilter,
     query: searchQuery,
-  }), [layoutState.inboxMode, viewFilter, stageFilter, searchQuery])
+    advanced: advancedFilters,
+  }), [layoutState.inboxMode, viewFilter, stageFilter, searchQuery, advancedFilters])
 
   useEffect(() => {
     setVisibleThreadCount(1000)
@@ -709,6 +741,18 @@ export default function InboxPage() {
     }
 
     setOptimisticPatches(prev => ({ ...prev, [thread.id]: { ...prev[thread.id], ...optimistic } }))
+    
+    if (DEV) {
+      console.log(`[NexusInboxActionNoRefresh]`, {
+        action,
+        thread_id: thread.id.slice(-8),
+        optimistic: true,
+        persisted: false,
+        preventedDefault: true,
+        stoppedPropagation: true
+      })
+    }
+
     await handleWorkflowMutation(label, mutation, {
       skipRefresh: true,
       action: action === 'archive'
@@ -719,6 +763,13 @@ export default function InboxPage() {
                 ...prev,
                 [thread.id]: { ...prev[thread.id], isArchived: false, inboxStatus: 'open', inboxStage: 'needs_response' },
               }))
+              console.log(`[NexusInboxActionNoRefresh]`, {
+                action: 'undo_archive',
+                thread_id: thread.id.slice(-8),
+                optimistic: true,
+                preventedDefault: true,
+                stoppedPropagation: true
+              })
               void handleWorkflowMutation('Thread Restored', () => unarchiveThread(thread), { skipRefresh: true })
             },
           }
@@ -729,6 +780,17 @@ export default function InboxPage() {
   const handleStageChange = useCallback(async (stage: InboxStage) => {
     if (!selected) return
     setOptimisticPatches(prev => ({ ...prev, [selected.id]: { ...prev[selected.id], inboxStage: stage } }))
+    
+    if (DEV) {
+      console.log(`[NexusInboxActionNoRefresh]`, {
+        action: `stage_change_${stage}`,
+        thread_id: selected.id.slice(-8),
+        optimistic: true,
+        preventedDefault: true,
+        stoppedPropagation: true
+      })
+    }
+
     await handleWorkflowMutation(`Stage: ${stage.replace(/_/g, ' ')}`, () => updateThreadStage(selected, stage), { skipRefresh: true })
   }, [selected, handleWorkflowMutation])
 
@@ -880,10 +942,12 @@ export default function InboxPage() {
             onThreadAction={handleThreadAction}
             viewCounts={viewCounts}
             onOpenAdvancedFilters={() => setActiveOverlay('filters')}
+            onClearFilters={handleResetFilters}
             loadingError={DEV && data.liveFetchStatus === 'error' ? data.liveFetchError : null}
             visibleThreadCount={visibleThreadCount}
             canLoadMore={true}
             onLoadMore={handleLoadMore}
+            recentlyUpdatedThreadIds={recentlyUpdatedThreadIds}
           />
         )}
 
@@ -898,10 +962,12 @@ export default function InboxPage() {
             onThreadAction={handleThreadAction}
             viewCounts={viewCounts}
             onOpenAdvancedFilters={() => setActiveOverlay('filters')}
+            onClearFilters={handleResetFilters}
             loadingError={null}
             visibleThreadCount={visibleThreadCount}
             canLoadMore={true}
             onLoadMore={handleLoadMore}
+            recentlyUpdatedThreadIds={recentlyUpdatedThreadIds}
           />
         )}
 
@@ -1036,13 +1102,9 @@ export default function InboxPage() {
         onAdvancedFiltersChange={(patch) => setAdvancedFilters((current) => ({ ...current, ...patch }))}
         advancedFilterOptions={advancedFilterOptions}
         viewCounts={viewCounts}
-        onReset={() => {
-          setStageFilter('all_stages')
-          setViewFilter('priority')
-          setAdvancedFilters({ outOfStateOwner: 'all' })
-        }}
+        onReset={handleResetFilters}
         onClose={() => setActiveOverlay(null)}
-        onApply={() => { void refreshInbox({ filters: liveThreadQuery }) }}
+        onApply={() => { /* Handled by useEffect */ }}
       />
 
       {activeOverlay === 'activity' && typeof document !== 'undefined'

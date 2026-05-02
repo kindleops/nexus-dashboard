@@ -17,7 +17,16 @@ interface ActivityEventRowProps {
 
 export const ActivityEventRow = ({ event, expanded, onToggle }: ActivityEventRowProps) => (
   <article className={cls('nx-activity-event', `is-${event.severity}`, expanded && 'is-expanded')}>
-    <button type="button" className="nx-activity-event-button" onClick={onToggle} aria-expanded={expanded}>
+    <button 
+      type="button" 
+      className="nx-activity-event-button" 
+      onClick={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        onToggle()
+      }} 
+      aria-expanded={expanded}
+    >
       <span className="nx-activity-event__timeline-node">
         <Icon name={getActivityEventIcon(event)} />
       </span>

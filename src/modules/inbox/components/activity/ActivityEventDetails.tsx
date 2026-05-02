@@ -60,7 +60,14 @@ export const ActivityEventDetails = ({ event }: ActivityEventDetailsProps) => {
       )}
 
       <div className="nx-activity-detail-actions">
-        <button type="button" onClick={onCopy}>
+        <button 
+          type="button" 
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onCopy()
+          }}
+        >
           {copied ? 'Copied' : 'Copy event data'}
         </button>
       </div>

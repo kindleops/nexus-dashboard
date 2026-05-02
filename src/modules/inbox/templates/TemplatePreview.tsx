@@ -49,11 +49,56 @@ export const TemplatePreview = ({
         onChange={onVariableChange}
       />
       <div className="nx-template-preview__actions">
-        <button type="button" onClick={onInsert}>Insert</button>
-        <button type="button" onClick={onReplace}>Replace Draft</button>
-        <button type="button" onClick={onSendNow}>Send Now</button>
-        <button type="button" onClick={onQueue}>Queue Reply</button>
-        <button type="button" onClick={onSchedule}>Schedule</button>
+        <button 
+          type="button" 
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onInsert()
+          }}
+        >
+          Insert
+        </button>
+        <button 
+          type="button" 
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onReplace()
+          }}
+        >
+          Replace Draft
+        </button>
+        <button 
+          type="button" 
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onSendNow()
+          }}
+        >
+          Send Now
+        </button>
+        <button 
+          type="button" 
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onQueue()
+          }}
+        >
+          Queue Reply
+        </button>
+        <button 
+          type="button" 
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onSchedule()
+          }}
+        >
+          Schedule
+        </button>
       </div>
     </div>
   )

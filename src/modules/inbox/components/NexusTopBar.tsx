@@ -63,7 +63,11 @@ export const ViewToggleButton = ({
   <button
     type="button"
     className={cls('nx-view-toggle', active && 'is-active')}
-    onClick={onClick}
+    onClick={(e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      onClick()
+    }}
     aria-pressed={Boolean(active)}
     aria-label={label}
     title={shortcut ? `${label} (${shortcut})` : label}
@@ -156,8 +160,17 @@ export const NexusTopBar = ({
                     type="button"
                     className={cls(selected && 'is-selected')}
                     style={statusStyleVars(option)}
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
                       setStatusOpen(false)
+                      console.log(`[NexusInboxActionNoRefresh]`, {
+                        action: `stage_change_${option.value}`,
+                        thread_id: selectedThread?.id.slice(-8),
+                        optimistic: true,
+                        preventedDefault: true,
+                        stoppedPropagation: true
+                      })
                       onStageChange(option.value)
                     }}
                   >
@@ -198,6 +211,7 @@ export const NexusTopBar = ({
                   className="nx-search-result-item"
                   onMouseDown={(event) => {
                     event.preventDefault()
+                    event.stopPropagation()
                     onSelectSearchResult(thread.id)
                   }}
                 >
@@ -217,7 +231,11 @@ export const NexusTopBar = ({
           <button
             type="button"
             className={cls('nx-processor-button', `is-${processorStatus}`)}
-            onClick={() => onOpenOverlay(activeOverlay === 'queue' ? null : 'queue')}
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onOpenOverlay(activeOverlay === 'queue' ? null : 'queue')
+            }}
             aria-expanded={activeOverlay === 'queue'}
             title="Queue processor health"
           >
@@ -240,7 +258,11 @@ export const NexusTopBar = ({
         <button
           type="button"
           className="nx-icon-control"
-          onClick={onToggleTheme}
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onToggleTheme()
+          }}
           title={theme === 'light' ? 'Dark mode' : 'Light mode'}
           aria-label={theme === 'light' ? 'Enable dark mode' : 'Enable light mode'}
         >
@@ -251,7 +273,11 @@ export const NexusTopBar = ({
           <button
             type="button"
             className="nx-notification-button"
-            onClick={onOpenActivity}
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onOpenActivity()
+            }}
             title="Activity Log"
           >
             <Icon name="activity" />
@@ -262,7 +288,11 @@ export const NexusTopBar = ({
           <button
             type="button"
             className={cls('nx-notification-button', unreadNotifications > 0 && 'has-alerts')}
-            onClick={() => onOpenOverlay(activeOverlay === 'notifications' ? null : 'notifications')}
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onOpenOverlay(activeOverlay === 'notifications' ? null : 'notifications')
+            }}
             aria-expanded={activeOverlay === 'notifications'}
             title="Notifications"
           >
@@ -275,7 +305,11 @@ export const NexusTopBar = ({
           type="button"
           className="nx-avatar-menu"
           title="User menu"
-          onClick={() => onOpenOverlay(activeOverlay === 'avatar' ? null : 'avatar')}
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onOpenOverlay(activeOverlay === 'avatar' ? null : 'avatar')
+          }}
           aria-expanded={activeOverlay === 'avatar'}
         >
           <span>RK</span>
@@ -284,12 +318,66 @@ export const NexusTopBar = ({
 
         {activeOverlay === 'avatar' && (
           <div className="nx-avatar-popover nx-liquid-popover">
-            <button type="button" onClick={onOpenMap}><Icon name="map" /> Map Mode <kbd>⌘M</kbd></button>
-            <button type="button" onClick={onOpenDossier}><Icon name="briefing" /> Dossier</button>
-            <button type="button" onClick={onOpenAi}><Icon name="brain" /> AI Assistant</button>
-            <button type="button" onClick={onOpenKeys}><Icon name="key" /> Keyboard Shortcuts</button>
-            <button type="button" onClick={onOpenKpis}><Icon name="stats" /> KPI Intelligence</button>
-            <button type="button" onClick={onResetLayout}><Icon name="layout-split" /> Reset Layout</button>
+            <button 
+              type="button" 
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                onOpenMap()
+              }}
+            >
+              <Icon name="map" /> Map Mode <kbd>⌘M</kbd>
+            </button>
+            <button 
+              type="button" 
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                onOpenDossier()
+              }}
+            >
+              <Icon name="briefing" /> Dossier
+            </button>
+            <button 
+              type="button" 
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                onOpenAi()
+              }}
+            >
+              <Icon name="spark" /> AI Assistant
+            </button>
+            <button 
+              type="button" 
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                onOpenKeys()
+              }}
+            >
+              <Icon name="key" /> Keyboard Shortcuts
+            </button>
+            <button 
+              type="button" 
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                onOpenKpis()
+              }}
+            >
+              <Icon name="stats" /> KPI Intelligence
+            </button>
+            <button 
+              type="button" 
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                onResetLayout()
+              }}
+            >
+              <Icon name="layout-split" /> Reset Layout
+            </button>
           </div>
         )}
       </div>

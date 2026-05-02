@@ -82,10 +82,28 @@ export const InboxActivityPanel = ({
                 <small>By {item.actor}</small>
                 <div className="nx-activity-card__actions">
                   {item.undo_payload && (
-                    <button type="button" onClick={() => handleUndo(item.id)}>Undo</button>
+                    <button 
+                      type="button" 
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        handleUndo(item.id)
+                      }}
+                    >
+                      Undo
+                    </button>
                   )}
                   {onViewThread && (
-                    <button type="button" onClick={() => onViewThread(item.thread_key)}>View</button>
+                    <button 
+                      type="button" 
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        onViewThread(item.thread_key)
+                      }}
+                    >
+                      View
+                    </button>
                   )}
                 </div>
               </div>

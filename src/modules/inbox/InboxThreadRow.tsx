@@ -22,10 +22,17 @@ export const InboxThreadRow = ({
   ].filter(Boolean).slice(0, 2)
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       className={`nx-thread-card nx-thread-row ${selected ? 'is-selected' : ''} ${!thread.isRead ? 'is-unread' : ''}`}
       onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onSelect()
+        }
+      }}
     >
       <div className="nx-thread-row__top">
         <div className="nx-thread-row__title">
@@ -49,17 +56,33 @@ export const InboxThreadRow = ({
         {!thread.isArchived && (
           <>
             {onMarkRead && !thread.isRead && (
-              <button type="button" className="nx-inline-button" onClick={(e) => { e.stopPropagation(); onMarkRead() }}>
+              <button 
+                type="button" 
+                className="nx-inline-button" 
+                onClick={(e) => { 
+                  e.preventDefault()
+                  e.stopPropagation()
+                  onMarkRead() 
+                }}
+              >
                 Read
               </button>
             )}
-            <button type="button" className="nx-inline-button" onClick={(e) => { e.stopPropagation(); onArchive() }}>
+            <button 
+              type="button" 
+              className="nx-inline-button" 
+              onClick={(e) => { 
+                e.preventDefault()
+                e.stopPropagation()
+                onArchive() 
+              }}
+            >
               Archive
             </button>
           </>
         )}
         {thread.isArchived && <span className="nx-thread-row__archived">Archived</span>}
       </div>
-    </button>
+    </div>
   )
 }

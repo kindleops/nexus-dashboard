@@ -15,7 +15,11 @@ export const TemplateLanguageTabs = ({
         role="tab"
         aria-selected={value === language}
         className={`nx-template-tab ${value === language ? 'is-active' : ''}`}
-        onClick={() => onChange(language)}
+        onClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          onChange(language)
+        }}
       >
         {language}
       </button>

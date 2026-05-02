@@ -35,7 +35,15 @@ const StageSelector = ({ stage, onChange }: { stage: InboxStage; onChange: (s: I
 
   return (
     <div className="nx-stage-selector">
-      <button type="button" className="nx-stage-btn" onClick={() => setOpen((v) => !v)}>
+      <button 
+        type="button" 
+        className="nx-stage-btn" 
+        onClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          setOpen((v) => !v)
+        }}
+      >
         <span className="nx-stage-dot" style={{ background: current.color }} />
         {current.label}
         <Icon name="chevron-down" />
@@ -47,7 +55,19 @@ const StageSelector = ({ stage, onChange }: { stage: InboxStage; onChange: (s: I
               key={opt.value}
               type="button"
               className={cls('nx-stage-option', stage === opt.value && 'is-active')}
-              onClick={() => { onChange(opt.value); setOpen(false) }}
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                console.log(`[NexusInboxActionNoRefresh]`, {
+                  action: `stage_change_${opt.value}`,
+                  thread_id: 'unknown_panel',
+                  optimistic: true,
+                  preventedDefault: true,
+                  stoppedPropagation: true
+                })
+                onChange(opt.value)
+                setOpen(false)
+              }}
             >
               <span className="nx-stage-dot" style={{ background: opt.color }} />
               {opt.label}
@@ -99,7 +119,15 @@ const CollapsibleIntelCard = ({
   const [expanded, setExpanded] = useState(defaultExpanded)
   return (
     <section className={cls('nx-intel-card', !expanded && 'is-collapsed')}>
-      <button type="button" className="nx-intel-card__header" onClick={() => setExpanded(!expanded)}>
+      <button 
+        type="button" 
+        className="nx-intel-card__header" 
+        onClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          setExpanded(!expanded)
+        }}
+      >
         <Icon name={icon as any} />
         <strong>{title}</strong>
         <Icon name="chevron-down" className={cls('nx-intel-card__chevron', expanded && 'is-rotated')} />
@@ -243,7 +271,16 @@ export const IntelligencePanel = (props: IntelligencePanelProps) => {
           {onStageChange && (
             <StageSelector stage={thread.inboxStage} onChange={onStageChange} />
           )}
-          <button type="button" className="nx-intel-collapse" onClick={onCollapse} title="Collapse intelligence panel">
+          <button 
+            type="button" 
+            className="nx-intel-collapse" 
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onCollapse()
+            }} 
+            title="Collapse intelligence panel"
+          >
             <Icon name="chevron-right" />
           </button>
         </div>
@@ -256,9 +293,31 @@ export const IntelligencePanel = (props: IntelligencePanelProps) => {
          <AutomationMetadataCard thread={thread} intelligence={intelligence} />
 
          <div className="nx-intel-action-rail">
-            <button type="button" className="nx-intel-action-btn" onClick={onOpenMap}><Icon name="map" /><span>Map</span></button>
-            <button type="button" className="nx-intel-action-btn" onClick={onOpenDossier}><Icon name="briefing" /><span>Dossier</span></button>
-            <button type="button" className="nx-intel-action-btn" onClick={onOpenAi} disabled={isSuppressed}><Icon name="spark" /><span>AI Assist</span></button>
+            <button 
+              type="button" 
+              className="nx-intel-action-btn" 
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpenMap(); }}
+            >
+              <Icon name="map" />
+              <span>Map</span>
+            </button>
+            <button 
+              type="button" 
+              className="nx-intel-action-btn" 
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpenDossier(); }}
+            >
+              <Icon name="briefing" />
+              <span>Dossier</span>
+            </button>
+            <button 
+              type="button" 
+              className="nx-intel-action-btn" 
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpenAi(); }} 
+              disabled={isSuppressed}
+            >
+              <Icon name="spark" />
+              <span>AI Assist</span>
+            </button>
          </div>
       </div>
     </aside>
