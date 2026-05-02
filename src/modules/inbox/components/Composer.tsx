@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from '../../../shared/icons'
 import { TemplatePopover } from './TemplatePopover'
@@ -96,6 +96,7 @@ export const Composer = ({
   const [voiceLevel, setVoiceLevel] = useState(0)
   const [transcription, setTranscription] = useState('')
   const [isHovered, setIsHovered] = useState(false)
+  const [isFocused, setIsFocused] = useState(false)
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
   const baseDraftRef = useRef('')
   const analyserRef = useRef<AnalyserNode | null>(null)
@@ -108,7 +109,7 @@ export const Composer = ({
   const tools: ComposerTool[] = [
     { id: 'templates', label: 'Templates', icon: 'file-text', action: () => setTemplatePopoverOpen(true), disabled: false },
     { id: 'ai-assist', label: 'AI Assist', icon: 'spark', action: onAI, disabled: false },
-    { id: 'translate', label: isTranslating ? 'Original' : 'Translate', icon: 'globe', action: onTranslate ?? (() => {}), disabled: false },
+    { id: 'translate', label: isTranslating ? 'Original' : 'Translate', icon: 'globe', action: () => onTranslate?.(), disabled: false },
     { id: 'offer', label: 'Offer', icon: 'zap', action: () => setOfferGlassOpen(true), disabled },
     { id: 'schedule', label: 'Schedule', icon: 'calendar', action: onOpenSchedule, disabled },
     { id: 'notes', label: 'Notes', icon: 'file-text', action: () => setNotesGlassOpen(true), disabled: false },
@@ -235,7 +236,17 @@ export const Composer = ({
         ? 'Stop recording'
         : 'Talk to type'
 
-  const showUtilities = isHovered || templatePopoverOpen || offerGlassOpen || notesGlassOpen
+  const DEV = Boolean(import.meta.env.DEV)
+  const showUtilities = isHovered || isFocused || templatePopoverOpen || offerGlassOpen || notesGlassOpen
+
+  useEffect(() => {
+    if (DEV) {
+      console.log(`[NexusComposerRail]`, {
+        visible: showUtilities,
+        reason: isHovered ? 'hover' : isFocused ? 'focus' : templatePopoverOpen ? 'templates' : offerGlassOpen ? 'offer' : notesGlassOpen ? 'notes' : 'hidden'
+      })
+    }
+  }, [DEV, showUtilities, isHovered, isFocused, templatePopoverOpen, offerGlassOpen, notesGlassOpen])
 
   return (
     <div 
@@ -243,7 +254,6 @@ export const Composer = ({
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      {/* Utility action row - Phase 2: Hidden until hover/focus */}
       <div className="nx-composer-utility-row">
         {tools.map(tool => (
           <button
@@ -254,7 +264,12 @@ export const Composer = ({
               tool.id === 'templates' && templatePopoverOpen && 'is-active',
               tool.id === 'translate' && isTranslating && 'is-translating-active'
             )}
-            onClick={tool.action}
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              if (DEV) console.log(`[NexusComposerRail] action: ${tool.id}`)
+              tool.action()
+            }}
             disabled={tool.disabled}
           >
             <Icon name={tool.icon} style={{ width: 13, marginRight: 5 }} />
@@ -277,8 +292,8 @@ export const Composer = ({
           onChange={e => setDraftText(e.target.value)}
           rows={1}
           disabled={disabled}
-          onFocus={() => {}}
-          onBlur={() => {}}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
           onInput={(e) => {
             const target = e.target as HTMLTextAreaElement
             target.style.height = 'auto'

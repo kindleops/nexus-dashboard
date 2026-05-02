@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { QueueProcessorHealth } from '../../../lib/data/inboxData'
 import type { InboxStage, InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
@@ -107,7 +107,21 @@ export const NexusTopBar = ({
   onOpenActivity,
   onResetLayout,
 }: NexusTopBarProps) => {
+  const DEV = Boolean(import.meta.env.DEV)
   const [statusOpen, setStatusOpen] = useState(false)
+
+  useEffect(() => {
+    if (DEV && statusOpen) {
+      console.log(`[NexusPopover]`, { name: 'ThreadStatus', action: 'open', open: true })
+    }
+  }, [statusOpen, DEV])
+
+  useEffect(() => {
+    if (DEV && activeOverlay) {
+      console.log(`[NexusPopover]`, { name: activeOverlay, action: 'open', open: true })
+    }
+  }, [activeOverlay, DEV])
+
   const showSearchResults = searchQuery.trim().length > 0
   const processorStatus = queueProcessorHealth?.status ?? 'unknown'
   const processorLabel = processorStatus === 'healthy' ? 'Healthy' : processorStatus === 'lagging' ? 'Delayed' : 'Unknown'
@@ -115,6 +129,7 @@ export const NexusTopBar = ({
   const statusVisual = getStatusVisual(selectedStage, isSuppressed)
   const notifications = buildInboxNotifications({ unreadCount: notificationCount, selectedThread, queueProcessorHealth })
   const unreadNotifications = notifications.filter((item) => item.status !== 'read').length
+  
   const handleNotificationAction = (notification: NexusNotification) => {
     if (notification.related_thread_id) onSelectSearchResult(notification.related_thread_id)
     onCloseOverlay()
@@ -164,6 +179,7 @@ export const NexusTopBar = ({
                       e.preventDefault()
                       e.stopPropagation()
                       setStatusOpen(false)
+                      if (DEV) console.log(`[NexusPopover]`, { name: 'ThreadStatus', action: 'close', open: false })
                       console.log(`[NexusInboxActionNoRefresh]`, {
                         action: `stage_change_${option.value}`,
                         thread_id: selectedThread?.id.slice(-8),
@@ -198,7 +214,7 @@ export const NexusTopBar = ({
         />
         <kbd>⌘K</kbd>
         {showSearchResults && (
-          <div className="nx-search-results-popover">
+          <div className="nx-search-results-popover nx-liquid-popover">
             <div className="nx-search-results-popover__header">
               <span>Search Results</span>
               <b>{searchResults.length}</b>

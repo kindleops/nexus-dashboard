@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { Icon } from '../../../shared/icons'
 
 type ThreadTranslateViewMode = 'original' | 'translated'
@@ -42,7 +43,7 @@ export const ComposerTranslationBar = ({
   onRevertDraft,
 }: ComposerTranslationBarProps) => {
 
-  return (
+  return createPortal(
     <div className="nx-translation-strip" role="region" aria-label="Translation controls">
       <div className="nx-translation-strip__row">
         {/* Language indicator */}
@@ -162,6 +163,7 @@ export const ComposerTranslationBar = ({
           {translationError}
         </div>
       )}
-    </div>
+    </div>,
+    document.body
   )
 }

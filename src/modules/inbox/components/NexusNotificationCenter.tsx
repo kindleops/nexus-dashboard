@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react'
+import { useMemo, useState, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import type { QueueProcessorHealth } from '../../../lib/data/inboxData'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
@@ -181,11 +181,23 @@ export const NexusNotificationCenter = ({
   onClose: () => void
   onOpenRecord: (notification: NexusNotification) => void
 }) => {
+  const DEV = Boolean(import.meta.env.DEV)
   const [activeSpace, setActiveSpace] = useState('All')
   const [showUnreadOnly, setShowUnreadOnly] = useState(false)
   const [showCriticalOnly, setShowCriticalOnly] = useState(false)
   const [readIds, setReadIds] = useState<string[]>([])
   const [dismissedIds, setDismissedIds] = useState<string[]>([])
+
+  useEffect(() => {
+    if (open && DEV) {
+      console.log(`[NexusPopover]`, { name: 'NotificationCenter', action: 'open', open: true })
+    }
+  }, [open, DEV])
+
+  const handleClose = useCallback(() => {
+    if (DEV) console.log(`[NexusPopover]`, { name: 'NotificationCenter', action: 'close', open: false })
+    onClose()
+  }, [onClose, DEV])
 
   const enriched = useMemo(() => (
     notifications
@@ -241,7 +253,7 @@ export const NexusNotificationCenter = ({
                   <span>Command Space</span>
                   <strong>Notifications</strong>
                 </div>
-                <button type="button" onClick={onClose} aria-label="Close notifications">
+                <button type="button" onClick={handleClose} aria-label="Close notifications">
                   <Icon name="close" />
                 </button>
               </header>

@@ -1,4 +1,4 @@
-import { useCallback, type ReactNode } from 'react'
+import { useCallback, useEffect, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from '../../../shared/icons'
 import type {
@@ -62,14 +62,26 @@ export const AdvancedFiltersPopover = ({
   onClose,
   onApply,
 }: AdvancedFiltersPopoverProps) => {
+  const DEV = Boolean(import.meta.env.DEV)
   const patch = useCallback((next: Partial<InboxAdvancedFilters>) => {
     onAdvancedFiltersChange(next)
   }, [onAdvancedFiltersChange])
 
+  useEffect(() => {
+    if (open && DEV) {
+      console.log(`[NexusPopover]`, { name: 'AdvancedFilters', action: 'open', open: true })
+    }
+  }, [open, DEV])
+
+  const handleClose = useCallback(() => {
+    if (DEV) console.log(`[NexusPopover]`, { name: 'AdvancedFilters', action: 'close', open: false })
+    onClose()
+  }, [onClose, DEV])
+
   if (!open) return null
 
   return createPortal(
-    <div className="nx-filter-overlay" role="presentation" onMouseDown={onClose}>
+    <div className="nx-filter-overlay" role="presentation" onMouseDown={handleClose}>
       <section
         className="nx-filter-modal"
         role="dialog"
@@ -82,7 +94,7 @@ export const AdvancedFiltersPopover = ({
             <span>Command Filters</span>
             <strong>Advanced Filters</strong>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close advanced filters">
+          <button type="button" onClick={handleClose} aria-label="Close advanced filters">
             <Icon name="close" />
           </button>
         </header>
@@ -206,7 +218,7 @@ export const AdvancedFiltersPopover = ({
                 e.preventDefault()
                 e.stopPropagation()
                 onApply?.()
-                onClose()
+                handleClose()
               }}
             >
               Apply Filters

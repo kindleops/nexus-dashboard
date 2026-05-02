@@ -153,23 +153,6 @@ export const ChatThread = ({
           <div key={msg.id} className={cls('nx-bubble-wrap', msg.direction === 'inbound' ? 'is-inbound' : 'is-outbound')}>
             <div className="nx-chat-bubble">
               {msg.body}
-              
-              <div className="nx-bubble-actions">
-                <button 
-                  type="button" 
-                  title="Copy text" 
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    navigator.clipboard.writeText(msg.body)
-                  }}
-                >
-                  <Icon name="layers" />
-                </button>
-                <button type="button" title="Forward"><Icon name="send" /></button>
-                <button type="button" title="Translate"><Icon name="globe" /></button>
-                <button type="button" title="More"><Icon name="more" /></button>
-              </div>
             </div>
 
             <div className="nx-bubble-footer">

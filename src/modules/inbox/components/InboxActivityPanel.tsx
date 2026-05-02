@@ -13,8 +13,16 @@ export const InboxActivityPanel = ({
   onClose: () => void
   onViewThread?: (threadKey: string) => void
 }) => {
+  const DEV = Boolean(import.meta.env.DEV)
   const [activities, setActivities] = useState<InboxActivityEvent[]>([])
   const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (DEV) console.log(`[NexusPopover]`, { name: 'ActivityLog', action: 'open', open: true })
+    return () => {
+      if (DEV) console.log(`[NexusPopover]`, { name: 'ActivityLog', action: 'close', open: false })
+    }
+  }, [DEV])
 
   useEffect(() => {
     let cancelled = false

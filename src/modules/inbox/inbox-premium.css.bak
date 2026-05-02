@@ -5710,82 +5710,16 @@
   box-shadow: 0 0 12px rgba(10, 132, 255, 0.3);
 }
 
-
-/* ── ELITE STAGE ORBIT INDICATOR (TASK 8 REFINEMENT) ────────────────────── */
-.nx-stage-orbit {
-  position: relative;
-  height: 44px;
-  min-width: 192px;
-  display: inline-flex;
-  align-items: center;
-  padding: 0 16px;
-  background: rgba(15, 20, 31, 0.65) !important;
-  backdrop-filter: blur(24px) saturate(180%) !important;
-  border: 1px solid rgba(255, 255, 255, 0.12) !important;
-  border-radius: 22px !important;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  gap: 0;
-}
-
-.nx-stage-orbit:hover {
-  background: rgba(15, 20, 31, 0.8) !important;
-  border-color: rgba(255, 255, 255, 0.2) !important;
-  transform: translateY(-1px);
-}
-
-.nx-stage-orbit__halo {
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  background: var(--status-color, var(--accent-blue));
-  box-shadow: 0 0 12px var(--status-pulse, rgba(10, 132, 255, 0.6));
-  margin-right: 14px;
-  flex-shrink: 0;
-}
-
-.nx-stage-orbit__copy {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  flex: 1;
-  text-align: left;
-}
-
-.nx-stage-orbit__copy small {
-  color: rgba(255, 255, 255, 0.5);
-  font-size: 9px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  line-height: 1;
-  margin-bottom: 2px;
-}
-
-.nx-stage-orbit__copy strong {
-  color: #fff;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.nx-stage-orbit > svg {
-  margin-left: 8px;
-  color: rgba(255, 255, 255, 0.4);
-  width: 14px;
-  height: 14px;
-}
-
-/* ── DEFINITIVE LIQUID GLASS PANELS (TASK 8 FINAL) ─────────────────────── */
+/* ── DEFINITIVE LIQUID GLASS PANELS (TASK 8 REFINEMENT) ────────────────── */
 .nx-liquid-panel {
-  background: rgba(15, 20, 31, 0.92) !important;
+  background: rgba(15, 20, 31, 0.9) !important;
   backdrop-filter: blur(48px) saturate(210%) !important;
-  border: 1px solid rgba(255, 255, 255, 0.16) !important;
-  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.05) inset !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.05) inset !important;
+  color: #fff !important;
 }
 
-.nx-activity-panel, .nx-notification-center {
+.nx-activity-panel {
   position: fixed !important;
   top: 72px !important;
   right: 18px !important;
@@ -5796,87 +5730,53 @@
   flex-direction: column !important;
   border-radius: 16px !important;
   overflow: hidden !important;
-  animation: nx-panel-drop 0.4s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  animation: nx-panel-drop 0.35s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.nx-notification-center {
+  position: fixed !important;
+  top: 72px !important;
+  right: 18px !important;
+  z-index: 12060 !important;
+  width: min(440px, calc(100vw - 36px)) !important;
+  max-height: calc(100vh - 90px) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  border-radius: 16px !important;
+  overflow: hidden !important;
+  animation: nx-panel-drop 0.35s cubic-bezier(0.16, 1, 0.3, 1) !important;
 }
 
 .nx-status-menu {
   position: absolute !important;
-  top: calc(100% + 12px) !important;
+  top: calc(100% + 8px) !important;
   left: 0 !important;
   z-index: 12070 !important;
-  min-width: 320px !important;
-  max-height: 540px !important;
-  padding: 10px !important;
-  border-radius: 16px !important;
+  min-width: 300px !important;
+  max-height: 520px !important;
+  padding: 8px !important;
+  border-radius: 14px !important;
   display: grid !important;
-  gap: 6px !important;
-  box-shadow: 0 32px 80px rgba(0,0,0,0.7) !important;
-  animation: nx-popover-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
-}
-
-.nx-status-menu button {
-  display: flex !important;
-  align-items: center !important;
-  padding: 12px 16px !important;
-  border-radius: 10px !important;
-  border: 1px solid transparent !important;
-  background: transparent !important;
-  text-align: left !important;
-  transition: all 0.15s ease !important;
-  cursor: pointer !important;
-  gap: 14px !important;
-}
-
-.nx-status-menu button:hover {
-  background: rgba(255, 255, 255, 0.08) !important;
-  border-color: rgba(255, 255, 255, 0.12) !important;
-}
-
-.nx-status-menu button.is-selected {
-  background: rgba(10, 132, 255, 0.15) !important;
-  border-color: rgba(10, 132, 255, 0.3) !important;
-}
-
-.nx-status-menu button .nx-status-dot {
-  width: 8px !important;
-  height: 8px !important;
-  border-radius: 99px !important;
-  background: var(--status-color) !important;
-  box-shadow: 0 0 10px var(--status-pulse) !important;
-  flex-shrink: 0 !important;
-}
-
-.nx-status-menu button span {
-  display: flex !important;
-  flex-direction: column !important;
-  flex: 1 !important;
-}
-
-.nx-status-menu button strong {
-  color: #fff !important;
-  font-size: 14px !important;
-  font-weight: 700 !important;
-  margin-bottom: 2px !important;
-}
-
-.nx-status-menu button small {
-  color: rgba(255, 255, 255, 0.5) !important;
-  font-size: 11px !important;
-  line-height: 1.3 !important;
-}
-
-.nx-status-menu button b {
-  color: rgba(255, 255, 255, 0.4) !important;
-  font-size: 12px !important;
-  font-weight: 600 !important;
-  min-width: 24px !important;
-  text-align: right !important;
+  gap: 4px !important;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.6) !important;
 }
 
 .nx-liquid-popover {
-  background: rgba(15, 20, 31, 0.92) !important;
+  background: rgba(15, 20, 31, 0.9) !important;
   backdrop-filter: blur(48px) saturate(210%) !important;
-  border: 1px solid rgba(255, 255, 255, 0.16) !important;
-  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.75) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.7) !important;
   color: #fff !important;
+}
+
+.nx-status-menu button, 
+.nx-notification-center button, 
+.nx-activity-panel button {
+  color: #fff !important;
+}
+
+.nx-status-menu button small,
+.nx-notification-center small,
+.nx-activity-panel small {
+  color: rgba(255, 255, 255, 0.6) !important;
 }
