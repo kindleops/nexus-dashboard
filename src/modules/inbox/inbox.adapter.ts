@@ -30,21 +30,26 @@ const withTimeout = async <T,>(
   }
 }
 
-const emptyLiveErrorModel = (liveFetchError: string): InboxModel => ({
-  threads: [],
-  unreadCount: 0,
-  urgentCount: 0,
-  totalCount: 0,
-  aiDraftCount: 0,
-  dataMode: 'live_supabase',
-  liveFetchStatus: 'error',
-  liveFetchError,
-  messageEventsCount: null,
-  messageEventsRawCount: null,
-  groupedThreadCount: null,
-  sendQueueCount: null,
-  lastLiveFetchAt: new Date().toISOString(),
-})
+const emptyLiveErrorModel = (liveFetchError: string): InboxModel => {
+  if (isDev) {
+    console.log('[NexusInbox] Data source: fallback_error')
+  }
+  return {
+    threads: [],
+    unreadCount: 0,
+    urgentCount: 0,
+    totalCount: 0,
+    aiDraftCount: 0,
+    dataMode: 'mock_preview',
+    liveFetchStatus: 'fallback_error',
+    liveFetchError,
+    messageEventsCount: null,
+    messageEventsRawCount: null,
+    groupedThreadCount: null,
+    sendQueueCount: null,
+    lastLiveFetchAt: new Date().toISOString(),
+  }
+}
 
 export interface InboxThread {
   id: string
@@ -94,6 +99,9 @@ export interface InboxThread {
   threadIsRead?: boolean
   threadIsArchived?: boolean
   threadIsPinned?: boolean
+  threadIsStarred?: boolean
+  threadIsHidden?: boolean
+  threadIsSuppressed?: boolean
   threadLastReadAt?: string | null
   threadArchivedAt?: string | null
   ownerDisplayName?: string
@@ -153,8 +161,8 @@ export interface InboxModel {
   urgentCount: number
   totalCount: number
   aiDraftCount: number
-  dataMode: 'live_supabase' | 'mock_preview'
-  liveFetchStatus: 'success' | 'error' | 'disabled'
+  dataMode: 'live' | 'mock_preview'
+  liveFetchStatus: 'active' | 'error' | 'disabled' | 'fallback_error'
   liveFetchError: string | null
   messageEventsCount: number | null
   messageEventsRawCount: number | null
@@ -196,7 +204,9 @@ export const adaptInboxModel = (store: CommandCenterStore): InboxModel => {
   }
 }
 
-export const loadInbox = async (): Promise<InboxModel> => {
+import { fetchInboxModel, type InboxFetchOptions } from '../../lib/data/inboxData'
+
+export const loadInbox = async (options: InboxFetchOptions = {}): Promise<InboxModel> => {
   if (isDev) {
     console.log('[Inbox Live Data Gate]', {
       hasSupabaseEnv,
@@ -216,11 +226,14 @@ export const loadInbox = async (): Promise<InboxModel> => {
   }
 
   if (shouldUseSupabase()) {
-    if (isDev) console.log('[loadInbox] Attempting Supabase fetch')
     try {
+      if (options.offset) {
+        return await fetchInboxModel(options)
+      }
+
       if (!liveInboxRequest) {
         liveInboxRequest = withTimeout(
-          (signal) => fetchInboxModel({ signal }),
+          (signal) => fetchInboxModel({ ...options, signal }),
           LIVE_INBOX_TIMEOUT_MS,
           `Live Inbox request timed out after ${LIVE_INBOX_TIMEOUT_MS}ms`,
         ).finally(() => {
@@ -229,7 +242,7 @@ export const loadInbox = async (): Promise<InboxModel> => {
       }
 
       const result = await liveInboxRequest
-      if (isDev) console.log('[loadInbox] Supabase fetch succeeded', { threadCount: result.threads.length })
+      if (isDev) console.log('[NexusInbox] Data source: live', { threadCount: result.threads.length })
       return result
     } catch (error) {
       const liveFetchError = error instanceof Error ? error.message : String(error)
@@ -240,6 +253,9 @@ export const loadInbox = async (): Promise<InboxModel> => {
     }
   }
 
+  if (isDev) {
+    console.log('[NexusInbox] Data source: mock_preview')
+  }
   const { loadCommandCenterStore } = await import('../../domain/normalize-command-center')
   const store = await loadCommandCenterStore()
   return adaptInboxModel(store)
@@ -255,6 +271,9 @@ export const toWorkflowThread = (t: InboxThread): InboxWorkflowThread => {
     isArchived: t.threadIsArchived ?? (t.status === 'archived'),
     isRead: t.threadIsRead ?? (t.status === 'read' || t.unreadCount === 0),
     isPinned: t.threadIsPinned ?? false,
+    isStarred: t.threadIsStarred ?? false,
+    isHidden: t.threadIsHidden ?? false,
+    isSuppressed: t.threadIsSuppressed ?? t.isOptOut ?? false,
     priority: t.priority as InboxWorkflowThread['priority'],
     lastInboundAt: t.lastInboundAt ?? null,
     lastOutboundAt: t.lastOutboundAt ?? null,
@@ -288,6 +307,7 @@ export const useInboxData = () => {
   const [error, setError] = useState<unknown>(null)
 
   const refresh = useCallback(async () => {
+    setLoading(true)
     try {
       const model = await loadInbox()
       setData(model ?? EMPTY_MODEL)
@@ -299,8 +319,34 @@ export const useInboxData = () => {
         console.error('[NEXUS] useInboxData refresh failed', err)
       }
       return EMPTY_MODEL
+    } finally {
+      setLoading(false)
     }
   }, [])
+
+  const loadMore = useCallback(async () => {
+    if (loading) return
+    setLoading(true)
+    try {
+      const model = await loadInbox({ offset: data.threads.length, maxRows: 200 })
+      if (model && model.threads.length > 0) {
+        setData((prev) => {
+          // Deduplicate by threadKey/id
+          const existingIds = new Set(prev.threads.map(t => t.id))
+          const newThreads = model.threads.filter(t => !existingIds.has(t.id))
+          return {
+            ...prev,
+            threads: [...prev.threads, ...newThreads],
+            lastLiveFetchAt: model.lastLiveFetchAt
+          }
+        })
+      }
+    } catch (err) {
+      if (isDev) console.error('[NEXUS] useInboxData loadMore failed', err)
+    } finally {
+      setLoading(false)
+    }
+  }, [data.threads.length, loading])
 
   useEffect(() => {
     let cancelled = false
@@ -359,5 +405,5 @@ export const useInboxData = () => {
     return () => { cancelled = true }
   }, [refresh])
 
-  return { data, loading, error, refresh }
+  return { data, loading, error, refresh, loadMore }
 }

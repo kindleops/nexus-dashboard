@@ -45,6 +45,7 @@ export interface InboxThreadFilters {
 export interface InboxFetchOptions {
   signal?: AbortSignal
   maxRows?: number
+  offset?: number
 }
 
 export interface ThreadMessage {
@@ -968,17 +969,21 @@ export const getInboxThreads = async (
   const PAGE_SIZE = 1000
   const maxRows = Number.isFinite(options.maxRows ?? Number.NaN)
     ? Math.max(1, Number(options.maxRows))
-    : 10000
+    : 200
+  const startOffset = options.offset ?? 0
 
   const rows: AnyRecord[] = []
   let page = 0
 
   while (rows.length < maxRows) {
+    const rangeStart = startOffset + (page * PAGE_SIZE)
+    const rangeEnd = rangeStart + PAGE_SIZE - 1
+
     let query = supabase
       .from('nexus_inbox_threads_v')
       .select('*')
       .order('latest_message_at', { ascending: false })
-      .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1)
+      .range(rangeStart, rangeEnd)
 
     if (options.signal) {
       query = query.abortSignal(options.signal)
@@ -1190,6 +1195,11 @@ export const getInboxThreads = async (
       isProbate: asBoolean(intelligenceRow?.['is_probate'], false),
       isTaxDelinquent: asBoolean(intelligenceRow?.['is_tax_delinquent'], false),
       threadIsPinned: isPinned,
+      threadIsStarred: asBoolean(row['is_starred'], false),
+      threadIsArchived: isArchived,
+      threadIsRead: isRead,
+      threadIsHidden: asBoolean(row['is_hidden'], false),
+      threadIsSuppressed: asBoolean(row['is_suppressed'], false),
     }
 
     return thread
@@ -1235,10 +1245,28 @@ export const getInboxThreads = async (
 
 export const fetchInboxModel = async (options: InboxFetchOptions = {}): Promise<InboxModel> => {
   const lastLiveFetchAt = new Date().toISOString()
-  console.log('[fetchInboxModel] Starting inbox fetch')
+  const limit = options.maxRows ?? 200
+  const offset = options.offset ?? 0
+
+  if (DEV) {
+    console.log('[NexusInbox] Data source: live', {
+      table: 'nexus_inbox_threads_v',
+      requestedLimit: limit,
+      requestedOffset: offset,
+      status: 'Starting fetch'
+    })
+  }
 
   const threads = await getInboxThreads({}, options)
-  console.log('[fetchInboxModel] Got', threads.length, 'threads from Supabase')
+  
+  if (DEV) {
+    console.log('[NexusInbox] Data source: live', {
+      returnedCount: threads.length,
+      firstThreadId: threads[0]?.id || 'none',
+      firstThreadKey: threads[0]?.threadKey || 'none'
+    })
+  }
+
   const groupedThreadCount = threads.length
 
   return {
@@ -1247,8 +1275,8 @@ export const fetchInboxModel = async (options: InboxFetchOptions = {}): Promise<
     urgentCount: threads.filter((thread) => thread.priority === 'urgent').length,
     totalCount: threads.length,
     aiDraftCount: threads.filter((thread) => thread.aiDraft !== null).length,
-    dataMode: 'live_supabase',
-    liveFetchStatus: 'success',
+    dataMode: 'live',
+    liveFetchStatus: 'active',
     liveFetchError: null,
     messageEventsCount: null,
     messageEventsRawCount: null,

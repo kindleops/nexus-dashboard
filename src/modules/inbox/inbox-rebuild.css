@@ -103,23 +103,23 @@
   background: rgba(14, 24, 40, 0.78);
 }
 
-.nx-inbox.is-operator-rebuild .nx-thread-row {
+.nx-inbox.is-operator-rebuild .nx-conversation-row {
   padding: 10px 11px;
   border-radius: 12px;
   border: 1px solid color-mix(in oklab, var(--op-border) 84%, transparent);
   background: rgba(12, 19, 33, 0.9);
 }
 
-.nx-inbox.is-operator-rebuild .nx-thread-row__title {
+.nx-inbox.is-operator-rebuild .nx-conversation-row__top {
   gap: 8px;
 }
 
-.nx-inbox.is-operator-rebuild .nx-thread-row__owner {
+.nx-inbox.is-operator-rebuild .nx-conversation-row__top strong {
   font-size: 13px;
   font-weight: 700;
 }
 
-.nx-inbox.is-operator-rebuild .nx-thread-row__phone {
+.nx-inbox.is-operator-rebuild .nx-conversation-row__phone {
   color: var(--op-muted);
   font-size: 11px;
 }
@@ -128,7 +128,7 @@
   display: none;
 }
 
-.nx-inbox.is-operator-rebuild .nx-thread-row__preview {
+.nx-inbox.is-operator-rebuild .nx-conversation-row__preview {
   font-size: 12px;
   line-height: 1.4;
   color: #c8d8f2;
@@ -138,19 +138,19 @@
   overflow: hidden;
 }
 
-.nx-inbox.is-operator-rebuild .nx-thread-row__meta {
+.nx-inbox.is-operator-rebuild .nx-conversation-row__meta {
   margin-top: 7px;
   gap: 6px;
 }
 
-.nx-inbox.is-operator-rebuild .nx-thread-row__hover-actions {
+.nx-inbox.is-operator-rebuild .nx-conversation-row__hover-actions {
   opacity: 0;
   pointer-events: none;
   transition: opacity 150ms ease;
 }
 
-.nx-inbox.is-operator-rebuild .nx-thread-row:hover .nx-thread-row__hover-actions,
-.nx-inbox.is-operator-rebuild .nx-thread-row.is-selected .nx-thread-row__hover-actions {
+.nx-inbox.is-operator-rebuild .nx-conversation-row:hover .nx-conversation-row__hover-actions,
+.nx-inbox.is-operator-rebuild .nx-conversation-row.is-selected .nx-conversation-row__hover-actions {
   opacity: 1;
   pointer-events: auto;
 }

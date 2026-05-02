@@ -615,6 +615,15 @@ export default function InboxPage() {
     void handleWorkflowMutation('Stage Updated', () => updateThreadStage(selected, stage))
   }, [handleWorkflowMutation, selected])
 
+  const handleToggleStar = useCallback(() => {
+    if (!selected) return
+    const nextStarred = !selected.isStarred
+    setOptimisticPatches(prev => ({ ...prev, [selected.id]: { ...prev[selected.id], isStarred: nextStarred } }))
+    void handleWorkflowMutation(nextStarred ? 'Thread Starred' : 'Thread Unstarred', () => (
+      nextStarred ? starThread(selected) : unstarThread(selected)
+    ))
+  }, [handleWorkflowMutation, selected])
+
   const handleTogglePin = useCallback(() => {
     if (!selected) return
     setOptimisticPatches(prev => ({ ...prev, [selected.id]: { ...prev[selected.id], isPinned: !selected.isPinned } }))
@@ -716,7 +725,7 @@ export default function InboxPage() {
   const isDoubleSided = inboxMode === 'full_double'
 
   return (
-    <div className={cls('nx-premium-inbox nx-inbox', ...layoutClasses)}>
+    <div id="nx-inbox-root" className={cls('nx-premium-inbox nx-inbox', ...layoutClasses)}>
       <NexusTopBar
         searchQuery={searchQuery}
         onSearchQueryChange={setSearchQuery}
@@ -760,8 +769,8 @@ export default function InboxPage() {
             onOpenAdvancedFilters={() => setActiveOverlay('filters')}
             loadingError={DEV && data.liveFetchStatus === 'error' ? data.liveFetchError : null}
             visibleThreadCount={visibleThreadCount}
-            canLoadMore={visibleThreadCount < filtered.length}
-            onLoadMore={() => setVisibleThreadCount((current) => Math.min(filtered.length, current + 1000))}
+            canLoadMore={true}
+            onLoadMore={loadMore}
           />
         )}
 
@@ -778,8 +787,8 @@ export default function InboxPage() {
             onOpenAdvancedFilters={() => setActiveOverlay('filters')}
             loadingError={null}
             visibleThreadCount={visibleThreadCount}
-            canLoadMore={visibleThreadCount < rightFiltered.length}
-            onLoadMore={() => setVisibleThreadCount((current) => Math.min(rightFiltered.length, current + 1000))}
+            canLoadMore={true}
+            onLoadMore={loadMore}
           />
         )}
 
@@ -800,9 +809,9 @@ export default function InboxPage() {
             messages={displayedMessagesWithTranslation}
             loading={messagesLoading}
             isSuppressed={selectedSuppressed}
-            isStarred={selected ? starredThreadIds.includes(selected.id) : false}
+            isStarred={selected?.isStarred ?? false}
             onTogglePin={handleTogglePin}
-            onToggleStar={() => selected && handleToggleStar(selected.id)}
+            onToggleStar={handleToggleStar}
             onToggleArchive={handleToggleArchive}
           />
 

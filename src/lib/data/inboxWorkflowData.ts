@@ -34,6 +34,7 @@ export type InboxWorkflowStatus =
   | 'failed'
   | 'archived'
   | 'suppressed'
+  | 'hidden'
   | 'closed'
 
 export type InboxPriority = 'urgent' | 'high' | 'normal' | 'low'
@@ -798,7 +799,7 @@ export const unstarThread = async (thread: InboxThread): Promise<WorkflowMutatio
 }
 
 export const hideThread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
-  return persistWorkflowPatch(thread, { isHidden: true, inboxStatus: 'hidden' as any })
+  return persistWorkflowPatch(thread, { isHidden: true, inboxStatus: 'hidden' })
 }
 
 export const unhideThread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {

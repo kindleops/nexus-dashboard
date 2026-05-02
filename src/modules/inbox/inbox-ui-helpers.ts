@@ -216,8 +216,10 @@ const closedStages = new Set(['not_interested', 'wrong_number', 'dnc_opt_out', '
 const toText = (value: unknown): string => String(value ?? '').trim()
 const toLower = (value: unknown): string => toText(value).toLowerCase()
 
-const getField = (thread: InboxWorkflowThread, key: string): unknown =>
-  (thread as unknown as Record<string, unknown>)[key]
+const getField = (thread: InboxWorkflowThread, key: string): unknown => {
+  const row = thread as unknown as Record<string, unknown>
+  return row[key] ?? row[key.charAt(0).toUpperCase() + key.slice(1)] ?? row[key.toLowerCase()]
+}
 
 const numberOrNull = (value: unknown): number | null => {
   if (value === null || value === undefined) return null
@@ -356,16 +358,22 @@ const matchesAdvancedFilters = (thread: InboxWorkflowThread, filters: InboxAdvan
 
   if (filters.activityDateFrom || filters.activityDateTo) {
     const ts = new Date(thread.lastMessageAt || thread.lastMessageIso || '').getTime()
-    if (!Number.isFinite(ts)) return false
-    if (filters.activityDateFrom) {
-      const from = new Date(filters.activityDateFrom).getTime()
-      if (Number.isFinite(from) && ts < from) return false
-    }
-    if (filters.activityDateTo) {
-      const to = new Date(filters.activityDateTo).getTime()
-      if (Number.isFinite(to) && ts > to + 86399999) return false
+    if (Number.isFinite(ts)) {
+      if (filters.activityDateFrom) {
+        const from = new Date(filters.activityDateFrom).getTime()
+        if (Number.isFinite(from) && ts < from) return false
+      }
+      if (filters.activityDateTo) {
+        const to = new Date(filters.activityDateTo).getTime()
+        if (Number.isFinite(to) && ts > to + 86399999) return false
+      }
     }
   }
+
+  // Composable Intent / Status / Stage checks
+  if (filters.state && toLower(thread.inboxStatus) !== toLower(filters.state)) return false
+  if (filters.priority && toLower(thread.priority) !== toLower(filters.priority)) return false
+  if (filters.zip && !toLower(getField(thread, 'zip')).includes(toLower(filters.zip))) return false
 
   return true
 }
