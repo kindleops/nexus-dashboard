@@ -51,6 +51,7 @@ export interface QueueItem {
   linkedInboxThreadId: string | null
   linkedPropertyId: string | null
   linkedOwnerId: string | null
+  metadata?: Record<string, any>
 }
 
 export interface QueueModel {

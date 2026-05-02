@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { Icon } from '../../../shared/icons'
 
 const TEMPLATE_STAGES = ['All', 'new_reply', 'needs_response', 'interested', 'needs_offer', 'nurture', 'sent_waiting'] as const
@@ -176,8 +177,10 @@ export const TemplatePopover = ({
   }, [search, filterStage, filterLang, filterUseCase, activeOnly])
 
   if (!open) return null
+  
+  if (typeof document === 'undefined') return null
 
-  return (
+  return createPortal(
     <div
       ref={popoverRef}
       className="nx-template-modal-overlay"
@@ -335,6 +338,7 @@ export const TemplatePopover = ({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

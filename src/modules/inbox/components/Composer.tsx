@@ -94,6 +94,8 @@ export const Composer = ({
   const [templatePopoverOpen, setTemplatePopoverOpen] = useState(false)
   const [voiceLevel, setVoiceLevel] = useState(0)
   const [transcription, setTranscription] = useState('')
+  const [isHovered, setIsHovered] = useState(false)
+  const [isFocused, setIsFocused] = useState(false)
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
   const templatesButtonRef = useRef<HTMLButtonElement>(null)
   const baseDraftRef = useRef('')
@@ -234,9 +236,20 @@ export const Composer = ({
         ? 'Stop recording'
         : 'Talk to type'
 
+  const showUtilities = isHovered || isFocused || templatePopoverOpen || hasDraft || isListening
+
   return (
-    <div className="nx-sticky-composer">
-      {/* Utility action row */}
+    <div 
+      className={cls("nx-sticky-composer", showUtilities && "show-utilities")}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onFocus={(e) => {
+        if (e.currentTarget.contains(e.target as Node)) setIsFocused(true)
+      }}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsFocused(false)
+      }}
+    >
       {/* Utility action row - Phase 2: Hidden until hover/focus */}
       <div className="nx-composer-utility-row">
         {tools.map(tool => (

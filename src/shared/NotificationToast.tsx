@@ -25,7 +25,7 @@ export interface NexusNotification {
   timestamp: Date
   sound?: SoundEvent
   autoDismiss?: boolean     // default: true
-  dismissMs?: number        // default: 5000
+  dismissMs?: number        // default: 3000
   read?: boolean
   source?: string           // module that emitted the notification
 }
@@ -45,7 +45,7 @@ export function emitNotification(
     id: `notif-${_notifCounter}-${Date.now()}`,
     timestamp: new Date(),
     autoDismiss: true,
-    dismissMs: 5000,
+    dismissMs: 3000,
     read: false,
     ...partial,
   }
@@ -103,7 +103,7 @@ export const NotificationToasts = () => {
 
       // Auto-dismiss
       if (notif.autoDismiss !== false) {
-        const ms = notif.dismissMs ?? 5000
+        const ms = notif.dismissMs ?? 3000
         const timer = setTimeout(() => {
           dismiss(notif.id)
         }, ms)

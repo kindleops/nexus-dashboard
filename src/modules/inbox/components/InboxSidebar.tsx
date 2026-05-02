@@ -37,7 +37,7 @@ interface InboxSidebarProps {
   visibleThreadCount: number
   canLoadMore: boolean
   onLoadMore: () => void
-  onThreadAction?: (id: string, action: 'star' | 'pin' | 'archive') => void
+  onThreadAction?: (id: string, action: 'star' | 'unstar' | 'pin' | 'unpin' | 'archive' | 'hide') => void
 }
 
 const fallback = (value: unknown, placeholder = '') => {
@@ -72,11 +72,12 @@ const secondaryPresetOptions = savedFilterOptions.filter((option) => (
 interface ConversationRowProps {
   thread: InboxWorkflowThread
   selected: boolean
+  isStarred: boolean
   onSelect: (id: string) => void
-  onAction?: (id: string, action: 'star' | 'pin' | 'archive') => void
+  onAction?: (id: string, action: 'star' | 'unstar' | 'pin' | 'unpin' | 'archive' | 'hide') => void
 }
 
-export const ConversationRow = memo(({ thread, selected, onSelect, onAction }: ConversationRowProps) => {
+export const ConversationRow = memo(({ thread, selected, isStarred, onSelect, onAction }: ConversationRowProps) => {
   const row = thread as unknown as Record<string, unknown>
   const ownerName = fallback(row.ownerDisplayName ?? thread.ownerName ?? thread.phoneNumber, 'Unknown Seller')
   const propertyAddress = fallback(row.propertyAddressFull ?? thread.propertyAddress, '')
@@ -102,6 +103,7 @@ export const ConversationRow = memo(({ thread, selected, onSelect, onAction }: C
         <span className="nx-conversation-row__top">
           <strong>{ownerName}</strong>
           <div className="nx-row-end-actions">
+            {thread.isPinned && <Icon name="pin" style={{ width: 12, color: 'var(--accent-blue)', opacity: 0.8 }} />}
             <time>{formatRelativeTime(thread.lastMessageAt || thread.lastMessageIso)}</time>
             <i className="nx-priority-dot" style={{ background: visual.dot, boxShadow: `0 0 10px ${visual.pulse}` }} />
           </div>
@@ -132,18 +134,18 @@ export const ConversationRow = memo(({ thread, selected, onSelect, onAction }: C
              <button 
                type="button" 
                title="Star" 
-               className={cls("nx-hover-action-btn", thread.priority === 'urgent' && "is-active")}
-               onClick={() => onAction?.(thread.id, 'star')}
+               className={cls("nx-hover-action-btn", isStarred && "is-active")}
+               onClick={() => onAction?.(thread.id, isStarred ? 'unstar' : 'star')}
              >
-               <Icon name="star" />
+               <Icon name="star" className={cls(isStarred && "is-active")} />
              </button>
              <button 
                type="button" 
                title="Pin" 
                className={cls("nx-hover-action-btn", thread.isPinned && "is-active")}
-               onClick={() => onAction?.(thread.id, 'pin')}
+               onClick={() => onAction?.(thread.id, thread.isPinned ? 'unpin' : 'pin')}
              >
-               <Icon name="pin" />
+               <Icon name="pin" className={cls(thread.isPinned && "is-active")} />
              </button>
              <button 
                type="button" 
@@ -173,7 +175,7 @@ export const ConversationList = ({
   activeViewFilter: InboxViewSelectValue
   selectedId: string | null
   onSelect: (id: string) => void
-  onAction?: (id: string, action: 'star' | 'pin' | 'archive') => void
+  onAction?: (id: string, action: 'star' | 'unstar' | 'pin' | 'unpin' | 'archive' | 'hide') => void
 }) => (
   <div className="nx-conversation-list">
     {threads.length > 0 ? (
@@ -182,6 +184,7 @@ export const ConversationList = ({
           key={thread.threadKey || thread.id}
           thread={thread}
           selected={selectedId === thread.id}
+          isStarred={thread.isStarred}
           onSelect={onSelect}
           onAction={onAction}
         />

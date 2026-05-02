@@ -7,6 +7,16 @@ import type {
   QueueModel,
   RiskLevel,
 } from '../../modules/queue/queue.types'
+
+export type {
+  DeliveryStatus,
+  FailureReason,
+  QueueItem,
+  QueueItemPriority,
+  QueueItemStatus,
+  QueueModel,
+  RiskLevel,
+}
 import { getSupabaseClient } from '../supabaseClient'
 import {
   asBoolean,
@@ -76,10 +86,49 @@ const deliveryFromStatus = (status: QueueItemStatus): DeliveryStatus => {
 export const fetchQueueModel = async (): Promise<QueueModel> => {
   const supabase = getSupabaseClient()
 
-  const [queueResult, ownerResult, propertyResult, phoneResult] = await Promise.all([
+  const [queueResult, ownerResult, propertyResult, phoneResult, marketResult] = await Promise.all([
     supabase
       .from('send_queue')
-      .select('queue_id,owner_id,master_owner_id,prospect_id,property_id,market,phone,status,priority,risk_level,retry_count,max_retries,scheduled_at,scheduled_for,send_at,sent_at,created_at,approved_at,held_at,template_name,message_text')
+      .select(`
+        id,
+        queue_id,
+        queue_key,
+        queue_status,
+        scheduled_for,
+        scheduled_for_local,
+        timezone,
+        to_phone_number,
+        from_phone_number,
+        message_type,
+        use_case_template,
+        message_body,
+        message_text,
+        selected_template_id,
+        selected_agent_id,
+        master_owner_id,
+        owner_id,
+        property_id,
+        prospect_id,
+        phone_number_id,
+        market_id,
+        market,
+        retry_count,
+        max_retries,
+        failed_reason,
+        paused_reason,
+        created_at,
+        updated_at,
+        metadata,
+        priority,
+        risk_level,
+        ai_confidence,
+        estimated_cost,
+        sent_at,
+        approved_at,
+        held_at,
+        touch_number,
+        language
+      `)
       .order('created_at', { ascending: false })
       .limit(1200),
     supabase
@@ -94,17 +143,23 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
       .from('phone_numbers')
       .select('phone_id,owner_id,master_owner_id,phone,phone_number,status')
       .limit(3000),
+    supabase
+      .from('markets')
+      .select('id,name')
+      .limit(100),
   ])
 
   if (queueResult.error) throw new Error(mapErrorMessage(queueResult.error))
   if (ownerResult.error) throw new Error(mapErrorMessage(ownerResult.error))
   if (propertyResult.error) throw new Error(mapErrorMessage(propertyResult.error))
   if (phoneResult.error) throw new Error(mapErrorMessage(phoneResult.error))
+  if (marketResult.error) throw new Error(mapErrorMessage(marketResult.error))
 
   const queueRows = safeArray(queueResult.data as AnyRecord[])
   const ownerRows = safeArray(ownerResult.data as AnyRecord[])
   const propertyRows = safeArray(propertyResult.data as AnyRecord[])
   const phoneRows = safeArray(phoneResult.data as AnyRecord[])
+  const marketRows = safeArray(marketResult.data as AnyRecord[])
 
   const ownerById = new Map<string, AnyRecord>()
   for (const row of ownerRows) {
@@ -118,6 +173,12 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
     if (propertyId) propertyById.set(propertyId, row)
   }
 
+  const marketById = new Map<string, string>()
+  for (const row of marketRows) {
+    const id = asString(row['id'], '')
+    if (id) marketById.set(id, asString(row['name'], ''))
+  }
+
   const phonesByOwner = new Map<string, string>()
   for (const row of phoneRows) {
     const ownerId = asString(getFirst(row, ['owner_id', 'master_owner_id']), '')
@@ -126,15 +187,17 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
   }
 
   const items: QueueItem[] = queueRows.map((row, index) => {
-    const queueId = asString(getFirst(row, ['queue_id']), `queue-${index + 1}`)
+    const id = asString(row['id'], `queue-${index + 1}`)
+    const queueId = asString(row['queue_id'] || row['id'], id)
     const ownerId = asString(getFirst(row, ['owner_id', 'master_owner_id']), '')
     const propertyId = asString(getFirst(row, ['property_id']), '')
     const owner = ownerById.get(ownerId)
     const property = propertyById.get(propertyId)
 
-    const status = toQueueStatus(getFirst(row, ['status']))
+    const status = toQueueStatus(getFirst(row, ['queue_status', 'status']))
     const scheduledIso =
-      asIso(getFirst(row, ['scheduled_at', 'scheduled_for', 'send_at'])) ?? new Date().toISOString()
+      asIso(getFirst(row, ['scheduled_for', 'scheduled_at', 'send_at'])) ?? new Date().toISOString()
+    const localScheduledIso = asIso(getFirst(row, ['scheduled_for_local'])) || scheduledIso
 
     const sellerName = asString(
       getFirst(owner ?? row, ['full_name', 'entity_name', 'seller_name', 'first_name']),
@@ -143,36 +206,41 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
 
     const propertyAddress = asString(
       getFirst(property ?? row, ['property_address', 'address', 'property']),
-      'Address unavailable',
+      'No property linked',
     )
 
     const market = asString(
-      getFirst(row, ['market']) ?? getFirst(owner ?? row, ['market']) ?? getFirst(property ?? row, ['market']),
-      'Unknown',
+      marketById.get(asString(row['market_id'], '')) ??
+      getFirst(row, ['market']) ?? 
+      getFirst(owner ?? row, ['market']) ?? 
+      getFirst(property ?? row, ['market']),
+      'Market unknown',
     )
 
     const phone =
-      asString(getFirst(row, ['phone']), '') ||
+      asString(getFirst(row, ['to_phone_number', 'phone']), '') ||
       phonesByOwner.get(ownerId) ||
-      '+10000000000'
+      'No phone'
 
     const retryCount = asNumber(getFirst(row, ['retry_count']), 0)
     const maxRetries = Math.max(asNumber(getFirst(row, ['max_retries']), 3), retryCount || 0)
 
+    const metadata = (row['metadata'] as AnyRecord) || {}
+
     return {
-      id: queueId,
+      id,
       queueId,
       sellerName,
       propertyAddress,
       market,
       phone,
-      agent: asString(getFirst(row, ['agent_name', 'agent', 'assigned_to']), 'NEXUS'),
-      templateName: asString(getFirst(row, ['template_name']), 'Default Outreach'),
+      agent: asString(getFirst(row, ['selected_agent_id', 'agent_name', 'agent']), 'NEXUS'),
+      templateName: asString(getFirst(row, ['template_name', 'use_case_template']), 'Template not attached'),
       templateSource: 'system',
-      useCase: asString(getFirst(row, ['use_case', 'campaign_source']), 'listing'),
-      stage: asString(getFirst(row, ['stage', 'seller_stage', 'lead_stage']), 'lead'),
-      messageText: asString(getFirst(row, ['message_text', 'message', 'body']), ''),
-      scheduledForLocal: scheduledIso,
+      useCase: asString(getFirst(row, ['message_type', 'use_case']), 'listing'),
+      stage: asString(getFirst(row, ['stage', 'seller_stage']), 'lead'),
+      messageText: asString(getFirst(row, ['message_body', 'message_text', 'message']), ''),
+      scheduledForLocal: localScheduledIso,
       scheduledForUtc: scheduledIso,
       timezone: asString(getFirst(row, ['timezone']), 'America/Chicago'),
       contactWindow: 'flexible',
@@ -182,19 +250,21 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
       language: asString(getFirst(row, ['language']), 'en') === 'es' ? 'es' : 'en',
       retryCount,
       maxRetries,
-      failureReason: toFailureReason(getFirst(row, ['failure_reason', 'error_code', 'status_reason'])),
+      failureReason: toFailureReason(getFirst(row, ['failed_reason', 'failure_reason', 'error_code'])),
       deliveryStatus: deliveryFromStatus(status),
       createdAt: asIso(getFirst(row, ['created_at'])) ?? new Date().toISOString(),
+      updatedAt: asIso(getFirst(row, ['updated_at'])) ?? new Date().toISOString(),
       sentAt: asIso(getFirst(row, ['sent_at'])),
       approvedByOperator: asIso(getFirst(row, ['approved_at'])) ? 'operator' : null,
       requiresApproval: status === 'approval' || asBoolean(getFirst(row, ['requires_approval']), false),
       riskLevel: toRisk(getFirst(row, ['risk_level'])),
       aiConfidence: Math.max(0, Math.min(100, asNumber(getFirst(row, ['ai_confidence', 'confidence']), 72))),
       estimatedCost: Math.max(asNumber(getFirst(row, ['estimated_cost']), 0.018), 0.01),
-      textgridNumber: asString(getFirst(row, ['textgrid_number']), phone),
-      linkedInboxThreadId: asString(getFirst(row, ['thread_id', 'conversation_id']), '') || null,
+      textgridNumber: asString(getFirst(row, ['from_phone_number', 'textgrid_number']), phone),
+      linkedInboxThreadId: asString(getFirst(metadata, ['thread_id', 'conversation_id', 'thread_key']), '') || null,
       linkedPropertyId: propertyId || null,
       linkedOwnerId: ownerId || null,
+      metadata,
     }
   })
 
@@ -204,8 +274,18 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
   const failedCount = items.filter((i) => i.status === 'failed').length
   const retryCount = items.filter((i) => i.status === 'retry').length
   const heldCount = items.filter((i) => i.status === 'held').length
-  const sentTodayCount = items.filter((i) => i.status === 'sent').length
-  const deliveredTodayCount = items.filter((i) => i.status === 'delivered').length
+  const sentTodayCount = items.filter((i) => {
+    if (i.status !== 'sent' && i.status !== 'delivered') return false
+    const sentAt = i.sentAt ? new Date(i.sentAt) : null
+    if (!sentAt) return false
+    return sentAt.toDateString() === new Date().toDateString()
+  }).length
+  const deliveredTodayCount = items.filter((i) => {
+    if (i.status !== 'delivered') return false
+    const sentAt = i.sentAt ? new Date(i.sentAt) : null
+    if (!sentAt) return false
+    return sentAt.toDateString() === new Date().toDateString()
+  }).length
 
   const apiPressureLevel: 'low' | 'medium' | 'high' =
     failedCount + retryCount > items.length * 0.1
@@ -224,8 +304,142 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
     heldCount,
     sentTodayCount,
     deliveredTodayCount,
-    safeCapacityRemaining: Math.max(1200 - items.length, 0),
+    safeCapacityRemaining: Math.max(1200 - sentTodayCount, 0),
     optOutRiskCount: items.filter((item) => item.riskLevel === 'high').length,
     apiPressureLevel,
   }
+}
+
+// ── Queue Actions ─────────────────────────────────────────────────────────
+
+export interface QueueActionResult {
+  ok: boolean
+  errorMessage: string | null
+  updatedItem?: QueueItem
+}
+
+const writeAuditTrail = (item: QueueItem, action: string, metadata: AnyRecord = {}) => {
+  const audit = (item.metadata?.audit_trail as AnyRecord[]) || []
+  audit.push({
+    action,
+    timestamp: new Date().toISOString(),
+    ...metadata,
+  })
+  return audit
+}
+
+export const approveQueueItem = async (item: QueueItem): Promise<QueueActionResult> => {
+  const supabase = getSupabaseClient()
+  const now = new Date().toISOString()
+  
+  const patch: AnyRecord = {
+    queue_status: 'queued',
+    approved_at: now,
+    updated_at: now,
+    metadata: {
+      ...item.metadata,
+      audit_trail: writeAuditTrail(item, 'approved'),
+    },
+  }
+
+  const { error } = await supabase
+    .from('send_queue')
+    .update(patch)
+    .eq('id', item.id)
+
+  if (error) return { ok: false, errorMessage: mapErrorMessage(error) }
+  return { ok: true, errorMessage: null, updatedItem: { ...item, status: 'scheduled', approvedByOperator: 'operator' } }
+}
+
+export const holdQueueItem = async (item: QueueItem): Promise<QueueActionResult> => {
+  const supabase = getSupabaseClient()
+  const now = new Date().toISOString()
+  
+  const patch: AnyRecord = {
+    queue_status: 'held',
+    held_at: now,
+    updated_at: now,
+    metadata: {
+      ...item.metadata,
+      audit_trail: writeAuditTrail(item, 'held'),
+    },
+  }
+
+  const { error } = await supabase
+    .from('send_queue')
+    .update(patch)
+    .eq('id', item.id)
+
+  if (error) return { ok: false, errorMessage: mapErrorMessage(error) }
+  return { ok: true, errorMessage: null, updatedItem: { ...item, status: 'held' } }
+}
+
+export const rescheduleQueueItem = async (item: QueueItem, newTime: string): Promise<QueueActionResult> => {
+  const supabase = getSupabaseClient()
+  const now = new Date().toISOString()
+  
+  const patch: AnyRecord = {
+    queue_status: 'queued',
+    scheduled_for: newTime,
+    scheduled_for_local: newTime,
+    updated_at: now,
+    metadata: {
+      ...item.metadata,
+      audit_trail: writeAuditTrail(item, 'rescheduled', { previous_time: item.scheduledForLocal, new_time: newTime }),
+    },
+  }
+
+  const { error } = await supabase
+    .from('send_queue')
+    .update(patch)
+    .eq('id', item.id)
+
+  if (error) return { ok: false, errorMessage: mapErrorMessage(error) }
+  return { ok: true, errorMessage: null, updatedItem: { ...item, status: 'scheduled', scheduledForLocal: newTime } }
+}
+
+export const cancelQueueItem = async (item: QueueItem): Promise<QueueActionResult> => {
+  const supabase = getSupabaseClient()
+  const now = new Date().toISOString()
+  
+  const patch: AnyRecord = {
+    queue_status: 'cancelled',
+    updated_at: now,
+    metadata: {
+      ...item.metadata,
+      audit_trail: writeAuditTrail(item, 'cancelled'),
+    },
+  }
+
+  const { error } = await supabase
+    .from('send_queue')
+    .update(patch)
+    .eq('id', item.id)
+
+  if (error) return { ok: false, errorMessage: mapErrorMessage(error) }
+  return { ok: true, errorMessage: null, updatedItem: { ...item, status: 'held' } }
+}
+
+export const retryQueueItem = async (item: QueueItem): Promise<QueueActionResult> => {
+  const supabase = getSupabaseClient()
+  const now = new Date().toISOString()
+  
+  const patch: AnyRecord = {
+    queue_status: 'queued',
+    retry_count: (item.retryCount || 0) + 1,
+    failed_reason: null,
+    updated_at: now,
+    metadata: {
+      ...item.metadata,
+      audit_trail: writeAuditTrail(item, 'manual_retry'),
+    },
+  }
+
+  const { error } = await supabase
+    .from('send_queue')
+    .update(patch)
+    .eq('id', item.id)
+
+  if (error) return { ok: false, errorMessage: mapErrorMessage(error) }
+  return { ok: true, errorMessage: null, updatedItem: { ...item, status: 'retry', retryCount: (item.retryCount || 0) + 1 } }
 }

@@ -1190,8 +1190,6 @@ export const getInboxThreads = async (
       isProbate: asBoolean(intelligenceRow?.['is_probate'], false),
       isTaxDelinquent: asBoolean(intelligenceRow?.['is_tax_delinquent'], false),
       threadIsPinned: isPinned,
-      ownerDisplayName,
-      propertyAddressFull,
     }
 
     return thread

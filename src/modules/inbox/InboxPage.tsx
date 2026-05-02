@@ -9,6 +9,8 @@ import {
   pinThread,
   unpinThread,
   archiveThread,
+  hideThread,
+  unhideThread,
   type InboxStage,
   type InboxWorkflowThread,
 } from '../../lib/data/inboxWorkflowData'
@@ -68,8 +70,6 @@ import './inbox-polish.css'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
-
-const STARRED_THREADS_STORAGE_KEY = 'nexus.inbox.starredThreadIds'
 const LANGUAGE_LABELS: Record<string, string> = {
   en: 'English',
   es: 'Spanish',
@@ -123,7 +123,6 @@ export default function InboxPage() {
   const [pendingMessagesByThread, setPendingMessagesByThread] = useState<Record<string, ThreadMessage[]>>({})
   const [visibleThreadCount, setVisibleThreadCount] = useState(1000)
 
-  const [starredThreadIds, setStarredThreadIds] = useState<string[]>([])
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [threadContext, setThreadContext] = useState<ThreadContext | null>(null)
   const [threadIntelligence, setThreadIntelligence] = useState<ThreadIntelligenceRecord | null>(null)
@@ -141,10 +140,16 @@ export default function InboxPage() {
   const [commandOpen, setCommandOpen] = useState(false)
   const [schedulePanelOpen, setSchedulePanelOpen] = useState(false)
   const [scheduledTime, setScheduledTime] = useState<ScheduledTime | null>(null)
+  const [showTranslation, setShowTranslation] = useState(false)
   const [layoutState, setLayoutState] = useState(defaultInboxLayoutState)
   const [dossierFull, setDossierFull] = useState(false)
+  const [optimisticPatches, setOptimisticPatches] = useState<Record<string, Partial<InboxWorkflowThread>>>({})
 
-  const threads = useMemo(() => (data.threads ?? []).map(toWorkflowThread), [data.threads])
+  const rawThreads = useMemo(() => (data.threads ?? []).map(toWorkflowThread), [data.threads])
+  const threads = useMemo(() => {
+    return rawThreads.map(t => optimisticPatches[t.id] ? { ...t, ...optimisticPatches[t.id] } : t)
+  }, [rawThreads, optimisticPatches])
+
   const advancedFilterOptions = useMemo(() => getAdvancedFilterOptions(threads), [threads])
   const viewCounts = useMemo(() => getInboxViewCounts(threads), [threads])
   const filtered = useMemo(() => (
@@ -286,23 +291,6 @@ export default function InboxPage() {
   useEffect(() => {
     setVisibleThreadCount(1000)
   }, [searchQuery, stageFilter, viewFilter, advancedFilters])
-
-  useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(STARRED_THREADS_STORAGE_KEY)
-      if (!raw) return
-      const parsed = JSON.parse(raw)
-      if (Array.isArray(parsed)) {
-        setStarredThreadIds(parsed.filter((value): value is string => typeof value === 'string'))
-      }
-    } catch {
-      // Ignore malformed local storage payloads.
-    }
-  }, [])
-
-  useEffect(() => {
-    window.localStorage.setItem(STARRED_THREADS_STORAGE_KEY, JSON.stringify(starredThreadIds))
-  }, [starredThreadIds])
 
 
 
@@ -601,12 +589,14 @@ export default function InboxPage() {
     let mutation = async () => ({ ok: true })
 
     switch (action) {
-      case 'star': label = 'Thread Starred'; mutation = () => starThread(thread); break
-      case 'unstar': label = 'Thread Unstarred'; mutation = () => unstarThread(thread); break
-      case 'pin': label = 'Thread Pinned'; mutation = () => pinThread(thread); break
-      case 'unpin': label = 'Thread Unpinned'; mutation = () => unpinThread(thread); break
-      case 'archive': label = 'Thread Archived'; mutation = () => archiveThread(thread); break
-      case 'unarchive': label = 'Thread Unarchived'; mutation = () => updateThreadStatus(thread, 'open'); break
+      case 'star': label = 'Thread Starred'; mutation = () => starThread(thread); setOptimisticPatches(p => ({...p, [thread.id]: { ...p[thread.id], isStarred: true }})); break
+      case 'unstar': label = 'Thread Unstarred'; mutation = () => unstarThread(thread); setOptimisticPatches(p => ({...p, [thread.id]: { ...p[thread.id], isStarred: false }})); break
+      case 'pin': label = 'Thread Pinned'; mutation = () => pinThread(thread); setOptimisticPatches(p => ({...p, [thread.id]: { ...p[thread.id], isPinned: true }})); break
+      case 'unpin': label = 'Thread Unpinned'; mutation = () => unpinThread(thread); setOptimisticPatches(p => ({...p, [thread.id]: { ...p[thread.id], isPinned: false }})); break
+      case 'archive': label = 'Thread Archived'; mutation = () => archiveThread(thread); setOptimisticPatches(p => ({...p, [thread.id]: { ...p[thread.id], isArchived: true, inboxStatus: 'archived' }})); break
+      case 'unarchive': label = 'Thread Unarchived'; mutation = () => updateThreadStatus(thread, 'open'); setOptimisticPatches(p => ({...p, [thread.id]: { ...p[thread.id], isArchived: false, inboxStatus: 'open' }})); break
+      case 'hide': label = 'Thread Hidden'; mutation = () => hideThread(thread); setOptimisticPatches(p => ({...p, [thread.id]: { ...p[thread.id], isHidden: true, inboxStatus: 'hidden' }})); break
+      case 'unhide': label = 'Thread Unhidden'; mutation = () => unhideThread(thread); setOptimisticPatches(p => ({...p, [thread.id]: { ...p[thread.id], isHidden: false, inboxStatus: 'open' }})); break
     }
 
     void handleWorkflowMutation(label, mutation)
@@ -620,11 +610,14 @@ export default function InboxPage() {
 
   const handleStageChange = useCallback((stage: InboxStage) => {
     if (!selected) return
+    const status = stage === 'archived' ? 'archived' : stage === 'dnc_opt_out' ? 'suppressed' : 'open'
+    setOptimisticPatches(prev => ({ ...prev, [selected.id]: { ...prev[selected.id], inboxStage: stage, inboxStatus: status as any, isArchived: stage === 'archived', isSuppressed: stage === 'dnc_opt_out' } }))
     void handleWorkflowMutation('Stage Updated', () => updateThreadStage(selected, stage))
   }, [handleWorkflowMutation, selected])
 
   const handleTogglePin = useCallback(() => {
     if (!selected) return
+    setOptimisticPatches(prev => ({ ...prev, [selected.id]: { ...prev[selected.id], isPinned: !selected.isPinned } }))
     void handleWorkflowMutation(selected.isPinned ? 'Thread Unpinned' : 'Thread Pinned', () => (
       selected.isPinned ? unpinThread(selected) : pinThread(selected)
     ))
@@ -632,20 +625,11 @@ export default function InboxPage() {
 
   const handleToggleArchive = useCallback(() => {
     if (!selected) return
+    setOptimisticPatches(prev => ({ ...prev, [selected.id]: { ...prev[selected.id], isArchived: !selected.isArchived, inboxStatus: !selected.isArchived ? 'archived' : 'open' } }))
     void handleWorkflowMutation(selected.isArchived ? 'Thread Unarchived' : 'Thread Archived', () => (
       selected.isArchived ? updateThreadStatus(selected, 'open') : archiveThread(selected)
     ))
   }, [handleWorkflowMutation, selected])
-
-  const handleToggleStar = useCallback((threadId: string) => {
-    setStarredThreadIds((current) => (
-      current.includes(threadId)
-        ? current.filter((id) => id !== threadId)
-        : [...current, threadId]
-    ))
-  }, [])
-
-
 
   const handleSend = useCallback(async (text: string) => {
     if (!selected || !text.trim()) return
@@ -822,7 +806,8 @@ export default function InboxPage() {
             onToggleArchive={handleToggleArchive}
           />
 
-          <ComposerTranslationBar
+          {showTranslation && (
+            <ComposerTranslationBar
             sellerLanguageLabel={sellerLanguageLabel}
             sellerLanguageCode={sellerLanguageCode}
             isSellerLanguageEnglish={isEnglishLanguage(sellerLanguageCode)}
@@ -841,6 +826,7 @@ export default function InboxPage() {
             onUseDraftTranslation={handleUseDraftTranslation}
             onRevertDraft={handleRevertDraftTranslation}
           />
+          )}
 
           <Composer
             draftText={draftText}
@@ -855,6 +841,8 @@ export default function InboxPage() {
             onReplaceTemplate={(text) => setDraftText(text)}
             onSendTemplate={handleSend}
             onScheduleTemplate={() => setSchedulePanelOpen(true)}
+            onTranslate={() => setShowTranslation(!showTranslation)}
+            isTranslating={showTranslation}
             disabled={selectedSuppressed}
             disabledReason="Messaging disabled for suppressed thread"
           />

@@ -1,646 +1,626 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { QueueItem, QueueModel, QueueView, QueueFilters, QueueBucket } from './queue.types'
+import { useState, useEffect, useCallback } from 'react'
+import { getSupabaseClient } from '../../lib/supabaseClient'
+import {
+  fetchQueueModel,
+  approveQueueItem,
+  holdQueueItem,
+  rescheduleQueueItem,
+  retryQueueItem,
+  cancelQueueItem,
+  type QueueModel,
+  type QueueItem,
+} from '../../lib/data/queueData'
+import type { QueueItemStatus } from './queue.types'
 import { Icon } from '../../shared/icons'
+import { formatRelativeTime } from '../../shared/formatters'
+import { emitNotification } from '../../shared/NotificationToast'
 import './queue-premium.css'
 
-interface QueuePageProps {
-  data: QueueModel
+// ── Types & Helpers ────────────────────────────────────────────────────────
+
+type ViewMode = 'today' | 'week' | 'month' | 'list' | 'approval' | 'failed'
+
+const cls = (...tokens: Array<string | false | null | undefined>) =>
+  tokens.filter(Boolean).join(' ')
+
+// ── Components ────────────────────────────────────────────────────────────
+
+/**
+ * Status Badge for Queue Items
+ */
+const StatusBadge = ({ status }: { status: QueueItemStatus }) => {
+  const labels: Record<string, string> = {
+    ready: 'Ready',
+    scheduled: 'Scheduled',
+    approval: 'Pending Approval',
+    failed: 'Failed',
+    sent: 'Sent',
+    delivered: 'Delivered',
+    retry: 'Retrying',
+    held: 'On Hold',
+  }
+
+  return (
+    <span className={cls('nx-badge', `nx-badge--${status}`)}>
+      {labels[status] || status}
+    </span>
+  )
 }
 
-const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
-
-// ── Shared UI Components ───────────────────────────────────────────────────
-
-const Badge: React.FC<{ type: string; children: React.ReactNode }> = ({ type, children }) => (
-  <span className={cls('nx-badge', `nx-badge--${type}`)}>{children}</span>
+/**
+ * Risk Tag
+ */
+const RiskTag = ({ level }: { level: 'low' | 'medium' | 'high' }) => (
+  <span className={cls('nx-risk-tag', `is-${level}`)}>
+    {level} RISK
+  </span>
 )
 
-const StatusPill: React.FC<{ label: string; count: number; active?: boolean; onClick: () => void }> = ({
-  label,
-  count,
-  active,
-  onClick,
+/**
+ * Queue Card for Grid/List views
+ */
+const QueueCard = ({ 
+  item, 
+  isSelected, 
+  onClick 
+}: { 
+  item: QueueItem, 
+  isSelected: boolean, 
+  onClick: () => void 
 }) => (
-  <button className={cls('nx-queue-bucket-btn', active && 'is-active')} onClick={onClick}>
-    <span>{label}</span>
-    <span className="nx-queue-bucket-count">{count}</span>
-  </button>
-)
-
-// ── View: Today ────────────────────────────────────────────────────────────
-
-const TodayView: React.FC<{
-  items: QueueItem[]
-  selectedId: string | null
-  onSelect: (id: string) => void
-}> = ({ items, selectedId, onSelect }) => {
-  const now = new Date()
-  const todayItems = items.filter((i) => {
-    const scheduled = new Date(i.scheduledForLocal)
-    return scheduled.toDateString() === now.toDateString()
-  })
-
-  const groupByTime = (items: QueueItem[]) => {
-    const groups: Record<string, QueueItem[]> = {
-      'Ready Now': [],
-      'Morning': [],
-      'Afternoon': [],
-      'Evening': [],
-      'Outside Window': [],
-    }
-
-    items.forEach((item) => {
-      const scheduled = new Date(item.scheduledForLocal)
-      if (scheduled <= now) {
-        groups['Ready Now'].push(item)
-      } else {
-        const hour = scheduled.getHours()
-        if (hour >= 6 && hour < 12) groups['Morning'].push(item)
-        else if (hour >= 12 && hour < 17) groups['Afternoon'].push(item)
-        else if (hour >= 17 && hour < 22) groups['Evening'].push(item)
-        else groups['Outside Window'].push(item)
-      }
-    })
-    return groups
-  }
-
-  const groups = groupByTime(todayItems)
-
-  return (
-    <div className="nx-queue-view nx-animate-fade-in">
-      {Object.entries(groups).map(
-        ([timeGroup, groupItems]) =>
-          groupItems.length > 0 && (
-            <div key={timeGroup} className="nx-queue-group">
-              <div className="nx-queue-group-header">
-                <Icon name="clock" style={{ width: 14, height: 14, color: 'var(--text-muted)' }} />
-                <h3>{timeGroup}</h3>
-                <span className="nx-queue-group-count">{groupItems.length}</span>
-              </div>
-              <div className="nx-queue-grid">
-                {groupItems.map((item) => (
-                  <QueueCard key={item.id} item={item} selected={selectedId === item.id} onClick={() => onSelect(item.id)} />
-                ))}
-              </div>
-            </div>
-          ),
-      )}
-    </div>
-  )
-}
-
-// ── View: Week ─────────────────────────────────────────────────────────────
-
-const WeekView: React.FC<{
-  items: QueueItem[]
-  selectedId: string | null
-  onSelect: (id: string) => void
-}> = ({ items }) => {
-  const now = new Date()
-  const weekDays: Date[] = []
-  const firstDay = new Date(now)
-  firstDay.setDate(now.getDate() - now.getDay())
-
-  for (let i = 0; i < 7; i++) {
-    const day = new Date(firstDay)
-    day.setDate(firstDay.getDate() + i)
-    weekDays.push(day)
-  }
-
-  const dayGroups = useMemo(() => {
-    const groups: Record<string, QueueItem[]> = {}
-    weekDays.forEach((day) => {
-      groups[day.toISOString().split('T')[0]] = []
-    })
-    items.forEach((item) => {
-      const key = item.scheduledForLocal.split('T')[0]
-      if (key in groups) groups[key].push(item)
-    })
-    return groups
-  }, [items])
-
-  return (
-    <div className="nx-queue-view nx-animate-fade-in">
-      <div className="nx-queue-week-board">
-        {weekDays.map((day) => {
-          const key = day.toISOString().split('T')[0]
-          const dayItems = dayGroups[key] || []
-          const isToday = day.toDateString() === now.toDateString()
-
-          return (
-            <div key={key} className={cls('nx-queue-day-column', isToday && 'is-today')}>
-              <div className="nx-queue-day-header">
-                <span className="nx-day-name">{day.toLocaleDateString('en-US', { weekday: 'short' })}</span>
-                <span className="nx-day-number">{day.getDate()}</span>
-              </div>
-              <div className="nx-queue-day-stats">
-                <div className="nx-day-stat">
-                  <small>Sends</small>
-                  <b>{dayItems.filter((i) => i.status === 'sent' || i.status === 'delivered').length}</b>
-                </div>
-                <div className="nx-day-stat">
-                  <small>Pending</small>
-                  <b>{dayItems.filter((i) => i.status === 'scheduled' || i.status === 'ready').length}</b>
-                </div>
-              </div>
-              <div className="nx-day-volume-track">
-                <div 
-                  className="nx-day-volume-bar" 
-                  style={{ height: `${Math.min(dayItems.length * 4, 100)}%`, opacity: 0.6 + (dayItems.length * 0.05) }} 
-                />
-              </div>
-              {dayItems.length === 0 && <div className="nx-day-empty">Empty</div>}
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-// ── View: Month ────────────────────────────────────────────────────────────
-
-const MonthView: React.FC<{
-  items: QueueItem[]
-}> = ({ items }) => {
-  const now = new Date()
-  const year = now.getFullYear()
-  const month = now.getMonth()
-  const firstDay = new Date(year, month, 1)
-  const daysInMonth = new Date(year, month + 1, 0).getDate()
-  const startingDay = firstDay.getDay()
-
-  const calendarDays = Array.from({ length: 42 }, (_, i) => {
-    const dayNum = i - startingDay + 1
-    return dayNum > 0 && dayNum <= daysInMonth ? new Date(year, month, dayNum) : null
-  })
-
-  const dayGroups = useMemo(() => {
-    const groups: Record<string, QueueItem[]> = {}
-    items.forEach((item) => {
-      const key = item.scheduledForLocal.split('T')[0]
-      if (!groups[key]) groups[key] = []
-      groups[key].push(item)
-    })
-    return groups
-  }, [items])
-
-  return (
-    <div className="nx-queue-view nx-animate-fade-in">
-      <div className="nx-queue-month-grid">
-        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
-          <div key={d} className="nx-month-day-label">{d}</div>
-        ))}
-        {calendarDays.map((day, i) => {
-          if (!day) return <div key={`empty-${i}`} className="nx-month-cell is-empty" />
-          const key = day.toISOString().split('T')[0]
-          const dayItems = dayGroups[key] || []
-          const intensity = Math.min(dayItems.length / 20, 1)
-
-          return (
-            <div key={key} className={cls('nx-month-cell', day.toDateString() === now.toDateString() && 'is-today')}>
-              <span className="nx-month-date">{day.getDate()}</span>
-              {dayItems.length > 0 && (
-                <div className="nx-month-indicator" style={{ background: `rgba(10, 132, 255, ${0.1 + intensity * 0.4})` }}>
-                  <b>{dayItems.length}</b>
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-// ── View: List ─────────────────────────────────────────────────────────────
-
-const ListView: React.FC<{
-  items: QueueItem[]
-  selectedId: string | null
-  onSelect: (id: string) => void
-}> = ({ items, selectedId, onSelect }) => (
-  <div className="nx-queue-view nx-animate-fade-in">
-    <div className="nx-queue-table-container">
-      <table className="nx-queue-table">
-        <thead>
-          <tr>
-            <th>Status</th>
-            <th>Scheduled</th>
-            <th>Seller / Address</th>
-            <th>Market</th>
-            <th>Touch</th>
-            <th>Template</th>
-            <th>Priority</th>
-            <th>Retries</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((item) => (
-            <tr
-              key={item.id}
-              className={cls(selectedId === item.id && 'is-selected')}
-              onClick={() => onSelect(item.id)}
-            >
-              <td><Badge type={item.status}>{item.status}</Badge></td>
-              <td className="nx-mono">{new Date(item.scheduledForLocal).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
-              <td>
-                <div style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{item.sellerName}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{item.propertyAddress}</div>
-              </td>
-              <td>{item.market}</td>
-              <td style={{ textAlign: 'center' }}>{item.touchNumber}</td>
-              <td>{item.templateName}</td>
-              <td><span className={cls('nx-pri-pill', `is-${item.priority.toLowerCase()}`)}>{item.priority}</span></td>
-              <td style={{ textAlign: 'center' }}>{item.retryCount}/{item.maxRetries}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  </div>
-)
-
-// ── View: Approval ─────────────────────────────────────────────────────────
-
-const ApprovalView: React.FC<{
-  items: QueueItem[]
-  selectedId: string | null
-  onSelect: (id: string) => void
-}> = ({ items, selectedId, onSelect }) => {
-  const approvalItems = items.filter((i) => i.status === 'approval' || i.requiresApproval)
-
-  return (
-    <div className="nx-queue-view nx-animate-fade-in">
-      <div className="nx-approval-grid">
-        {approvalItems.map((item) => (
-          <div
-            key={item.id}
-            className={cls('nx-approval-card', selectedId === item.id && 'is-selected')}
-            onClick={() => onSelect(item.id)}
-          >
-            <div className="nx-approval-card-header">
-              <div>
-                <h3>{item.sellerName}</h3>
-                <small>{item.propertyAddress}</small>
-              </div>
-              <div className={cls('nx-risk-tag', `is-${item.riskLevel}`)}>{item.riskLevel} Risk</div>
-            </div>
-            <div className="nx-approval-message-preview">
-              <Icon name="message" />
-              <p>{item.messageText}</p>
-            </div>
-            <div className="nx-approval-meta">
-              <span><Icon name="target" /> {item.market}</span>
-              <span><Icon name="spark" /> AI {item.aiConfidence}%</span>
-            </div>
-            <div className="nx-approval-actions">
-              <button className="nx-btn nx-btn--primary">Approve</button>
-              <button className="nx-btn nx-btn--secondary">Edit</button>
-              <button className="nx-btn nx-btn--secondary">Hold</button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-// ── View: Failed ───────────────────────────────────────────────────────────
-
-const FailedView: React.FC<{
-  items: QueueItem[]
-  selectedId: string | null
-  onSelect: (id: string) => void
-}> = ({ items, selectedId, onSelect }) => {
-  const failedItems = items.filter((i) => i.status === 'failed' || i.status === 'retry')
-  
-  const reasonGroups = useMemo(() => {
-    const groups: Record<string, QueueItem[]> = {}
-    failedItems.forEach((item) => {
-      const reason = item.failureReason || 'unknown'
-      if (!groups[reason]) groups[reason] = []
-      groups[reason].push(item)
-    })
-    return groups
-  }, [failedItems])
-
-  return (
-    <div className="nx-queue-view nx-animate-fade-in">
-      {Object.entries(reasonGroups).map(([reason, groupItems]) => (
-        <div key={reason} className="nx-failure-group">
-          <div className="nx-failure-group-header">
-            <Icon name="alert" />
-            <h3>{reason.replace(/_/g, ' ')}</h3>
-            <span className="nx-count-badge">{groupItems.length}</span>
-          </div>
-          <div className="nx-failure-grid">
-            {groupItems.map((item) => (
-              <div 
-                key={item.id} 
-                className={cls('nx-failure-item', selectedId === item.id && 'is-selected')}
-                onClick={() => onSelect(item.id)}
-              >
-                <div className="nx-failure-item-top">
-                  <strong>{item.sellerName}</strong>
-                  <small>Retry {item.retryCount}/{item.maxRetries}</small>
-                </div>
-                <p>{item.propertyAddress}</p>
-                <div className="nx-failure-actions">
-                  <button className="nx-btn nx-btn--xs nx-btn--primary">Retry Now</button>
-                  <button className="nx-btn nx-btn--xs nx-btn--secondary">Hold</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-// ── Sub-component: Queue Card ──────────────────────────────────────────────
-
-const QueueCard: React.FC<{
-  item: QueueItem
-  selected: boolean
-  onClick: () => void
-}> = ({ item, selected, onClick }) => (
-  <div className={cls('nx-queue-card', selected && 'is-selected')} onClick={onClick}>
+  <div 
+    className={cls('nx-queue-card', isSelected && 'is-selected')} 
+    onClick={onClick}
+  >
     <div className="nx-queue-card__header">
-      <span className="nx-queue-card__seller">{item.sellerName}</span>
-      <Badge type={item.status}>{item.status}</Badge>
+      <div className="nx-queue-card__seller-info">
+        <span className="nx-queue-card__seller">{item.sellerName}</span>
+        <span className="nx-queue-card__address">{item.propertyAddress}</span>
+      </div>
+      <StatusBadge status={item.status} />
     </div>
-    <div className="nx-queue-card__address">{item.propertyAddress}</div>
-    <div className="nx-queue-card__meta">
-      <span className="nx-market-tag">{item.market}</span>
-      <span className="nx-touch-tag">Touch {item.touchNumber}</span>
-      <span className={cls('nx-pri-pill', `is-${item.priority.toLowerCase()}`)}>{item.priority}</span>
-    </div>
-    <div className="nx-queue-card__preview">{item.messageText.substring(0, 80)}...</div>
+    
+    {item.messageText && (
+      <div className="nx-queue-card__preview">
+        {item.messageText}
+      </div>
+    )}
+
     <div className="nx-queue-card__footer">
-      <span className="nx-card-time">
+      <div className="nx-card-time">
         <Icon name="clock" />
-        {new Date(item.scheduledForLocal).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-      </span>
-      <span className="nx-card-template">
+        {formatRelativeTime(item.scheduledForLocal)}
+      </div>
+      <div className="nx-card-template">
         <Icon name="file-text" />
         {item.templateName}
-      </span>
+      </div>
+      {item.riskLevel === 'high' && <RiskTag level="high" />}
     </div>
   </div>
 )
 
-// ── Sub-component: Inspector ───────────────────────────────────────────────
+/**
+ * Intelligence Row
+ */
+const IntelRow = ({ label, value, icon, className }: { label: string; value: string | number; icon?: string; className?: string }) => (
+  <div className={cls('nx-queue-inspector-row', className)}>
+    <span className="nx-queue-inspector-label">
+      {icon && <span style={{ marginRight: 6 }}>{icon}</span>}
+      {label}
+    </span>
+    <span className="nx-queue-inspector-value">{value || '—'}</span>
+  </div>
+)
 
-const QueueInspector: React.FC<{
-  item: QueueItem | null
-  onClose: () => void
-}> = ({ item, onClose }) => {
+/**
+ * Collapsible Inspector Card
+ */
+const CollapsibleInspectorCard = ({ 
+  title, 
+  icon, 
+  children, 
+  className,
+  defaultExpanded = true 
+}: { 
+  title: string; 
+  icon: any; 
+  children: React.ReactNode; 
+  className?: string;
+  defaultExpanded?: boolean 
+}) => {
+  const [expanded, setExpanded] = useState(defaultExpanded)
+  return (
+    <section className={cls('nx-inspector-card', !expanded && 'is-collapsed', className)}>
+      <button type="button" className="nx-inspector-card__header" onClick={() => setExpanded(!expanded)}>
+        <Icon name={icon} />
+        <strong>{title}</strong>
+        <Icon name="chevron-down" className={cls('nx-inspector-card__chevron', expanded && 'is-rotated')} />
+      </button>
+      {expanded && <div className="nx-inspector-card__body">{children}</div>}
+    </section>
+  )
+}
+
+/**
+ * Intelligence Inspector Panel
+ */
+const QueueInspector = ({ 
+  item, 
+  onAction 
+}: { 
+  item: QueueItem | null, 
+  onAction: (action: string, id: string) => void 
+}) => {
+  const [showMetadata, setShowMetadata] = useState(false)
+
   if (!item) {
     return (
-      <div className="nx-queue-inspector is-empty">
-        <div className="nx-inspector-empty-state">
-          <Icon name="radar" />
-          <p>Select a queue item to inspect operational details</p>
+      <aside className="nx-queue-inspector is-empty">
+        <div className="nx-empty-state">
+          <Icon name="target" style={{ width: 48, height: 48, opacity: 0.2, marginBottom: 16 }} />
+          <p>Select a queue item to inspect signal</p>
         </div>
+      </aside>
+    )
+  }
+
+  return (
+    <aside className="nx-queue-inspector">
+      <header className="nx-queue-inspector-header">
+        <div className="nx-inspector-title">
+          <h2>Item Intelligence</h2>
+          <StatusBadge status={item.status} />
+        </div>
+        <button className="nx-inspector-close" onClick={() => onAction('deselect', item.id)}>
+          <Icon name="close" />
+        </button>
+      </header>
+
+      <div className="nx-queue-inspector-body">
+        <CollapsibleInspectorCard title="Execution Details" icon="radar">
+          <div className="nx-inspector-grid">
+            <IntelRow label="Scheduled" value={new Date(item.scheduledForLocal).toLocaleString()} />
+            <IntelRow label="Timezone" value={item.timezone} />
+            <IntelRow label="Touch #" value={item.touchNumber} />
+            <IntelRow label="Priority" value={item.priority.toUpperCase()} className={cls(item.priority === 'P0' && 'is-urgent')} />
+            <IntelRow label="Risk" value={item.riskLevel.toUpperCase()} className={cls(`is-risk-${item.riskLevel}`)} />
+            <IntelRow label="Language" value={item.language === 'es' ? 'Spanish' : 'English'} />
+          </div>
+        </CollapsibleInspectorCard>
+
+        <CollapsibleInspectorCard title="Seller & Property" icon="user">
+          <div className="nx-inspector-grid">
+            <IntelRow label="Seller" value={item.sellerName} />
+            <IntelRow label="Phone" value={item.phone} />
+            <IntelRow label="Market" value={item.market} />
+            <IntelRow label="Address" value={item.propertyAddress} />
+            <IntelRow label="Owner ID" value={item.linkedOwnerId || '—'} className="is-id-row" />
+          </div>
+        </CollapsibleInspectorCard>
+
+        <CollapsibleInspectorCard title="Payload Signal" icon="file-text">
+          <div className="nx-inspector-message-preview">
+            <div className="nx-msg-meta">
+              <span>{item.templateName}</span>
+              <span>{item.useCase}</span>
+            </div>
+            <p>{item.messageText}</p>
+          </div>
+        </CollapsibleInspectorCard>
+
+        {item.status === 'failed' && (
+          <CollapsibleInspectorCard title="Error Diagnostic" icon="alert" className="is-error">
+            <div className="nx-error-box">
+              <strong>{item.failureReason || 'Unknown Failure'}</strong>
+              <p>Retry attempt {item.retryCount} of {item.maxRetries}</p>
+            </div>
+          </CollapsibleInspectorCard>
+        )}
+
+        <div className="nx-inspector-advanced">
+          <button 
+            className="nx-inspector-toggle-json"
+            onClick={() => setShowMetadata(!showMetadata)}
+          >
+            <Icon name="grid" />
+            {showMetadata ? 'Hide Metadata' : 'View Raw Signal'}
+          </button>
+          
+          {showMetadata && (
+            <pre className="nx-inspector-json">
+              {JSON.stringify(item.metadata || {}, null, 2)}
+            </pre>
+          )}
+        </div>
+      </div>
+
+      <div className="nx-queue-inspector-actions">
+        {item.status === 'approval' && (
+          <button className="nx-btn nx-btn--primary" onClick={() => onAction('approve', item.id)}>
+            <Icon name="check" /> Approve Send
+          </button>
+        )}
+        {(item.status === 'ready' || item.status === 'scheduled') && (
+          <button className="nx-btn nx-btn--secondary" onClick={() => onAction('hold', item.id)}>
+            <Icon name="shield" /> Hold Item
+          </button>
+        )}
+        {item.status === 'failed' && (
+          <button className="nx-btn nx-btn--primary" onClick={() => onAction('retry', item.id)}>
+            <Icon name="zap" /> Retry Now
+          </button>
+        )}
+        <button className="nx-btn nx-btn--secondary" onClick={() => onAction('reschedule', item.id)}>
+          <Icon name="calendar" /> Reschedule
+        </button>
+        <button className="nx-btn nx-btn--danger" onClick={() => onAction('cancel', item.id)}>
+          <Icon name="close" /> Cancel
+        </button>
+      </div>
+    </aside>
+  )
+}
+
+// ── Main Page Component ────────────────────────────────────────────────────
+interface QueuePageProps {
+  data?: QueueModel
+}
+
+export const QueuePage = ({ data: initialData }: QueuePageProps = {}) => {
+  const [loading, setLoading] = useState(!initialData)
+  const [model, setModel] = useState<QueueModel | null>(initialData || null)
+  const [viewMode, setViewMode] = useState<ViewMode>('today')
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
+  const [statusFilter, setStatusFilter] = useState<QueueItemStatus | 'all'>('all')
+
+  const refreshData = useCallback(async () => {
+    try {
+      const data = await fetchQueueModel()
+      setModel(data)
+    } catch (err) {
+      console.error('Failed to fetch queue data', err)
+      emitNotification({
+        title: 'Queue Load Failed',
+        detail: err instanceof Error ? err.message : 'Database sync error',
+        severity: 'critical'
+      })
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    refreshData()
+
+    const supabase = getSupabaseClient()
+    const channel = supabase
+      .channel('queue-live-updates')
+      .on(
+        'postgres_changes',
+        { event: '*', table: 'send_queue', schema: 'public' },
+        () => {
+          refreshData()
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [refreshData])
+
+  // Keyboard navigation for view switching
+  useEffect(() => {
+    const handleKeys = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      
+      const modes: ViewMode[] = ['today', 'week', 'month', 'list', 'approval', 'failed']
+      const key = parseInt(e.key)
+      if (key >= 1 && key <= 6) {
+        setViewMode(modes[key - 1])
+      }
+    }
+    window.addEventListener('keydown', handleKeys)
+    return () => window.removeEventListener('keydown', handleKeys)
+  }, [])
+
+  const handleAction = async (action: string, id: string) => {
+    const item = model?.items.find((i: QueueItem) => i.id === id)
+    if (!item) return
+
+    if (action === 'deselect') {
+      setSelectedItemId(null)
+      return
+    }
+
+    // Optimistic UI mapping
+    let successMessage = ''
+    let resultPromise: Promise<any> | null = null
+
+    switch (action) {
+      case 'approve':
+        successMessage = `Approved send to ${item.sellerName}`
+        resultPromise = approveQueueItem(item)
+        break
+      case 'hold':
+        successMessage = `Held item for ${item.sellerName}`
+        resultPromise = holdQueueItem(item)
+        break
+      case 'cancel':
+        successMessage = `Cancelled item for ${item.sellerName}`
+        resultPromise = cancelQueueItem(item)
+        break
+      case 'retry':
+        successMessage = `Retrying send to ${item.sellerName}`
+        resultPromise = retryQueueItem(item)
+        break
+      case 'reschedule':
+        // Simplified for now - in production would open a date picker
+        const tomorrow = new Date()
+        tomorrow.setDate(tomorrow.getDate() + 1)
+        successMessage = `Rescheduled to ${tomorrow.toLocaleDateString()}`
+        resultPromise = rescheduleQueueItem(item, tomorrow.toISOString())
+        break
+    }
+
+    if (resultPromise) {
+      try {
+        const res = await resultPromise
+        if (res.ok) {
+          emitNotification({
+            title: 'Action Successful',
+            detail: successMessage,
+            severity: 'success',
+            sound: 'notification'
+          })
+          refreshData()
+        } else {
+          throw new Error(res.errorMessage || 'Unknown error')
+        }
+      } catch (err) {
+        emitNotification({
+          title: 'Action Failed',
+          detail: err instanceof Error ? err.message : 'Database update failed',
+          severity: 'critical',
+          sound: 'alert-triggered'
+        })
+      }
+    }
+  }
+
+  const selectedItem = model?.items.find((i: QueueItem) => i.id === selectedItemId) || null
+
+  const filteredItems = (model?.items || []).filter((item: QueueItem) => {
+    if (statusFilter !== 'all' && item.status !== statusFilter) return false
+    
+    // Additional view-specific filtering
+    if (viewMode === 'approval') return item.status === 'approval'
+    if (viewMode === 'failed') return item.status === 'failed'
+    
+    return true
+  })
+
+  // Group items for Today view
+  const timeBuckets = [
+    { label: 'Past Due / Overdue', filter: (i: QueueItem) => new Date(i.scheduledForLocal) < new Date() && (i.status === 'ready' || i.status === 'retry') },
+    { label: 'Upcoming (Next 4h)', filter: (i: QueueItem) => {
+      const diff = new Date(i.scheduledForLocal).getTime() - new Date().getTime()
+      return diff > 0 && diff < 4 * 3600 * 1000
+    }},
+    { label: 'Later Today', filter: (i: QueueItem) => {
+      const diff = new Date(i.scheduledForLocal).getTime() - new Date().getTime()
+      return diff >= 4 * 3600 * 1000 && new Date(i.scheduledForLocal).toDateString() === new Date().toDateString()
+    }}
+  ]
+
+  if (loading) {
+    return (
+      <div className="nx-premium-queue is-loading">
+        <div className="nx-loading-spinner" />
+        <p>Syncing operations queue...</p>
       </div>
     )
   }
 
   return (
-    <div className="nx-queue-inspector nx-animate-fade-in">
-      <div className="nx-queue-inspector-header">
-        <div className="nx-inspector-title">
-          <Icon name="activity" />
-          <h2>Item Intelligence</h2>
-        </div>
-        <button className="nx-icon-btn" onClick={onClose}><Icon name="close" /></button>
-      </div>
-
-      <div className="nx-queue-inspector-body">
-        <section className="nx-queue-inspector-section">
-          <div className="nx-queue-inspector-section-title">Queue Summary</div>
-          <div className="nx-queue-inspector-row">
-            <span className="nx-queue-inspector-label">Queue ID</span>
-            <span className="nx-queue-inspector-value nx-mono">{item.queueId}</span>
-          </div>
-          <div className="nx-queue-inspector-row">
-            <span className="nx-queue-inspector-label">Status</span>
-            <Badge type={item.status}>{item.status}</Badge>
-          </div>
-          <div className="nx-queue-inspector-row">
-            <span className="nx-queue-inspector-label">Scheduled</span>
-            <span className="nx-queue-inspector-value">{new Date(item.scheduledForLocal).toLocaleString()}</span>
-          </div>
-          <div className="nx-queue-inspector-row">
-            <span className="nx-queue-inspector-label">Priority</span>
-            <span className={cls('nx-pri-pill', `is-${item.priority.toLowerCase()}`)}>{item.priority}</span>
-          </div>
-        </section>
-
-        <section className="nx-queue-inspector-section">
-          <div className="nx-queue-inspector-section-title">Seller & Property</div>
-          <div className="nx-queue-inspector-row">
-            <span className="nx-queue-inspector-label">Seller</span>
-            <span className="nx-queue-inspector-value">{item.sellerName}</span>
-          </div>
-          <div className="nx-queue-inspector-row">
-            <span className="nx-queue-inspector-label">Phone</span>
-            <span className="nx-queue-inspector-value nx-mono">{item.phone}</span>
-          </div>
-          <div className="nx-queue-inspector-row">
-            <span className="nx-queue-inspector-label">Address</span>
-            <span className="nx-queue-inspector-value">{item.propertyAddress}</span>
-          </div>
-          <div className="nx-queue-inspector-row">
-            <span className="nx-queue-inspector-label">Market</span>
-            <span className="nx-queue-inspector-value">{item.market}</span>
-          </div>
-        </section>
-
-        <section className="nx-queue-inspector-section">
-          <div className="nx-queue-inspector-section-title">Message</div>
-          <div className="nx-queue-inspector-row">
-            <span className="nx-queue-inspector-label">Template</span>
-            <span className="nx-queue-inspector-value">{item.templateName}</span>
-          </div>
-          <div className="nx-queue-inspector-message-box">
-            {item.messageText}
-          </div>
-          <div className="nx-queue-inspector-row" style={{ marginTop: 8 }}>
-            <span className="nx-queue-inspector-label">Segments</span>
-            <span className="nx-queue-inspector-value">{Math.ceil(item.messageText.length / 160)}</span>
-          </div>
-        </section>
-
-        <section className="nx-queue-inspector-section">
-          <div className="nx-queue-inspector-section-title">Delivery & Retry</div>
-          <div className="nx-queue-inspector-row">
-            <span className="nx-queue-inspector-label">Delivery</span>
-            <Badge type={item.deliveryStatus}>{item.deliveryStatus}</Badge>
-          </div>
-          <div className="nx-queue-inspector-row">
-            <span className="nx-queue-inspector-label">Attempts</span>
-            <span className="nx-queue-inspector-value">{item.retryCount} / {item.maxRetries}</span>
-          </div>
-          {item.failureReason && (
-            <div className="nx-failure-callout">
-              <strong>Failure:</strong> {item.failureReason.replace(/_/g, ' ')}
-            </div>
-          )}
-        </section>
-      </div>
-
-      <div className="nx-queue-inspector-actions">
-        <button className="nx-btn nx-btn--primary">Approve</button>
-        <button className="nx-btn nx-btn--secondary">Reschedule</button>
-        <button className="nx-btn nx-btn--secondary">Hold</button>
-        <button className="nx-btn nx-btn--danger">Cancel</button>
-      </div>
-    </div>
-  )
-}
-
-// ── Main Queue Page ────────────────────────────────────────────────────────
-
-export const QueuePage: React.FC<QueuePageProps> = ({ data }) => {
-  const [view, setView] = useState<QueueView>('today')
-  const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
-  const [selectedBucket, setSelectedBucket] = useState<QueueBucket | null>(null)
-  const [searchQuery, setSearchQuery] = useState('')
-  
-  const [_filters, _setFilters] = useState<QueueFilters>({
-    markets: [],
-    statuses: [],
-    agents: [],
-    priorities: [],
-    templates: [],
-    useCases: [],
-    languages: [],
-    contactWindows: [],
-    riskLevels: [],
-    searchQuery: '',
-  })
-
-  const selectedItem = useMemo(() => data.items.find((i) => i.id === selectedItemId) || null, [data.items, selectedItemId])
-
-  const filteredItems = useMemo(() => {
-    let items = data.items
-    if (selectedBucket) {
-      items = items.filter((i) => i.status === selectedBucket)
-    }
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase()
-      items = items.filter(
-        (i) =>
-          i.sellerName.toLowerCase().includes(q) ||
-          i.propertyAddress.toLowerCase().includes(q) ||
-          i.market.toLowerCase().includes(q),
-      )
-    }
-    return items
-  }, [data.items, selectedBucket, searchQuery])
-
-  // Shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).tagName === 'INPUT') return
-      if (e.key === '1') setView('today')
-      if (e.key === '2') setView('week')
-      if (e.key === '3') setView('month')
-      if (e.key === '4') setView('list')
-      if (e.key === '5') setView('approval')
-      if (e.key === '6') setView('failed')
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
-
-  return (
     <div className="nx-premium-queue">
       <header className="nx-queue-topbar">
         <div className="nx-queue-topbar__title">
-          <div className="nx-topbar__logo" style={{ width: 32, height: 32 }}>
-            <Icon name="radar" />
-          </div>
           <h1>Operations Queue</h1>
+          <div className="nx-view-switcher">
+            {(['today', 'week', 'month', 'list', 'approval', 'failed'] as ViewMode[]).map(mode => (
+              <button 
+                key={mode}
+                className={cls('nx-view-btn', viewMode === mode && 'is-active')}
+                onClick={() => setViewMode(mode)}
+              >
+                {mode}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="nx-global-search">
-          <Icon name="search" />
-          <input 
-            placeholder="Search queue..." 
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-          <kbd>⌘K</kbd>
-        </div>
-
-        <div className="nx-queue-view-switcher">
-          {(['today', 'week', 'month', 'list', 'approval', 'failed'] as QueueView[]).map((v) => (
-            <button
-              key={v}
-              className={cls('nx-queue-view-btn', view === v && 'is-active')}
-              onClick={() => setView(v)}
-            >
-              {v.toUpperCase()}
-            </button>
-          ))}
+        <div className="nx-queue-topbar__actions">
+          <div className="nx-queue-stat">
+            <small>READY</small>
+            <b>{model?.readyCount || 0}</b>
+          </div>
+          <div className="nx-queue-stat is-warning">
+            <small>PENDING</small>
+            <b>{model?.approvalCount || 0}</b>
+          </div>
+          <div className="nx-queue-stat is-danger">
+            <small>FAILED</small>
+            <b>{model?.failedCount || 0}</b>
+          </div>
+          <button className="nx-btn nx-btn--secondary" onClick={refreshData}>
+            <Icon name="radar" /> Refresh
+          </button>
         </div>
       </header>
 
       <div className="nx-queue-shell">
         <aside className="nx-queue-sidebar">
           <div className="nx-queue-sidebar-section">
-            <span className="nx-queue-sidebar-label">Send Capacity</span>
+            <span className="nx-queue-sidebar-label">Active Capacity</span>
             <div className="nx-queue-capacity">
               <div className="nx-queue-capacity-item">
-                <span className="nx-queue-capacity-label">Today's Sends</span>
-                <span className="nx-queue-capacity-value">{data.sentTodayCount}</span>
+                <span className="nx-queue-capacity-label">Sent Today</span>
+                <span className="nx-queue-capacity-value">{model?.sentTodayCount || 0}</span>
               </div>
               <div className="nx-queue-capacity-item">
-                <span className="nx-queue-capacity-label">Remaining Safe</span>
-                <span className="nx-queue-capacity-value" style={{ color: 'var(--success)' }}>{data.safeCapacityRemaining}</span>
+                <span className="nx-queue-capacity-label">Daily Limit</span>
+                <span className="nx-queue-capacity-value">1,200</span>
               </div>
-              <div className="nx-queue-capacity-item">
-                <span className="nx-queue-capacity-label">Failed Today</span>
-                <span className="nx-queue-capacity-value" style={{ color: 'var(--danger)' }}>{data.failedCount}</span>
+              <div className="nx-queue-capacity-progress">
+                <div 
+                  className="nx-queue-capacity-bar" 
+                  style={{ width: `${Math.min(((model?.sentTodayCount || 0) / 1200) * 100, 100)}%` }} 
+                />
               </div>
             </div>
           </div>
 
           <div className="nx-queue-sidebar-section">
-            <span className="nx-queue-sidebar-label">Queue Status</span>
-            <StatusPill label="Ready Now" count={data.readyCount} active={selectedBucket === 'ready'} onClick={() => setSelectedBucket(selectedBucket === 'ready' ? null : 'ready')} />
-            <StatusPill label="Scheduled" count={data.scheduledCount} active={selectedBucket === 'scheduled'} onClick={() => setSelectedBucket(selectedBucket === 'scheduled' ? null : 'scheduled')} />
-            <StatusPill label="Approvals" count={data.approvalCount} active={selectedBucket === 'approval'} onClick={() => setSelectedBucket(selectedBucket === 'approval' ? null : 'approval')} />
-            <StatusPill label="Failed" count={data.failedCount} active={selectedBucket === 'failed'} onClick={() => setSelectedBucket(selectedBucket === 'failed' ? null : 'failed')} />
+            <span className="nx-queue-sidebar-label">Status Filters</span>
+            {(['all', 'ready', 'scheduled', 'approval', 'held', 'failed'] as const).map(s => (
+              <button 
+                key={s}
+                className={cls('nx-queue-bucket-btn', statusFilter === s && 'is-active')}
+                onClick={() => setStatusFilter(s)}
+              >
+                <span className="nx-bucket-name">{s === 'all' ? 'All Items' : s.charAt(0).toUpperCase() + s.slice(1)}</span>
+                <span className="nx-queue-bucket-count">
+                  {s === 'all' ? model?.items.length : (model as any)[`${s}Count`] || 0}
+                </span>
+              </button>
+            ))}
           </div>
 
+          <div className="nx-queue-sidebar-section is-spacer" />
+
           <div className="nx-queue-sidebar-section">
-            <span className="nx-queue-sidebar-label">Active Markets</span>
-            {['Dallas', 'Austin', 'Houston', 'Denver', 'Minneapolis'].map((m) => (
-              <label key={m} className="nx-market-filter" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 13, cursor: 'pointer' }}>
-                <input type="checkbox" style={{ accentColor: 'var(--accent-blue)' }} />
-                <span style={{ color: 'var(--text-secondary)' }}>{m}</span>
-              </label>
-            ))}
+            <div className="nx-sidebar-footer">
+              <div className="nx-pressure-gauge">
+                <div className={cls('nx-gauge-dot', `is-pressure-${model?.apiPressureLevel || 'low'}`)} />
+                <span>API Pressure: {model?.apiPressureLevel.toUpperCase()}</span>
+              </div>
+            </div>
           </div>
         </aside>
 
         <main className="nx-queue-main">
           <div className="nx-queue-scroll-area">
-            {view === 'today' && <TodayView items={filteredItems} selectedId={selectedItemId} onSelect={setSelectedItemId} />}
-            {view === 'week' && <WeekView items={filteredItems} selectedId={selectedItemId} onSelect={setSelectedItemId} />}
-            {view === 'month' && <MonthView items={filteredItems} />}
-            {view === 'list' && <ListView items={filteredItems} selectedId={selectedItemId} onSelect={setSelectedItemId} />}
-            {view === 'approval' && <ApprovalView items={filteredItems} selectedId={selectedItemId} onSelect={setSelectedItemId} />}
-            {view === 'failed' && <FailedView items={filteredItems} selectedId={selectedItemId} onSelect={setSelectedItemId} />}
+            {viewMode === 'today' && (
+              <div className="nx-today-view">
+                {timeBuckets.map(bucket => {
+                  const items = filteredItems.filter(bucket.filter)
+                  if (items.length === 0) return null
+                  return (
+                    <div key={bucket.label} className="nx-queue-group">
+                      <div className="nx-queue-group-header">
+                        <h3>{bucket.label}</h3>
+                        <span className="nx-queue-group-count">{items.length}</span>
+                      </div>
+                      <div className="nx-queue-grid">
+                        {items.map((item: QueueItem) => (
+                          <QueueCard 
+                            key={item.id} 
+                            item={item} 
+                            isSelected={selectedItemId === item.id}
+                            onClick={() => setSelectedItemId(item.id)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })}
+                {filteredItems.length === 0 && (
+                  <div className="nx-queue-empty">
+                    <p>No items scheduled for today.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {(viewMode === 'list' || viewMode === 'approval' || viewMode === 'failed') && (
+              <div className="nx-list-view">
+                <div className="nx-queue-table-container">
+                  <table className="nx-queue-table">
+                    <thead>
+                      <tr>
+                        <th>Seller & Property</th>
+                        <th>Status</th>
+                        <th>Scheduled</th>
+                        <th>Market</th>
+                        <th>Agent</th>
+                        <th>Risk</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredItems.map((item: QueueItem) => (
+                        <tr 
+                          key={item.id} 
+                          className={cls(selectedItemId === item.id && 'is-selected')}
+                          onClick={() => setSelectedItemId(item.id)}
+                        >
+                          <td>
+                            <div className="nx-cell-owner">
+                              <strong>{item.sellerName}</strong>
+                              <small>{item.propertyAddress}</small>
+                            </div>
+                          </td>
+                          <td><StatusBadge status={item.status} /></td>
+                          <td>{formatRelativeTime(item.scheduledForLocal)}</td>
+                          <td>{item.market}</td>
+                          <td>{item.agent}</td>
+                          <td><RiskTag level={item.riskLevel} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {viewMode === 'week' && (
+              <div className="nx-week-board">
+                {/* Simplified week view implementation */}
+                <div className="nx-queue-grid">
+                   {filteredItems.map((item: QueueItem) => (
+                    <QueueCard 
+                      key={item.id} 
+                      item={item} 
+                      isSelected={selectedItemId === item.id}
+                      onClick={() => setSelectedItemId(item.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {viewMode === 'month' && (
+              <div className="nx-month-heatmap">
+                 <div className="nx-queue-grid">
+                   {filteredItems.map((item: QueueItem) => (
+                    <QueueCard 
+                      key={item.id} 
+                      item={item} 
+                      isSelected={selectedItemId === item.id}
+                      onClick={() => setSelectedItemId(item.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </main>
 
-        <QueueInspector item={selectedItem} onClose={() => setSelectedItemId(null)} />
+        <QueueInspector 
+          item={selectedItem} 
+          onAction={handleAction} 
+        />
       </div>
     </div>
   )

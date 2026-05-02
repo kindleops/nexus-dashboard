@@ -21,17 +21,22 @@ export type InboxViewSelectValue =
   | 'hidden'
   | 'suppressed'
   | 'all'
+  | 'starred'
+  | 'pinned'
+  | 'unassigned'
 
 export type InboxSavedFilterPreset =
   | 'my_priority'
   | 'new_inbounds'
-  | 'high_motivation'
   | 'offer_needed'
   | 'review_required'
-  | 'suppressed'
-  | 'spanish_replies'
   | 'wrong_numbers'
-  | 'unlinked_records'
+  | 'suppressed'
+  | 'language_focus'
+  | 'high_motivation'
+  | 'starred'
+  | 'pinned'
+  | 'unassigned'
 
 export interface InboxAdvancedFilters {
   market?: string
@@ -195,13 +200,15 @@ export const viewOptions: Array<{ value: InboxViewSelectValue; label: string }> 
 export const savedFilterOptions: Array<{ value: InboxSavedFilterPreset; label: string }> = [
   { value: 'my_priority', label: 'Priority' },
   { value: 'new_inbounds', label: 'Active' },
-  { value: 'high_motivation', label: 'Active + Motivation' },
   { value: 'offer_needed', label: 'Waiting' },
   { value: 'review_required', label: 'All' },
-  { value: 'suppressed', label: 'Suppressed' },
-  { value: 'spanish_replies', label: 'Language Focus' },
   { value: 'wrong_numbers', label: 'Hidden' },
-  { value: 'unlinked_records', label: 'All (Debug)' },
+  { value: 'suppressed', label: 'Suppressed' },
+  { value: 'language_focus', label: 'Language Focus' },
+  { value: 'high_motivation', label: 'Active + Motivation' },
+  { value: 'starred', label: 'Starred' },
+  { value: 'pinned', label: 'Pinned' },
+  { value: 'unassigned', label: 'Unassigned' },
 ]
 
 const closedStages = new Set(['not_interested', 'wrong_number', 'dnc_opt_out', 'archived', 'closed_converted'])
@@ -271,8 +278,14 @@ const matchesViewSelection = (thread: InboxWorkflowThread, view: InboxViewSelect
   if (view === 'priority') return showInPriority && !isArchived
   if (view === 'active') return !isArchived && !isSuppressed && uiIntent !== 'outbound_waiting'
   if (view === 'waiting') return uiIntent === 'outbound_waiting' && !isArchived
-  if (view === 'hidden') return priorityBucket === 'hidden' && !isArchived
+  if (view === 'hidden') return priorityBucket === 'hidden' || isArchived || thread.isHidden
   if (view === 'suppressed') return isSuppressed && !isArchived
+  if (view === 'starred') return thread.isStarred
+  if (view === 'pinned') return thread.isPinned
+  if (view === 'unassigned') {
+    const assigned = getField(thread, 'assignedAgent') || getField(thread, 'sms_agent_id') || getField(thread, 'ownerId')
+    return !assigned
+  }
   
   return true
 }
@@ -295,7 +308,14 @@ const matchesAdvancedFilters = (thread: InboxWorkflowThread, filters: InboxAdvan
   if (filters.propertyType && !propertyType.includes(toLower(filters.propertyType))) return false
   if (filters.ownerType && !ownerType.includes(toLower(filters.ownerType))) return false
   if (filters.occupancy && !occupancy.includes(toLower(filters.occupancy))) return false
-  if (filters.language && !language.includes(toLower(filters.language))) return false
+  if (filters.language) {
+    if (filters.language === 'non_english') {
+      const lang = toLower(getField(thread, 'language') || getField(thread, 'detected_language') || getField(thread, 'sellerLanguage'))
+      if (!lang || lang.includes('english') || lang.includes('en')) return false
+    } else {
+      if (!language.includes(toLower(filters.language))) return false
+    }
+  }
   if (filters.priority && toLower(thread.priority) !== toLower(filters.priority)) return false
   if (filters.bestContactWindow && !bestContactWindow.includes(toLower(filters.bestContactWindow))) return false
   if (filters.persona && !persona.includes(toLower(filters.persona))) return false
@@ -384,6 +404,9 @@ export const getInboxViewCounts = (threads: InboxWorkflowThread[]): Record<Inbox
   waiting: threads.filter((thread) => matchesViewSelection(thread, 'waiting')).length,
   hidden: threads.filter((thread) => matchesViewSelection(thread, 'hidden')).length,
   suppressed: threads.filter((thread) => matchesViewSelection(thread, 'suppressed')).length,
+  starred: threads.filter((thread) => matchesViewSelection(thread, 'starred')).length,
+  pinned: threads.filter((thread) => matchesViewSelection(thread, 'pinned')).length,
+  unassigned: threads.filter((thread) => matchesViewSelection(thread, 'unassigned')).length,
   all: threads.length,
 })
 
@@ -394,9 +417,11 @@ export const getSavedPresetConfig = (preset: InboxSavedFilterPreset): Partial<In
   if (preset === 'offer_needed') return { view: 'waiting', stage: 'all_stages' }
   if (preset === 'review_required') return { view: 'all', stage: 'all_stages' }
   if (preset === 'suppressed') return { view: 'suppressed', stage: 'suppressed' }
-  if (preset === 'spanish_replies') return { view: 'active', advanced: { language: 'spanish' } }
+  if (preset === 'language_focus') return { view: 'all', advanced: { language: 'non_english' } }
   if (preset === 'wrong_numbers') return { view: 'hidden' }
-  if (preset === 'unlinked_records') return { view: 'all', advanced: { ownerType: 'unknown' } }
+  if (preset === 'starred') return { view: 'starred', stage: 'all_stages' }
+  if (preset === 'pinned') return { view: 'pinned', stage: 'all_stages' }
+  if (preset === 'unassigned') return { view: 'unassigned', stage: 'all_stages' }
   return {}
 }
 

@@ -328,13 +328,20 @@
   position: absolute;
   right: 0;
   top: calc(100% + 12px);
-  width: 260px;
-  padding: 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  background: rgba(18, 23, 34, 0.62);
-  backdrop-filter: blur(26px) saturate(150%);
-  box-shadow: 0 24px 80px rgba(0,0,0,0.48);
+  width: 320px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(18, 23, 34, 0.65);
+  backdrop-filter: blur(32px) saturate(180%);
+  box-shadow: 0 24px 80px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.05);
+  animation: nx-popover-in 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 1000;
+}
+
+@keyframes nx-popover-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .nx-liquid-popover__title {
@@ -347,6 +354,35 @@
   color: var(--text-secondary);
   font-size: 13px;
   line-height: 1.4;
+}
+
+/* Liquid Panels (Activity Log, etc) */
+.nx-liquid-panel {
+  position: absolute;
+  top: 74px;
+  right: 18px;
+  bottom: 18px;
+  width: 420px;
+  display: flex;
+  flex-direction: column;
+  background: rgba(18, 23, 34, 0.72);
+  backdrop-filter: blur(40px) saturate(180%);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 16px;
+  box-shadow: 0 40px 100px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.05);
+  z-index: 100;
+  animation: nx-panel-in 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes nx-panel-in {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.nx-premium-inbox.is-light-mode .nx-liquid-panel {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(0, 0, 0, 0.1);
+  box-shadow: 0 40px 100px rgba(0, 40, 100, 0.15);
 }
 
 .nx-avatar-menu {
@@ -5021,48 +5057,139 @@
   font-size: 11px;
 }
 
-.nx-property-pill b.is-missing,
-.nx-intel-value.is-missing {
-  color: #8190a8;
+.nx-intel-card {
+  position: relative;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--bg-panel-elevated);
+  overflow: hidden;
+  transition: all 0.2s ease;
 }
 
-.nx-intel-action-rail {
+.nx-intel-card__header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.nx-intel-card__header:hover {
+  background: rgba(255,255,255,0.03);
+}
+
+.nx-intel-card__chevron {
+  margin-left: auto;
+  opacity: 0.5;
+  transition: transform 0.2s ease;
+}
+
+.nx-intel-card__chevron.is-rotated {
+  transform: rotate(180deg);
+}
+
+.nx-intel-card__body {
+  padding: 0 14px 14px;
+}
+
+.nx-property-card .nx-intel-card__media {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  overflow: hidden;
+}
+
+.nx-property-card .nx-intel-card__media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.nx-property-card .nx-intel-card__media-actions {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
   display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  padding: 10px;
+  background: linear-gradient(0deg, rgba(0,0,0,0.8) 0%, transparent 100%);
+  opacity: 0;
+  transform: translateY(10px);
+  transition: all 0.2s ease;
+  pointer-events: none;
+}
+
+.nx-property-card .nx-intel-card__media:hover .nx-intel-card__media-actions {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.nx-prop-link {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  text-decoration: none;
+  color: #fff;
+  background: rgba(255,255,255,0.12);
+  backdrop-filter: blur(8px);
+  border-radius: 6px;
+  transition: background 0.2s ease;
+}
+
+.nx-prop-link:hover {
+  background: var(--accent-blue);
+}
+
+.nx-intel-card__header-static {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nx-intel-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
   gap: 8px;
 }
 
-.nx-intel-action-rail.is-compact {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.nx-intel-pill {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
 }
 
-.nx-intel-action-rail.is-split,
-.nx-intel-action-rail.is-workspace {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+.nx-intel-pill small {
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  font-weight: 700;
 }
 
-.nx-intel-action-rail button {
-  min-height: 36px;
-  border: 1px solid var(--intel-border);
-  border-radius: 9px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  color: var(--text-secondary);
-  background: var(--intel-surface);
+.nx-intel-pill b {
+  font-size: 13px;
+  color: var(--text-primary);
 }
 
-.nx-intel-action-rail button:hover {
-  color: #fff;
-  border-color: rgba(10, 132, 255, 0.56);
-  background: rgba(10, 132, 255, 0.14);
-}
-
-.nx-intelligence-panel .nx-accordion-card {
-  border: 1px solid var(--intel-border);
-  border-radius: 11px;
-  background: var(--intel-surface);
-  overflow: hidden;
+.nx-intel-pill b.is-missing {
+  color: var(--text-muted);
+  opacity: 0.5;
 }
 
 .nx-intelligence-panel.is-mode-compact .nx-accordion-card {
@@ -5470,23 +5597,55 @@
 
 /* 4. Composer Utility Strip */
 .nx-composer-utility-row {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%) translateY(10px);
+  display: flex;
+  gap: 6px;
+  padding: 6px 12px;
+  background: rgba(15, 20, 31, 0.7);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-bottom: 0;
+  border-radius: 12px 12px 0 0;
   opacity: 0;
-  transform: translateY(10px);
-  transition: all 0.3s ease;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   pointer-events: none;
+  z-index: 10;
 }
 
-.nx-sticky-composer:hover .nx-composer-utility-row,
-.nx-sticky-composer:focus-within .nx-composer-utility-row {
+.nx-sticky-composer.show-utilities .nx-composer-utility-row {
   opacity: 1;
-  transform: translateY(0);
+  transform: translateX(-50%) translateY(0);
   pointer-events: auto;
 }
 
+.nx-utility-btn {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  transition: all 0.2s ease;
+}
+
+.nx-utility-btn:hover {
+  background: rgba(255,255,255,0.06);
+  color: var(--text-primary);
+  border-color: rgba(255,255,255,0.1);
+}
+
+.nx-utility-btn.is-active,
 .nx-utility-btn.is-translating-active {
   background: var(--accent-blue-soft);
   color: var(--accent-blue);
-  border-color: var(--accent-blue);
+  border-color: rgba(10,132,255,0.3);
 }
 
 /* 5. Property Hero Polish */
@@ -5553,33 +5712,33 @@
    ========================================================================== */
 
 .nx-premium-inbox.is-light-mode {
-  --bg-main: #f5f7fb;
-  --bg-panel: rgba(255, 255, 255, 0.88);
+  --bg-main: #f0f2f5;
+  --bg-panel: rgba(255, 255, 255, 0.82);
   --bg-panel-solid: #ffffff;
   --bg-panel-elevated: #ffffff;
-  --border-subtle: rgba(0, 0, 0, 0.06);
-  --border-strong: rgba(0, 0, 0, 0.12);
+  --border-subtle: rgba(0, 42, 101, 0.08);
+  --border-strong: rgba(0, 42, 101, 0.15);
   --accent-blue: #007aff;
-  --accent-blue-soft: rgba(0, 122, 255, 0.1);
-  --text-primary: #1c1c1e;
-  --text-secondary: #3a3a3c;
-  --text-muted: #8e8e93;
+  --accent-blue-soft: rgba(0, 122, 255, 0.08);
+  --text-primary: #1d1d1f;
+  --text-secondary: #48484a;
+  --text-muted: #86868b;
   --success: #34c759;
   --warning: #ff9500;
   --danger: #ff3b30;
 
   background: 
-    radial-gradient(at 0% 0%, rgba(0, 122, 255, 0.04) 0px, transparent 50%),
-    radial-gradient(at 100% 100%, rgba(0, 122, 255, 0.02) 0px, transparent 50%),
-    #f5f7fb;
+    radial-gradient(at 0% 0%, rgba(0, 122, 255, 0.06) 0px, transparent 50%),
+    radial-gradient(at 100% 100%, rgba(0, 122, 255, 0.04) 0px, transparent 50%),
+    #f0f2f5;
   color: var(--text-primary);
 }
 
 .nx-premium-inbox.is-light-mode .nx-topbar {
-  background: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.7);
   border-bottom: 1px solid var(--border-subtle);
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
-  backdrop-filter: blur(20px) saturate(180%);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  backdrop-filter: blur(30px) saturate(200%);
 }
 
 .nx-premium-inbox.is-light-mode .nx-sidebar,
@@ -5587,66 +5746,84 @@
 .nx-premium-inbox.is-light-mode .nx-chat-container,
 .nx-premium-inbox.is-light-mode .nx-sticky-composer {
   background: var(--bg-panel);
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 10px 40px rgba(0, 40, 100, 0.04);
   border: 1px solid var(--border-subtle);
-  backdrop-filter: blur(30px) saturate(180%);
+  backdrop-filter: blur(40px) saturate(210%);
 }
 
 .nx-premium-inbox.is-light-mode .nx-conversation-row {
-  border-bottom: 1px solid rgba(0, 0, 0, 0.03);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
 }
 
 .nx-premium-inbox.is-light-mode .nx-conversation-row:hover {
-  background: rgba(0, 122, 255, 0.02);
+  background: rgba(0, 122, 255, 0.03);
 }
 
 .nx-premium-inbox.is-light-mode .nx-conversation-row.is-selected {
-  background: white;
-  box-shadow: 0 4px 14px rgba(0, 122, 255, 0.08);
-  border-color: rgba(0, 122, 255, 0.3);
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(0, 122, 255, 0.12), 0 0 0 1px rgba(0, 122, 255, 0.2);
+  border-color: transparent;
 }
 
 .nx-premium-inbox.is-light-mode .nx-chat-bubble {
-  background: #e9e9eb;
-  color: #1c1c1e;
+  background: #f2f2f7;
+  color: #1d1d1f;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
 .nx-premium-inbox.is-light-mode .is-outbound .nx-chat-bubble {
-  background: linear-gradient(180deg, #007aff 0%, #006ae6 100%);
+  background: linear-gradient(180deg, #007aff 0%, #0063e1 100%);
   color: white;
-  box-shadow: 0 2px 8px rgba(0, 122, 255, 0.3);
+  box-shadow: 0 4px 12px rgba(0, 122, 255, 0.25);
 }
 
 .nx-premium-inbox.is-light-mode .nx-bubble-meta-badge {
-  background: rgba(255, 255, 255, 0.9);
-  border-color: rgba(0, 0, 0, 0.08);
-  color: #8e8e93;
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(0, 0, 0, 0.1);
+  color: #86868b;
 }
 
 .nx-premium-inbox.is-light-mode .nx-intel-card {
-  background: rgba(0, 0, 0, 0.02);
-  border-color: rgba(0, 0, 0, 0.05);
+  background: rgba(255, 255, 255, 0.6);
+  border-color: rgba(0, 0, 0, 0.06);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
 }
 
-.nx-premium-inbox.is-light-mode .nx-stage-orbit {
-  background: rgba(0, 122, 255, 0.05);
-  border-color: rgba(0, 122, 255, 0.2);
-  color: #007aff;
+.nx-premium-inbox.is-light-mode .nx-intel-pill {
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.nx-premium-inbox.is-light-mode .nx-stage-selector .nx-stage-btn {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.1);
+  color: #1d1d1f;
 }
 
 .nx-premium-inbox.is-light-mode .nx-notification-button,
 .nx-premium-inbox.is-light-mode .nx-processor-button,
-.nx-premium-inbox.is-light-mode .nx-icon-control {
-  background: rgba(0, 0, 0, 0.03);
-  color: #3a3a3c;
+.nx-premium-inbox.is-light-mode .nx-icon-control,
+.nx-premium-inbox.is-light-mode .nx-sidebar__icon-button {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.1);
+  color: #1d1d1f;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
 .nx-premium-inbox.is-light-mode .nx-global-search {
-  background: rgba(0, 0, 0, 0.04);
-  border-color: transparent;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.03);
 }
 
-.nx-premium-inbox.is-light-mode .nx-global-search input {
-  color: #1c1c1e;
+.nx-premium-inbox.is-light-mode .nx-liquid-popover {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(0, 0, 0, 0.1);
+  box-shadow: 0 20px 60px rgba(0, 40, 100, 0.15);
+  color: #1d1d1f;
+}
+
+.nx-premium-inbox.is-light-mode .nx-composer-utility-row {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(0, 0, 0, 0.08);
 }

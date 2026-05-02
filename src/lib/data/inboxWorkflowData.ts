@@ -72,6 +72,9 @@ export interface InboxThreadWorkflow {
   isArchived: boolean
   isRead: boolean
   isPinned: boolean
+  isStarred: boolean
+  isHidden: boolean
+  isSuppressed: boolean
   priority: InboxPriority
   lastInboundAt: string | null
   lastOutboundAt: string | null
@@ -287,6 +290,9 @@ const withWorkflowState = (
     isArchived,
     isRead,
     isPinned: asBoolean(stateRow?.['is_pinned'], false),
+    isStarred: asBoolean(stateRow?.['is_starred'], false),
+    isHidden: asBoolean(stateRow?.['is_hidden'], false),
+    isSuppressed: asBoolean(stateRow?.['is_suppressed'], false),
     priority: hasStateRow
       ? ((normalizeStatus(stateRow?.['priority']) as InboxPriority) || thread.priority)
       : (latestInbound ? 'urgent' : 'normal'),
@@ -478,6 +484,9 @@ export const getThreadWorkflowState = async (thread: InboxThread): Promise<Inbox
     isArchived: (inferred.inboxStatus as InboxWorkflowStatus) === 'archived',
     isRead: !thread.unread,
     isPinned: false,
+    isStarred: false,
+    isHidden: false,
+    isSuppressed: false,
     priority: thread.priority,
     lastInboundAt: inferred.lastInboundAt ?? thread.lastInboundAt ?? null,
     lastOutboundAt: inferred.lastOutboundAt ?? thread.lastOutboundAt ?? null,
@@ -491,7 +500,7 @@ export const getThreadWorkflowState = async (thread: InboxThread): Promise<Inbox
 
 const persistWorkflowPatch = async (
   thread: InboxThread,
-  patch: Partial<Pick<InboxThreadWorkflow, 'inboxStatus' | 'inboxStage' | 'isArchived' | 'isRead' | 'isPinned' | 'priority'>>,
+  patch: Partial<Pick<InboxThreadWorkflow, 'inboxStatus' | 'inboxStage' | 'isArchived' | 'isRead' | 'isPinned' | 'isStarred' | 'isHidden' | 'isSuppressed' | 'priority'>>,
 ): Promise<WorkflowMutationResult> => {
   const supabase = getSupabaseClient()
   const now = new Date().toISOString()
@@ -525,7 +534,15 @@ const persistWorkflowPatch = async (
     }
     if (patch.isPinned != null) payload['is_pinned'] = patch.isPinned
     if (patch.priority) payload['priority'] = patch.priority
-    if ((patch as any).isStarred != null) payload['is_starred'] = (patch as any).isStarred
+    if (patch.isStarred != null) payload['is_starred'] = patch.isStarred
+    if (patch.isHidden != null) {
+      payload['is_hidden'] = patch.isHidden
+      payload['hidden_at'] = patch.isHidden ? now : null
+    }
+    if (patch.isSuppressed != null) {
+      payload['is_suppressed'] = patch.isSuppressed
+      payload['suppressed_at'] = patch.isSuppressed ? now : null
+    }
     if (patch.isArchived != null) payload['archived_at'] = patch.isArchived ? now : null
     payload['is_urgent'] = (patch.priority ?? thread.priority) === 'urgent'
 
@@ -558,7 +575,7 @@ export const fetchInboxThreads = async (params: InboxThreadsQuery = {}): Promise
         chunk(keys, 40).map((keyBatch) => (
           supabase
             .from('inbox_thread_state')
-            .select('thread_key,stage,status,priority,is_archived,is_read,is_pinned,last_read_at,archived_at,updated_at')
+            .select('thread_key,stage,status,priority,is_archived,is_read,is_pinned,is_starred,is_hidden,is_suppressed,last_read_at,archived_at,updated_at')
             .in('thread_key', keyBatch)
         )),
       )
@@ -773,9 +790,25 @@ export const unpinThread = async (thread: InboxThread): Promise<WorkflowMutation
 }
 
 export const starThread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
-  return persistWorkflowPatch(thread, { isStarred: true } as any)
+  return persistWorkflowPatch(thread, { isStarred: true })
 }
 
 export const unstarThread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
-  return persistWorkflowPatch(thread, { isStarred: false } as any)
+  return persistWorkflowPatch(thread, { isStarred: false })
+}
+
+export const hideThread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
+  return persistWorkflowPatch(thread, { isHidden: true, inboxStatus: 'hidden' as any })
+}
+
+export const unhideThread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
+  return persistWorkflowPatch(thread, { isHidden: false, inboxStatus: 'open' })
+}
+
+export const suppressThread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
+  return persistWorkflowPatch(thread, { isSuppressed: true, inboxStatus: 'suppressed' })
+}
+
+export const unsuppressThread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
+  return persistWorkflowPatch(thread, { isSuppressed: false, inboxStatus: 'open' })
 }
