@@ -1249,22 +1249,19 @@ export const fetchInboxModel = async (options: InboxFetchOptions = {}): Promise<
   const offset = options.offset ?? 0
 
   if (DEV) {
-    console.log('[NexusInbox] Data source: live', {
-      table: 'nexus_inbox_threads_v',
-      requestedLimit: limit,
-      requestedOffset: offset,
-      status: 'Starting fetch'
-    })
+    console.log('[NexusInbox] source: nexus_inbox_threads_v')
+    console.log('[NexusInbox] requested limit:', limit)
+    console.log('[NexusInbox] requested offset:', offset)
   }
 
   const threads = await getInboxThreads({}, options)
   
   if (DEV) {
-    console.log('[NexusInbox] Data source: live', {
-      returnedCount: threads.length,
-      firstThreadId: threads[0]?.id || 'none',
-      firstThreadKey: threads[0]?.threadKey || 'none'
-    })
+    // Mask sensitive phone numbers in thread keys if present (e.g. +16125551234 -> +1612***1234)
+    const maskId = (id: string) => id.replace(/(\+\d{1,2}\d{3})\d{4}(\d{4})/, '$1****$2')
+    console.log('[NexusInbox] returned row count:', threads.length)
+    console.log('[NexusInbox] fallback/mock/live status:', 'live')
+    console.log('[NexusInbox] first thread key/id:', maskId(threads[0]?.threadKey || threads[0]?.id || 'none'))
   }
 
   const groupedThreadCount = threads.length

@@ -2,9 +2,13 @@ import { useState, useRef, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from '../../../shared/icons'
 
-const TEMPLATE_STAGES = ['All', 'new_reply', 'needs_response', 'interested', 'needs_offer', 'nurture', 'sent_waiting'] as const
-const TEMPLATE_LANGUAGES = ['All', 'English', 'Spanish', 'Bilingual'] as const
-const TEMPLATE_USE_CASES = ['All', 'Initial Outreach', 'Follow-Up', 'Offer', 'Appointment', 'Objection Handle', 'Closing'] as const
+const TEMPLATE_STAGES = ['All', 'new_reply', 'needs_response', 'interested', 'needs_offer', 'nurture', 'sent_waiting', 'failed'] as const
+const TEMPLATE_LANGUAGES = [
+  'All', 'English', 'Spanish', 'French', 'Portuguese', 'Italian', 'German', 
+  'Russian', 'Chinese', 'Japanese', 'Korean', 'Vietnamese', 'Tagalog', 
+  'Arabic', 'Hindi', 'Bengali', 'Punjabi', 'Bilingual'
+] as const
+const TEMPLATE_USE_CASES = ['All', 'Initial Outreach', 'Follow-Up', 'Offer', 'Appointment', 'Objection Handle', 'Closing', 'Re-engagement'] as const
 
 interface TemplateDef {
   id: string
@@ -95,7 +99,6 @@ const BUILT_IN_TEMPLATES: TemplateDef[] = [
 
 interface TemplatePopoverProps {
   open: boolean
-  anchorRef: React.RefObject<HTMLElement>
   onClose: () => void
   onInsert: (text: string) => void
   onReplace: (text: string) => void
@@ -116,7 +119,6 @@ const FilterChip = ({ label, active, onClick }: { label: string; active: boolean
 
 export const TemplatePopover = ({
   open,
-  anchorRef,
   onClose,
   onInsert,
   onReplace,
@@ -130,40 +132,6 @@ export const TemplatePopover = ({
   const popoverRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    if (!open) return
-    // Focus search on open
-    const t = setTimeout(() => searchRef.current?.focus(), 60)
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        popoverRef.current && !popoverRef.current.contains(event.target as Node) &&
-        anchorRef.current && !anchorRef.current.contains(event.target as Node)
-      ) {
-        onClose()
-      }
-    }
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    document.addEventListener('keydown', handleEscape)
-    return () => {
-      clearTimeout(t)
-      document.removeEventListener('mousedown', handleClickOutside)
-      document.removeEventListener('keydown', handleEscape)
-    }
-  }, [open, onClose, anchorRef])
-
-  // Reset filters when closed
-  useEffect(() => {
-    if (!open) {
-      setSearch('')
-      setFilterStage('All')
-      setFilterLang('All')
-      setFilterUseCase('All')
-    }
-  }, [open])
-
   const filtered = useMemo(() => {
     const q = search.toLowerCase()
     return BUILT_IN_TEMPLATES.filter((t) => {
@@ -175,6 +143,35 @@ export const TemplatePopover = ({
       return true
     })
   }, [search, filterStage, filterLang, filterUseCase, activeOnly])
+
+  useEffect(() => {
+    if (!open) return
+    const t = setTimeout(() => searchRef.current?.focus(), 60)
+    
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+      if (event.key === 'Enter' && filtered.length > 0 && search) {
+        // If searching and hit enter, use the first result
+        onInsert(filtered[0].content)
+        onClose()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      clearTimeout(t)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [open, onClose, filtered, search, onInsert])
+
+  // Reset filters when closed
+  useEffect(() => {
+    if (!open) {
+      setSearch('')
+      setFilterStage('All')
+      setFilterLang('All')
+      setFilterUseCase('All')
+    }
+  }, [open])
 
   if (!open) return null
   

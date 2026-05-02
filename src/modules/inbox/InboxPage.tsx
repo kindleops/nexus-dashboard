@@ -161,6 +161,11 @@ export default function InboxPage() {
     })
   ), [threads, searchQuery, stageFilter, viewFilter, advancedFilters])
 
+  const handleLoadMore = useCallback(async () => {
+    await loadMore()
+    setVisibleThreadCount(prev => prev + 200)
+  }, [loadMore])
+
   const rightFiltered = useMemo(() => (
     applyInboxFilters(threads, {
       search: '',
@@ -567,7 +572,7 @@ export default function InboxPage() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [announceLayout, layoutState.activeOverlay, layoutState.mapMode, layoutState.leftPanelMode, layoutState.inboxMode, setActiveOverlay])
 
-  const handleWorkflowMutation = useCallback(async (label: string, mutation: () => Promise<any>) => {
+  const handleWorkflowMutation = useCallback(async (label: string, mutation: () => Promise<any>, options?: { action?: { label: string, onClick: () => void } }) => {
     try {
       const result = await mutation()
       if (result && 'ok' in result && !result.ok) {
@@ -575,7 +580,12 @@ export default function InboxPage() {
         return
       }
       await refreshInbox()
-      emitNotification({ title: label, detail: 'Action completed successfully', severity: 'success' })
+      emitNotification({ 
+        title: label, 
+        detail: 'Action completed successfully', 
+        severity: 'success',
+        action: options?.action
+      })
     } catch (err) {
       emitNotification({ title: 'Error', detail: String(err), severity: 'critical' })
     }
@@ -599,7 +609,16 @@ export default function InboxPage() {
       case 'unhide': label = 'Thread Unhidden'; mutation = () => unhideThread(thread); setOptimisticPatches(p => ({...p, [thread.id]: { ...p[thread.id], isHidden: false, inboxStatus: 'open' }})); break
     }
 
-    void handleWorkflowMutation(label, mutation)
+    if (action === 'archive') {
+      void handleWorkflowMutation(label, mutation, {
+        action: {
+          label: 'Undo',
+          onClick: () => handleThreadAction(thread, 'unarchive')
+        }
+      })
+    } else {
+      void handleWorkflowMutation(label, mutation)
+    }
   }, [handleWorkflowMutation, threads])
 
   const handleSelect = useCallback((id: string) => {
@@ -635,9 +654,16 @@ export default function InboxPage() {
   const handleToggleArchive = useCallback(() => {
     if (!selected) return
     setOptimisticPatches(prev => ({ ...prev, [selected.id]: { ...prev[selected.id], isArchived: !selected.isArchived, inboxStatus: !selected.isArchived ? 'archived' : 'open' } }))
-    void handleWorkflowMutation(selected.isArchived ? 'Thread Unarchived' : 'Thread Archived', () => (
-      selected.isArchived ? updateThreadStatus(selected, 'open') : archiveThread(selected)
-    ))
+    void handleWorkflowMutation(
+      selected.isArchived ? 'Thread Unarchived' : 'Thread Archived', 
+      () => (selected.isArchived ? updateThreadStatus(selected, 'open') : archiveThread(selected)),
+      !selected.isArchived ? {
+        action: {
+          label: 'Undo',
+          onClick: () => handleToggleArchive()
+        }
+      } : undefined
+    )
   }, [handleWorkflowMutation, selected])
 
   const handleSend = useCallback(async (text: string) => {
@@ -770,7 +796,7 @@ export default function InboxPage() {
             loadingError={DEV && data.liveFetchStatus === 'error' ? data.liveFetchError : null}
             visibleThreadCount={visibleThreadCount}
             canLoadMore={true}
-            onLoadMore={loadMore}
+            onLoadMore={handleLoadMore}
           />
         )}
 
@@ -788,7 +814,7 @@ export default function InboxPage() {
             loadingError={null}
             visibleThreadCount={visibleThreadCount}
             canLoadMore={true}
-            onLoadMore={loadMore}
+            onLoadMore={handleLoadMore}
           />
         )}
 

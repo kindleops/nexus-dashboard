@@ -28,6 +28,10 @@ export interface NexusNotification {
   dismissMs?: number        // default: 3000
   read?: boolean
   source?: string           // module that emitted the notification
+  action?: {
+    label: string
+    onClick: () => void
+  }
 }
 
 // ── Global notification bus ───────────────────────────────────────────────
@@ -134,6 +138,19 @@ export const NotificationToasts = () => {
           <div className="nx-toast__body">
             <span className="nx-toast__title">{toast.title}</span>
             {toast.detail && <span className="nx-toast__detail">{toast.detail}</span>}
+            {toast.action && (
+              <button 
+                type="button" 
+                className="nx-toast__action" 
+                onClick={(e) => {
+                  e.stopPropagation()
+                  toast.action?.onClick()
+                  dismiss(toast.id)
+                }}
+              >
+                {toast.action.label}
+              </button>
+            )}
           </div>
           <button type="button" className="nx-toast__dismiss" onClick={() => dismiss(toast.id)}>
             <Icon name="close" className="nx-toast__dismiss-icon" />

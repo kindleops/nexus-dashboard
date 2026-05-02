@@ -24,6 +24,11 @@ export type InboxViewSelectValue =
   | 'starred'
   | 'pinned'
   | 'unassigned'
+  | 'needs_response'
+  | 'archived'
+  | 'sent'
+  | 'queued'
+  | 'failed'
 
 export type InboxSavedFilterPreset =
   | 'my_priority'
@@ -288,6 +293,11 @@ const matchesViewSelection = (thread: InboxWorkflowThread, view: InboxViewSelect
     const assigned = getField(thread, 'assignedAgent') || getField(thread, 'sms_agent_id') || getField(thread, 'ownerId')
     return !assigned
   }
+  if (view === 'needs_response') return Boolean(thread.needsResponse) && !isArchived
+  if (view === 'archived') return isArchived
+  if (view === 'sent') return uiIntent === 'sent' && !isArchived
+  if (view === 'queued') return uiIntent === 'queued' && !isArchived
+  if (view === 'failed') return uiIntent === 'failed' && !isArchived
   
   return true
 }
@@ -415,6 +425,11 @@ export const getInboxViewCounts = (threads: InboxWorkflowThread[]): Record<Inbox
   starred: threads.filter((thread) => matchesViewSelection(thread, 'starred')).length,
   pinned: threads.filter((thread) => matchesViewSelection(thread, 'pinned')).length,
   unassigned: threads.filter((thread) => matchesViewSelection(thread, 'unassigned')).length,
+  needs_response: threads.filter((thread) => matchesViewSelection(thread, 'needs_response')).length,
+  archived: threads.filter((thread) => matchesViewSelection(thread, 'archived')).length,
+  sent: threads.filter((thread) => matchesViewSelection(thread, 'sent')).length,
+  queued: threads.filter((thread) => matchesViewSelection(thread, 'queued')).length,
+  failed: threads.filter((thread) => matchesViewSelection(thread, 'failed')).length,
   all: threads.length,
 })
 

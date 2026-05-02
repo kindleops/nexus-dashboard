@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { CommandCenterStore } from '../../domain/types'
 import { formatRelativeTime } from '../../shared/formatters'
-import { fetchInboxModel } from '../../lib/data/inboxData'
+import { fetchInboxModel, type InboxFetchOptions } from '../../lib/data/inboxData'
 import { isDev, shouldUseSupabase, useSupabaseData } from '../../lib/data/shared'
 import type { InboxWorkflowThread } from '../../lib/data/inboxWorkflowData'
 import { hasSupabaseEnv, supabaseAnonKeyPresent, supabaseUrlPresent } from '../../lib/supabaseClient'
@@ -204,7 +204,6 @@ export const adaptInboxModel = (store: CommandCenterStore): InboxModel => {
   }
 }
 
-import { fetchInboxModel, type InboxFetchOptions } from '../../lib/data/inboxData'
 
 export const loadInbox = async (options: InboxFetchOptions = {}): Promise<InboxModel> => {
   if (isDev) {

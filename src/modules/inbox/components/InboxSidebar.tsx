@@ -98,28 +98,29 @@ export const ConversationRow = memo(({ thread, selected, isStarred, onSelect, on
       onClick={() => onSelect(thread.id)}
       style={statusStyleVars(visual)}
     >
-      <span className="nx-conversation-main">
+      <div className="nx-conversation-row__content">
         {/* Row 1: Name & Time */}
-        <span className="nx-conversation-row__top">
-          <strong>{ownerName}</strong>
+        <div className="nx-conversation-row__top">
+          <strong className="nx-conversation-row__name">{ownerName}</strong>
           <div className="nx-row-end-actions">
-            {thread.isPinned && <Icon name="pin" style={{ width: 12, color: 'var(--accent-blue)', opacity: 0.8 }} />}
-            <time>{formatRelativeTime(thread.lastMessageAt || thread.lastMessageIso)}</time>
+            {thread.isPinned && <Icon name="pin" className="nx-pinned-icon" />}
+            {thread.isStarred && <Icon name="star" className="nx-starred-icon" />}
+            <time className="nx-conversation-row__time">{formatRelativeTime(thread.lastMessageAt || thread.lastMessageIso)}</time>
             <i className="nx-priority-dot" style={{ background: visual.dot, boxShadow: `0 0 10px ${visual.pulse}` }} />
           </div>
-        </span>
+        </div>
 
         {/* Row 2: Address */}
-        <span className="nx-conversation-row__sub-row">
+        <div className="nx-conversation-row__sub-row">
           <span className="nx-conversation-row__address">{propertyAddress || 'No Address'}</span>
-        </span>
+        </div>
 
         {/* Row 3: Preview */}
-        <span className="nx-conversation-row__preview">{latestMessageBody}</span>
+        <div className="nx-conversation-row__preview">{latestMessageBody}</div>
 
-        {/* Row 4: Meta */}
+        {/* Row 4: Footer (Badges + Hover Actions) */}
         <div className="nx-conversation-row__footer">
-          <span className="nx-conversation-row__meta">
+          <div className="nx-conversation-row__meta">
             <span className="nx-stage-pill nx-status-pill" style={{ '--pill-color': visual.color, '--pill-bg': visual.bg, '--pill-border': visual.border } as Record<string, string>}>
               <i className="nx-status-dot" style={{ background: visual.dot }} />
               {visual.label}
@@ -127,25 +128,24 @@ export const ConversationRow = memo(({ thread, selected, isStarred, onSelect, on
             {market && (
               <span className="nx-market-tag">{market}</span>
             )}
-          </span>
+          </div>
           
-          {/* Phase 2/3: Hover Actions */}
           <div className="nx-conversation-row__hover-actions" onClick={(e) => e.stopPropagation()}>
              <button 
                type="button" 
-               title="Star" 
+               title={isStarred ? "Unstar" : "Star"} 
                className={cls("nx-hover-action-btn", isStarred && "is-active")}
                onClick={() => onAction?.(thread.id, isStarred ? 'unstar' : 'star')}
              >
-               <Icon name="star" className={cls(isStarred && "is-active")} />
+               <Icon name="star" />
              </button>
              <button 
                type="button" 
-               title="Pin" 
+               title={thread.isPinned ? "Unpin" : "Pin"} 
                className={cls("nx-hover-action-btn", thread.isPinned && "is-active")}
                onClick={() => onAction?.(thread.id, thread.isPinned ? 'unpin' : 'pin')}
              >
-               <Icon name="pin" className={cls(thread.isPinned && "is-active")} />
+               <Icon name="pin" />
              </button>
              <button 
                type="button" 
@@ -157,7 +157,7 @@ export const ConversationRow = memo(({ thread, selected, isStarred, onSelect, on
              </button>
           </div>
         </div>
-      </span>
+      </div>
     </button>
   )
 })
@@ -246,17 +246,21 @@ export const InboxSidebar = ({
         <div className="nx-sidebar__saved-filters">
           <span className="nx-sidebar__saved-label">Mode</span>
           <div className="nx-sidebar__saved-scroll">
-            {primaryPresetOptions.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={cls('nx-filter-pill', savedPreset === option.value && 'is-active')}
-                onClick={() => onApplySavedPreset(option.value)}
-              >
-                {option.label}
-              </button>
-            ))}
-            <select
+            <div className="nx-mode-tabs">
+              {primaryPresetOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={cls('nx-mode-tab', savedPreset === option.value && 'is-active')}
+                  onClick={() => onApplySavedPreset(option.value as InboxSavedFilterPreset)}
+                >
+                  <span className="nx-mode-tab__label">{option.label}</span>
+                  <span className="nx-mode-tab__count">{viewCounts[option.value as keyof typeof viewCounts] ?? 0}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <select
               className="nx-filter-more-select"
               value={secondaryPresetOptions.some((option) => option.value === savedPreset) ? savedPreset : ''}
               onChange={(event) => event.target.value && onApplySavedPreset(event.target.value as InboxSavedFilterPreset)}
@@ -267,28 +271,27 @@ export const InboxSidebar = ({
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
-          </div>
         </div>
-
-        <div className="nx-sidebar__advanced-wrap">
-          <button
-            type="button"
-            className="nx-sidebar__filter-button"
-            onClick={onOpenAdvancedFilters}
-          >
-            <Icon name="filter" />
-            Advanced Filters
-            <Icon name="chevron-right" />
-          </button>
-        </div>
-
-        {loadingError && (
-          <div className="nx-sidebar-error">
-            <Icon name="alert" />
-            <span>{loadingError}</span>
-          </div>
-        )}
       </div>
+
+      <div className="nx-sidebar__advanced-wrap">
+        <button
+          type="button"
+          className="nx-sidebar__filter-button"
+          onClick={onOpenAdvancedFilters}
+        >
+          <Icon name="filter" />
+          Advanced Filters
+          <Icon name="chevron-right" />
+        </button>
+      </div>
+
+      {loadingError && (
+        <div className="nx-sidebar-error">
+          <Icon name="alert" />
+          <span>{loadingError}</span>
+        </div>
+      )}
 
       <ConversationList
         threads={threads.slice(0, visibleThreadCount)}

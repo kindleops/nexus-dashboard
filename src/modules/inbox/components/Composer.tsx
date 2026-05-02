@@ -97,7 +97,6 @@ export const Composer = ({
   const [isHovered, setIsHovered] = useState(false)
   const [isFocused, setIsFocused] = useState(false)
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
-  const templatesButtonRef = useRef<HTMLButtonElement>(null)
   const baseDraftRef = useRef('')
   const analyserRef = useRef<AnalyserNode | null>(null)
   const animationFrameRef = useRef<number | undefined>(undefined)
@@ -243,19 +242,12 @@ export const Composer = ({
       className={cls("nx-sticky-composer", showUtilities && "show-utilities")}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
-      onFocus={(e) => {
-        if (e.currentTarget.contains(e.target as Node)) setIsFocused(true)
-      }}
-      onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsFocused(false)
-      }}
     >
       {/* Utility action row - Phase 2: Hidden until hover/focus */}
       <div className="nx-composer-utility-row">
         {tools.map(tool => (
           <button
             key={tool.id}
-            ref={tool.id === 'templates' ? templatesButtonRef : undefined}
             type="button"
             className={cls(
               'nx-utility-btn',
@@ -285,6 +277,8 @@ export const Composer = ({
           onChange={e => setDraftText(e.target.value)}
           rows={1}
           disabled={disabled}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
           onInput={(e) => {
             const target = e.target as HTMLTextAreaElement
             target.style.height = 'auto'
@@ -368,7 +362,6 @@ export const Composer = ({
       {/* Template popover/modal */}
       <TemplatePopover
         open={templatePopoverOpen}
-        anchorRef={templatesButtonRef as React.RefObject<HTMLElement>}
         onClose={() => setTemplatePopoverOpen(false)}
         onInsert={onInsertTemplate}
         onReplace={onReplaceTemplate}
