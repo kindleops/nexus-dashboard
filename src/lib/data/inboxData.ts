@@ -1189,6 +1189,9 @@ export const getInboxThreads = async (
       hasLien: asBoolean(intelligenceRow?.['has_lien'], false),
       isProbate: asBoolean(intelligenceRow?.['is_probate'], false),
       isTaxDelinquent: asBoolean(intelligenceRow?.['is_tax_delinquent'], false),
+      threadIsPinned: isPinned,
+      ownerDisplayName,
+      propertyAddressFull,
     }
 
     return thread
@@ -1220,6 +1223,8 @@ export const getInboxThreads = async (
   }
 
   filtered.sort((a, b) => {
+    if ((a as any).threadIsPinned && !(b as any).threadIsPinned) return -1
+    if (!(a as any).threadIsPinned && (b as any).threadIsPinned) return 1
     if ((a as unknown as AnyRecord)['showInPriorityInbox'] && !(b as unknown as AnyRecord)['showInPriorityInbox']) return -1
     if (!(a as unknown as AnyRecord)['showInPriorityInbox'] && (b as unknown as AnyRecord)['showInPriorityInbox']) return 1
     if (a.status === 'unread' && b.status !== 'unread') return -1

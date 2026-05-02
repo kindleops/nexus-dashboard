@@ -85,6 +85,30 @@ const missingLabel = (value: unknown, placeholder = '—') => (
 )
 
 
+const CollapsibleIntelCard = ({ 
+  title, 
+  icon, 
+  children, 
+  defaultExpanded = true 
+}: { 
+  title: string; 
+  icon: string; 
+  children: React.ReactNode; 
+  defaultExpanded?: boolean 
+}) => {
+  const [expanded, setExpanded] = useState(defaultExpanded)
+  return (
+    <section className={cls('nx-intel-card', !expanded && 'is-collapsed')}>
+      <button type="button" className="nx-intel-card__header" onClick={() => setExpanded(!expanded)}>
+        <Icon name={icon as any} />
+        <strong>{title}</strong>
+        <Icon name="chevron-down" className={cls('nx-intel-card__chevron', expanded && 'is-rotated')} />
+      </button>
+      {expanded && <div className="nx-intel-card__body">{children}</div>}
+    </section>
+  )
+}
+
 const IntelRow = ({ label, value, icon }: { label: string; value: string | number; icon?: string }) => (
   <div className="nx-intel-pill">
     {icon && <i>{icon}</i>}
@@ -117,14 +141,14 @@ const PropertySnapshotCard = ({
           </div>
         )}
         <div className="nx-intel-card__media-actions">
-           {links.zillow && <a href={links.zillow} target="_blank" rel="noreferrer"><Icon name="arrow-up-right" /> Zillow</a>}
-           {links.realtor && <a href={links.realtor} target="_blank" rel="noreferrer"><Icon name="arrow-up-right" /> Realtor</a>}
-           {links.googleSearch && <a href={links.googleSearch} target="_blank" rel="noreferrer"><Icon name="search" /> Google</a>}
-           {links.streetView && <a href={links.streetView} target="_blank" rel="noreferrer"><Icon name="map" /> Maps</a>}
+           {links.zillow && <a href={links.zillow} target="_blank" rel="noreferrer" className="nx-prop-link"><Icon name="arrow-up-right" /> Zillow</a>}
+           {links.realtor && <a href={links.realtor} target="_blank" rel="noreferrer" className="nx-prop-link"><Icon name="arrow-up-right" /> Realtor</a>}
+           {links.googleSearch && <a href={links.googleSearch} target="_blank" rel="noreferrer" className="nx-prop-link"><Icon name="search" /> Google</a>}
+           {links.streetView && <a href={links.streetView} target="_blank" rel="noreferrer" className="nx-prop-link"><Icon name="map" /> Maps</a>}
         </div>
       </div>
       
-      <div className="nx-intel-card__header">
+      <div className="nx-intel-card__header-static">
         <div className="nx-intel-card__title-row">
           <strong>{address}</strong>
         </div>
@@ -149,12 +173,8 @@ const PropertySnapshotCard = ({
   )
 }
 
-const DealIntelligenceCard = ({ thread }: { thread: InboxWorkflowThread, intelligence: any }) => (
-  <section className="nx-intel-card">
-    <div className="nx-intel-card__header">
-       <Icon name="stats" />
-       <strong>Deal Intelligence</strong>
-    </div>
+const DealIntelligenceCard = ({ thread }: { thread: InboxWorkflowThread }) => (
+  <CollapsibleIntelCard title="Deal Intelligence" icon="stats">
     <div className="nx-intel-grid">
        <IntelRow label="Final Score" value={thread.finalAcquisitionScore as any} />
        <IntelRow label="Motivation Score" value={(thread as any).motivationScore} />
@@ -163,15 +183,11 @@ const DealIntelligenceCard = ({ thread }: { thread: InboxWorkflowThread, intelli
        <IntelRow label="Seller Intent" value={thread.uiIntent || '—'} />
        <IntelRow label="Next Step" value={(thread as any).dealNextStep || '—'} />
     </div>
-  </section>
+  </CollapsibleIntelCard>
 )
 
 const OwnerContactCard = ({ thread, intelligence }: { thread: InboxWorkflowThread, intelligence: any }) => (
-  <section className="nx-intel-card">
-    <div className="nx-intel-card__header">
-       <Icon name="user" />
-       <strong>Owner / Contact</strong>
-    </div>
+  <CollapsibleIntelCard title="Owner / Contact" icon="user">
     <div className="nx-intel-grid">
        <IntelRow label="Name" value={thread.ownerDisplayName || thread.ownerName} />
        <IntelRow label="Type" value={(thread as any).ownerType || '—'} />
@@ -181,15 +197,11 @@ const OwnerContactCard = ({ thread, intelligence }: { thread: InboxWorkflowThrea
        <IntelRow label="Last Contact" value={formatRelativeTime(thread.lastOutboundAt || thread.lastMessageAt)} />
        <IntelRow label="Timezone" value={(intelligence as any)?.timezone || '—'} />
     </div>
-  </section>
+  </CollapsibleIntelCard>
 )
 
 const AutomationMetadataCard = ({ thread, intelligence }: { thread: InboxWorkflowThread, intelligence: any }) => (
-  <section className="nx-intel-card">
-    <div className="nx-intel-card__header">
-       <Icon name="settings" />
-       <strong>Automation / Metadata</strong>
-    </div>
+  <CollapsibleIntelCard title="Automation / Metadata" icon="settings" defaultExpanded={false}>
     <div className="nx-intel-grid">
        <IntelRow label="Current Stage" value={thread.inboxStage} />
        <IntelRow label="Auto-Reply" value={(intelligence as any)?.auto_reply_status || '—'} />
@@ -198,7 +210,7 @@ const AutomationMetadataCard = ({ thread, intelligence }: { thread: InboxWorkflo
        <IntelRow label="Source" value={(intelligence as any)?.source_app || '—'} />
        <IntelRow label="Record ID" value={thread.id} />
     </div>
-  </section>
+  </CollapsibleIntelCard>
 )
 
 
@@ -239,7 +251,7 @@ export const IntelligencePanel = (props: IntelligencePanelProps) => {
 
       <div className="nx-intel-scroll-body">
          <PropertySnapshotCard thread={thread} intelligence={intelligence} />
-         <DealIntelligenceCard thread={thread} intelligence={intelligence} />
+         <DealIntelligenceCard thread={thread} />
          <OwnerContactCard thread={thread} intelligence={intelligence} />
          <AutomationMetadataCard thread={thread} intelligence={intelligence} />
 
