@@ -1,143 +1,174 @@
 /**
  * InboxCommandMap.tsx
  *
- * Lightweight MapLibre-powered property/market context map for Inbox.
- * Uses the same CartoCDN dark-matter tile set as NexusMap.
- * Designed as a compact command map inside the Inbox dossier panel.
+ * Full MapLibre GL command map for Inbox.
+ * Shows ALL inbox threads as pulsing pins at exact property coordinates.
+ * No clustering — every property visible at all zoom levels.
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
-import type { InboxThread } from './inbox.adapter'
-
-// ─── Market coordinate lookup ─────────────────────────────────────────────
-
-const MARKET_COORDS: Record<string, [number, number]> = {
-  'm-dallas':      [-96.797,  32.7767],
-  'm-houston':     [-95.3698, 29.7604],
-  'm-atlanta':     [-84.388,  33.749 ],
-  'm-minneapolis': [-93.265,  44.9778],
-  'm-phoenix':     [-112.074, 33.4484],
-}
-
-// Known market display names
-const MARKET_LABELS: Record<string, string> = {
-  'm-dallas':      'Dallas, TX',
-  'm-houston':     'Houston, TX',
-  'm-atlanta':     'Atlanta, GA',
-  'm-minneapolis': 'Minneapolis, MN',
-  'm-phoenix':     'Phoenix, AZ',
-}
+import type { FeatureCollection, Point } from 'geojson'
+import type { ExpressionSpecification } from 'maplibre-gl'
+import type { InboxWorkflowThread } from '../../lib/data/inboxWorkflowData'
 
 const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
 
-// ─── Nearby mock point generator (stable per coords) ─────────────────────
+const PIN_COLOR: ExpressionSpecification = [
+  'match', ['get', 'pinTier'],
+  'hot',     '#d4404c',
+  'warm',    '#d89530',
+  'neutral', '#38d0f0',
+  '#4e6e88',
+]
 
-function getNearbyPoints(
-  center: [number, number],
-  count = 6,
-): Array<[number, number]> {
-  const pts: Array<[number, number]> = []
-  for (let i = 0; i < count; i++) {
-    const angle = (i / count) * Math.PI * 2 + 0.3
-    const dist = 0.018 + (i % 3) * 0.012
-    pts.push([
-      center[0] + Math.cos(angle) * dist,
-      center[1] + Math.sin(angle) * dist * 0.72,
-    ])
+interface PinFeatureProps {
+  id: string
+  ownerName: string
+  address: string
+  marketId: string
+  priority: string
+  sentiment: string
+  pinTier: 'hot' | 'warm' | 'neutral' | 'cold'
+  selected: 0 | 1
+}
+
+function computePinTier(thread: InboxWorkflowThread): PinFeatureProps['pinTier'] {
+  if (thread.priority === 'urgent') return 'hot'
+  const s = (thread as any).sentiment || 'neutral'
+  if (s === 'hot') return 'hot'
+  if (s === 'warm') return 'warm'
+  if (s === 'cold') return 'cold'
+  return 'neutral'
+}
+
+function isValidCoord(lat: number, lng: number): boolean {
+  return Number.isFinite(lat) && Number.isFinite(lng) &&
+    lat !== 0 && lng !== 0 &&
+    lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180
+}
+
+function getThreadLat(t: InboxWorkflowThread): number {
+  return Number((t as any).lat ?? (t as any).latitude ?? 0)
+}
+
+function getThreadLng(t: InboxWorkflowThread): number {
+  return Number((t as any).lng ?? (t as any).longitude ?? 0)
+}
+
+function buildPinsGeoJSON(
+  threads: InboxWorkflowThread[],
+  selectedId: string | undefined,
+): FeatureCollection<Point, PinFeatureProps> {
+  return {
+    type: 'FeatureCollection',
+    features: threads
+      .filter((t) => isValidCoord(getThreadLat(t), getThreadLng(t)))
+      .map((t) => ({
+        type: 'Feature' as const,
+        geometry: { type: 'Point' as const, coordinates: [getThreadLng(t), getThreadLat(t)] },
+        properties: {
+          id: t.id,
+          ownerName: t.ownerName || 'Unknown',
+          address: t.propertyAddress || t.subject || 'No Address',
+          marketId: t.marketId || 'unknown',
+          priority: t.priority,
+          sentiment: (t as any).sentiment || 'neutral',
+          pinTier: computePinTier(t),
+          selected: t.id === selectedId ? 1 : 0,
+        },
+      })),
   }
-  return pts
 }
-
-// ─── Pin color by sentiment/priority ─────────────────────────────────────
-
-function getPinColor(thread: InboxThread): string {
-  if (thread.priority === 'urgent' || thread.sentiment === 'hot') return '#d4404c'
-  if (thread.sentiment === 'warm') return '#d89530'
-  if (thread.sentiment === 'cold') return '#6b7280'
-  return '#38d0f0'
-}
-
-// ─── Custom HTML marker elements ──────────────────────────────────────────
-
-function createPulseMarker(color: string): HTMLElement {
-  const wrapper = document.createElement('div')
-  wrapper.className = 'nx-icm-pin'
-  wrapper.style.setProperty('--pin-color', color)
-
-  const dot = document.createElement('div')
-  dot.className = 'nx-icm-pin__dot'
-
-  const ring = document.createElement('div')
-  ring.className = 'nx-icm-pin__ring'
-
-  wrapper.appendChild(ring)
-  wrapper.appendChild(dot)
-  return wrapper
-}
-
-function createContextDot(opacity = 0.45): HTMLElement {
-  const el = document.createElement('div')
-  el.className = 'nx-icm-dot'
-  el.style.opacity = String(opacity)
-  return el
-}
-
-// ─── Map style override URL (env or default) ──────────────────────────────
 
 function resolveStyle(): string {
   const envStyle = (import.meta.env as Record<string, string>).VITE_MAP_STYLE_URL
   return typeof envStyle === 'string' && envStyle.length > 0 ? envStyle : MAP_STYLE
 }
 
-// ─── Helper: format market label ─────────────────────────────────────────
-
-function fmtMarket(marketId: string): string {
-  return (
-    MARKET_LABELS[marketId] ??
-    marketId
-      .replace(/^m-/, '')
-      .replace(/-/g, ' ')
-      .replace(/\b\w/g, c => c.toUpperCase())
-  )
+function getMarketCenter(threads: InboxWorkflowThread[]): [number, number] | null {
+  const withCoords = threads.filter((t) => isValidCoord(getThreadLat(t), getThreadLng(t)))
+  if (withCoords.length === 0) return null
+  let sumLat = 0
+  let sumLng = 0
+  for (const t of withCoords) {
+    sumLat += getThreadLat(t)
+    sumLng += getThreadLng(t)
+  }
+  return [sumLng / withCoords.length, sumLat / withCoords.length]
 }
 
-// ─── Props ────────────────────────────────────────────────────────────────
+function getSelectedCoord(thread: InboxWorkflowThread | null): [number, number] | null {
+  if (!thread) return null
+  const lat = getThreadLat(thread)
+  const lng = getThreadLng(thread)
+  return isValidCoord(lat, lng) ? [lng, lat] : null
+}
 
 interface Props {
-  thread: InboxThread
+  threads: InboxWorkflowThread[]
+  selectedThread: InboxWorkflowThread | null
   zoomedIn: boolean
 }
 
-// ─── Component ────────────────────────────────────────────────────────────
-
-export function InboxCommandMap({ thread, zoomedIn }: Props) {
+export function InboxCommandMap({ threads, selectedThread, zoomedIn }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
-  const markersRef = useRef<maplibregl.Marker[]>([])
+  const mapReadyRef = useRef(false)
+  const selectedIdRef = useRef<string | undefined>(selectedThread?.id)
+  const pFrame = useRef(0)
+  const pAnim = useRef(0)
 
-  const coords = MARKET_COORDS[thread.marketId] ?? null
-  const pinColor = getPinColor(thread)
-  const baseZoom = zoomedIn ? 13 : 10
+  const withCoords = threads.filter((t) => {
+    const lat = getThreadLat(t)
+    const lng = getThreadLng(t)
+    return isValidCoord(lat, lng)
+  })
 
-  // ── Init / re-init map when thread changes ──────────────────────────────
+  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+    console.log('[InboxMap]', {
+      totalThreads: threads.length,
+      withCoords: withCoords.length,
+      selectedCoord: getSelectedCoord(selectedThread),
+      marketCenter: getMarketCenter(threads),
+      sampleThread: threads[0] ? {
+        id: threads[0].id,
+        propertyId: (threads[0] as any).propertyId,
+        lat: getThreadLat(threads[0]),
+        lng: getThreadLng(threads[0]),
+      } : null,
+    })
+  }
+
+  const pinsGeoJSON = useMemo(
+    () => buildPinsGeoJSON(threads, selectedThread?.id),
+    [threads, selectedThread?.id],
+  )
+
   useEffect(() => {
-    if (!containerRef.current || !coords) return
+    selectedIdRef.current = selectedThread?.id
+  }, [selectedThread?.id])
 
-    // Clean up previous instance
-    for (const m of markersRef.current) m.remove()
-    markersRef.current = []
+  useEffect(() => {
+    if (!containerRef.current) return
+
+    const center = getSelectedCoord(selectedThread) ?? getMarketCenter(threads) ?? [-96, 37.5]
+    const baseZoom = zoomedIn ? 12 : 6
+
     if (mapRef.current) {
       mapRef.current.remove()
       mapRef.current = null
+      mapReadyRef.current = false
     }
 
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: resolveStyle(),
-      center: coords,
+      center,
       zoom: baseZoom,
+      minZoom: 2,
+      maxZoom: 17,
       interactive: true,
       attributionControl: false,
       pitchWithRotate: false,
@@ -145,89 +176,153 @@ export function InboxCommandMap({ thread, zoomedIn }: Props) {
     })
 
     mapRef.current = map
+    map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right')
 
     map.on('load', () => {
-      // Nearby context dots
-      for (const pt of getNearbyPoints(coords, 6)) {
-        const el = createContextDot()
-        const m = new maplibregl.Marker({ element: el, anchor: 'center' })
-          .setLngLat(pt)
-          .addTo(map)
-        markersRef.current.push(m)
-      }
+      mapReadyRef.current = true
 
-      // Selected property pulse marker
-      const el = createPulseMarker(pinColor)
-      const m = new maplibregl.Marker({ element: el, anchor: 'center' })
-        .setLngLat(coords)
-        .addTo(map)
-      markersRef.current.push(m)
+      map.addSource('pins', {
+        type: 'geojson',
+        data: pinsGeoJSON,
+      })
+
+      map.addLayer({
+        id: 'pin-glow',
+        type: 'circle',
+        source: 'pins',
+        paint: {
+          'circle-radius': ['case', ['==', ['get', 'selected'], 1], 22, 14],
+          'circle-blur': 0.9,
+          'circle-opacity': ['case', ['==', ['get', 'selected'], 1], 0.50, 0.18],
+          'circle-color': PIN_COLOR,
+        },
+      })
+
+      map.addLayer({
+        id: 'pin-pulse',
+        type: 'circle',
+        source: 'pins',
+        paint: {
+          'circle-radius': ['match', ['get', 'pinTier'], 'hot', 18, 'warm', 14, 'neutral', 12, 10],
+          'circle-blur': 0.6,
+          'circle-opacity': ['match', ['get', 'pinTier'], 'hot', 0.22, 'warm', 0.12, 'neutral', 0.08, 0.04],
+          'circle-color': PIN_COLOR,
+          'circle-stroke-width': 1.5,
+          'circle-stroke-color': PIN_COLOR,
+          'circle-stroke-opacity': ['match', ['get', 'pinTier'], 'hot', 0.35, 'warm', 0.18, 'neutral', 0.12, 0.06],
+        },
+      })
+
+      map.addLayer({
+        id: 'pin-core',
+        type: 'circle',
+        source: 'pins',
+        paint: {
+          'circle-radius': ['case', ['==', ['get', 'selected'], 1], 9, 5.5],
+          'circle-color': PIN_COLOR,
+          'circle-stroke-width': ['case', ['==', ['get', 'selected'], 1], 2.5, 1],
+          'circle-stroke-color': ['case', ['==', ['get', 'selected'], 1], '#ffffff', 'rgba(255,255,255,0.26)'],
+          'circle-opacity': 0.95,
+        },
+      })
+
+      const animate = () => {
+        if (!mapReadyRef.current || !mapRef.current) return
+        pFrame.current = (pFrame.current + 1) % 150
+        const t = pFrame.current / 150
+        const wave = Math.sin(t * Math.PI)
+        const scale = 1 + wave * 2.2
+        const opacity = 0.28 * (1 - t * 0.8)
+        try {
+          map.setPaintProperty('pin-pulse', 'circle-radius', [
+            'match', ['get', 'pinTier'],
+            'hot', 10 + scale * 9,
+            'warm', 8 + scale * 6,
+            'neutral', 6 + scale * 4,
+            5 + scale * 3,
+          ])
+          map.setPaintProperty('pin-pulse', 'circle-opacity', [
+            'match', ['get', 'pinTier'],
+            'hot', opacity,
+            'warm', opacity * 0.45,
+            'neutral', opacity * 0.25,
+            opacity * 0.12,
+          ])
+        } catch { /* removed */ }
+        pAnim.current = requestAnimationFrame(animate)
+      }
+      pAnim.current = requestAnimationFrame(animate)
+
+      map.on('click', 'pin-core', (e) => {
+        const feat = e.features?.[0]
+        if (!feat) return
+        const id = feat.properties?.id as string | undefined
+        if (!id) return
+        const coords = (feat.geometry as Point).coordinates as [number, number]
+        map.flyTo({ center: coords, zoom: Math.max(map.getZoom(), 12), duration: 800 })
+        const src = map.getSource('pins') as maplibregl.GeoJSONSource | undefined
+        src?.setData(buildPinsGeoJSON(threads, id))
+      })
+
+      map.on('mouseenter', 'pin-core', () => { map.getCanvas().style.cursor = 'pointer' })
+      map.on('mouseleave', 'pin-core', () => { map.getCanvas().style.cursor = '' })
     })
 
     return () => {
-      for (const m of markersRef.current) m.remove()
-      markersRef.current = []
-      map.remove()
-      mapRef.current = null
+      mapReadyRef.current = false
+      if (pAnim.current) cancelAnimationFrame(pAnim.current)
+      if (mapRef.current) {
+        mapRef.current.remove()
+        mapRef.current = null
+      }
     }
-    // Re-init only when thread changes (id or marketId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [thread.id, thread.marketId])
+  }, [])
 
-  // ── Zoom level responds to zoomedIn prop ───────────────────────────────
   useEffect(() => {
-    if (!mapRef.current || !coords) return
-    mapRef.current.easeTo({ zoom: zoomedIn ? 13 : 10, duration: 400 })
-  }, [zoomedIn, coords])
+    if (!mapReadyRef.current || !mapRef.current) return
+    const src = mapRef.current.getSource('pins') as maplibregl.GeoJSONSource | undefined
+    src?.setData(pinsGeoJSON)
+  }, [pinsGeoJSON])
 
-  // ── No coords: empty state ──────────────────────────────────────────────
-  if (!coords) {
-    return (
-      <div className="nx-icm nx-icm--empty">
-        <p className="nx-icm__empty-msg">No property location available for this thread.</p>
-      </div>
-    )
-  }
+  useEffect(() => {
+    if (!mapReadyRef.current || !mapRef.current) return
+    const target = zoomedIn ? 12 : 6
+    const coord = getSelectedCoord(selectedThread)
+    if (coord) {
+      mapRef.current.flyTo({ center: coord, zoom: Math.max(mapRef.current.getZoom(), target), duration: 600 })
+    } else {
+      mapRef.current.easeTo({ zoom: target, duration: 400 })
+    }
+  }, [zoomedIn, selectedThread])
 
-  const priorityLabel =
-    thread.priority === 'urgent' ? 'P0 · Urgent'
-    : thread.priority === 'high' ? 'P1 · High'
-    : thread.priority === 'normal' ? 'P2 · Normal'
-    : 'P3 · Low'
+  const threadCount = pinsGeoJSON.features.length
 
   return (
     <div className="nx-icm">
-      {/* Map canvas */}
       <div ref={containerRef} className="nx-icm__canvas" />
-
-      {/* Context card overlay */}
-      <div className="nx-icm__card" aria-label="Property context">
+      <div className="nx-icm__card" aria-label="Map context">
         <div className="nx-icm__card-row nx-icm__card-row--head">
-          <span className="nx-icm__card-subject" title={thread.subject}>
-            {thread.subject}
+          <span className="nx-icm__card-subject">
+            {selectedThread ? (selectedThread.propertyAddress || selectedThread.subject) : 'All Properties'}
           </span>
-          <span
-            className="nx-icm__card-badge"
-            style={{ '--icm-badge-color': pinColor } as React.CSSProperties}
-          >
-            {thread.sentiment}
+          <span className="nx-icm__card-badge" style={{ '--icm-badge-color': '#38d0f0' } as React.CSSProperties}>
+            {threadCount} pins
           </span>
         </div>
-        <div className="nx-icm__card-row">
-          <span className="nx-icm__card-label">Market</span>
-          <span className="nx-icm__card-value">{fmtMarket(thread.marketId)}</span>
-        </div>
-        <div className="nx-icm__card-row">
-          <span className="nx-icm__card-label">Priority</span>
-          <span className="nx-icm__card-value">{priorityLabel}</span>
-        </div>
-        <div className="nx-icm__card-row">
-          <span className="nx-icm__card-label">Last Active</span>
-          <span className="nx-icm__card-value">{thread.lastMessageLabel}</span>
-        </div>
+        {selectedThread && (
+          <>
+            <div className="nx-icm__card-row">
+              <span className="nx-icm__card-label">Market</span>
+              <span className="nx-icm__card-value">{selectedThread.marketId || 'Unknown'}</span>
+            </div>
+            <div className="nx-icm__card-row">
+              <span className="nx-icm__card-label">Priority</span>
+              <span className="nx-icm__card-value">{selectedThread.priority}</span>
+            </div>
+          </>
+        )}
       </div>
-
-      {/* Attribution (required for CartoCDN) */}
       <div className="nx-icm__attribution">© CARTO · © OSM</div>
     </div>
   )

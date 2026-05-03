@@ -160,6 +160,8 @@ export interface InboxThread {
   // Deal
   dealNextStep?: string
   motivationSummary?: string
+  lat?: number
+  lng?: number
 }
 
 export interface InboxModel {

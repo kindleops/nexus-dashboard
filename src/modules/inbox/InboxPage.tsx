@@ -1072,10 +1072,11 @@ export default function InboxPage() {
               </div>
             </div>
             <div className="nx-map-right-body">
-              {selected
-                ? <InboxCommandMap thread={selected} zoomedIn={mapMode !== 'side'} />
-                : <div className="nx-map-right-empty"><Icon name="map" /><span>Select a thread to view property</span></div>
-              }
+              <InboxCommandMap
+                threads={threads}
+                selectedThread={selected}
+                zoomedIn={mapMode !== 'side'}
+              />
             </div>
             {selected && (
               <div className="nx-map-right-footer">

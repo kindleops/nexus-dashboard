@@ -56,10 +56,20 @@ const get = (thread: InboxWorkflowThread, key: string): unknown => {
   return row[key] ?? row[key.replace(/_/g, '')] ?? row[key.charAt(0).toUpperCase() + key.slice(1)]
 }
 
-const isMultifamily = (thread: InboxWorkflowThread): boolean => {
+type PropertyCategory = 'sfh' | 'multifamily' | 'hotel' | 'storage' | 'retail' | 'office' | 'industrial' | 'land' | 'other'
+
+const detectPropertyCategory = (thread: InboxWorkflowThread): PropertyCategory => {
   const pt = normalizeText(get(thread, 'propertyType') || get(thread, 'property_type')).toLowerCase()
-  const units = Number(get(thread, 'unitCount') || get(thread, 'unit_count') || get(thread, 'units'))
-  return units >= 5 || pt.includes('multifamily') || pt.includes('apartment') || pt.includes('commercial')
+  const units = Number(get(thread, 'unitCount') || get(thread, 'unit_count') || get(thread, 'units')) || 0
+  if (units >= 5 || pt.includes('multifamily') || pt.includes('apartment')) return 'multifamily'
+  if (pt.includes('hotel') || pt.includes('motel') || pt.includes('lodging') || pt.includes('hospitality')) return 'hotel'
+  if (pt.includes('storage') || pt.includes('self-storage') || pt.includes('warehouse') && !pt.includes('industrial')) return 'storage'
+  if (pt.includes('retail') || pt.includes('plaza') || pt.includes('strip') || pt.includes('shopping') || pt.includes('commercial') && pt.includes('store')) return 'retail'
+  if (pt.includes('office') || pt.includes('medical office') || pt.includes('professional')) return 'office'
+  if (pt.includes('industrial') || pt.includes('warehouse') || pt.includes('manufacturing') || pt.includes('flex')) return 'industrial'
+  if (pt.includes('land') || pt.includes('lot') || pt.includes('acre') || pt.includes('vacant')) return 'land'
+  if (units <= 4 && (pt.includes('single') || pt.includes('sfh') || pt.includes('residential') || pt === '')) return 'sfh'
+  return 'other'
 }
 
 // ── Workflow Control Card (unchanged) ─────────────────────────────────────
@@ -291,9 +301,9 @@ const PropertyHeroCard = ({
   const links = buildPropertyExternalLinks(address)
   const market = snapshot.market || thread.market || thread.marketId || 'Unknown Market'
   const propertyType = normalizeText(snapshot.propertyType || (get(thread, 'propertyType') as string) || 'Residential')
-  const multi = isMultifamily(thread)
-
-  const unitCount = get(thread, 'unitCount') || get(thread, 'unit_count') || get(thread, 'units')
+  const category = detectPropertyCategory(thread)
+  const isMulti = category === 'multifamily'
+  const unitCount = get(thread, 'unitCount') || get(thread, 'unit_count') || get(thread, 'units') || (category === 'hotel' ? (get(thread, 'roomCount') || get(thread, 'room_count') || get(thread, 'rooms')) : null)
   const lotSize = get(thread, 'lotSize') || get(thread, 'lot_size_sqft') || get(thread, 'lotSizeSqft') || get(thread, 'lotSizeAcres')
   const occupancy = get(thread, 'occupancy')
   const ownerType = get(thread, 'ownerType') || get(thread, 'owner_type')
@@ -320,13 +330,19 @@ const PropertyHeroCard = ({
       <div className="nx-intel-card__header-static nx-property-hero__info">
         <div className="nx-property-hero__address">
           <strong>{address || 'No Address'}</strong>
-          {multi && <span className="nx-badge nx-badge--multi">MULTIFAMILY</span>}
+          {isMulti && <span className="nx-badge nx-badge--multi">MULTIFAMILY</span>}
+          {category === 'hotel' && <span className="nx-badge nx-badge--commercial">HOTEL/MOTEL</span>}
+          {category === 'storage' && <span className="nx-badge nx-badge--commercial">SELF-STORAGE</span>}
+          {category === 'retail' && <span className="nx-badge nx-badge--commercial">RETAIL/PLAZA</span>}
+          {category === 'office' && <span className="nx-badge nx-badge--commercial">OFFICE</span>}
+          {category === 'industrial' && <span className="nx-badge nx-badge--commercial">INDUSTRIAL</span>}
+          {category === 'land' && <span className="nx-badge nx-badge--land">LAND</span>}
         </div>
         <div className="nx-property-hero__meta">
           <span className="nx-market-tag">{market}</span>
           <span className="nx-divider">•</span>
           <span>{propertyType}</span>
-          {Boolean(unitCount) && !isMissingValue(unitCount) && (<><span className="nx-divider">•</span><span>{asStr(unitCount)} units</span></>)}
+          {(category === 'multifamily' || category === 'hotel') && Boolean(unitCount) && !isMissingValue(unitCount) && (<><span className="nx-divider">•</span><span>{asStr(unitCount)} {category === 'hotel' ? 'rooms' : 'units'}</span></>)}
         </div>
         <div className="nx-property-hero__chips">
           {Boolean(snapshot.beds) && !isMissingValue(snapshot.beds) && <span className="nx-pill">{snapshot.beds} Bed{snapshot.beds !== '1' ? 's' : ''}</span>}
@@ -353,7 +369,8 @@ const PropertySnapshotSection = ({ thread }: { thread: InboxWorkflowThread }) =>
   const propertyType = get(thread, 'propertyType') || get(thread, 'property_type')
   const occupancy = get(thread, 'occupancy')
   const ownerType = get(thread, 'ownerType') || get(thread, 'owner_type')
-  const multi = isMultifamily(thread)
+  const category = detectPropertyCategory(thread)
+  const isMulti = category === 'multifamily'
 
   const toChip = (v: unknown): string | null => {
     if (v === null || v === undefined) return null
@@ -377,7 +394,7 @@ const PropertySnapshotSection = ({ thread }: { thread: InboxWorkflowThread }) =>
         {Boolean(propertyType) && !isMissingValue(propertyType) && <StatChip label="Property Type" value={toChip(propertyType)} />}
         {Boolean(occupancy) && !isMissingValue(occupancy) && <StatChip label="Occupancy" value={toChip(occupancy)} />}
         {Boolean(ownerType) && !isMissingValue(ownerType) && <StatChip label="Owner Type" value={toChip(ownerType)} />}
-        {multi && (
+        {isMulti && (
           <>
             <StatChip label="Units" value={toChip(get(thread, 'unitCount') || get(thread, 'unit_count') || get(thread, 'units'))} color="purple" />
             <StatChip label="Rent Roll" value="Needs rent roll" color="amber" />
@@ -460,13 +477,14 @@ const OfferIntelligenceSection = ({ thread }: { thread: InboxWorkflowThread }) =
   const offerConfidence = get(thread, 'offerConfidence') || get(thread, 'offer_confidence') || get(thread, 'confidenceBand')
   const nextRequired = get(thread, 'nextRequiredInfo') || get(thread, 'next_required_info')
 
-  const multi = isMultifamily(thread)
+  const category = detectPropertyCategory(thread)
+  const isMulti = category === 'multifamily'
   const rentRoll = get(thread, 'rentRoll') || get(thread, 'rent_roll')
 
   let aiOfferDisplay = 'Needs Underwriting'
   if (aiOffer && !isMissingValue(aiOffer)) {
     aiOfferDisplay = fmtCurrency(aiOffer) || normalizeText(aiOffer)
-  } else if (multi && (!rentRoll || isMissingValue(rentRoll))) {
+  } else if (isMulti && (!rentRoll || isMissingValue(rentRoll))) {
     aiOfferDisplay = 'Needs rent roll'
   } else if (!arv || isMissingValue(arv)) {
     aiOfferDisplay = 'Needs ARV'
@@ -477,7 +495,7 @@ const OfferIntelligenceSection = ({ thread }: { thread: InboxWorkflowThread }) =
   let nextRequiredDisplay = 'Awaiting underwriting'
   if (nextRequired && !isMissingValue(nextRequired)) {
     nextRequiredDisplay = asStr(nextRequired)
-  } else if (multi && (!rentRoll || isMissingValue(rentRoll))) {
+  } else if (isMulti && (!rentRoll || isMissingValue(rentRoll))) {
     nextRequiredDisplay = 'Need rent roll / occupancy'
   } else if (!arv || isMissingValue(arv)) {
     nextRequiredDisplay = 'Need ARV verification'

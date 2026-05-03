@@ -903,9 +903,6 @@ export const NexusMap = ({
       map.addSource('leads', {
         type: 'geojson',
         data: buildLeadsGeoJSON(curLeads, curMode, curSelectedLead),
-        cluster: true,
-        clusterMaxZoom: 9,
-        clusterRadius: 42,
       })
 
       map.addSource('markets', {
@@ -995,49 +992,12 @@ export const NexusMap = ({
         },
       })
 
-      // ── Cluster circles ─────────────────────────────────────────
-      map.addLayer({
-        id: 'leads-clusters',
-        type: 'circle',
-        source: 'leads',
-        filter: ['has', 'point_count'],
-        paint: {
-          'circle-color': [
-            'step', ['get', 'point_count'],
-            '#1e4d7a',   5,   // 2–4: slate-blue
-            '#1d4ed8',   15,  // 5–14: indigo
-            '#7c3aed',        // 15+: violet
-          ],
-          'circle-radius': [
-            'step', ['get', 'point_count'],
-            16, 5, 22, 15, 28,
-          ],
-          'circle-stroke-width': 2,
-          'circle-stroke-color': 'rgba(255,255,255,0.20)',
-          'circle-opacity': 0.90,
-        },
-      })
-
-      map.addLayer({
-        id: 'leads-cluster-count',
-        type: 'symbol',
-        source: 'leads',
-        filter: ['has', 'point_count'],
-        layout: {
-          'text-field': '{point_count_abbreviated}',
-          'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'],
-          'text-size': 11,
-        },
-        paint: { 'text-color': '#ffffff' },
-      })
-
       // ── Individual property pins ─────────────────────────────────
       // Outer glow halo — tier-colored blur ring
       map.addLayer({
         id: 'leads-pin-glow',
         type: 'circle',
         source: 'leads',
-        filter: ['!', ['has', 'point_count']],
         paint: {
           'circle-radius': [
             'case', ['==', ['get', 'selected'], 1], 22, 14,
@@ -1050,20 +1010,17 @@ export const NexusMap = ({
         },
       })
 
-      // Activity pulse ring — visible on hot pins for live activity feel
+      // Activity pulse ring — visible on ALL pins with tier-differentiated intensity
       map.addLayer({
         id: 'leads-pulse-ring',
         type: 'circle',
         source: 'leads',
-        filter: ['all',
-          ['!', ['has', 'point_count']],
-          ['in', ['get', 'pinTier'], ['literal', ['hot', 'warm']]],
-        ],
         paint: {
           'circle-radius': [
             'match', ['get', 'pinTier'],
             'hot', 18,
             'warm', 14,
+            'neutral', 12,
             10,
           ],
           'circle-blur': 0.6,
@@ -1071,7 +1028,8 @@ export const NexusMap = ({
             'match', ['get', 'pinTier'],
             'hot', 0.22,
             'warm', 0.12,
-            0,
+            'neutral', 0.08,
+            0.04,
           ],
           'circle-color': PIN_COLOR_EXPR,
           'circle-stroke-width': 1.5,
@@ -1080,7 +1038,8 @@ export const NexusMap = ({
             'match', ['get', 'pinTier'],
             'hot', 0.35,
             'warm', 0.18,
-            0,
+            'neutral', 0.12,
+            0.06,
           ],
         },
       })
@@ -1090,7 +1049,6 @@ export const NexusMap = ({
         id: 'leads-pins',
         type: 'circle',
         source: 'leads',
-        filter: ['!', ['has', 'point_count']],
         paint: {
           'circle-radius': [
             'case', ['==', ['get', 'selected'], 1], 9.0, 5.5,
@@ -1112,7 +1070,6 @@ export const NexusMap = ({
         id: MAP_LAYER_IDS.pressure,
         type: 'circle',
         source: SOURCE_IDS.leads,
-        filter: ['!', ['has', 'point_count']],
         paint: {
           'circle-radius': [
             'interpolate', ['linear'],
@@ -1134,9 +1091,7 @@ export const NexusMap = ({
         type: 'circle',
         source: SOURCE_IDS.leads,
         filter: [
-          'all',
-          ['!', ['has', 'point_count']],
-          ['match', ['get', 'ownerType'], ['tax-delinquent', 'estate'], true, false],
+          'match', ['get', 'ownerType'], ['tax-delinquent', 'estate'], true, false,
         ],
         paint: {
           'circle-radius': 9,
@@ -1153,9 +1108,7 @@ export const NexusMap = ({
         type: 'circle',
         source: SOURCE_IDS.leads,
         filter: [
-          'all',
-          ['!', ['has', 'point_count']],
-          ['match', ['get', 'pipelineStage'], ['under-contract', 'negotiating'], true, false],
+          'match', ['get', 'pipelineStage'], ['under-contract', 'negotiating'], true, false,
         ],
         paint: {
           'circle-radius': 7,
@@ -1171,7 +1124,6 @@ export const NexusMap = ({
         id: MAP_LAYER_IDS.stage,
         type: 'circle',
         source: SOURCE_IDS.leads,
-        filter: ['!', ['has', 'point_count']],
         paint: {
           'circle-radius': [
             'match', ['get', 'stageBucket'],
@@ -1204,7 +1156,6 @@ export const NexusMap = ({
         id: MAP_LAYER_IDS.buyerDemand,
         type: 'circle',
         source: SOURCE_IDS.leads,
-        filter: ['!', ['has', 'point_count']],
         paint: {
           'circle-radius': [
             'interpolate', ['linear'], ['get', 'buyerDemandScore'],
@@ -1235,7 +1186,6 @@ export const NexusMap = ({
         id: MAP_LAYER_IDS.aiPriority,
         type: 'circle',
         source: SOURCE_IDS.leads,
-        filter: ['!', ['has', 'point_count']],
         paint: {
           'circle-radius': [
             'interpolate', ['linear'], ['get', 'aiScore'],
@@ -1511,7 +1461,6 @@ export const NexusMap = ({
         // Pin pulse — smoother sinusoidal expansion cycle
         pulseFrame = (pulseFrame + 1) % 150
         const t = pulseFrame / 150
-        // Sine-based easing: smooth rise and fall
         const wave = Math.sin(t * Math.PI)
         const scale = 1 + wave * 2.2
         const opacity = 0.28 * (1 - t * 0.8)
@@ -1520,13 +1469,15 @@ export const NexusMap = ({
             'match', ['get', 'pinTier'],
             'hot', 10 + scale * 9,
             'warm', 8 + scale * 6,
-            6,
+            'neutral', 6 + scale * 4,
+            5 + scale * 3,
           ])
           map.setPaintProperty('leads-pulse-ring', 'circle-opacity', [
             'match', ['get', 'pinTier'],
             'hot', opacity,
             'warm', opacity * 0.45,
-            0,
+            'neutral', opacity * 0.25,
+            opacity * 0.12,
           ])
         } catch {
           // Layer may have been removed during cleanup

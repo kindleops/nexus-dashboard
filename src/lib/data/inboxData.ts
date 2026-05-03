@@ -154,6 +154,11 @@ const QUEUE_PROCESSOR_LAG_MINUTES = 10
 const DEV = Boolean(import.meta.env.DEV)
 const MESSAGE_EVENTS_THREAD_PAGE_SIZE = 1000
 
+const isValidCoordSimple = (lat: number, lng: number): boolean =>
+  Number.isFinite(lat) && Number.isFinite(lng) &&
+  lat !== 0 && lng !== 0 &&
+  lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180
+
 /** Values that map 1:1 to `nexus_inbox_threads_v.stage` / `inbox_thread_state.stage`. */
 export const SERVER_INBOX_THREAD_STAGE_VALUES = new Set([
   'new_reply',
@@ -1267,7 +1272,7 @@ export const getInboxThreads = async (
       const keyBatch = uniqueKeys.slice(index, index + 250)
       const { data: intelligenceRows, error: intelligenceError } = await supabase
         .from('nexus_thread_intelligence_v')
-        .select(`
+         .select(`
           thread_key,
           owner_display_name,
           seller_first_name,
@@ -1317,8 +1322,35 @@ export const getInboxThreads = async (
     }
   }
 
+  const coordsByPropertyId = new Map<string, { lat: number; lng: number }>()
+  const propertyIds = boundedRows
+    .map((row) => asString(row['property_id'], ''))
+    .filter(Boolean)
+  if (propertyIds.length > 0) {
+    const uniquePropertyIds = Array.from(new Set(propertyIds))
+    for (let index = 0; index < uniquePropertyIds.length; index += 500) {
+      const idBatch = uniquePropertyIds.slice(index, index + 500)
+      const { data: propRows, error: propError } = await supabase
+        .from('properties')
+        .select('property_id,latitude,longitude')
+        .in('property_id', idBatch)
+      if (!propError) {
+        safeArray(propRows as AnyRecord[]).forEach((r) => {
+          const pid = asString(getFirst(r, ['property_id']), '')
+          const lat = asNumber(getFirst(r, ['latitude']), 0)
+          const lng = asNumber(getFirst(r, ['longitude']), 0)
+          if (pid && isValidCoordSimple(lat, lng)) {
+            coordsByPropertyId.set(pid, { lat, lng })
+          }
+        })
+      } else if (DEV) {
+        console.warn('[Inbox] property coords fetch failed', mapErrorMessage(propError))
+      }
+    }
+  }
+
   if (DEV) {
-    console.log('[Inbox] nexus_inbox_threads_v rows', boundedRows.length)
+    console.log('[Inbox] nexus_inbox_threads_v rows', boundedRows.length, 'with coords', coordsByPropertyId.size)
   }
 
   const toStageFromIntent = (uiIntent: string): string => {
@@ -1451,6 +1483,13 @@ export const getInboxThreads = async (
       threadIsRead: isRead,
       threadIsHidden: asBoolean(row['is_hidden'], false),
       threadIsSuppressed: asBoolean(row['is_suppressed'], false),
+    }
+
+    const propId = thread.propertyId || ''
+    const coords = coordsByPropertyId.get(propId)
+    if (coords) {
+      thread.lat = coords.lat
+      thread.lng = coords.lng
     }
 
     return thread
