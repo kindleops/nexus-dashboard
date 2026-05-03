@@ -51,11 +51,13 @@ import {
   cycleMapMode,
   cycleRightPanelMode,
   defaultInboxLayoutState,
+  defaultMapSourceMode,
   getLayoutClassNames,
   layoutToastForState,
   openMapMode,
   resetLayoutMode,
   type ActiveOverlay,
+  type MapSourceMode,
 } from './inbox-layout-state'
 import {
   applyInboxFilters,
@@ -127,6 +129,7 @@ export default function InboxPage() {
   const [selectedMessages, setSelectedMessages] = useState<ThreadMessage[]>([])
   const [pendingMessagesByThread, setPendingMessagesByThread] = useState<Record<string, ThreadMessage[]>>({})
   const [visibleThreadCount, setVisibleThreadCount] = useState(1000)
+  const [mapSourceMode, _setMapSourceMode] = useState<MapSourceMode>(defaultMapSourceMode)
 
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [threadContext, setThreadContext] = useState<ThreadContext | null>(null)
@@ -1089,8 +1092,10 @@ export default function InboxPage() {
             <div className="nx-map-right-body">
               <InboxCommandMap
                 threads={threads}
+                visibleThreads={filtered}
                 selectedThread={selected}
                 zoomedIn={mapMode !== 'side'}
+                sourceMode={mapSourceMode}
                 onSelectThreadId={handleSelect}
               />
             </div>

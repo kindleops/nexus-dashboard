@@ -230,11 +230,9 @@ export const resolveInboxSellerNameWithSource = (row: Record<string, unknown>): 
   // Final fallbacks
   const phoneRaw = asString(row.phoneNumber || row.phoneNumberId || row.canonicalE164 || row.seller_phone || row.phone || row.prospect_phone, '').trim()
   if (phoneRaw) {
-    if (DEV) console.log('[NexusInboxNameResolution] fallback to phone', { row, meta, phoneRaw })
     return { value: formatDisplayPhone(phoneRaw), source: 'phone_fallback' }
   }
 
-  if (DEV) console.log('[NexusInboxNameResolution] fallback to unknown', { row, meta })
   return { value: 'Unknown Seller', source: 'none' }
 }
 
@@ -268,7 +266,6 @@ export const resolveInboxPropertyAddressWithSource = (row: Record<string, unknow
     }
   }
 
-  if (DEV) console.log('[NexusInboxAddressResolution] fallback to no address', { row, meta })
   return { value: 'No Address', source: 'none' }
 }
 
@@ -1213,63 +1210,43 @@ export const getInboxThreads = async (
   const threadKeys = boundedRows
     .map((row) => asString(row['thread_key'], ''))
     .filter(Boolean)
-  const intelligenceByThreadKey = new Map<string, AnyRecord>()
+
+  // ── Thread enrichment via RPC (replaces dropped nexus_thread_intelligence_v) ──
+  const enrichmentByThreadKey = new Map<string, AnyRecord>()
+  let enrichmentTotal = 0
+  let enrichmentErrors = 0
 
   if (threadKeys.length > 0) {
     const uniqueKeys = Array.from(new Set(threadKeys))
     for (let index = 0; index < uniqueKeys.length; index += 250) {
       const keyBatch = uniqueKeys.slice(index, index + 250)
-      const { data: intelligenceRows, error: intelligenceError } = await supabase
-        .from('nexus_thread_intelligence_v')
-         .select(`
-          thread_key,
-          owner_display_name,
-          seller_first_name,
-          seller_last_name,
-          owner_type,
-          contact_language,
-          best_phone,
-          phone_confidence,
-          property_address_full,
-          property_id,
-          beds,
-          baths,
-          sqft,
-          year_built,
-          effective_year_built,
-          estimated_value,
-          cash_offer,
-          equity_amount,
-          equity_percent,
-          estimated_repair_cost,
-          final_acquisition_score,
-          motivation_score,
-          motivation_summary,
-          deal_next_step,
-          podio_tags,
-          is_owner_occupied,
-          is_absentee,
-          is_vacant,
-          has_lien,
-          is_probate,
-          is_tax_delinquent,
-          streetview_image,
-          zillow_url,
-          realtor_url
-        `)
-        .in('thread_key', keyBatch)
+      const { data: enrichmentRows, error: enrichmentError } = await supabase
+        .rpc('get_thread_enrichment', { p_thread_keys: keyBatch })
 
-      if (intelligenceError) {
-        if (DEV) console.warn('[Inbox] intelligence enrichment failed', mapErrorMessage(intelligenceError))
+      if (enrichmentError) {
+        if (DEV) console.warn('[InboxEnrichment] RPC failed', mapErrorMessage(enrichmentError))
+        enrichmentErrors += 1
         continue
       }
 
-      safeArray(intelligenceRows as AnyRecord[]).forEach((row) => {
+      const rows = safeArray(enrichmentRows as AnyRecord[])
+      enrichmentTotal += rows.length
+      rows.forEach((row) => {
         const key = asString(row['thread_key'], '')
-        if (key) intelligenceByThreadKey.set(key, row)
+        if (key) enrichmentByThreadKey.set(key, row)
+      })
+    }
+
+    if (DEV) {
+      console.log('[InboxEnrichment]', {
+        totalThreads: uniqueKeys.length,
+        enrichedRows: enrichmentTotal,
+        errors: enrichmentErrors,
       })
     }
   }
+
+  // ── Coordinate enrichment via RPC ──
 
   const coordsByPropertyId = new Map<string, { lat: number; lng: number }>()
   const propertyIds = boundedRows
@@ -1330,17 +1307,35 @@ export const getInboxThreads = async (
   }
 
   let coordsMergedCount = 0
+  let nameResolvedCount = 0
+  let namePhoneFallbackCount = 0
+  let nameUnresolvedCount = 0
+  let addressResolvedCount = 0
+  let addressNoAddressFallbackCount = 0
+  let addressUnresolvedPropertyIds: string[] = []
 
   const threads: InboxThread[] = boundedRows.map((row, index) => {
     const threadKey = asString(row['thread_key'], '') || `thread:${index}`
-    const intelligenceRow = intelligenceByThreadKey.get(threadKey)
+    const enrichmentRow = enrichmentByThreadKey.get(threadKey)
     const latestMessageIso = asIso(row['latest_message_at']) ?? new Date().toISOString()
     const latestDirection = normalizeMessageDirection({ direction: row['latest_direction'] })
     const sellerPhone = normalizePhone(row['seller_phone'])
 
-    const mergedRow = { ...row, ...intelligenceRow }
+    const mergedRow = { ...row, ...enrichmentRow }
     const nameRes = resolveInboxSellerNameWithSource(mergedRow as Record<string, unknown>)
     const addrRes = resolveInboxPropertyAddressWithSource(mergedRow as Record<string, unknown>)
+
+    if (nameRes.source === 'phone_fallback') namePhoneFallbackCount += 1
+    else if (nameRes.source === 'none') nameUnresolvedCount += 1
+    else nameResolvedCount += 1
+
+    if (addrRes.source === 'none') {
+      addressNoAddressFallbackCount += 1
+      const pid = asString(row['property_id'], '')
+      if (pid) addressUnresolvedPropertyIds.push(pid)
+    } else {
+      addressResolvedCount += 1
+    }
 
     const ownerDisplayName = nameRes.value
     const propertyAddressFull = addrRes.value
@@ -1412,37 +1407,49 @@ export const getInboxThreads = async (
       propertyAddressFull,
       latestMessageBody: asString(row['latest_message_body'], '') || undefined,
       latestMessageAt: latestMessageIso,
-      cashOffer: row['cash_offer'] ?? intelligenceRow?.['cash_offer'] ?? null,
-      estimatedValue: row['estimated_value'] ?? intelligenceRow?.['estimated_value'] ?? null,
-      finalAcquisitionScore: row['final_acquisition_score'] ?? intelligenceRow?.['final_acquisition_score'] ?? null,
-      streetviewImage: (intelligenceRow?.['streetview_image'] as string) ?? null,
-      zillowUrl: (intelligenceRow?.['zillow_url'] ?? intelligenceRow?.['zillow_link'] ?? intelligenceRow?.['zillow']) as string ?? null,
-      realtorUrl: (intelligenceRow?.['realtor_url'] ?? intelligenceRow?.['realtor_link'] ?? intelligenceRow?.['realtor']) as string ?? null,
+      cashOffer: row['cash_offer'] ?? enrichmentRow?.['cash_offer'] ?? null,
+      estimatedValue: row['estimated_value'] ?? enrichmentRow?.['estimated_value'] ?? null,
+      finalAcquisitionScore: row['final_acquisition_score'] ?? enrichmentRow?.['final_acquisition_score'] ?? null,
+      streetviewImage: (enrichmentRow?.['streetview_image'] as string) ?? null,
+      zillowUrl: (enrichmentRow?.['zillow_url'] ?? enrichmentRow?.['zillow_link'] ?? enrichmentRow?.['zillow']) as string ?? null,
+      realtorUrl: (enrichmentRow?.['realtor_url'] ?? enrichmentRow?.['realtor_link'] ?? enrichmentRow?.['realtor']) as string ?? null,
       // Newly Hydrated Fields
-      sellerFirstName: asString(intelligenceRow?.['seller_first_name'], ''),
-      sellerLastName: asString(intelligenceRow?.['seller_last_name'], ''),
-      ownerType: asString(intelligenceRow?.['owner_type'], ''),
-      contactLanguage: asString(intelligenceRow?.['contact_language'], ''),
-      bestPhone: asString(intelligenceRow?.['best_phone'], ''),
-      phoneConfidence: asNumber(intelligenceRow?.['phone_confidence'], 0),
-      beds: intelligenceRow?.['beds'] as string | number,
-      baths: intelligenceRow?.['baths'] as string | number,
-      sqft: intelligenceRow?.['sqft'] as string | number,
-      yearBuilt: intelligenceRow?.['year_built'] as string | number,
-      effectiveYear: intelligenceRow?.['effective_year_built'] as string | number,
-      equityAmount: asNumber(intelligenceRow?.['equity_amount'], 0),
-      equityPercent: asNumber(intelligenceRow?.['equity_percent'], 0),
-      estimatedRepairCost: asNumber(intelligenceRow?.['estimated_repair_cost'], 0),
-      motivationScore: asNumber(intelligenceRow?.['motivation_score'], 0),
-      motivationSummary: asString(intelligenceRow?.['motivation_summary'], ''),
-      dealNextStep: asString(intelligenceRow?.['deal_next_step'], ''),
-      podioTags: safeArray(intelligenceRow?.['podio_tags'] as string[]),
-      isOwnerOccupied: asBoolean(intelligenceRow?.['is_owner_occupied'], false),
-      isAbsentee: asBoolean(intelligenceRow?.['is_absentee'], false),
-      isVacant: asBoolean(intelligenceRow?.['is_vacant'], false),
-      hasLien: asBoolean(intelligenceRow?.['has_lien'], false),
-      isProbate: asBoolean(intelligenceRow?.['is_probate'], false),
-      isTaxDelinquent: asBoolean(intelligenceRow?.['is_tax_delinquent'], false),
+      sellerFirstName: asString(enrichmentRow?.['seller_first_name'], ''),
+      sellerLastName: asString(enrichmentRow?.['seller_last_name'], ''),
+      sellerName: (() => {
+        const fn = asString(enrichmentRow?.['seller_first_name'], '')
+        const ln = asString(enrichmentRow?.['seller_last_name'], '')
+        const dn = asString(enrichmentRow?.['owner_display_name'], '')
+        return dn || (fn && ln ? `${fn} ${ln}` : fn || ln || '')
+      })(),
+      ownerType: asString(enrichmentRow?.['owner_type'], ''),
+      contactLanguage: asString(enrichmentRow?.['contact_language'], ''),
+      bestPhone: asString(enrichmentRow?.['best_phone'], ''),
+      phoneConfidence: asNumber(enrichmentRow?.['phone_confidence'], 0),
+      propertyAddress: propertyAddressFull !== 'No Address' ? propertyAddressFull : undefined,
+      propertyCity: asString(enrichmentRow?.['property_city'], ''),
+      propertyState: asString(enrichmentRow?.['property_state'], ''),
+      propertyZip: asString(enrichmentRow?.['property_zip'], ''),
+      marketName: asString(enrichmentRow?.['market_name'], '') || asString(row['market'], ''),
+      propertyType: asString(enrichmentRow?.['property_type'], ''),
+      beds: enrichmentRow?.['beds'] as string | number,
+      baths: enrichmentRow?.['baths'] as string | number,
+      sqft: enrichmentRow?.['sqft'] as string | number,
+      yearBuilt: enrichmentRow?.['year_built'] as string | number,
+      effectiveYear: enrichmentRow?.['effective_year_built'] as string | number,
+      equityAmount: asNumber(enrichmentRow?.['equity_amount'], 0),
+      equityPercent: asNumber(enrichmentRow?.['equity_percent'], 0),
+      estimatedRepairCost: asNumber(enrichmentRow?.['estimated_repair_cost'], 0),
+      motivationScore: asNumber(enrichmentRow?.['motivation_score'], 0),
+      motivationSummary: asString(enrichmentRow?.['motivation_summary'], ''),
+      dealNextStep: asString(enrichmentRow?.['deal_next_step'], ''),
+      podioTags: safeArray(enrichmentRow?.['podio_tags'] as string[]),
+      isOwnerOccupied: asBoolean(enrichmentRow?.['is_owner_occupied'], false),
+      isAbsentee: asBoolean(enrichmentRow?.['is_absentee'], false),
+      isVacant: asBoolean(enrichmentRow?.['is_vacant'], false),
+      hasLien: asBoolean(enrichmentRow?.['has_lien'], false),
+      isProbate: asBoolean(enrichmentRow?.['is_probate'], false),
+      isTaxDelinquent: asBoolean(enrichmentRow?.['is_tax_delinquent'], false),
       threadIsPinned: isPinned,
       threadIsStarred: asBoolean(row['is_starred'], false),
       threadIsArchived: isArchived,
@@ -1478,6 +1485,20 @@ export const getInboxThreads = async (
       sampleLat: sampleThread?.lat ?? null,
       sampleLng: sampleThread?.lng ?? null,
       threadsWithCoords: withCoords.length,
+    })
+
+    console.log('[NexusInboxNameResolution]', {
+      totalThreads: threads.length,
+      resolvedOwnerNames: nameResolvedCount,
+      phoneFallbacks: namePhoneFallbackCount,
+      unresolvedNames: nameUnresolvedCount,
+    })
+
+    console.log('[NexusInboxAddressResolution]', {
+      totalThreads: threads.length,
+      resolvedAddresses: addressResolvedCount,
+      noAddressFallbacks: addressNoAddressFallbackCount,
+      unresolvedPropertyIds: addressUnresolvedPropertyIds.slice(0, 10),
     })
   }
 

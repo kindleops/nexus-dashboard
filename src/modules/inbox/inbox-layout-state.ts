@@ -4,6 +4,7 @@ export type NexusTheme = 'dark' | 'light'
 export type PanelMode = 'default' | 'hidden' | 'half' | 'full'
 export type InboxMode = 'default' | 'full_single' | 'full_double'
 export type MapMode = 'off' | 'side' | 'half' | 'seventy_five' | 'full'
+export type MapSourceMode = 'visible_threads' | 'loaded_threads' | 'all_active_coordinate_threads'
 export type ActiveOverlay = null | 'notifications' | 'queue' | 'filters' | 'avatar' | 'ai' | 'templates' | 'dossier' | 'keys' | 'activity'
 
 export interface InboxLayoutState {
@@ -30,9 +31,16 @@ export const defaultInboxLayoutState: InboxLayoutState = {
   rightInboxFilter: 'new_inbounds',
 }
 
+export const defaultMapSourceMode: MapSourceMode = 'loaded_threads'
+// TODO: Upgrade to 'all_active_coordinate_threads' when backend query is ready
+
 const panelCycle: PanelMode[] = ['default', 'hidden', 'half', 'full']
 const inboxCycle: InboxMode[] = ['default', 'full_single', 'full_double']
 const mapCycle: MapMode[] = ['side', 'half', 'seventy_five', 'full']
+const mapSourceCycle: MapSourceMode[] = ['visible_threads', 'loaded_threads', 'all_active_coordinate_threads']
+
+export const cycleMapSourceMode = (current: MapSourceMode): MapSourceMode =>
+  nextValue(mapSourceCycle, current)
 
 const nextValue = <T extends string>(cycle: T[], current: T): T => {
   const index = cycle.indexOf(current)

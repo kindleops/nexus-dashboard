@@ -26,6 +26,7 @@ page.on('console', msg => {
     text.includes('[NexusInboxCounts') ||
     text.includes('[NexusInboxNameResolution') ||
     text.includes('[InboxCoords') ||
+    text.includes('[InboxEnrichment') ||
     text.includes('[InboxMap]') ||
     text.includes('[InboxMapSource]') ||
     text.includes('[InboxPage]') ||

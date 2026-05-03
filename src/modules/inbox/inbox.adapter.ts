@@ -136,11 +136,17 @@ export interface InboxThread {
   // Seller details
   sellerFirstName?: string
   sellerLastName?: string
+  sellerName?: string
   ownerType?: string
   contactLanguage?: string
   bestPhone?: string
   phoneConfidence?: number
   // Property details
+  propertyCity?: string
+  propertyState?: string
+  propertyZip?: string
+  marketName?: string
+  propertyType?: string
   beds?: string | number
   baths?: string | number
   sqft?: string | number
