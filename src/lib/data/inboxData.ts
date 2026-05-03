@@ -275,39 +275,6 @@ export const resolveInboxPropertyAddressWithSource = (row: Record<string, unknow
 export const resolveInboxPropertyAddress = (row: Record<string, unknown>): string =>
   resolveInboxPropertyAddressWithSource(row).value
 
-const applyInboxViewServerFilters = (query: any, view: string | undefined): any => {
-  if (!view || view === 'all') return query
-  let q = query
-  if (view === 'priority') {
-    q = q.eq('show_in_priority_inbox', true).eq('is_archived', false)
-  } else if (view === 'active') {
-    q = q
-      .eq('is_archived', false)
-      .not('priority_bucket', 'eq', 'hidden')
-      .not('priority_bucket', 'eq', 'suppressed')
-      .not('ui_intent', 'eq', 'outbound_waiting')
-  } else if (view === 'waiting') {
-    q = q.eq('ui_intent', 'outbound_waiting').eq('is_archived', false)
-  } else if (view === 'archived') {
-    q = q.eq('is_archived', true)
-  } else if (view === 'suppressed') {
-    q = q.eq('priority_bucket', 'suppressed')
-  } else if (view === 'hidden') {
-    q = q.eq('priority_bucket', 'hidden')
-  } else if (view === 'starred') {
-    q = q.eq('is_starred', true)
-  } else if (view === 'pinned') {
-    q = q.eq('is_pinned', true)
-  } else if (view === 'sent') {
-    q = q.eq('ui_intent', 'sent').eq('is_archived', false)
-  } else if (view === 'queued') {
-    q = q.eq('ui_intent', 'queued').eq('is_archived', false)
-  } else if (view === 'failed') {
-    q = q.eq('ui_intent', 'failed').eq('is_archived', false)
-  }
-  return q
-}
-
 const applyInboxSearchServerFilter = (query: any, text: string | undefined): any => {
   if (!text || !text.trim()) return query
   const term = `%${text.trim()}%`
@@ -1190,21 +1157,11 @@ export const getInboxThreads = async (
     : 200
   const filterState = options.filters ?? filters
   
-  // Base query for counts with filters
-  let countQuery = supabase.from('nexus_inbox_threads_v').select('*', { count: 'exact', head: true })
-  countQuery = applyInboxViewServerFilters(countQuery, filterState.view)
-  countQuery = applyInboxSearchServerFilter(countQuery, filterState.query)
-  countQuery = applyInboxAdvancedServerFilters(countQuery, filterState.advanced)
-
-  if (
-    filterState.stage &&
-    filterState.stage !== 'all_stages' &&
-    SERVER_INBOX_THREAD_STAGE_VALUES.has(filterState.stage)
-  ) {
-    countQuery = countQuery.eq('stage', filterState.stage)
-  }
-
-  const { count: totalAvailable } = await countQuery
+  // NOTE: View filter and stage filter are applied CLIENT-SIDE only (see applyInboxFilters).
+  // Server fetches ALL threads so the map and other consumers get the full dataset.
+  const { count: totalAvailable } = await supabase
+    .from('nexus_inbox_threads_v')
+    .select('*', { count: 'exact', head: true })
 
   const startOffset = options.offset ?? 0
   const rows: AnyRecord[] = []
@@ -1220,17 +1177,9 @@ export const getInboxThreads = async (
       .order('latest_message_at', { ascending: false })
       .range(rangeStart, rangeEnd)
 
-    query = applyInboxViewServerFilters(query, filterState.view)
+    // View filter and stage filter are applied CLIENT-SIDE only so the map and other consumers get full dataset.
     query = applyInboxSearchServerFilter(query, filterState.query)
     query = applyInboxAdvancedServerFilters(query, filterState.advanced)
-
-    if (
-      filterState.stage &&
-      filterState.stage !== 'all_stages' &&
-      SERVER_INBOX_THREAD_STAGE_VALUES.has(filterState.stage)
-    ) {
-      query = query.eq('stage', filterState.stage)
-    }
 
     if (options.signal) {
       query = query.abortSignal(options.signal)
@@ -1326,16 +1275,25 @@ export const getInboxThreads = async (
   const propertyIds = boundedRows
     .map((row) => asString(row['property_id'], ''))
     .filter(Boolean)
+
   if (propertyIds.length > 0) {
     const uniquePropertyIds = Array.from(new Set(propertyIds))
+    let totalPropsReturned = 0
+
     for (let index = 0; index < uniquePropertyIds.length; index += 500) {
       const idBatch = uniquePropertyIds.slice(index, index + 500)
-      const { data: propRows, error: propError } = await supabase
-        .from('properties')
-        .select('property_id,latitude,longitude')
-        .in('property_id', idBatch)
-      if (!propError) {
-        safeArray(propRows as AnyRecord[]).forEach((r) => {
+      const { data: rpcRows, error: rpcError } = await supabase
+        .rpc('get_property_coordinates', { p_property_ids: idBatch })
+
+      if (rpcError) {
+        if (DEV) console.warn('[InboxCoords] RPC coords fetch failed', mapErrorMessage(rpcError))
+      } else {
+        const rows = safeArray(rpcRows as AnyRecord[])
+        totalPropsReturned += rows.length
+        if (DEV && rows.length > 0) {
+          console.log('[InboxCoords] RPC returned', rows.length, 'coords, sample:', rows.slice(0, 2))
+        }
+        rows.forEach((r) => {
           const pid = asString(getFirst(r, ['property_id']), '')
           const lat = asNumber(getFirst(r, ['latitude']), 0)
           const lng = asNumber(getFirst(r, ['longitude']), 0)
@@ -1343,9 +1301,15 @@ export const getInboxThreads = async (
             coordsByPropertyId.set(pid, { lat, lng })
           }
         })
-      } else if (DEV) {
-        console.warn('[Inbox] property coords fetch failed', mapErrorMessage(propError))
       }
+    }
+
+    if (DEV) {
+      console.log('[InboxCoords] summary:', {
+        uniquePropertyIdsQueried: uniquePropertyIds.length,
+        coordsFetched: totalPropsReturned,
+        coordsStored: coordsByPropertyId.size,
+      })
     }
   }
 
@@ -1364,6 +1328,8 @@ export const getInboxThreads = async (
     if (uiIntent === 'language_switch') return 'needs_response'
     return 'needs_response'
   }
+
+  let coordsMergedCount = 0
 
   const threads: InboxThread[] = boundedRows.map((row, index) => {
     const threadKey = asString(row['thread_key'], '') || `thread:${index}`
@@ -1490,10 +1456,30 @@ export const getInboxThreads = async (
     if (coords) {
       thread.lat = coords.lat
       thread.lng = coords.lng
+      coordsMergedCount++
     }
 
     return thread
   })
+
+  if (DEV) {
+    const withPropertyId = threads.filter((t) => t.propertyId).length
+    const uniquePropertyIds = Array.from(new Set(threads.map((t) => t.propertyId).filter(Boolean)))
+    const withCoords = threads.filter((t) => isValidCoordSimple(t.lat || 0, t.lng || 0))
+    const sampleThread = threads.find((t) => t.propertyId && coordsByPropertyId.has(t.propertyId))
+    console.log('[InboxCoords]', {
+      threadCount: threads.length,
+      withPropertyId,
+      uniquePropertyIds: uniquePropertyIds.length,
+      coordsFetched: coordsByPropertyId.size,
+      coordsMerged: coordsMergedCount,
+      samplePropertyId: sampleThread?.propertyId || null,
+      sampleCoordKeys: sampleThread ? ['lat', 'lng'] : [],
+      sampleLat: sampleThread?.lat ?? null,
+      sampleLng: sampleThread?.lng ?? null,
+      threadsWithCoords: withCoords.length,
+    })
+  }
 
   let filtered = [...threads]
 

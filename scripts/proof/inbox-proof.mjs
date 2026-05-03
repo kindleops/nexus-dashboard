@@ -24,7 +24,12 @@ page.on('console', msg => {
   if (
     text.includes('[NexusInbox') ||
     text.includes('[NexusInboxCounts') ||
-    text.includes('[NexusInboxNameResolution')
+    text.includes('[NexusInboxNameResolution') ||
+    text.includes('[InboxCoords') ||
+    text.includes('[InboxMap]') ||
+    text.includes('[InboxMapSource]') ||
+    text.includes('[InboxPage]') ||
+    text.includes('[NexusInboxAddressResolution')
   ) {
     console.log(`[browser-console] ${text}`)
   }
@@ -35,11 +40,30 @@ await page.goto(`${BASE_URL}${route}`, {
   timeout: 60_000,
 })
 
+await page.waitForTimeout(2000)
+
 await page.screenshot({
   path: screenshotPath,
   fullPage: true,
 })
 
 console.log(`✅ Inbox screenshot saved: ${screenshotPath}`)
+
+const mapOutDir = path.resolve('proof/inbox')
+const mapStamp = new Date().toISOString().replace(/[:.]/g, '-')
+const mapScreenshotPath = path.join(mapOutDir, `inbox-map-${mapStamp}.png`)
+
+await page.keyboard.down('Meta')
+await page.keyboard.press('m')
+await page.keyboard.up('Meta')
+
+await page.waitForTimeout(3000)
+
+await page.screenshot({
+  path: mapScreenshotPath,
+  fullPage: true,
+})
+
+console.log(`✅ Inbox map screenshot saved: ${mapScreenshotPath}`)
 
 await browser.close()

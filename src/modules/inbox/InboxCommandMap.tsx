@@ -6,7 +6,7 @@
  * No clustering — every property visible at all zoom levels.
  */
 
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import type { FeatureCollection, Point } from 'geojson'
@@ -106,40 +106,37 @@ function getSelectedCoord(thread: InboxWorkflowThread | null): [number, number] 
   return isValidCoord(lat, lng) ? [lng, lat] : null
 }
 
+function getBoundsForPins(
+  threads: InboxWorkflowThread[],
+): [number, number][] | null {
+  const withCoords = threads
+    .filter((t) => isValidCoord(getThreadLat(t), getThreadLng(t)))
+    .map((t) => [getThreadLng(t), getThreadLat(t)] as [number, number])
+  if (withCoords.length === 0) return null
+  return withCoords
+}
+
 interface Props {
   threads: InboxWorkflowThread[]
   selectedThread: InboxWorkflowThread | null
   zoomedIn: boolean
+  onSelectThreadId?: (threadId: string) => void
 }
 
-export function InboxCommandMap({ threads, selectedThread, zoomedIn }: Props) {
+export function InboxCommandMap({ threads, selectedThread, zoomedIn, onSelectThreadId }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
   const mapReadyRef = useRef(false)
   const selectedIdRef = useRef<string | undefined>(selectedThread?.id)
   const pFrame = useRef(0)
   const pAnim = useRef(0)
+  const [hasRenderedPins, setHasRenderedPins] = useState(false)
 
   const withCoords = threads.filter((t) => {
     const lat = getThreadLat(t)
     const lng = getThreadLng(t)
     return isValidCoord(lat, lng)
   })
-
-  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
-    console.log('[InboxMap]', {
-      totalThreads: threads.length,
-      withCoords: withCoords.length,
-      selectedCoord: getSelectedCoord(selectedThread),
-      marketCenter: getMarketCenter(threads),
-      sampleThread: threads[0] ? {
-        id: threads[0].id,
-        propertyId: (threads[0] as any).propertyId,
-        lat: getThreadLat(threads[0]),
-        lng: getThreadLng(threads[0]),
-      } : null,
-    })
-  }
 
   const pinsGeoJSON = useMemo(
     () => buildPinsGeoJSON(threads, selectedThread?.id),
@@ -151,16 +148,45 @@ export function InboxCommandMap({ threads, selectedThread, zoomedIn }: Props) {
   }, [selectedThread?.id])
 
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      console.log('[InboxMapSource]', {
+        activeMapMode: 'all_loaded_threads',
+        receivedThreadCount: threads.length,
+        threadsWithLatLng: withCoords.length,
+        pinsGeoJsonCount: pinsGeoJSON.features.length,
+        selectedThreadId: selectedThread?.id ?? null,
+        selectedHasCoords: selectedThread ? isValidCoord(getThreadLat(selectedThread), getThreadLng(selectedThread)) : false,
+      })
+    }
+  }, [threads, withCoords.length, pinsGeoJSON.features.length, selectedThread])
+
+  // Skip rendering map until threads are loaded
+  if (threads.length === 0) {
+    return (
+      <div className="nx-icm">
+        <div className="nx-icm__empty">
+          <div className="nx-icm__empty-title">Loading threads...</div>
+          <div className="nx-icm__empty-sub">Waiting for inbox data to load</div>
+        </div>
+      </div>
+    )
+  }
+
+  useEffect(() => {
     if (!containerRef.current) return
 
-    const center = getSelectedCoord(selectedThread) ?? getMarketCenter(threads) ?? [-96, 37.5]
-    const baseZoom = zoomedIn ? 12 : 6
+    const selectedCoord = getSelectedCoord(selectedThread)
+    const bounds = getBoundsForPins(threads)
+    const marketCenter = getMarketCenter(threads)
 
     if (mapRef.current) {
       mapRef.current.remove()
       mapRef.current = null
       mapReadyRef.current = false
     }
+
+    const center = selectedCoord ?? marketCenter ?? [-96, 37.5]
+    const baseZoom = zoomedIn ? 12 : 6
 
     const map = new maplibregl.Map({
       container: containerRef.current,
@@ -205,7 +231,7 @@ export function InboxCommandMap({ threads, selectedThread, zoomedIn }: Props) {
         paint: {
           'circle-radius': ['match', ['get', 'pinTier'], 'hot', 18, 'warm', 14, 'neutral', 12, 10],
           'circle-blur': 0.6,
-          'circle-opacity': ['match', ['get', 'pinTier'], 'hot', 0.22, 'warm', 0.12, 'neutral', 0.08, 0.04],
+          'circle-opacity': ['match', ['get', 'pinTier'], 'hot', 0.22, 'warm', 0.18, 'neutral', 0.12, 0.06],
           'circle-color': PIN_COLOR,
           'circle-stroke-width': 1.5,
           'circle-stroke-color': PIN_COLOR,
@@ -225,6 +251,21 @@ export function InboxCommandMap({ threads, selectedThread, zoomedIn }: Props) {
           'circle-opacity': 0.95,
         },
       })
+
+      setHasRenderedPins(pinsGeoJSON.features.length > 0)
+
+      if (selectedCoord) {
+        map.flyTo({ center: selectedCoord, zoom: Math.max(baseZoom, 12), duration: 1000 })
+      } else if (bounds && bounds.length > 1) {
+        const padding = 80
+        map.fitBounds(
+          [
+            [Math.min(...bounds.map((c) => c[0])), Math.min(...bounds.map((c) => c[1]))],
+            [Math.max(...bounds.map((c) => c[0])), Math.max(...bounds.map((c) => c[1]))],
+          ],
+          { padding, duration: 800 },
+        )
+      }
 
       const animate = () => {
         if (!mapReadyRef.current || !mapRef.current) return
@@ -256,12 +297,17 @@ export function InboxCommandMap({ threads, selectedThread, zoomedIn }: Props) {
       map.on('click', 'pin-core', (e) => {
         const feat = e.features?.[0]
         if (!feat) return
-        const id = feat.properties?.id as string | undefined
-        if (!id) return
+        const clickedId = feat.properties?.id as string | undefined
+        if (!clickedId) return
         const coords = (feat.geometry as Point).coordinates as [number, number]
         map.flyTo({ center: coords, zoom: Math.max(map.getZoom(), 12), duration: 800 })
+
         const src = map.getSource('pins') as maplibregl.GeoJSONSource | undefined
-        src?.setData(buildPinsGeoJSON(threads, id))
+        src?.setData(buildPinsGeoJSON(threads, clickedId))
+
+        if (onSelectThreadId) {
+          onSelectThreadId(clickedId)
+        }
       })
 
       map.on('mouseenter', 'pin-core', () => { map.getCanvas().style.cursor = 'pointer' })
@@ -297,10 +343,20 @@ export function InboxCommandMap({ threads, selectedThread, zoomedIn }: Props) {
   }, [zoomedIn, selectedThread])
 
   const threadCount = pinsGeoJSON.features.length
+  const isEmpty = !hasRenderedPins && threads.length > 0
 
   return (
     <div className="nx-icm">
       <div ref={containerRef} className="nx-icm__canvas" />
+      {isEmpty && (
+        <div className="nx-icm__empty">
+          <div className="nx-icm__empty-title">No coordinates found</div>
+          <div className="nx-icm__empty-sub">
+            {threads.length} threads loaded, but {withCoords.length} have valid lat/lng.
+            Check [InboxCoords] logs for property coordinate fetch status.
+          </div>
+        </div>
+      )}
       <div className="nx-icm__card" aria-label="Map context">
         <div className="nx-icm__card-row nx-icm__card-row--head">
           <span className="nx-icm__card-subject">

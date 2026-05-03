@@ -155,6 +155,21 @@ export default function InboxPage() {
     return rawThreads.map(t => optimisticPatches[t.id] ? { ...t, ...optimisticPatches[t.id] } : t)
   }, [rawThreads, optimisticPatches])
 
+  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+    const withCoords = threads.filter((t) => {
+      const lat = (t as any).lat ?? (t as any).latitude ?? 0
+      const lng = (t as any).lng ?? (t as any).longitude ?? 0
+      return Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0
+    })
+    console.log('[InboxPage]', {
+      rawThreads: rawThreads.length,
+      threadsAfterPatches: threads.length,
+      withCoords: withCoords.length,
+      sampleLat: withCoords[0] ? ((withCoords[0] as any).lat ?? (withCoords[0] as any).latitude) : null,
+      sampleLng: withCoords[0] ? ((withCoords[0] as any).lng ?? (withCoords[0] as any).longitude) : null,
+    })
+  }
+
   const advancedFilterOptions = useMemo(() => getAdvancedFilterOptions(threads), [threads])
   
   const viewCounts = useMemo(() => {
@@ -1076,6 +1091,7 @@ export default function InboxPage() {
                 threads={threads}
                 selectedThread={selected}
                 zoomedIn={mapMode !== 'side'}
+                onSelectThreadId={handleSelect}
               />
             </div>
             {selected && (
