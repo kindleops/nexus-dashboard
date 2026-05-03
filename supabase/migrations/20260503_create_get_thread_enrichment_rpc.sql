@@ -2,6 +2,7 @@
 -- RPC: get_thread_enrichment
 -- Returns owner/property enrichment data for inbox threads.
 -- SECURITY DEFINER bypasses RLS so the anon key can access data.
+-- Uses set-based joins for performance.
 -- ============================================================
 
 drop function if exists public.get_thread_enrichment(text[]);
@@ -12,7 +13,6 @@ returns table (
   property_id text,
   master_owner_id text,
   prospect_id text,
-  -- Owner / Seller fields
   owner_display_name text,
   seller_first_name text,
   seller_last_name text,
@@ -20,7 +20,6 @@ returns table (
   contact_language text,
   best_phone text,
   phone_confidence text,
-  -- Property fields
   property_address_full text,
   property_street text,
   property_city text,
@@ -53,168 +52,176 @@ returns table (
   zillow_url text,
   realtor_url text
 )
-language plpgsql
+language sql
 security definer
 set search_path = public
 as $$
-declare
-  v_thread_key text;
-  v_property_id text;
-  v_owner_id text;
-  v_prospect_id text;
-  v_market text;
-  v_property_address text;
-begin
-  -- Process each thread key
-  foreach v_thread_key in array p_thread_keys loop
-    -- Extract IDs from thread_key format (phone:xxx, owner:xxx, prospect:xxx, property:xxx, event:xxx)
-    if v_thread_key like 'phone:%' then
-      -- For phone-based threads, look up latest message_event
-      select me.property_id, me.master_owner_id, me.prospect_id, me.market, me.property_address
-      into v_property_id, v_owner_id, v_prospect_id, v_market, v_property_address
-      from public.message_events me
-      where (
-        me.canonical_e164 = substring(v_thread_key from 7)
-        or me.seller_phone = substring(v_thread_key from 7)
-        or (me.direction = 'inbound' and me.from_phone_number = substring(v_thread_key from 7))
-        or (me.direction = 'outbound' and me.to_phone_number = substring(v_thread_key from 7))
-      )
-      order by me.event_timestamp desc
-      limit 1;
-    elsif v_thread_key like 'owner:%' then
-      v_owner_id := substring(v_thread_key from 7);
-      select me.property_id, me.prospect_id, me.market, me.property_address
-      into v_property_id, v_prospect_id, v_market, v_property_address
-      from public.message_events me
-      where me.master_owner_id = v_owner_id
-      order by me.event_timestamp desc
-      limit 1;
-    elsif v_thread_key like 'prospect:%' then
-      v_prospect_id := substring(v_thread_key from 8);
-      select me.property_id, me.master_owner_id, me.market, me.property_address
-      into v_property_id, v_owner_id, v_market, v_property_address
-      from public.message_events me
-      where me.prospect_id = v_prospect_id
-      order by me.event_timestamp desc
-      limit 1;
-    elsif v_thread_key like 'property:%' then
-      v_property_id := substring(v_thread_key from 11);
-      select me.master_owner_id, me.prospect_id, me.market, me.property_address
-      into v_owner_id, v_prospect_id, v_market, v_property_address
-      from public.message_events me
-      where me.property_id = v_property_id
-      order by me.event_timestamp desc
-      limit 1;
-    else
-      -- event:xxx or unknown format - look up by ID
-      select me.property_id, me.master_owner_id, me.prospect_id, me.market, me.property_address
-      into v_property_id, v_owner_id, v_prospect_id, v_market, v_property_address
-      from public.message_events me
-      where me.id::text = substring(v_thread_key from 7)
-      limit 1;
-    end if;
-
-    -- Return enrichment row
-    thread_key := v_thread_key;
-    property_id := v_property_id;
-    master_owner_id := v_owner_id;
-    prospect_id := v_prospect_id;
-
-    -- Fetch property data
-    if v_property_id is not null and v_property_id != '' then
-      select
-        p.full_address,
-        p.street,
-        p.city,
-        p.state,
-        p.zip,
-        p.property_type,
-        p.bedrooms,
-        p.bathrooms,
-        p.living_area_sqft,
-        p.year_built,
-        p.effective_year_built,
-        p.estimated_value,
-        p.cash_offer,
-        p.equity_amount,
-        p.equity_percent,
-        p.estimated_repair_cost,
-        p.streetview_image,
-        p.zillow_url,
-        p.realtor_url
-      into
-        property_address_full,
-        property_street,
-        property_city,
-        property_state,
-        property_zip,
-        property_type,
-        beds,
-        baths,
-        sqft,
-        year_built,
-        effective_year_built,
-        estimated_value,
-        cash_offer,
-        equity_amount,
-        equity_percent,
-        estimated_repair_cost,
-        streetview_image,
-        zillow_url,
-        realtor_url
-      from public.properties p
-      where p.property_id::text = v_property_id;
-    end if;
-
-    -- Fall back to message_event address if property table doesn't have it
-    if property_address_full is null and v_property_address is not null then
-      property_address_full := v_property_address;
-    end if;
-
-    -- Fall back to market from message_event
-    if market_name is null and v_market is not null then
-      market_name := v_market;
-    end if;
-
-    -- Fetch owner data
-    if v_owner_id is not null and v_owner_id != '' then
-      select
-        o.display_name,
-        o.first_name,
-        o.last_name,
-        o.owner_type,
-        o.best_phone,
-        o.phone_confidence,
-        o.contact_language,
-        o.is_owner_occupied,
-        o.is_absentee,
-        o.is_vacant,
-        o.has_lien,
-        o.is_probate,
-        o.is_tax_delinquent
-      into
-        owner_display_name,
-        seller_first_name,
-        seller_last_name,
-        owner_type,
-        best_phone,
-        phone_confidence,
-        contact_language,
-        is_owner_occupied,
-        is_absentee,
-        is_vacant,
-        has_lien,
-        is_probate,
-        is_tax_delinquent
-      from public.owners o
-      where o.owner_id::text = v_owner_id;
-    end if;
-
-    -- Return the row
-    return next;
-  end loop;
-end;
+  with thread_ids as (
+    select
+      tk.thread_key,
+      case when tk.thread_key like 'phone:%' then substring(tk.thread_key from 7) end as phone_raw,
+      case when tk.thread_key like 'owner:%' then substring(tk.thread_key from 7) end as owner_id_raw,
+      case when tk.thread_key like 'prospect:%' then substring(tk.thread_key from 8) end as prospect_id_raw,
+      case when tk.thread_key like 'property:%' then substring(tk.thread_key from 11) end as property_id_raw,
+      case when tk.thread_key like 'event:%' then substring(tk.thread_key from 7)::uuid end as event_id_raw
+    from unnest(p_thread_keys) as tk(thread_key)
+  ),
+  -- Find latest message_event for each thread
+  latest_events as (
+    select distinct on (ti.thread_key)
+      ti.thread_key,
+      me.property_id,
+      me.master_owner_id,
+      me.prospect_id,
+      me.market_id,
+      me.property_address
+    from thread_ids ti
+    left join public.message_events me on (
+      (ti.phone_raw is not null and (me.from_phone_number = ti.phone_raw or me.to_phone_number = ti.phone_raw))
+      or (ti.owner_id_raw is not null and me.master_owner_id = ti.owner_id_raw)
+      or (ti.prospect_id_raw is not null and me.prospect_id = ti.prospect_id_raw)
+      or (ti.property_id_raw is not null and me.property_id = ti.property_id_raw)
+      or (ti.event_id_raw is not null and me.id = ti.event_id_raw)
+    )
+    order by ti.thread_key, me.event_timestamp desc nulls last, me.id desc
+  ),
+  -- Enrich with property data
+  property_enriched as (
+    select
+      le.thread_key,
+      coalesce(p.property_id::text, le.property_id) as property_id,
+      le.master_owner_id,
+      le.prospect_id,
+      le.market_id,
+      p.property_address_full,
+      p.property_address as property_street,
+      p.property_address_city as property_city,
+      p.property_address_state as property_state,
+      p.property_address_zip as property_zip,
+      p.property_type,
+      p.total_bedrooms as beds,
+      p.total_baths as baths,
+      p.building_square_feet as sqft,
+      p.year_built,
+      p.effective_year_built,
+      p.estimated_value,
+      p.cash_offer,
+      p.equity_amount,
+      p.equity_percent,
+      p.estimated_repair_cost,
+      p.final_acquisition_score,
+      p.structured_motivation_score as motivation_score,
+      null::text as motivation_summary,
+      null::text as deal_next_step,
+      p.podio_tags,
+      p.streetview_image,
+      p.tax_delinquent as is_tax_delinquent,
+      p.active_lien as has_lien,
+      null::boolean as is_owner_occupied,
+      null::boolean as is_absentee,
+      null::boolean as is_vacant,
+      null::boolean as is_probate,
+      null::text as zillow_url,
+      null::text as realtor_url,
+      coalesce(p.market, le.market_id) as market_name,
+      p.owner_1_firstname as seller_first_name,
+      p.owner_1_lastname as seller_last_name
+    from latest_events le
+    left join public.properties p on p.property_id::text = coalesce(le.property_id, null)
+  ),
+  -- Enrich with owner data
+  owner_enriched as (
+    select
+      pe.thread_key,
+      pe.property_id,
+      pe.master_owner_id,
+      pe.prospect_id,
+      pe.property_address_full,
+      pe.property_street,
+      pe.property_city,
+      pe.property_state,
+      pe.property_zip,
+      pe.property_type,
+      pe.beds,
+      pe.baths,
+      pe.sqft,
+      pe.year_built,
+      pe.effective_year_built,
+      pe.estimated_value,
+      pe.cash_offer,
+      pe.equity_amount,
+      pe.equity_percent,
+      pe.estimated_repair_cost,
+      pe.final_acquisition_score,
+      pe.motivation_score,
+      pe.motivation_summary,
+      pe.deal_next_step,
+      pe.podio_tags,
+      pe.streetview_image,
+      pe.is_tax_delinquent,
+      pe.has_lien,
+      pe.is_owner_occupied,
+      pe.is_absentee,
+      pe.is_vacant,
+      pe.is_probate,
+      pe.zillow_url,
+      pe.realtor_url,
+      pe.market_name,
+      coalesce(pe.seller_first_name, so.owner_name) as seller_first_name,
+      pe.seller_last_name,
+      mo.display_name as owner_display_name,
+      mo.owner_type_guess as owner_type,
+      mo.best_language as contact_language,
+      mo.best_phone_1 as best_phone,
+      mo.best_phone_confidence as phone_confidence
+    from property_enriched pe
+    left join public.master_owners mo on mo.master_owner_id::text = pe.master_owner_id
+    left join public.sub_owners so on so.master_owner_id::text = pe.master_owner_id
+  )
+  select
+    oe.thread_key,
+    oe.property_id,
+    oe.master_owner_id,
+    oe.prospect_id,
+    oe.owner_display_name,
+    oe.seller_first_name,
+    oe.seller_last_name,
+    oe.owner_type,
+    oe.contact_language,
+    oe.best_phone,
+    oe.phone_confidence,
+    oe.property_address_full,
+    oe.property_street,
+    oe.property_city,
+    oe.property_state,
+    oe.property_zip,
+    oe.property_type,
+    oe.market_name,
+    oe.beds,
+    oe.baths,
+    oe.sqft,
+    oe.year_built,
+    oe.effective_year_built,
+    oe.estimated_value,
+    oe.cash_offer,
+    oe.equity_amount,
+    oe.equity_percent,
+    oe.estimated_repair_cost,
+    oe.final_acquisition_score,
+    oe.motivation_score,
+    oe.motivation_summary,
+    oe.deal_next_step,
+    oe.podio_tags,
+    oe.is_owner_occupied,
+    oe.is_absentee,
+    oe.is_vacant,
+    oe.has_lien,
+    oe.is_probate,
+    oe.is_tax_delinquent,
+    oe.streetview_image,
+    oe.zillow_url,
+    oe.realtor_url
+  from owner_enriched oe;
 $$;
 
--- Grant execute to anon and authenticated roles
 grant execute on function public.get_thread_enrichment(text[]) to anon, authenticated;

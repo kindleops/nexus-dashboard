@@ -21,6 +21,7 @@ export interface NormalizedPropertySnapshot {
   cashOffer: string
   finalScore: string
   streetViewUrl: string | null
+  aerialViewUrl: string | null
   unitCount: string
   lotSize: string
   occupancy: string
@@ -59,6 +60,12 @@ export const buildStreetViewUrl = (address: string | null): string | null => {
   return `https://maps.googleapis.com/maps/api/streetview?size=600x300&location=${encodeURIComponent(address)}&fov=70&key=${apiKey}`
 }
 
+export const buildAerialViewUrl = (address: string | null): string | null => {
+  if (!address) return null
+  const apiKey = GOOGLE_MAPS_API_KEY || 'AIzaSyAhOk7KZkduU4qywmrlq5ZqSOtgktHYiFk'
+  return `https://maps.googleapis.com/maps/api/staticmap?size=600x300&maptype=satellite&scale=2&zoom=19&center=${encodeURIComponent(address)}&key=${apiKey}`
+}
+
 /**
  * Normalize raw intelligence data into a structured property snapshot.
  */
@@ -90,6 +97,7 @@ export const normalizePropertySnapshot = (
     cashOffer: (thread as any)?.cashOffer || get('cash_offer'),
     finalScore: (thread as any)?.finalAcquisitionScore || get('final_acquisition_score'),
     streetViewUrl: buildStreetViewUrl(address),
+    aerialViewUrl: buildAerialViewUrl(address),
     unitCount: (thread as any)?.unitCount || (thread as any)?.unit_count || (thread as any)?.units || get('unit_count'),
     lotSize: (thread as any)?.lotSize || (thread as any)?.lot_size || (thread as any)?.lotSizeSqft || get('lot_size_sqft') || get('lot_size_acres'),
     occupancy: (thread as any)?.occupancy || get('occupancy'),

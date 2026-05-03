@@ -13,6 +13,8 @@ export type ActivityEventType =
   | 'message_received'
   | 'message_failed'
   | 'note_added'
+  | 'ai_copilot_interaction'
+
 
 export interface InboxActivityEvent {
   id: string

@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from '../../../shared/icons'
+import { CopilotOrbTrigger } from '../copilot/AICopilotPanel'
 import { TemplatePopover } from './TemplatePopover'
 import type { InboxThread } from '../inbox.adapter'
 import type { ThreadContext } from '../../../lib/data/inboxData'
@@ -255,27 +256,44 @@ export const Composer = ({
       onMouseLeave={() => setIsHovered(false)}
     >
       <div className="nx-composer-utility-row">
-        {tools.map(tool => (
-          <button
-            key={tool.id}
-            type="button"
-            className={cls(
-              'nx-utility-btn',
-              tool.id === 'templates' && templatePopoverOpen && 'is-active',
-              tool.id === 'translate' && isTranslating && 'is-translating-active'
-            )}
-            onClick={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              if (DEV) console.log(`[NexusComposerRail] action: ${tool.id}`)
-              tool.action()
-            }}
-            disabled={tool.disabled}
-          >
-            <Icon name={tool.icon} style={{ width: 13, marginRight: 5 }} />
-            {tool.label}
-          </button>
-        ))}
+        {tools.map(tool => {
+          if (tool.id === 'ai-assist') {
+            return (
+              <button
+                key={tool.id}
+                type="button"
+                className="nx-composer-orb-trigger"
+                onClick={tool.action}
+                disabled={tool.disabled}
+              >
+                <CopilotOrbTrigger size="sm" isReady={!!thread?.aiDraft} />
+                {tool.label}
+              </button>
+            )
+          }
+          return (
+            <button
+              key={tool.id}
+              type="button"
+              className={cls(
+                'nx-utility-btn',
+                tool.id === 'templates' && templatePopoverOpen && 'is-active',
+                tool.id === 'translate' && isTranslating && 'is-translating-active'
+              )}
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                if (DEV) console.log(`[NexusComposerRail] action: ${tool.id}`)
+                tool.action()
+              }}
+              disabled={tool.disabled}
+            >
+              <Icon name={tool.icon} style={{ width: 13, marginRight: 5 }} />
+              {tool.label}
+            </button>
+          )
+        })}
+
       </div>
 
       {/* Main input area */}

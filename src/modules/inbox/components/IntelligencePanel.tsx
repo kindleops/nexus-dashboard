@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import type { ThreadContext, ThreadIntelligenceRecord, ThreadMessage } from '../../../lib/data/inboxData'
 import type { InboxStatus, SellerStage, InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import type { PanelMode } from '../inbox-layout-state'
 import {
   normalizePropertySnapshot,
   buildPropertyExternalLinks,
+  buildAerialViewUrl,
 } from '../inbox-normalization'
 import { Icon } from '../../../shared/icons'
 import { formatRelativeTime } from '../../../shared/formatters'
@@ -18,34 +19,22 @@ import {
 } from '../status-visuals'
 
 const DEV = Boolean(import.meta.env.DEV)
+const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
 
-const cls = (...tokens: Array<string | false | null | undefined>) =>
-  tokens.filter(Boolean).join(' ')
+import { CopilotOrbTrigger } from '../copilot/AICopilotPanel'
 
-// ── Helpers ───────────────────────────────────────────────────────────────
+// ── Helper Utilities ──────────────────────────────────────────────────────
 
 const normalizeText = (value: unknown): string => String(value ?? '').trim()
 
-const isMissingValue = (value: unknown): boolean => {
+const isPresent = (value: unknown): boolean => {
   const text = normalizeText(value).toLowerCase()
-  return !text || text === 'unknown' || text === 'n/a' || text === 'null' || text === 'undefined' || text === 'none' || text === '-'
+  return Boolean(text) && text !== 'unknown' && text !== 'n/a' && text !== 'null' && text !== 'undefined' && text !== 'none' && text !== '-'
 }
 
 const asStr = (value: unknown): string => normalizeText(value)
 
-const getMissingDataLabel = (value: unknown, context?: string): string => {
-  if (isMissingValue(value)) {
-    if (context === 'arv') return 'Needs ARV'
-    if (context === 'condition') return 'Needs condition'
-    if (context === 'rent_roll') return 'Needs rent roll'
-    if (context === 'underwriting') return 'Needs underwriting'
-    if (context === 'ask') return 'Ask seller'
-    return 'Not available'
-  }
-  return normalizeText(value)
-}
-
-const fmtCurrency = (value: unknown): string | null => {
+const formatMoney = (value: unknown): string | null => {
   const raw = String(value ?? '').replace(/[,$\s]/g, '')
   const num = Number(raw)
   if (!Number.isFinite(num) || num === 0) return null
@@ -54,30 +43,26 @@ const fmtCurrency = (value: unknown): string | null => {
   return `$${Math.round(num).toLocaleString()}`
 }
 
-const fmtPercent = (value: unknown): string | null => {
+const formatPercent = (value: unknown): string | null => {
   const raw = String(value ?? '').replace(/[%\s]/g, '')
   const num = Number(raw)
   if (!Number.isFinite(num)) return null
   return `${Math.round(num)}%`
 }
 
-const fmtScore = (value: unknown): string | null => {
-  const raw = String(value ?? '').replace(/[^0-9.]/g, '')
-  const num = Number(raw)
-  if (!Number.isFinite(num)) return null
-  return `${Math.round(num)}/100`
+const formatDate = (value: unknown): string | null => {
+  if (!isPresent(value)) return null
+  const date = new Date(String(value))
+  if (Number.isNaN(date.getTime())) return null
+  return date.toLocaleString()
 }
 
 const fmtPhone = (value: unknown): string | null => {
   const raw = normalizeText(value)
   if (!raw) return null
   const digits = raw.replace(/\D/g, '')
-  if (digits.length === 11 && digits.startsWith('1')) {
-    return `+1 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`
-  }
-  if (digits.length === 10) {
-    return `+1 (${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
-  }
+  if (digits.length === 11 && digits.startsWith('1')) return `+1 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`
+  if (digits.length === 10) return `+1 (${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
   return raw
 }
 
@@ -85,6 +70,190 @@ const get = (thread: InboxWorkflowThread, key: string): unknown => {
   const row = thread as unknown as Record<string, unknown>
   return row[key] ?? row[key.replace(/_/g, '')] ?? row[key.charAt(0).toUpperCase() + key.slice(1)]
 }
+
+const getAvailableFields = (group: Record<string, unknown>): string[] =>
+  Object.entries(group).filter(([, v]) => isPresent(v)).map(([k]) => k)
+
+const getMissingFields = (group: Record<string, unknown>): Array<{ key: string; label: string }> =>
+  Object.entries(group).filter(([, v]) => !isPresent(v)).map(([k]) => ({ key: k, label: k.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) }))
+
+const toChip = (v: unknown): string | null => {
+  if (v === null || v === undefined) return null
+  const n = Number(String(v).replace(/[,$\s]/g, ''))
+  if (Number.isFinite(n)) return String(n)
+  return String(v).trim() || null
+}
+
+// ── Reusable UI Components ────────────────────────────────────────────────
+
+const DossierCard = ({ children, className }: { children: React.ReactNode; className?: string }) => (
+  <div className={cls('nx-dossier-card', className)} style={{ display: 'block', visibility: 'visible', opacity: 1 }}>{children}</div>
+)
+
+const DossierShell = ({ children }: { children: React.ReactNode }) => (
+  <div className="nx-dossier-shell">{children}</div>
+)
+
+const QuietBadge = ({
+  label,
+  tone = 'default',
+}: {
+  label: string
+  tone?: 'default' | 'accent' | 'warning' | 'danger' | 'success'
+}) => <span className={cls('nx-quiet-badge', tone !== 'default' && `is-${tone}`)}>{label}</span>
+
+const MetricInline = ({
+  label,
+  value,
+  tone = 'default',
+}: {
+  label: string
+  value: string | null
+  tone?: 'default' | 'accent' | 'warning' | 'danger' | 'success'
+}) => {
+  if (!isPresent(value)) return null
+  return (
+    <div className={cls('nx-metric-inline', tone !== 'default' && `is-${tone}`)}>
+      <span className="nx-metric-inline__label">{label}</span>
+      <strong className="nx-metric-inline__value">{value}</strong>
+    </div>
+  )
+}
+
+const ActionButton = ({
+  label,
+  icon,
+  tone = 'default',
+  disabled,
+}: {
+  label: string
+  icon: string
+  tone?: 'default' | 'accent' | 'warning' | 'danger'
+  disabled?: boolean
+}) => (
+  <button type="button" className={cls('nx-action-button', tone !== 'default' && `is-${tone}`)} disabled={disabled}>
+    <Icon name={icon as any} />
+    <span>{label}</span>
+  </button>
+)
+
+const DossierMetric = ({ 
+  label, 
+  value, 
+  icon,
+  accent,
+  suffix,
+  internal,
+  showWhenMissing = false,
+}: { 
+  label: string; 
+  value: string | null; 
+  icon: string; 
+  accent?: 'blue' | 'green' | 'amber' | 'purple' | 'red' | 'cyan';
+  suffix?: string;
+  internal?: boolean;
+  showWhenMissing?: boolean;
+}) => (
+  !isPresent(value) && !showWhenMissing ? null : <div className={cls('nx-dossier-metric', !value && 'is-empty', accent && `is-${accent}`, internal && 'is-internal')}>
+    <div className="nx-dossier-metric__icon"><Icon name={icon as any} /></div>
+    <div className="nx-dossier-metric__content">
+      <span className="nx-dossier-metric__label">{label}</span>
+      <span className="nx-dossier-metric__value">
+        {value || '—'}
+        {suffix && value && <span className="nx-dossier-metric__suffix">{suffix}</span>}
+      </span>
+      {internal && <span className="nx-dossier-metric__internal-tag">INTERNAL</span>}
+    </div>
+  </div>
+)
+
+const DossierTabGroup = ({ 
+  tabs, 
+  active, 
+  onChange, 
+}: { 
+  tabs: Array<{ id: string; label: string; icon: string; count?: number }>; 
+  active: string; 
+  onChange: (id: string) => void;
+}) => (
+  <div className="nx-dossier-tabs">
+    {tabs.map((t) => (
+      <button
+        key={t.id}
+        type="button"
+        className={cls('nx-dossier-tab', t.id === active && 'is-active')}
+        onClick={() => onChange(t.id)}
+      >
+        <Icon name={t.icon as any} />
+        <span>{t.label}</span>
+        {t.count !== undefined && t.count > 0 && <span className="nx-dossier-tab__count">{t.count}</span>}
+      </button>
+    ))}
+  </div>
+)
+
+const MissingDataDisclosure = ({ fields }: { fields: Array<{ key: string; label: string }> }) => {
+  const [open, setOpen] = useState(false)
+  if (fields.length === 0) return null
+  return (
+    <div className="nx-missing-disclosure">
+      <button type="button" className="nx-missing-disclosure__trigger" onClick={() => setOpen(!open)}>
+        <Icon name="alert" />
+        <span>{fields.length} missing {fields.length === 1 ? 'field' : 'fields'}</span>
+        <Icon name={open ? 'chevron-down' : 'chevron-right'} />
+      </button>
+      {open && (
+        <div className="nx-missing-disclosure__list">
+          {fields.map((f) => (
+            <span key={f.key} className="nx-missing-disclosure__item">{f.label}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const LinkedRecordButton = ({ 
+  label, 
+  url, 
+  icon,
+  variant = 'default',
+}: { 
+  label: string; 
+  url?: string | null; 
+  icon: string;
+  variant?: 'default' | 'primary' | 'internal';
+}) => {
+  if (!url) return null
+  const isExternal = url.startsWith('http') || url.startsWith('https')
+  return (
+    <a
+      href={url}
+      target={isExternal ? '_blank' : undefined}
+      rel={isExternal ? 'noopener noreferrer' : undefined}
+      className={cls('nx-dossier-link', variant !== 'default' && `is-${variant}`)}
+    >
+      <Icon name={icon as any} />
+      <span>{label}</span>
+    </a>
+  )
+}
+
+const StatusPill = ({ label, color }: { label: string; color: string }) => (
+  <span className="nx-dossier-status-pill" style={{ background: `${color}22`, color, borderColor: `${color}44` }}>
+    <i className="nx-dossier-status-pill__dot" style={{ background: color }} />
+    {label}
+  </span>
+)
+
+const SectionEmptyState = ({ text }: { text: string }) => (
+  <div className="nx-dossier-empty">
+    <Icon name="alert" />
+    <span>{text}</span>
+  </div>
+)
+
+// ── Property Category Detection ───────────────────────────────────────────
 
 type PropertyCategory = 'sfh' | 'multifamily' | 'hotel' | 'storage' | 'retail' | 'office' | 'industrial' | 'land' | 'other'
 
@@ -94,7 +263,7 @@ const detectPropertyCategory = (thread: InboxWorkflowThread): PropertyCategory =
   if (units >= 5 || pt.includes('multifamily') || pt.includes('apartment')) return 'multifamily'
   if (pt.includes('hotel') || pt.includes('motel') || pt.includes('lodging') || pt.includes('hospitality')) return 'hotel'
   if (pt.includes('storage') || pt.includes('self-storage') || pt.includes('warehouse') && !pt.includes('industrial')) return 'storage'
-  if (pt.includes('retail') || pt.includes('plaza') || pt.includes('strip') || pt.includes('shopping') || pt.includes('commercial') && pt.includes('store')) return 'retail'
+  if (pt.includes('retail') || pt.includes('plaza') || pt.includes('strip') || pt.includes('shopping')) return 'retail'
   if (pt.includes('office') || pt.includes('medical office') || pt.includes('professional')) return 'office'
   if (pt.includes('industrial') || pt.includes('warehouse') || pt.includes('manufacturing') || pt.includes('flex')) return 'industrial'
   if (pt.includes('land') || pt.includes('lot') || pt.includes('acre') || pt.includes('vacant')) return 'land'
@@ -116,156 +285,56 @@ const getNextBestAction = (thread: InboxWorkflowThread): NextActionResult => {
   const isMulti = category === 'multifamily'
   const stage = thread.conversationStage
   const inboxStatus = thread.inboxStatus
-  const queueStatus = thread.queueStatus
-  const hasArv = !isMissingValue(get(thread, 'arv') || get(thread, 'afterRepairValue'))
-  const hasRentRoll = !isMissingValue(get(thread, 'rentRoll') || get(thread, 'rent_roll'))
-  const hasCondition = !isMissingValue(get(thread, 'estimatedRepairCost') || get(thread, 'estimated_repair_cost'))
+  const hasArv = isPresent(get(thread, 'arv') || get(thread, 'afterRepairValue'))
+  const hasRentRoll = isPresent(get(thread, 'rentRoll') || get(thread, 'rent_roll'))
+  const hasCondition = isPresent(get(thread, 'estimatedRepairCost') || get(thread, 'estimated_repair_cost'))
   const lastReplyPreview = thread.latestMessageBody || thread.lastMessageBody || ''
+  const sellerFirstName = thread.sellerFirstName || thread.ownerDisplayName?.split(' ')[0] || 'there'
+  const motivationScore = Number(get(thread, 'motivationScore') || get(thread, 'motivation_score') || 0)
+  const equityPercent = Number(String(get(thread, 'equityPercent') || get(thread, 'equity_percent') || 0).replace(/[^0-9.]/g, ''))
 
-  // Waiting for seller response
   if (inboxStatus === 'waiting' || inboxStatus === 'queued') {
     const nextTouch = get(thread, 'nextTouchUseCase') || get(thread, 'next_touch_use_case')
-    if (nextTouch) {
-      return {
-        title: `Waiting on seller — next: ${asStr(nextTouch)}`,
-        reason: 'Follow-up will schedule when eligible.',
-        urgency: 'low',
-      }
-    }
-    return {
-      title: 'Waiting on seller response',
-      reason: 'Next follow-up will schedule when eligible.',
-      urgency: 'low',
-    }
+    if (nextTouch) return { title: `Waiting on seller — next: ${asStr(nextTouch)}`, reason: 'Follow-up will schedule when eligible.', urgency: 'low' }
+    return { title: 'Waiting on seller response', reason: 'Next follow-up will schedule when eligible.', urgency: 'low' }
   }
 
-  // New reply needs review
   if (inboxStatus === 'new_reply') {
     const intent = thread.uiIntent || ''
     if (intent === 'info_request' || intent === 'language_switch') {
-      return {
-        title: 'Review seller question',
-        reason: 'Seller is asking for information. Respond promptly.',
-        suggestedReply: lastReplyPreview ? `Acknowledge: "${lastReplyPreview.slice(0, 80)}..."` : undefined,
-        urgency: 'high',
-      }
+      return { title: 'Review seller question', reason: 'Seller is asking for information. Respond promptly.', suggestedReply: `Hi ${sellerFirstName}, thanks for reaching out. I can help with that...`, urgency: 'high' }
     }
     if (intent === 'potential_interest' || intent === 'price_anchor') {
-      return {
-        title: 'Seller showing interest',
-        reason: 'Continue discovery — ask condition questions or reveal offer range.',
-        urgency: 'high',
-      }
+      return { title: 'Seller showing interest', reason: motivationScore >= 70 ? 'High motivation detected — move to offer discussion.' : 'Continue discovery.', suggestedReply: equityPercent >= 50 ? `Hi ${sellerFirstName}, based on the property's equity position, we may be able to present a competitive offer...` : undefined, urgency: 'high' }
     }
-    return {
-      title: 'Review new seller reply',
-      reason: 'Classify intent and advance workflow.',
-      suggestedReply: lastReplyPreview ? `Last message: "${lastReplyPreview.slice(0, 80)}..."` : undefined,
-      urgency: 'high',
-    }
+    return { title: 'Review new seller reply', reason: 'Classify intent and advance workflow.', suggestedReply: lastReplyPreview ? `Last message: "${lastReplyPreview.slice(0, 80)}..."` : undefined, urgency: 'high' }
   }
 
-  // AI draft ready
   if (inboxStatus === 'ai_draft_ready') {
-    return {
-      title: 'Review AI draft reply',
-      reason: 'AI has prepared a response. Review and approve before sending.',
-      urgency: 'high',
-    }
+    return { title: 'Review AI draft reply', reason: 'AI has prepared a response. Review and approve before sending.', suggestedReply: thread.aiDraft ? `Draft: "${thread.aiDraft.slice(0, 100)}${thread.aiDraft.length > 100 ? '...' : ''}"` : undefined, urgency: 'high' }
   }
 
-  // Missing data blockers
   if (!hasArv && (stage === 'price_discovery' || stage === 'offer_reveal' || stage === 'negotiation')) {
-    return {
-      title: 'Verify ARV before revealing offer',
-      reason: 'Cannot generate confident offer without ARV verification.',
-      urgency: 'high',
-    }
+    return { title: 'Verify ARV before revealing offer', reason: 'Cannot generate confident offer without ARV verification.', suggestedReply: `Hi ${sellerFirstName}, to give you the most accurate offer, I need to verify some property details...`, urgency: 'high' }
   }
 
   if (isMulti && !hasRentRoll && (stage === 'price_discovery' || stage === 'offer_reveal')) {
-    return {
-      title: 'Ask seller for rent roll and occupancy',
-      reason: 'Multifamily requires rent roll and occupancy before offer underwriting.',
-      suggestedReply: 'Could you share the current rent roll and occupancy rate for the property?',
-      urgency: 'high',
-    }
+    return { title: 'Ask seller for rent roll and occupancy', reason: 'Multifamily requires rent roll before underwriting.', suggestedReply: `Hi ${sellerFirstName}, could you share the current rent roll and occupancy rate?`, urgency: 'high' }
   }
 
   if (!hasCondition && (stage === 'condition_details' || stage === 'offer_reveal')) {
-    return {
-      title: 'Gather property condition details',
-      reason: 'Repair estimate needed before offer can be finalized.',
-      suggestedReply: 'Can you describe the current condition of the property? Any major repairs needed?',
-      urgency: 'medium',
-    }
+    return { title: 'Gather property condition details', reason: 'Repair estimate needed before offer.', suggestedReply: `Hi ${sellerFirstName}, can you describe the current condition of the property?`, urgency: 'medium' }
   }
 
-  // Suppressed
-  if (thread.isSuppressed || thread.isOptOut) {
-    return {
-      title: 'Thread suppressed',
-      reason: 'No further action required.',
-      urgency: 'low',
-    }
-  }
+  if (thread.isSuppressed || thread.isOptOut) return { title: 'Thread suppressed', reason: 'No further action required.', urgency: 'low' }
 
-  // Default based on stage
-  if (stage === 'ownership_check') {
-    return {
-      title: 'Confirm ownership and property details',
-      reason: 'Verify seller is the legal owner before proceeding.',
-      urgency: 'medium',
-    }
-  }
+  if (stage === 'ownership_check') return { title: 'Confirm ownership', reason: 'Verify seller is the legal owner.', suggestedReply: `Hi ${sellerFirstName}, can you confirm you're the owner?`, urgency: 'medium' }
+  if (stage === 'interest_probe') return { title: 'Probe seller motivation', reason: 'Understand why they are considering selling.', suggestedReply: `Hi ${sellerFirstName}, what is motivating you to consider selling?`, urgency: 'medium' }
+  if (stage === 'seller_response') return { title: 'Awaiting seller response', reason: 'Next follow-up pending.', urgency: 'low' }
+  if (stage === 'negotiation') return { title: 'Active negotiation', reason: 'Review counter-offers and evaluate terms.', suggestedReply: equityPercent >= 60 ? `Hi ${sellerFirstName}, given the equity position, I think we can find common ground...` : undefined, urgency: 'high' }
+  if (stage === 'contract_path') return { title: 'Move toward contract', reason: 'Terms aligned. Prepare contract.', suggestedReply: `Hi ${sellerFirstName}, I'd like to move forward with getting the property under contract...`, urgency: 'high' }
 
-  if (stage === 'interest_probe') {
-    return {
-      title: 'Probe seller motivation',
-      reason: 'Understand why they are considering selling.',
-      suggestedReply: 'What is motivating you to consider selling the property?',
-      urgency: 'medium',
-    }
-  }
-
-  if (stage === 'seller_response') {
-    return {
-      title: 'Awaiting seller response',
-      reason: 'Seller has been contacted. Next follow-up pending.',
-      urgency: 'low',
-    }
-  }
-
-  if (stage === 'negotiation') {
-    return {
-      title: 'Active negotiation',
-      reason: 'Review counter-offers and evaluate deal terms.',
-      urgency: 'high',
-    }
-  }
-
-  if (stage === 'contract_path') {
-    return {
-      title: 'Move toward contract',
-      reason: 'Terms are aligned. Prepare contract or assignment.',
-      urgency: 'high',
-    }
-  }
-
-  // Queue status hints
-  if (queueStatus === 'queued') {
-    return {
-      title: 'Message queued for delivery',
-      reason: 'Next outbound message is scheduled.',
-      urgency: 'low',
-    }
-  }
-
-  return {
-    title: thread.nextSystemAction || 'Review thread and determine next step',
-    reason: 'No specific action detected. Evaluate thread manually.',
-    urgency: 'medium',
-  }
+  return { title: thread.nextSystemAction || 'Review thread', reason: 'No specific action detected. Evaluate manually.', urgency: 'medium' }
 }
 
 // ── Diagnostics ───────────────────────────────────────────────────────────
@@ -273,33 +342,80 @@ const getNextBestAction = (thread: InboxWorkflowThread): NextActionResult => {
 const logIntelligencePanelData = (thread: InboxWorkflowThread) => {
   if (!DEV) return
   const threadObj = thread as unknown as Record<string, unknown>
-  const propertyFields = ['beds', 'baths', 'sqft', 'yearBuilt', 'lotSize', 'propertyType', 'occupancy', 'lastSaleDate', 'lastSalePrice', 'assessedValue', 'annualTaxes', 'county', 'apn']
-  const sellerFields = ['ownerDisplayName', 'bestPhone', 'phoneType', 'contactLanguage', 'ownerType', 'mailingCity', 'mailingState', 'outOfStateOwner']
-  const offerFields = ['cashOffer', 'aiRecommendedOffer', 'targetContract', 'walkawayPrice', 'offerConfidence', 'nextRequiredInfo']
-  const automationFields = ['queueStatus', 'lastOutboundAt', 'lastInboundAt', 'automationState', 'conversationStage']
-
-  const propPresent = propertyFields.filter((f) => threadObj[f] !== undefined && threadObj[f] !== null)
-  const sellerPresent = sellerFields.filter((f) => threadObj[f] !== undefined && threadObj[f] !== null)
-  const offerPresent = offerFields.filter((f) => threadObj[f] !== undefined && threadObj[f] !== null)
-  const autoPresent = automationFields.filter((f) => threadObj[f] !== undefined && threadObj[f] !== null)
-
-  const allKeyFields = [...propertyFields, ...sellerFields, ...offerFields, ...automationFields]
-  const missingFields = allKeyFields.filter((f) => threadObj[f] === undefined || threadObj[f] === null)
-
+  const fields = ['beds', 'baths', 'sqft', 'yearBuilt', 'ownerDisplayName', 'bestPhone', 'cashOffer', 'aiRecommendedOffer', 'queueStatus', 'conversationStage']
+  const present = fields.filter((f) => threadObj[f] !== undefined && threadObj[f] !== null)
   console.log('[IntelligencePanelData]', {
     thread_id: thread.id.slice(-8),
-    has_property_snapshot: propPresent.length > 0,
-    property_fields_present: propPresent.length,
-    seller_fields_present: sellerPresent.length,
-    offer_fields_present: offerPresent.length,
-    automation_fields_present: autoPresent.length,
-    missing_key_fields: missingFields.slice(0, 10),
+    fields_present: present.length,
+    missing: fields.filter((f) => !present.includes(f)).slice(0, 5),
   })
 }
 
-// ── Workflow Control Card ─────────────────────────────────────────────────
+// ── 1. Deal Command Header ────────────────────────────────────────────────
 
-const WorkflowControlCard = ({
+const DealCommandHeader = ({ thread }: { thread: InboxWorkflowThread }) => {
+  const stageVisual = getSellerStageVisual(thread.conversationStage)
+  const statusVisual = getStatusVisual(thread.inboxStatus)
+  const finalScore = get(thread, 'finalAcquisitionScore') || get(thread, 'final_score')
+  const lastReply = thread.latestMessageBody || thread.lastMessageBody
+  const lastContact = thread.lastOutboundAt || thread.lastMessageAt
+  const sellerName = thread.ownerDisplayName || thread.ownerName || asStr(get(thread, 'sellerName')) || 'Seller Unknown'
+  const address = thread.propertyAddress || thread.subject || 'Property Unknown'
+  const market = thread.market || thread.marketId || 'Market Unknown'
+  const ownerType = asStr(get(thread, 'ownerType') || get(thread, 'owner_type'))
+  const priorityScore = isPresent(finalScore) ? `${Math.round(Number(String(finalScore).replace(/[^0-9.]/g, '')))}/100` : null
+
+  return (
+    <div className="nx-dossier-header">
+      <div className="nx-dossier-header__executive">
+        <div className="nx-dossier-header__identity">
+          <div className="nx-dossier-header__avatar">
+            {sellerName.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
+          </div>
+          <div className="nx-dossier-header__info">
+            <div className="nx-dossier-header__identity-row">
+              <strong className="nx-dossier-header__name">{sellerName}</strong>
+              {isPresent(ownerType) && <QuietBadge label={ownerType} />}
+            </div>
+            <span className="nx-dossier-header__address">{address}</span>
+            <span className="nx-dossier-header__market">{market}</span>
+          </div>
+        </div>
+
+        <div className="nx-dossier-header__message">
+          <span className="nx-dossier-header__message-label">Latest seller signal</span>
+          <div className="nx-dossier-header__preview">
+            <Icon name="message" />
+            <span>{lastReply ? `"${lastReply.slice(0, 180)}${lastReply.length > 180 ? '...' : ''}"` : 'No recent seller reply captured.'}</span>
+          </div>
+        </div>
+
+        <div className="nx-dossier-header__status-stack">
+          <div className="nx-dossier-header__status-row">
+            <span className="nx-dossier-header__status-label">Inbox Status</span>
+            <StatusPill label={statusVisual.label} color={statusVisual.color} />
+          </div>
+          <div className="nx-dossier-header__status-row">
+            <span className="nx-dossier-header__status-label">Seller Stage</span>
+            <StatusPill label={stageVisual.label} color={stageVisual.color} />
+          </div>
+          <div className="nx-dossier-header__status-row">
+            <span className="nx-dossier-header__status-label">Priority Score</span>
+            <span className="nx-dossier-score">{priorityScore || 'Unscored'}</span>
+          </div>
+          <div className="nx-dossier-header__status-row">
+            <span className="nx-dossier-header__status-label">Last Contact</span>
+            <span className="nx-dossier-header__status-value">{lastContact ? formatRelativeTime(lastContact) : 'No contact'}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── 2. Workflow Control ───────────────────────────────────────────────────
+
+const WorkflowControl = ({
   thread,
   onStatusChange,
   onStageChange,
@@ -314,360 +430,241 @@ const WorkflowControlCard = ({
   const stageVisual = getSellerStageVisual(thread.conversationStage)
   const autoVisual = automationStateVisuals[thread.automationState]
 
-  const handleStatusChange = (status: InboxStatus) => {
-    if (DEV) {
-      console.log(`[NexusWorkflowStatus]`, {
-        action: 'status_change',
-        thread_id: thread.id.slice(-8),
-        old_status: thread.inboxStatus,
-        new_status: status
-      })
-    }
-    onStatusChange(status)
-    setStatusOpen(false)
-  }
-
-  const handleStageChange = (stage: SellerStage) => {
-    if (DEV) {
-      console.log(`[NexusWorkflowStatus]`, {
-        action: 'stage_change',
-        thread_id: thread.id.slice(-8),
-        old_stage: thread.conversationStage,
-        new_stage: stage
-      })
-    }
-    onStageChange(stage)
-    setStageOpen(false)
-  }
+  const handleStatusChange = (status: InboxStatus) => { onStatusChange(status); setStatusOpen(false) }
+  const handleStageChange = (stage: SellerStage) => { onStageChange(stage); setStageOpen(false) }
 
   return (
-    <section className="nx-intel-card nx-workflow-card">
-      <header className="nx-intel-card__header-static">
-        <strong>Workflow Control</strong>
-      </header>
-
-      <div className="nx-workflow-body">
-        <div className="nx-workflow-row">
-          <label>Inbox Status</label>
-          <div className="nx-status-dropdown-wrap">
-            <button
-              type="button"
-              className="nx-workflow-status-btn"
-              style={statusStyleVars(statusVisual)}
-              onClick={() => setStatusOpen(!statusOpen)}
-            >
-              <i className="nx-status-dot" />
-              <span>{statusVisual.label}</span>
-              <Icon name="chevron-down" />
-            </button>
-            {statusOpen && (
-              <div className="nx-status-menu nx-liquid-panel">
-                {inboxStatusOptions.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    className={cls(opt.value === thread.inboxStatus && 'is-selected')}
-                    style={statusStyleVars(opt)}
-                    onClick={() => handleStatusChange(opt.value as InboxStatus)}
-                  >
-                    <i className="nx-status-dot" />
-                    <span>
-                      <strong>{opt.label}</strong>
-                      <small>{opt.description}</small>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="nx-workflow-row">
-          <label>Seller Stage</label>
-          <div className="nx-status-dropdown-wrap">
-            <button
-              type="button"
-              className="nx-workflow-status-btn"
-              style={statusStyleVars(stageVisual)}
-              onClick={() => setStageOpen(!stageOpen)}
-            >
-              <i className="nx-status-dot" />
-              <span>{stageVisual.label}</span>
-              <Icon name="chevron-down" />
-            </button>
-            
-            <div className="nx-stage-indicator" style={{ marginTop: 8 }}>
-              <div className="nx-stage-progress">
-                {sellerStageOptions.map((opt, idx) => {
-                  const isCurrent = opt.value === thread.conversationStage
-                  const isPast = !isCurrent && sellerStageOptions.findIndex(o => o.value === thread.conversationStage) > idx
-                  return (
-                    <div 
-                      key={opt.value} 
-                      className={cls('nx-stage-step', isCurrent && 'is-current', isPast && 'is-past')}
-                      title={opt.label}
-                    />
-                  )
-                })}
-              </div>
+    <DossierCard className="nx-workflow-control">
+      <div className="nx-workflow-control__row">
+        <span className="nx-workflow-control__label">Status</span>
+        <div className="nx-workflow-control__dropdown">
+          <button type="button" className="nx-workflow-btn" style={statusStyleVars(statusVisual)} onClick={() => setStatusOpen(!statusOpen)}>
+            <i className="nx-workflow-dot" style={{ background: statusVisual.color }} />
+            {statusVisual.label}
+            <Icon name="chevron-down" />
+          </button>
+          {statusOpen && (
+            <div className="nx-workflow-menu nx-liquid-panel">
+              {inboxStatusOptions.map((opt) => (
+                <button key={opt.value} type="button" className={cls('nx-workflow-menu-item', opt.value === thread.inboxStatus && 'is-selected')} style={statusStyleVars(opt)} onClick={() => handleStatusChange(opt.value as InboxStatus)}>
+                  <i className="nx-workflow-dot" style={{ background: opt.color }} />
+                  <div><strong>{opt.label}</strong><small>{opt.description}</small></div>
+                </button>
+              ))}
             </div>
-
-            {stageOpen && (
-              <div className="nx-status-menu nx-liquid-panel">
-                {sellerStageOptions.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    className={cls(opt.value === thread.conversationStage && 'is-selected')}
-                    style={statusStyleVars(opt)}
-                    onClick={() => handleStageChange(opt.value as SellerStage)}
-                  >
-                    <i className="nx-status-dot" />
-                    <span>
-                      <strong>{opt.label}</strong>
-                      <small>{opt.description}</small>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          )}
         </div>
-
-        <div className="nx-workflow-row">
-          <label>Automation</label>
-          <span className="nx-auto-pill" style={{ '--auto-color': autoVisual.color } as any}>
-            {autoVisual.label}
-          </span>
+      </div>
+      <div className="nx-workflow-control__row">
+        <span className="nx-workflow-control__label">Stage</span>
+        <div className="nx-workflow-control__dropdown">
+          <button type="button" className="nx-workflow-btn" style={statusStyleVars(stageVisual)} onClick={() => setStageOpen(!stageOpen)}>
+            <i className="nx-workflow-dot" style={{ background: stageVisual.color }} />
+            {stageVisual.label}
+            <Icon name="chevron-down" />
+          </button>
+          {stageOpen && (
+            <div className="nx-workflow-menu nx-liquid-panel">
+              {sellerStageOptions.map((opt) => (
+                <button key={opt.value} type="button" className={cls('nx-workflow-menu-item', opt.value === thread.conversationStage && 'is-selected')} style={statusStyleVars(opt)} onClick={() => handleStageChange(opt.value as SellerStage)}>
+                  <i className="nx-workflow-dot" style={{ background: opt.color }} />
+                  <div><strong>{opt.label}</strong><small>{opt.description}</small></div>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
-
-        <div className="nx-workflow-row nx-next-action-row">
+      </div>
+      <div className="nx-workflow-control__row">
+        <span className="nx-workflow-control__label">Automation</span>
+        <span className="nx-workflow-pill" style={{ '--wp-color': autoVisual.color } as any}>{autoVisual.label}</span>
+      </div>
+      {thread.queueStatus && (
+        <div className="nx-workflow-control__row">
+          <span className="nx-workflow-control__label">Queue</span>
+          <span className="nx-workflow-pill">{asStr(thread.queueStatus)}</span>
+        </div>
+      )}
+      {thread.nextSystemAction && (
+        <div className="nx-workflow-control__row nx-workflow-next">
           <Icon name="spark" />
-          <p>{thread.nextSystemAction}</p>
+          <span>{thread.nextSystemAction}</span>
         </div>
-      </div>
-    </section>
+      )}
+    </DossierCard>
   )
 }
 
-// ── Collapsible Card ──────────────────────────────────────────────────────
+// ── 3. Property Hero Card ─────────────────────────────────────────────────
 
-const CollapsibleIntelCard = ({ 
-  title, 
-  icon, 
-  children, 
-  defaultExpanded = true,
-  accent,
-}: { 
-  title: string; 
-  icon: string; 
-  children: React.ReactNode; 
-  defaultExpanded?: boolean;
-  accent?: 'blue' | 'green' | 'amber' | 'purple' | 'none';
-}) => {
-  const [expanded, setExpanded] = useState(defaultExpanded)
-  return (
-    <section className={cls('nx-intel-card', !expanded && 'is-collapsed', accent && accent !== 'none' && `is-accent-${accent}`)}>
-      <button 
-        type="button" 
-        className="nx-intel-card__header" 
-        onClick={(e) => {
-          e.preventDefault()
-          e.stopPropagation()
-          setExpanded(!expanded)
-        }}
-      >
-        <Icon name={icon as any} />
-        <strong>{title}</strong>
-        <Icon name="chevron-down" className={cls('nx-intel-card__chevron', expanded && 'is-rotated')} />
-      </button>
-      {expanded && <div className="nx-intel-card__body">{children}</div>}
-    </section>
-  )
-}
-
-// ── Stat Chip ─────────────────────────────────────────────────────────────
-
-const StatChip = ({ label, value, icon, color }: { label: string; value: string | null; icon?: string; color?: string }) => {
-  const missing = isMissingValue(value)
-  return (
-    <div className={cls('nx-stat-chip', missing && 'is-missing', color && `is-${color}`)}>
-      {icon && <span className="nx-stat-chip__icon">{icon}</span>}
-      <div className="nx-stat-chip__content">
-        <small>{label}</small>
-        <b>{missing ? '—' : value}</b>
-      </div>
-    </div>
-  )
-}
-
-// ── Grouped Row (for Deal Intelligence, etc.) ─────────────────────────────
-
-const GroupedRow = ({ label, children }: { label: string; children: React.ReactNode }) => (
-  <div className="nx-grouped-section">
-    <div className="nx-grouped-label">{label}</div>
-    <div className="nx-grouped-content">{children}</div>
-  </div>
-)
-
-const DataRow = ({ label, value, accent, placeholder }: { label: string; value: string | null; accent?: 'green' | 'red' | 'amber' | 'blue'; placeholder?: string }) => {
-  const display = value || placeholder || '—'
-  const isPlaceholder = !value
-  return (
-    <div className={cls('nx-data-row', isPlaceholder && 'is-placeholder', accent && `is-${accent}`)}>
-      <small>{label}</small>
-      <b>{display}</b>
-    </div>
-  )
-}
-
-// ── Property Hero Card ────────────────────────────────────────────────────
-
-const PropertyHeroCard = ({
-  thread,
-  intelligence,
-}: {
-  thread: InboxWorkflowThread
-  intelligence: ThreadIntelligenceRecord | null
-}) => {
+const PropertySnapshotCard = ({ thread, intelligence }: { thread: InboxWorkflowThread; intelligence: ThreadIntelligenceRecord | null }) => {
   const snapshot = normalizePropertySnapshot(intelligence, thread)
-  const address = snapshot.fullAddress
+  const address = snapshot.fullAddress || thread.propertyAddress || thread.subject || 'Property Unknown'
   const streetViewUrl = snapshot.streetViewUrl
+  const aerialViewUrl = snapshot.aerialViewUrl || buildAerialViewUrl(address)
+  const [streetFailed, setStreetFailed] = useState(false)
+  const [aerialFailed, setAerialFailed] = useState(false)
   const links = buildPropertyExternalLinks(address)
   const market = snapshot.market || thread.market || thread.marketId || 'Unknown Market'
-  const propertyType = normalizeText(snapshot.propertyType || (get(thread, 'propertyType') as string) || 'Residential')
+  const propertyType = normalizeText(snapshot.propertyType || asStr(get(thread, 'propertyType')) || 'Residential')
   const category = detectPropertyCategory(thread)
-  const isMulti = category === 'multifamily'
-  const unitCount = get(thread, 'unitCount') || get(thread, 'unit_count') || get(thread, 'units') || (category === 'hotel' ? (get(thread, 'roomCount') || get(thread, 'room_count') || get(thread, 'rooms')) : null)
-  const lotSize = get(thread, 'lotSize') || get(thread, 'lot_size_sqft') || get(thread, 'lotSizeSqft') || get(thread, 'lotSizeAcres')
-  const occupancy = get(thread, 'occupancy')
-  const ownerType = get(thread, 'ownerType') || get(thread, 'owner_type')
+  const estimatedValue = formatMoney(get(thread, 'estimatedValue') || get(thread, 'estimated_value') || get(thread, 'zestimate'))
+  const equityPct = formatPercent(get(thread, 'equityPercent') || get(thread, 'equity_percent'))
+  const repairCost = formatMoney(get(thread, 'estimatedRepairCost') || get(thread, 'estimated_repair_cost'))
+
+  useEffect(() => {
+    setStreetFailed(false)
+    setAerialFailed(false)
+  }, [streetViewUrl, aerialViewUrl])
 
   return (
-    <section className="nx-intel-card nx-property-hero-card">
-      <div className="nx-intel-card__media">
-        {streetViewUrl ? (
-          <img src={streetViewUrl} alt="Street View" onError={(e) => (e.currentTarget.style.display = 'none')} />
-        ) : (
-          <div className="nx-property-media-fallback">
-             <Icon name="map" />
-             <span>No Image Available</span>
+    <div className="nx-dossier-card nx-property-snapshot-card">
+      <div className="nx-property-snapshot__media">
+        <div className="nx-property-snapshot__pane">
+          {streetViewUrl && !streetFailed ? (
+            <img src={streetViewUrl} alt="Street View" onError={() => setStreetFailed(true)} />
+          ) : (
+            <div className="nx-property-hero__fallback">
+              <Icon name="map" />
+              <span>Street View</span>
+              <strong>{address}</strong>
+            </div>
+          )}
+          <span className="nx-property-snapshot__eyebrow">Street</span>
+        </div>
+        <div className="nx-property-snapshot__pane">
+          {aerialViewUrl && !aerialFailed ? (
+            <img src={aerialViewUrl} alt="Aerial View" onError={() => setAerialFailed(true)} />
+          ) : (
+            <div className="nx-property-hero__fallback">
+            <Icon name="map" />
+              <span>Aerial</span>
+            <strong>{address}</strong>
           </div>
-        )}
-        <div className="nx-intel-card__media-actions">
-           {links.zillow && <a href={links.zillow} target="_blank" rel="noreferrer" className="nx-prop-link"><Icon name="arrow-up-right" /> Zillow</a>}
-           {links.realtor && <a href={links.realtor} target="_blank" rel="noreferrer" className="nx-prop-link"><Icon name="arrow-up-right" /> Realtor</a>}
-           {links.googleSearch && <a href={links.googleSearch} target="_blank" rel="noreferrer" className="nx-prop-link"><Icon name="search" /> Google</a>}
-           {links.streetView && <a href={links.streetView} target="_blank" rel="noreferrer" className="nx-prop-link"><Icon name="map" /> Maps</a>}
+          )}
+          <span className="nx-property-snapshot__eyebrow">Aerial</span>
+        </div>
+        
+        <div className="nx-property-snapshot__hover-actions">
+          <div className="nx-property-hero__hover-grid">
+            <LinkedRecordButton label="Zillow" url={links.zillow} icon="globe" />
+            <LinkedRecordButton label="Realtor" url={links.realtor} icon="globe" />
+            <LinkedRecordButton label="Google Search" url={links.googleSearch} icon="search" />
+            <LinkedRecordButton label="Maps" url={links.streetView} icon="map" />
+          </div>
         </div>
       </div>
       
-      <div className="nx-intel-card__header-static nx-property-hero__info">
-        <div className="nx-property-hero__address">
-          <strong>{address || 'No Address'}</strong>
-          {isMulti && <span className="nx-badge nx-badge--multi">MULTIFAMILY</span>}
-          {category === 'hotel' && <span className="nx-badge nx-badge--commercial">HOTEL/MOTEL</span>}
-          {category === 'storage' && <span className="nx-badge nx-badge--commercial">SELF-STORAGE</span>}
-          {category === 'retail' && <span className="nx-badge nx-badge--commercial">RETAIL/PLAZA</span>}
-          {category === 'office' && <span className="nx-badge nx-badge--commercial">OFFICE</span>}
-          {category === 'industrial' && <span className="nx-badge nx-badge--commercial">INDUSTRIAL</span>}
-          {category === 'land' && <span className="nx-badge nx-badge--land">LAND</span>}
+      <div className="nx-property-snapshot__metadata">
+        <div className="nx-property-snapshot__identity-row">
+          <div className="nx-property-snapshot__identity">
+            <strong>{address}</strong>
+            <span>{market} • {propertyType}</span>
+          </div>
+          <div className="nx-property-snapshot__badges">
+            {category === 'multifamily' && <span className="nx-badge nx-badge--multi">MULTIFAMILY</span>}
+            {category === 'hotel' && <span className="nx-badge nx-badge--commercial">HOTEL</span>}
+            {category === 'storage' && <span className="nx-badge nx-badge--commercial">STORAGE</span>}
+            {category === 'retail' && <span className="nx-badge nx-badge--commercial">RETAIL</span>}
+            {category === 'land' && <span className="nx-badge nx-badge--land">LAND</span>}
+          </div>
         </div>
-        <div className="nx-property-hero__meta">
-          <span className="nx-market-tag">{market}</span>
-          <span className="nx-divider">•</span>
-          <span>{propertyType}</span>
-          {(category === 'multifamily' || category === 'hotel') && Boolean(unitCount) && !isMissingValue(unitCount) && (<><span className="nx-divider">•</span><span>{asStr(unitCount)} {category === 'hotel' ? 'rooms' : 'units'}</span></>)}
-        </div>
-        <div className="nx-property-hero__chips">
-          {Boolean(snapshot.beds) && !isMissingValue(snapshot.beds) && <span className="nx-pill">{snapshot.beds} Bed{snapshot.beds !== '1' ? 's' : ''}</span>}
-          {Boolean(snapshot.baths) && !isMissingValue(snapshot.baths) && <span className="nx-pill">{snapshot.baths} Bath{snapshot.baths !== '1' ? 's' : ''}</span>}
-          {Boolean(snapshot.sqft) && !isMissingValue(snapshot.sqft) && <span className="nx-pill">{Number(snapshot.sqft).toLocaleString()} sqft</span>}
-          {Boolean(snapshot.yearBuilt) && !isMissingValue(snapshot.yearBuilt) && <span className="nx-pill">Built {snapshot.yearBuilt}</span>}
-          {Boolean(lotSize) && !isMissingValue(lotSize) && <span className="nx-pill">{asStr(lotSize)} lot</span>}
-          {Boolean(occupancy) && !isMissingValue(occupancy) && <span className="nx-pill">{asStr(occupancy)}</span>}
-          {Boolean(ownerType) && !isMissingValue(ownerType) && <span className="nx-pill">{asStr(ownerType)}</span>}
+        
+        <div className="nx-property-snapshot__metrics">
+          {isPresent(snapshot.beds) && <QuietBadge label={`${snapshot.beds} Bed${snapshot.beds !== '1' ? 's' : ''}`} />}
+          {isPresent(snapshot.baths) && <QuietBadge label={`${snapshot.baths} Bath${snapshot.baths !== '1' ? 's' : ''}`} />}
+          {isPresent(snapshot.sqft) && <QuietBadge label={`${Number(snapshot.sqft).toLocaleString()} sqft`} />}
+          {isPresent(snapshot.yearBuilt) && <QuietBadge label={`Built ${snapshot.yearBuilt}`} />}
+          {isPresent(estimatedValue) && <QuietBadge label={estimatedValue || ''} tone="accent" />}
+          {isPresent(equityPct) && <QuietBadge label={`${equityPct} equity`} />}
+          {isPresent(repairCost) && <QuietBadge label={`${repairCost} repairs`} tone="warning" />}
         </div>
       </div>
-    </section>
+    </div>
   )
 }
 
-// ── Next Best Action Section ──────────────────────────────────────────────
+// ── 4. Next Best Action ───────────────────────────────────────────────────
 
-const NextBestActionSection = ({ thread, isSuppressed }: { thread: InboxWorkflowThread; isSuppressed: boolean }) => {
+const AIActionCard = ({ thread, isSuppressed }: { thread: InboxWorkflowThread; isSuppressed: boolean }) => {
   const action = getNextBestAction(thread)
-  const aiDraft = thread.aiDraft
+  const [showReason, setShowReason] = useState(false)
+  const lastReply = thread.latestMessageBody || thread.lastMessageBody
 
   return (
-    <section className="nx-intel-card nx-next-best-card">
-      <header className="nx-section-header">
+    <DossierCard className={cls('nx-next-action', `is-${action.urgency}`, 'nx-ai-action-card')}>
+      <div className="nx-next-action__header">
         <Icon name="spark" />
-        <span>Next Best Action</span>
-        <span className={cls('nx-action-urgency', `is-${action.urgency}`)}>
-          {action.urgency === 'high' ? 'Urgent' : action.urgency === 'medium' ? 'Recommended' : 'Info'}
-        </span>
-      </header>
-      <div className="nx-nba-body">
-        <p className="nx-nba__title">{action.title}</p>
-        <p className="nx-nba__reason">{action.reason}</p>
-        {action.suggestedReply && (
-          <div className="nx-nba__reply-preview">
-            <small>Suggested Reply</small>
-            <p>{action.suggestedReply}</p>
+        <span>AI Recommended Action</span>
+        <QuietBadge
+          label={action.urgency === 'high' ? 'Needs operator' : action.urgency === 'medium' ? 'Recommended' : 'Monitor'}
+          tone={action.urgency === 'high' ? 'warning' : action.urgency === 'medium' ? 'accent' : 'default'}
+        />
+      </div>
+      <div className="nx-next-action__body">
+        <p className="nx-next-action__title">{action.title}</p>
+        <p className="nx-next-action__reason">{action.reason}</p>
+        {lastReply && <div className="nx-next-action__signal">Latest reply: {lastReply.slice(0, 140)}{lastReply.length > 140 ? '...' : ''}</div>}
+        <button type="button" className="nx-next-action__why" onClick={() => setShowReason(!showReason)}>
+          <Icon name={showReason ? 'chevron-down' : 'chevron-right'} />
+          Why this action?
+        </button>
+        {showReason && (
+          <div className="nx-next-action__explanation">
+            <p>Based on: Stage = {thread.conversationStage}, Status = {thread.inboxStatus}
+              {thread.motivationScore && `, Motivation = ${Math.round(Number(thread.motivationScore))}/100`}
+              {thread.equityPercent && `, Equity = ${formatPercent(thread.equityPercent)}`}
+            </p>
           </div>
         )}
       </div>
-      {aiDraft && !isSuppressed && (
-        <div className="nx-next-best__draft">
-          <small>AI Draft</small>
-          <p>{aiDraft}</p>
+      {(thread.aiDraft || action.suggestedReply) && !isSuppressed && (
+        <div className="nx-next-action__draft">
+          <small>Suggested reply preview</small>
+          <p>{thread.aiDraft || action.suggestedReply}</p>
         </div>
       )}
-      <div className="nx-next-best__actions">
-        <button type="button" className="nx-nb-btn nx-nb-btn--primary" disabled={isSuppressed}>
-          <Icon name="clock" />
-          <span>Queue Reply</span>
-        </button>
-        <button type="button" className="nx-nb-btn">
-          <Icon name="file-text" />
-          <span>Edit</span>
-        </button>
-        <button type="button" className="nx-nb-btn nx-nb-btn--warn">
-          <Icon name="alert" />
-          <span>Mark Review</span>
-        </button>
-        <button type="button" className="nx-nb-btn nx-nb-btn--danger" disabled={isSuppressed}>
-          <Icon name="shield" />
-          <span>Suppress</span>
-        </button>
+      <div className="nx-next-action__actions">
+        <ActionButton label="Queue Reply" icon="clock" tone="accent" disabled={isSuppressed} />
+        <ActionButton label="Edit" icon="file-text" />
+        <ActionButton label="Review" icon="alert" tone="warning" />
+        <ActionButton label="Suppress" icon="shield" tone="danger" disabled={isSuppressed} />
       </div>
-    </section>
+    </DossierCard>
   )
 }
 
-// ── Offer Intelligence Section ────────────────────────────────────────────
+// ── 5. Offer Intelligence ─────────────────────────────────────────────────
 
-const OfferIntelligenceSection = ({ thread }: { thread: InboxWorkflowThread }) => {
+const OfferMemoCard = ({ thread }: { thread: InboxWorkflowThread }) => {
   const category = detectPropertyCategory(thread)
   const isMulti = category === 'multifamily'
-  const hasArv = !isMissingValue(get(thread, 'arv') || get(thread, 'afterRepairValue'))
-  const hasCondition = !isMissingValue(get(thread, 'estimatedRepairCost') || get(thread, 'estimated_repair_cost'))
-  const hasRentRoll = !isMissingValue(get(thread, 'rentRoll') || get(thread, 'rent_roll'))
+  const hasArv = isPresent(get(thread, 'arv') || get(thread, 'afterRepairValue'))
+  const hasCondition = isPresent(get(thread, 'estimatedRepairCost') || get(thread, 'estimated_repair_cost'))
+  const hasRentRoll = isPresent(get(thread, 'rentRoll') || get(thread, 'rent_roll'))
 
   const cashOffer = get(thread, 'cashOffer') || get(thread, 'cash_offer') || get(thread, 'mao')
   const aiOffer = get(thread, 'aiRecommendedOffer') || get(thread, 'ai_offer') || get(thread, 'ai_recommended_opening_offer')
   const targetContract = get(thread, 'targetContract') || get(thread, 'target_contract')
-  const walkaway = get(thread, 'walkawayPrice') || get(thread, 'walkaway_price') || get(thread, 'walkaway') || get(thread, 'walkaway_internal')
+  const walkaway = get(thread, 'walkawayPrice') || get(thread, 'walkaway_price') || get(thread, 'walkaway_internal')
   const offerConfidence = get(thread, 'offerConfidence') || get(thread, 'offer_confidence') || get(thread, 'confidenceBand')
+  const sellerAsk = get(thread, 'sellerAsk') || get(thread, 'seller_ask')
   const nextRequired = get(thread, 'nextRequiredInfo') || get(thread, 'next_required_info')
-  const offerReason = get(thread, 'offerReason') || get(thread, 'offer_reason')
-  const offerMethod = get(thread, 'offerMethod') || get(thread, 'offer_method')
+
+  const offerStatus = useMemo(() => {
+    if (thread.isSuppressed || thread.isOptOut) return { label: 'Blocked', color: '#ff453a' }
+    if (aiOffer && isPresent(aiOffer)) return { label: 'Ready', color: '#30d158' }
+    if (!hasArv) return { label: 'Needs ARV', color: '#ff453a' }
+    if (!hasCondition) return { label: 'Needs Repairs', color: '#ffd60a' }
+    if (isMulti && !hasRentRoll) return { label: 'Needs Rent Roll', color: '#ff9f0a' }
+    if (!isPresent(sellerAsk)) return { label: 'Needs Seller Ask', color: '#64d2ff' }
+    return { label: 'Ready', color: '#30d158' }
+  }, [aiOffer, hasArv, hasCondition, isMulti, hasRentRoll, sellerAsk, thread.isSuppressed, thread.isOptOut])
 
   let aiOfferDisplay: string
-  if (aiOffer && !isMissingValue(aiOffer)) {
-    aiOfferDisplay = fmtCurrency(aiOffer) || normalizeText(aiOffer)
-  } else if (isMulti && (!hasRentRoll)) {
+  if (aiOffer && isPresent(aiOffer)) {
+    aiOfferDisplay = formatMoney(aiOffer) || normalizeText(aiOffer)
+  } else if (isMulti && !hasRentRoll) {
     aiOfferDisplay = 'Needs rent roll'
   } else if (!hasArv) {
     aiOfferDisplay = 'Needs ARV'
@@ -677,441 +674,367 @@ const OfferIntelligenceSection = ({ thread }: { thread: InboxWorkflowThread }) =
     aiOfferDisplay = 'Needs underwriting'
   }
 
-  let nextRequiredDisplay: string
-  if (nextRequired && !isMissingValue(nextRequired)) {
-    nextRequiredDisplay = asStr(nextRequired)
-  } else if (isMulti && !hasRentRoll) {
-    nextRequiredDisplay = 'Need rent roll / occupancy'
-  } else if (!hasArv) {
-    nextRequiredDisplay = 'Need ARV verification'
-  } else if (!hasCondition) {
-    nextRequiredDisplay = 'Need condition details'
-  } else {
-    nextRequiredDisplay = 'Awaiting underwriting'
-  }
+  const hasAnyOfferField = [cashOffer, aiOffer, targetContract, walkaway].some((v) => isPresent(v))
 
   return (
-    <CollapsibleIntelCard title="Offer Intelligence" icon="zap" accent="amber">
-      <div className="nx-offer-stack">
-        <div className="nx-offer-row nx-offer-row--legacy">
-          <div className="nx-offer-row__label">
-            <Icon name="clock" />
-            <span>Legacy Cash Offer</span>
-          </div>
-          <div className="nx-offer-row__value">
-            {fmtCurrency(cashOffer) || 'No offer generated'}
-          </div>
+    <DossierCard className="nx-force-card nx-offer-card nx-offer-memo-card">
+      <div className="nx-dossier-section__title" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <Icon name="zap" />
+          Offer Intelligence
+        </span>
+        <QuietBadge
+          label={offerStatus.label}
+          tone={offerStatus.label === 'Ready' ? 'success' : offerStatus.label === 'Blocked' ? 'danger' : 'warning'}
+        />
+      </div>
+      <div className="nx-offer-memo-card__body">
+        <div className="nx-offer-memo-card__group">
+          <MetricInline label="Legacy cash offer" value={formatMoney(cashOffer)} tone="accent" />
+          <MetricInline label="AI recommended opening" value={aiOfferDisplay} tone="accent" />
+          <MetricInline label="Target contract" value={formatMoney(targetContract)} />
+          <MetricInline label="MAO" value={formatMoney(get(thread, 'mao') || get(thread, 'maxAllowableOffer') || get(thread, 'max_allowable_offer'))} />
+          <MetricInline label="Walkaway internal" value={formatMoney(walkaway) || 'Needs underwriting'} tone="danger" />
         </div>
-
-        <div className="nx-offer-row nx-offer-row--ai">
-          <div className="nx-offer-row__label">
-            <Icon name="spark" />
-            <span>AI Recommended Opening</span>
-          </div>
-          <div className={cls('nx-offer-row__value', isMissingValue(aiOffer) && 'is-placeholder')}>
-            {aiOfferDisplay}
-          </div>
-        </div>
-
-        <div className="nx-offer-row">
-          <div className="nx-offer-row__label">
-            <span>Target Contract</span>
-          </div>
-          <div className="nx-offer-row__value">
-            {fmtCurrency(targetContract) || 'Pending'}
-          </div>
-        </div>
-
-        <div className="nx-offer-row nx-offer-row--internal">
-          <div className="nx-offer-row__label">
-            <Icon name="eye" />
-            <span>Walkaway (Internal)</span>
-          </div>
-          <div className={cls('nx-offer-row__value', isMissingValue(walkaway) && 'is-placeholder')}>
-            {fmtCurrency(walkaway) || 'Needs underwriting'}
-          </div>
-        </div>
-
-        {Boolean(offerConfidence) && !isMissingValue(offerConfidence) && (
-          <div className="nx-offer-row">
-            <div className="nx-offer-row__label">
-              <span>Offer Confidence</span>
-            </div>
-            <div className="nx-offer-row__value">
-              {asStr(offerConfidence)}
-            </div>
-          </div>
-        )}
-
-        {Boolean(offerMethod) && !isMissingValue(offerMethod) && (
-          <div className="nx-offer-row">
-            <div className="nx-offer-row__label">
-              <span>Offer Method</span>
-            </div>
-            <div className="nx-offer-row__value">
-              {asStr(offerMethod)}
-            </div>
-          </div>
-        )}
-
-        {Boolean(offerReason) && !isMissingValue(offerReason) && (
-          <div className="nx-offer-row">
-            <div className="nx-offer-row__label">
-              <span>Offer Reason</span>
-            </div>
-            <div className="nx-offer-row__value">
-              {asStr(offerReason)}
-            </div>
-          </div>
-        )}
-
-        <div className="nx-offer-row nx-offer-row--next">
-          <div className="nx-offer-row__label">
-            <Icon name="alert" />
-            <span>Next Required Info</span>
-          </div>
-          <div className="nx-offer-row__value is-placeholder">
-            {nextRequiredDisplay}
-          </div>
+        <div className="nx-offer-memo-card__group">
+          <MetricInline
+            label="Missing underwriting info"
+            value={isPresent(nextRequired) ? asStr(nextRequired) : !hasArv ? 'ARV verification' : !hasCondition ? 'Condition details' : isMulti && !hasRentRoll ? 'Rent roll' : !isPresent(sellerAsk) ? 'Seller ask' : 'None'}
+            tone={!hasAnyOfferField || !hasArv || !hasCondition ? 'warning' : 'default'}
+          />
+          <MetricInline
+            label="Confidence / safe-to-reveal"
+            value={isPresent(offerConfidence) ? asStr(offerConfidence) : hasArv && hasCondition ? 'Reasonable to review internally' : 'Hold internal'}
+          />
         </div>
       </div>
-    </CollapsibleIntelCard>
+      {!hasAnyOfferField && <SectionEmptyState text="No offer figures yet. Underwriting inputs needed." />}
+    </DossierCard>
   )
 }
 
-// ── Deal Intelligence Section ─────────────────────────────────────────────
+// ── 6. Property Intelligence Tabs ─────────────────────────────────────────
 
-const DealIntelligenceSection = ({ thread }: { thread: InboxWorkflowThread }) => {
-  // Valuation
-  const estimatedValue = get(thread, 'estimatedValue') || get(thread, 'estimated_value') || get(thread, 'zestimate')
-  const assessedValue = get(thread, 'assessedValue') || get(thread, 'assessed_value') || get(thread, 'taxAssessedValue')
-  const lastSalePrice = get(thread, 'lastSalePrice') || get(thread, 'last_sale_price')
-  const equityAmount = get(thread, 'equityAmount') || get(thread, 'equity_amount') || get(thread, 'equity')
-  const equityPercent = get(thread, 'equityPercent') || get(thread, 'equity_percent')
+const PROPERTY_TABS = [
+  { id: 'overview', label: 'Overview', icon: 'layers' },
+  { id: 'valuation', label: 'Valuation', icon: 'trending-up' },
+  { id: 'condition', label: 'Condition', icon: 'alert' },
+  { id: 'tax', label: 'Tax', icon: 'briefing' },
+  { id: 'owner', label: 'Owner', icon: 'user' },
+  { id: 'links', label: 'Links', icon: 'arrow-up-right' },
+]
 
-  // Condition
-  const repairCost = get(thread, 'estimatedRepairCost') || get(thread, 'estimated_repair_cost') || get(thread, 'estimatedRepairs')
-  const rehabLevel = get(thread, 'rehabLevel') || get(thread, 'rehab_level') || get(thread, 'rehab_scope')
-  const buildingQuality = get(thread, 'buildingQuality') || get(thread, 'building_quality')
-  const distressTags = get(thread, 'distressTags') || get(thread, 'distress_tags') || get(thread, 'distress_indicators')
+const PropertyIntelligenceTabs = ({
+  thread,
+  intelligence,
+}: {
+  thread: InboxWorkflowThread
+  intelligence: ThreadIntelligenceRecord | null
+}) => {
+  const [activeTab, setActiveTab] = useState('overview')
 
-  // Motivation
-  const finalScore = thread.finalAcquisitionScore || get(thread, 'finalScore') || get(thread, 'final_acquisition_score')
-  const motivationScore = get(thread, 'motivationScore') || get(thread, 'motivation_score') || get(thread, 'structured_motivation_score')
-  const priorityTier = get(thread, 'priorityTier') || get(thread, 'priority_tier')
-  const sentiment = thread.sentiment || get(thread, 'message_sentiment')
-  const ownershipYears = get(thread, 'ownershipYears') || get(thread, 'ownership_years') || get(thread, 'years_owned')
+  const snapshot = normalizePropertySnapshot(intelligence, thread)
+  const extLinks = buildPropertyExternalLinks(snapshot.fullAddress || thread.propertyAddress || thread.subject || null)
+
+  const fields = useMemo(() => ({
+    unitCount: snapshot.unitCount || get(thread, 'unitCount') || get(thread, 'unit_count') || get(thread, 'units'),
+    yearBuilt: snapshot.yearBuilt || get(thread, 'yearBuilt') || get(thread, 'year_built'),
+    effectiveYear: snapshot.effectiveYear || get(thread, 'effectiveYear') || get(thread, 'effective_year_built'),
+    constructionType: get(thread, 'constructionType') || get(thread, 'construction_type'),
+    exteriorWalls: get(thread, 'exteriorWalls') || get(thread, 'exterior_walls'),
+    floorCover: get(thread, 'floorCover') || get(thread, 'floor_cover'),
+    basement: get(thread, 'basement') || get(thread, 'basement_type'),
+    hvacType: get(thread, 'hvacType') || get(thread, 'hvac_type') || get(thread, 'ac_heating'),
+    roofCover: get(thread, 'roofCover') || get(thread, 'roof_cover'),
+    beds: snapshot.beds || get(thread, 'beds') || get(thread, 'bedrooms'),
+    baths: snapshot.baths || get(thread, 'baths') || get(thread, 'bathrooms'),
+    sqft: snapshot.sqft || get(thread, 'sqft') || get(thread, 'livingAreaSqft'),
+    stories: get(thread, 'stories') || get(thread, 'num_stories'),
+    garage: get(thread, 'garageOrParking') || get(thread, 'garage_or_parking'),
+    propertyType: snapshot.propertyType || get(thread, 'propertyType') || get(thread, 'property_type'),
+    occupancy: snapshot.occupancy || get(thread, 'occupancy'),
+    county: get(thread, 'county') || get(thread, 'property_county'),
+    apn: get(thread, 'apn') || get(thread, 'apn_parcel_id'),
+    zoning: get(thread, 'zoning') || get(thread, 'zoning_code'),
+    lotSize: snapshot.lotSize || get(thread, 'lotSize') || get(thread, 'lot_size_sqft'),
+  }), [thread, snapshot])
+
+  const availableCount = getAvailableFields(fields).length
+
+  const tabs = PROPERTY_TABS.map((t) => t.id === 'overview' ? { ...t, count: availableCount } : t)
 
   return (
-    <CollapsibleIntelCard title="Deal Intelligence" icon="trending-up" accent="green">
-      <GroupedRow label="Valuation">
-        <DataRow label="Estimated Value" value={fmtCurrency(estimatedValue)} placeholder="Needs valuation" accent="blue" />
-        <DataRow label="Assessed Value" value={fmtCurrency(assessedValue)} />
-        <DataRow label="Last Sale Price" value={fmtCurrency(lastSalePrice)} />
-        <DataRow label="Equity Amount" value={fmtCurrency(equityAmount)} accent="green" />
-        <DataRow label="Equity %" value={fmtPercent(equityPercent)} />
-      </GroupedRow>
-
-      <GroupedRow label="Condition">
-        <DataRow label="Repair Estimate" value={fmtCurrency(repairCost)} placeholder="Needs inspection" />
-        <DataRow label="Rehab Level" value={getMissingDataLabel(rehabLevel, 'ask') as string} />
-        <DataRow label="Building Quality" value={getMissingDataLabel(buildingQuality) as string} />
-        <DataRow label="Distress Tags" value={getMissingDataLabel(distressTags) as string} />
-      </GroupedRow>
-
-      <GroupedRow label="Motivation">
-        <DataRow 
-          label="Final Score" 
-          value={fmtScore(finalScore) || 'Not scored'}
-          accent={finalScore && Number(String(finalScore).replace(/[^0-9.]/g, '')) >= 70 ? 'green' : 'amber'}
-        />
-        <DataRow label="Motivation Score" value={fmtScore(motivationScore) || asStr(motivationScore)} />
-        <DataRow label="Priority Tier" value={getMissingDataLabel(priorityTier) as string} />
-        <DataRow label="Sentiment" value={getMissingDataLabel(sentiment) as string} />
-        <DataRow label="Ownership Years" value={getMissingDataLabel(ownershipYears) as string} />
-      </GroupedRow>
-    </CollapsibleIntelCard>
+    <DossierCard className="nx-property-tabs">
+      <DossierTabGroup tabs={tabs} active={activeTab} onChange={setActiveTab} />
+      <div className="nx-property-tabs__content">
+        {activeTab === 'overview' && (
+          <>
+            <div className="nx-field-group">
+              <div className="nx-field-group__title"><Icon name="grid" /><span>Structure</span></div>
+              <div className="nx-data-grid">
+                <DossierMetric label="Units" value={toChip(fields.unitCount)} icon="grid" accent="blue" />
+                <DossierMetric label="Beds" value={toChip(fields.beds)} icon="eye" accent="blue" />
+                <DossierMetric label="Baths" value={toChip(fields.baths)} icon="eye" accent="blue" />
+                <DossierMetric label="Sq Ft" value={fields.sqft ? Number(String(fields.sqft).replace(/,/g, '')).toLocaleString() : null} icon="maximize" accent="blue" />
+                <DossierMetric label="Stories" value={toChip(fields.stories)} icon="layers" />
+                <DossierMetric label="Garage" value={toChip(fields.garage)} icon="grid" />
+              </div>
+            </div>
+            <div className="nx-field-group">
+              <div className="nx-field-group__title"><Icon name="calendar" /><span>Age & Construction</span></div>
+              <div className="nx-data-grid">
+                <DossierMetric label="Year Built" value={toChip(fields.yearBuilt)} icon="calendar" accent="cyan" />
+                <DossierMetric label="Effective Year" value={toChip(fields.effectiveYear)} icon="calendar" accent="cyan" />
+                <DossierMetric label="Construction" value={toChip(fields.constructionType)} icon="layers" />
+                <DossierMetric label="Exterior Walls" value={toChip(fields.exteriorWalls)} icon="layers" />
+                <DossierMetric label="Basement" value={toChip(fields.basement)} icon="layers" />
+              </div>
+            </div>
+            <div className="nx-field-group">
+              <div className="nx-field-group__title"><Icon name="settings" /><span>Systems & Finishes</span></div>
+              <div className="nx-data-grid">
+                <DossierMetric label="AC / Heating" value={toChip(fields.hvacType)} icon="bolt" accent="amber" />
+                <DossierMetric label="Floor Cover" value={toChip(fields.floorCover)} icon="grid" />
+                <DossierMetric label="Roof Cover" value={toChip(fields.roofCover)} icon="bolt" accent="amber" />
+              </div>
+            </div>
+            <MissingDataDisclosure fields={getMissingFields(fields)} />
+          </>
+        )}
+        {activeTab === 'valuation' && (
+          <>
+            <div className="nx-field-group">
+              <div className="nx-field-group__title"><Icon name="trending-up" /><span>Valuation</span></div>
+              <div className="nx-data-grid">
+                <DossierMetric label="Est. Value" value={formatMoney(get(thread, 'estimatedValue') || get(thread, 'estimated_value') || get(thread, 'zestimate'))} icon="trending-up" accent="green" />
+                <DossierMetric label="Assessed Value" value={formatMoney(get(thread, 'assessedValue') || get(thread, 'assessed_value'))} icon="stats" />
+                <DossierMetric label="Last Sale Price" value={formatMoney(get(thread, 'lastSalePrice') || get(thread, 'last_sale_price'))} icon="arrow-up-right" />
+                <DossierMetric label="Equity Amount" value={formatMoney(get(thread, 'equityAmount') || get(thread, 'equity_amount'))} icon="zap" accent="green" />
+                <DossierMetric label="Equity %" value={formatPercent(get(thread, 'equityPercent') || get(thread, 'equity_percent'))} icon="activity" accent="green" />
+              </div>
+            </div>
+            <MissingDataDisclosure fields={getMissingFields({
+              estimatedValue: get(thread, 'estimatedValue'),
+              assessedValue: get(thread, 'assessedValue'),
+              lastSalePrice: get(thread, 'lastSalePrice'),
+              equityAmount: get(thread, 'equityAmount'),
+              equityPercent: get(thread, 'equityPercent'),
+            })} />
+          </>
+        )}
+        {activeTab === 'condition' && (
+          <>
+            <div className="nx-field-group">
+              <div className="nx-field-group__title"><Icon name="alert" /><span>Condition</span></div>
+              <div className="nx-data-grid">
+                <DossierMetric label="Repair Cost" value={formatMoney(get(thread, 'estimatedRepairCost') || get(thread, 'estimated_repair_cost'))} icon="activity" accent="red" />
+                <DossierMetric label="Rehab Level" value={toChip(get(thread, 'rehabLevel') || get(thread, 'rehab_level'))} icon="alert" accent="amber" />
+                <DossierMetric label="Building Condition" value={toChip(get(thread, 'buildingCondition') || get(thread, 'building_condition'))} icon="eye" />
+                <DossierMetric label="Building Quality" value={toChip(get(thread, 'buildingQuality') || get(thread, 'building_quality'))} icon="eye" />
+                <DossierMetric label="Distress Tags" value={toChip(get(thread, 'distressTags') || get(thread, 'distress_tags'))} icon="alert" accent="amber" />
+              </div>
+            </div>
+            <MissingDataDisclosure fields={getMissingFields({
+              estimatedRepairCost: get(thread, 'estimatedRepairCost'),
+              rehabLevel: get(thread, 'rehabLevel'),
+              buildingCondition: get(thread, 'buildingCondition'),
+              buildingQuality: get(thread, 'buildingQuality'),
+              distressTags: get(thread, 'distressTags'),
+            })} />
+          </>
+        )}
+        {activeTab === 'tax' && (
+          <>
+            <div className="nx-field-group">
+              <div className="nx-field-group__title"><Icon name="briefing" /><span>Tax & Assessment</span></div>
+              <div className="nx-data-grid">
+                <DossierMetric label="Annual Tax" value={formatMoney(get(thread, 'annualTaxes') || get(thread, 'tax_amount'))} icon="stats" accent="amber" />
+                <DossierMetric label="Assessed Total" value={formatMoney(get(thread, 'assessedValue') || get(thread, 'assd_total_value'))} icon="stats" accent="blue" />
+                <DossierMetric label="Assessed Land" value={formatMoney(get(thread, 'assdLandValue') || get(thread, 'assd_land_value'))} icon="map" accent="blue" />
+                <DossierMetric label="Assessed Improvement" value={formatMoney(get(thread, 'assdImprovementValue') || get(thread, 'assd_improvement_value'))} icon="layers" accent="blue" />
+                <DossierMetric label="Tax Year" value={toChip(get(thread, 'taxYear') || get(thread, 'tax_year'))} icon="calendar" />
+                <DossierMetric label="Tax Delinquent" value={thread.isTaxDelinquent ? 'Yes' : null} icon="shield" accent="red" />
+              </div>
+            </div>
+            <MissingDataDisclosure fields={getMissingFields({
+              annualTaxes: get(thread, 'annualTaxes'),
+              assessedValue: get(thread, 'assessedValue'),
+              assdLandValue: get(thread, 'assdLandValue'),
+              assdImprovementValue: get(thread, 'assdImprovementValue'),
+              taxYear: get(thread, 'taxYear'),
+            })} />
+          </>
+        )}
+        {activeTab === 'owner' && (
+          <>
+            <div className="nx-field-group">
+              <div className="nx-field-group__title"><Icon name="user" /><span>Ownership</span></div>
+              <div className="nx-data-grid">
+                <DossierMetric label="Owner Type" value={toChip(get(thread, 'ownerType') || get(thread, 'owner_type'))} icon="user" />
+                <DossierMetric label="Absentee" value={thread.isAbsentee ? 'Yes' : null} icon="map" accent="amber" />
+                <DossierMetric label="Owner Occupied" value={thread.isOwnerOccupied ? 'Yes' : null} icon="home" accent="green" />
+                <DossierMetric label="Out of State" value={get(thread, 'outOfStateOwner') ? 'Yes' : null} icon="globe" />
+                <DossierMetric label="Occupancy" value={toChip(get(thread, 'occupancy'))} icon="layers" />
+              </div>
+            </div>
+            <MissingDataDisclosure fields={getMissingFields({
+              ownerType: get(thread, 'ownerType'),
+              occupancy: get(thread, 'occupancy'),
+            })} />
+          </>
+        )}
+        {activeTab === 'links' && (
+          <div className="nx-links-grid">
+            <LinkedRecordButton label="Zillow" url={extLinks?.zillow} icon="globe" />
+            <LinkedRecordButton label="Realtor" url={extLinks?.realtor} icon="globe" />
+            <LinkedRecordButton label="Google Maps" url={extLinks?.googleSearch} icon="map" />
+            <LinkedRecordButton label="Street View" url={extLinks?.streetView} icon="map" />
+          </div>
+        )}
+      </div>
+    </DossierCard>
   )
 }
 
-// ── Seller / Contact Intelligence Section ─────────────────────────────────
+// ── 7. Seller / Owner Intelligence ────────────────────────────────────────
 
-const SellerContactSection = ({ thread }: { thread: InboxWorkflowThread }) => {
-  const ownerName = thread.ownerDisplayName || thread.ownerName || normalizeText(get(thread, 'owner_display_name'))
-  const phone = thread.phoneNumber || thread.canonicalE164 || normalizeText(get(thread, 'seller_phone'))
-  const phoneFormatted = fmtPhone(phone)
-  const phoneType = get(thread, 'phoneType') || get(thread, 'phone_type')
+const SellerOwnerCard = ({ thread }: { thread: InboxWorkflowThread }) => {
+  const ownerName = thread.ownerDisplayName || thread.ownerName || asStr(get(thread, 'sellerName')) || 'Unknown Seller'
+  const phone = fmtPhone(thread.phoneNumber || thread.canonicalE164 || get(thread, 'seller_phone'))
   const phoneConfidence = get(thread, 'phoneConfidence') || get(thread, 'phone_confidence')
-  const language = get(thread, 'contactLanguage') || get(thread, 'language') || get(thread, 'seller_language') || get(thread, 'best_language')
-  const ownerType = get(thread, 'ownerType') || get(thread, 'owner_type') || get(thread, 'owner_type_guess')
-  const lastIntent = thread.uiIntent || normalizeText(get(thread, 'lastIntent')) || normalizeText(get(thread, 'last_intent'))
-  const sellerPersona = get(thread, 'sellerPersona') || get(thread, 'seller_persona')
+  const language = get(thread, 'contactLanguage') || get(thread, 'language') || get(thread, 'seller_language')
+  const ownerType = get(thread, 'ownerType') || get(thread, 'owner_type')
+  const mailingAddress = get(thread, 'mailingAddress') || get(thread, 'mailing_address')
   const mailingCity = get(thread, 'mailingCity') || get(thread, 'mailing_city')
   const mailingState = get(thread, 'mailingState') || get(thread, 'mailing_state')
-  const outOfState = get(thread, 'outOfStateOwner') || get(thread, 'out_of_state_owner')
-  const occupation = get(thread, 'occupation')
-  const ageFlag = get(thread, 'ageOrSeniorFlag') || get(thread, 'age_or_senior_flag') || get(thread, 'is_senior')
-  const netAssetValue = get(thread, 'netAssetValue') || get(thread, 'net_asset_value')
-  const smsEligible = get(thread, 'smsEligible') || get(thread, 'sms_eligible')
-  const contactConfidence = get(thread, 'contactConfidence') || get(thread, 'contact_confidence')
-  const lastReplyPreview = thread.latestMessageBody || thread.lastMessageBody
-  const lastContactAt = thread.lastOutboundAt || thread.lastMessageAt
-
-  const initials = ownerName ? ownerName.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase() : '?'
-  const mailingLocation = [mailingCity, mailingState].filter(Boolean).join(', ') || 'Not available'
+  const mailingZip = get(thread, 'mailingZip') || get(thread, 'mailing_zip')
+  const mailingLocation = [mailingAddress, mailingCity, mailingState, mailingZip].filter((v) => isPresent(v)).join(', ')
+  const ownershipYears = get(thread, 'ownershipYears') || get(thread, 'years_owned')
+  const motivationScore = get(thread, 'motivationScore') || get(thread, 'motivation_score')
+  const lastIntent = thread.uiIntent || get(thread, 'lastIntent')
+  const lastInbound = thread.lastInboundAt
+  const lastOutbound = thread.lastOutboundAt
+  const email = get(thread, 'ownerEmail') || get(thread, 'owner_email') || get(thread, 'email')
+  const initials = ownerName.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()
+  const hasIdentityData = [phone, phoneConfidence, language, email, mailingLocation, ownershipYears, motivationScore, lastIntent, lastInbound, lastOutbound].some((v) => isPresent(v))
 
   return (
-    <CollapsibleIntelCard title="Seller / Contact" icon="user" accent="blue">
-      <div className="nx-contact-card">
-        <div className="nx-contact-avatar">
-          {initials}
-        </div>
-        <div className="nx-contact-info">
-          <strong>{ownerName || 'Unknown Seller'}</strong>
-          <div className="nx-contact-chips">
-            {Boolean(ownerType) && !isMissingValue(ownerType) && <span className="nx-contact-type">{asStr(ownerType)}</span>}
-            {Boolean(smsEligible) && <span className="nx-chip nx-chip--sms">SMS Eligible</span>}
-            {Boolean(outOfState) && <span className="nx-chip nx-chip--out-of-state">Out of State</span>}
+    <DossierCard className="nx-force-card nx-seller-card nx-seller-owner-card">
+      <div className="nx-dossier-section__title" style={{ marginBottom: 10 }}>
+        <Icon name="user" />
+        <span>Seller / Owner Intelligence</span>
+      </div>
+      <div className="nx-seller-header">
+        <div className="nx-seller-avatar">{initials}</div>
+        <div className="nx-seller-info">
+          <strong>{ownerName}</strong>
+          <div className="nx-seller-chips">
+            {isPresent(ownerType) && <QuietBadge label={asStr(ownerType)} />}
+            {thread.isAbsentee && <QuietBadge label="Absentee" tone="warning" />}
+            {thread.isOwnerOccupied && <QuietBadge label="Owner occupied" tone="success" />}
           </div>
         </div>
       </div>
-      <div className="nx-contact-details">
-        {Boolean(phoneFormatted) && (
-          <div className="nx-contact-row">
-            <small>Best Phone</small>
-            <b>{phoneFormatted}</b>
-          </div>
-        )}
-        {Boolean(phoneType) && !isMissingValue(phoneType) && (
-          <div className="nx-contact-row">
-            <small>Phone Type</small>
-            <b>{asStr(phoneType)}</b>
-          </div>
-        )}
-        {Boolean(contactConfidence) && !isMissingValue(contactConfidence) && (
-          <div className="nx-contact-row">
-            <small>Contact Confidence</small>
-            <b>{asStr(contactConfidence)}</b>
-          </div>
-        )}
-        {Boolean(phoneConfidence) && !isMissingValue(phoneConfidence) && (
-          <div className="nx-contact-row">
-            <small>Phone Confidence</small>
-            <b>{asStr(phoneConfidence)}</b>
-          </div>
-        )}
-        {Boolean(language) && !isMissingValue(language) && (
-          <div className="nx-contact-row">
-            <small>Language</small>
-            <b>{asStr(language)}</b>
-          </div>
-        )}
-        {Boolean(mailingLocation) && mailingLocation !== 'Not available' && (
-          <div className="nx-contact-row">
-            <small>Mailing Address</small>
-            <b>{mailingLocation}</b>
-          </div>
-        )}
-        {Boolean(occupation) && !isMissingValue(occupation) && (
-          <div className="nx-contact-row">
-            <small>Occupation</small>
-            <b>{asStr(occupation)}</b>
-          </div>
-        )}
-        {Boolean(ageFlag) && !isMissingValue(ageFlag) && (
-          <div className="nx-contact-row">
-            <small>Senior Flag</small>
-            <b>{asStr(ageFlag)}</b>
-          </div>
-        )}
-        {Boolean(netAssetValue) && !isMissingValue(netAssetValue) && (
-          <div className="nx-contact-row">
-            <small>Net Asset Value</small>
-            <b>{fmtCurrency(netAssetValue) || asStr(netAssetValue)}</b>
-          </div>
-        )}
-        {Boolean(lastIntent) && !isMissingValue(lastIntent) && (
-          <div className="nx-contact-row">
-            <small>Last Intent</small>
-            <b>{asStr(lastIntent)}</b>
-          </div>
-        )}
-        {Boolean(sellerPersona) && !isMissingValue(sellerPersona) && (
-          <div className="nx-contact-row">
-            <small>Seller Persona</small>
-            <b>{asStr(sellerPersona)}</b>
-          </div>
-        )}
-        {Boolean(lastReplyPreview) && (
-          <div className="nx-contact-row nx-contact-row--preview">
-            <small>Last Reply Preview</small>
-            <b>"{lastReplyPreview.slice(0, 60)}{lastReplyPreview.length > 60 ? '…' : ''}"</b>
-          </div>
-        )}
-        <div className="nx-contact-row">
-          <small>Last Contact</small>
-          <b>{formatRelativeTime(lastContactAt)}</b>
-        </div>
+      <div className="nx-seller-owner-card__meta">
+        <MetricInline label="Best phone" value={phone} tone="accent" />
+        <MetricInline label="Phone confidence" value={isPresent(phoneConfidence) ? asStr(phoneConfidence) : null} />
+        <MetricInline label="Language" value={isPresent(language) ? asStr(language) : null} />
+        <MetricInline label="Motivation score" value={isPresent(motivationScore) ? `${Math.round(Number(String(motivationScore).replace(/[^0-9.]/g, '')))}/100` : null} tone="warning" />
+        <MetricInline label="Last intent" value={isPresent(lastIntent) ? asStr(lastIntent) : null} />
+        <MetricInline label="Last inbound" value={lastInbound ? formatRelativeTime(lastInbound) : null} />
+        <MetricInline label="Last outbound" value={lastOutbound ? formatRelativeTime(lastOutbound) : null} />
+        <MetricInline label="Mailing address" value={isPresent(mailingLocation) ? mailingLocation : null} />
+        <MetricInline label="Ownership years" value={isPresent(ownershipYears) ? `${toChip(ownershipYears)} yrs` : null} />
       </div>
-    </CollapsibleIntelCard>
+      {!hasIdentityData && <SectionEmptyState text="Owner contact intelligence has not been enriched yet." />}
+    </DossierCard>
   )
 }
 
-// ── Property Snapshot Section ─────────────────────────────────────────────
+const LinkedRecordsCard = ({ thread }: { thread: InboxWorkflowThread }) => {
+  const baseUrl = 'https://app.realestateflow.ai'
+  const offerId = asStr(get(thread, 'offerId') || get(thread, 'offer_id'))
+  const underwritingId = asStr(get(thread, 'underwritingId') || get(thread, 'underwriting_id') || get(thread, 'underwritingRunId'))
+  const contractId = asStr(get(thread, 'contractId') || get(thread, 'contract_id'))
+  const titleId = asStr(get(thread, 'titleId') || get(thread, 'title_id') || get(thread, 'titleFileId'))
+  const hasAnyLink = Boolean(
+    thread.propertyId ||
+    thread.ownerId ||
+    thread.prospectId ||
+    thread.canonicalE164 ||
+    offerId ||
+    underwritingId ||
+    contractId ||
+    titleId
+  )
 
-const PropertySnapshotSection = ({ thread }: { thread: InboxWorkflowThread }) => {
-  const beds = get(thread, 'beds') || get(thread, 'bedrooms')
-  const baths = get(thread, 'baths') || get(thread, 'bathrooms')
-  const sqft = get(thread, 'sqft') || get(thread, 'livingAreaSqft') || get(thread, 'living_area_sqft')
-  const yearBuilt = get(thread, 'yearBuilt') || get(thread, 'year_built')
-  const effectiveYear = get(thread, 'effectiveYear') || get(thread, 'effective_year_built')
-  const lotSize = get(thread, 'lotSize') || get(thread, 'lot_size_sqft') || get(thread, 'lotSizeSqft') || get(thread, 'lotSizeAcres')
-  const propertyType = get(thread, 'propertyType') || get(thread, 'property_type')
-  const occupancy = get(thread, 'occupancy')
-  const category = detectPropertyCategory(thread)
-  const isMulti = category === 'multifamily'
-
-  // Structure fields
-  const stories = get(thread, 'stories') || get(thread, 'num_stories') || get(thread, 'numStories')
-  const garage = get(thread, 'garageOrParking') || get(thread, 'garage_or_parking') || get(thread, 'garage_spaces') || get(thread, 'parking_spaces')
-  const basement = get(thread, 'basement') || get(thread, 'basement_type') || get(thread, 'has_basement')
-  const constructionType = get(thread, 'constructionType') || get(thread, 'construction_type')
-  const bldgQuality = get(thread, 'buildingQuality') || get(thread, 'building_quality')
-
-  // Land / Parcel
-  const county = get(thread, 'county') || get(thread, 'property_county') || get(thread, 'county_name')
-  const apn = get(thread, 'apn') || get(thread, 'apn_parcel_id') || get(thread, 'parcel_id') || get(thread, 'parcel_number')
-  const zoning = get(thread, 'zoning') || get(thread, 'zoning_code')
-
-  // Tax / History
-  const lastSaleDate = get(thread, 'lastSaleDate') || get(thread, 'last_sale_date')
-  const lastSalePrice = get(thread, 'lastSalePrice') || get(thread, 'last_sale_price')
-  const assessedValue = get(thread, 'assessedValue') || get(thread, 'assessed_value') || get(thread, 'tax_assessed_value')
-  const annualTaxes = get(thread, 'annualTaxes') || get(thread, 'annual_taxes') || get(thread, 'tax_amount')
-  const taxYear = get(thread, 'taxYear') || get(thread, 'tax_year')
-
-  const toChip = (v: unknown): string | null => {
-    if (v === null || v === undefined) return null
-    const n = Number(String(v).replace(/[,$\s]/g, ''))
-    if (Number.isFinite(n)) return String(n)
-    return String(v).trim() || null
-  }
-
-  const fmtSaleDate = (v: unknown): string | null => {
-    const raw = normalizeText(v)
-    if (!raw) return null
-    try {
-      const d = new Date(raw)
-      if (isNaN(d.getTime())) return raw
-      return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
-    } catch { return raw }
-  }
+  if (!hasAnyLink) return null
 
   return (
-    <CollapsibleIntelCard title="Property Snapshot" icon="layers" accent="purple">
-      {/* Structure */}
-      <GroupedRow label="Structure">
-        <div className="nx-stat-grid nx-stat-grid--compact">
-          <StatChip label="Beds" value={toChip(beds)} color="blue" />
-          <StatChip label="Baths" value={toChip(baths)} color="blue" />
-          <StatChip label="Sqft" value={sqft ? `${Number(String(sqft).replace(/,/g, '')).toLocaleString()}` : null} color="blue" />
-          <StatChip label="Year Built" value={toChip(yearBuilt)} />
-          {Boolean(effectiveYear) && <StatChip label="Eff. Year" value={toChip(effectiveYear)} />}
-          {Boolean(stories) && <StatChip label="Stories" value={toChip(stories)} />}
-          {Boolean(garage) && <StatChip label="Garage/Parking" value={toChip(garage)} />}
-          {Boolean(basement) && <StatChip label="Basement" value={toChip(basement)} />}
-          {Boolean(constructionType) && !isMissingValue(constructionType) && <StatChip label="Construction" value={toChip(constructionType)} />}
-          {Boolean(bldgQuality) && !isMissingValue(bldgQuality) && <StatChip label="Quality" value={toChip(bldgQuality)} />}
-          {Boolean(propertyType) && !isMissingValue(propertyType) && <StatChip label="Type" value={toChip(propertyType)} />}
-          {Boolean(occupancy) && !isMissingValue(occupancy) && <StatChip label="Occupancy" value={toChip(occupancy)} />}
-        </div>
-      </GroupedRow>
-
-      {/* Land / Parcel */}
-      <GroupedRow label="Land / Parcel">
-        <div className="nx-stat-grid nx-stat-grid--compact">
-          {Boolean(lotSize) && !isMissingValue(lotSize) && <StatChip label="Lot Size" value={toChip(lotSize)} />}
-          {Boolean(county) && !isMissingValue(county) && <StatChip label="County" value={toChip(county)} />}
-          {Boolean(apn) && !isMissingValue(apn) && <StatChip label="APN / Parcel" value={toChip(apn)} />}
-          {Boolean(zoning) && !isMissingValue(zoning) && <StatChip label="Zoning" value={toChip(zoning)} />}
-          {isMulti && <StatChip label="Units" value={toChip(get(thread, 'unitCount') || get(thread, 'unit_count') || get(thread, 'units'))} color="purple" />}
-        </div>
-      </GroupedRow>
-
-      {/* Tax / History */}
-      <GroupedRow label="Tax / History">
-        <div className="nx-stat-grid nx-stat-grid--compact">
-          <StatChip label="Last Sale" value={fmtSaleDate(lastSaleDate)} />
-          <StatChip label="Sale Price" value={fmtCurrency(lastSalePrice)} />
-          <StatChip label="Assessed Value" value={fmtCurrency(assessedValue)} />
-          <StatChip label="Annual Taxes" value={fmtCurrency(annualTaxes)} />
-          {Boolean(taxYear) && <StatChip label="Tax Year" value={toChip(taxYear)} />}
-        </div>
-      </GroupedRow>
-
-      {/* Distress indicators */}
-      <div className="nx-distress-indicators">
-        {thread.isAbsentee && <span className="nx-distress-tag">Absentee Owner</span>}
-        {thread.isVacant && <span className="nx-distress-tag">Vacant</span>}
-        {thread.hasLien && <span className="nx-distress-tag nx-distress-tag--warn">Active Lien</span>}
-        {thread.isProbate && <span className="nx-distress-tag">Probate</span>}
-        {thread.isTaxDelinquent && <span className="nx-distress-tag nx-distress-tag--warn">Tax Delinquent</span>}
+    <DossierCard className="nx-bottom-app-links nx-linked-records-card">
+      <div className="nx-bottom-app-links__title">Linked Apps</div>
+      <div className="nx-bottom-app-links__grid">
+        {thread.propertyId && <LinkedRecordButton label="Property App" url={`${baseUrl}/properties/${thread.propertyId}`} icon="layers" variant="internal" />}
+        {thread.ownerId && <LinkedRecordButton label="Owner App" url={`${baseUrl}/owners/${thread.ownerId}`} icon="user" variant="internal" />}
+        {thread.prospectId && <LinkedRecordButton label="Prospect App" url={`${baseUrl}/prospects/${thread.prospectId}`} icon="users" variant="internal" />}
+        {thread.canonicalE164 && <LinkedRecordButton label="Phone App" url={`${baseUrl}/phones/${encodeURIComponent(thread.canonicalE164)}`} icon="phone" variant="internal" />}
+        {offerId && <LinkedRecordButton label="Offer App" url={`${baseUrl}/offers/${offerId}`} icon="zap" variant="internal" />}
+        {underwritingId && <LinkedRecordButton label="Underwriting App" url={`${baseUrl}/underwriting/${underwritingId}`} icon="stats" variant="internal" />}
+        {contractId && <LinkedRecordButton label="Contract App" url={`${baseUrl}/contracts/${contractId}`} icon="briefing" variant="internal" />}
+        {titleId && <LinkedRecordButton label="Title App" url={`${baseUrl}/title/${titleId}`} icon="briefing" variant="internal" />}
       </div>
-    </CollapsibleIntelCard>
+    </DossierCard>
   )
 }
 
-// ── Automation Timeline Section ───────────────────────────────────────────
+// ── 8. Automation Timeline ────────────────────────────────────────────────
 
-const AutomationTimelineSection = ({ thread }: { thread: InboxWorkflowThread }) => {
-  const firstTouchAt = normalizeText(get(thread, 'firstTouchAt') || get(thread, 'first_touch_at') || thread.updatedAt)
-  const sellerRepliedAt = normalizeText(get(thread, 'sellerRepliedAt') || get(thread, 'seller_replied_at') || thread.lastInboundAt)
+const TimelineCard = ({ thread }: { thread: InboxWorkflowThread }) => {
   const stageVisual = getSellerStageVisual(thread.conversationStage)
   const autoVisual = automationStateVisuals[thread.automationState]
-  const queueStatus = thread.queueStatus
-  const lastOutboundAt = thread.lastOutboundAt
-  const lastInboundAt = thread.lastInboundAt
-  const nextTouch = get(thread, 'nextTouchUseCase') || get(thread, 'next_touch_use_case')
-  const nextEligible = get(thread, 'nextEligibleAt') || get(thread, 'next_eligible_at')
-  const pendingPrior = get(thread, 'pendingPriorTouch') || get(thread, 'pending_prior_touch')
-  const automationReason = get(thread, 'automationReason') || get(thread, 'automation_reason')
 
-  const timelineItems = [
-    { label: 'First Touch Sent', time: firstTouchAt, done: Boolean(firstTouchAt), icon: 'send' },
-    { label: 'Seller Replied', time: sellerRepliedAt, done: Boolean(sellerRepliedAt), icon: 'message' },
-    { label: 'Current Stage', time: '', done: true, active: true, icon: 'layers', label_extra: stageVisual.label },
-    { label: 'Automation', time: '', done: true, icon: 'bolt', label_extra: autoVisual.label },
-    { label: 'Queue Status', time: '', done: Boolean(queueStatus), icon: 'clock', label_extra: asStr(queueStatus) || 'Healthy' },
-    { label: 'Last Outbound', time: lastOutboundAt || '', done: Boolean(lastOutboundAt), icon: 'arrow-up' },
-    { label: 'Last Inbound', time: lastInboundAt || '', done: Boolean(lastInboundAt), icon: 'arrow-down' },
-    ...(Boolean(nextTouch) ? [{ label: 'Next Touch', time: '', done: false, icon: 'next', label_extra: asStr(nextTouch) }] : []),
-    ...(Boolean(nextEligible) ? [{ label: 'Next Eligible', time: asStr(nextEligible), done: false, icon: 'calendar' }] : []),
-    ...(Boolean(pendingPrior) ? [{ label: 'Pending Prior Touch', time: '', done: false, icon: 'alert', label_extra: asStr(pendingPrior) }] : []),
+  const timedItems = [
+    { label: 'First Touch', time: get(thread, 'firstTouchAt') || get(thread, 'first_touch_at') || thread.updatedAt, done: true },
+    { label: 'Last Outbound', time: thread.lastOutboundAt, done: Boolean(thread.lastOutboundAt) },
+    { label: 'Seller Replied', time: thread.lastInboundAt, done: Boolean(thread.lastInboundAt), active: thread.inboxStatus === 'new_reply' },
+  ]
+    .filter((item) => item.time)
+    .sort((a, b) => new Date(String(a.time)).getTime() - new Date(String(b.time)).getTime())
+
+  const statusItems = [
+    { label: 'Current Stage', labelExtra: stageVisual.label, done: true, active: true },
+    { label: 'Automation', labelExtra: autoVisual.label, done: true },
+    { label: 'Queue', labelExtra: asStr(thread.queueStatus) || 'Healthy', done: Boolean(thread.queueStatus) },
   ]
 
+  const items = [...timedItems, ...statusItems]
+
+  const isCritical = thread.inboxStatus === 'new_reply' || thread.inboxStatus === 'ai_draft_ready' || thread.queueStatus === 'stuck'
+
   return (
-    <CollapsibleIntelCard title="Automation Timeline" icon="activity" defaultExpanded={false}>
+    <DossierCard className="nx-force-card nx-timeline-card nx-timeline-workspace-card">
+      <div className="nx-dossier-section__title" style={{ justifyContent: 'space-between', marginBottom: 10 }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <Icon name="activity" />
+          Automation Timeline
+        </span>
+        {isCritical ? <QuietBadge label="Critical" tone="accent" /> : null}
+      </div>
       <div className="nx-timeline">
-        {timelineItems.map((item, idx) => (
-          <div key={idx} className={cls('nx-timeline-item', item.done && 'is-done', item.active && 'is-active')}>
+        {items.map((item, idx) => (
+          <div key={idx} className={cls('nx-timeline-item', (item as any).done && 'is-done', (item as any).active && 'is-active')}>
             <div className="nx-timeline-dot" />
             <div className="nx-timeline-content">
               <div className="nx-timeline-label">
-                <span>{item.label}</span>
-                {item.label_extra && <span className="nx-timeline-extra">{item.label_extra}</span>}
+                <span>{(item as any).label}</span>
+                {(item as any).labelExtra && <span className="nx-timeline-extra">{(item as any).labelExtra}</span>}
               </div>
-              {item.time && <small>{formatRelativeTime(item.time)}</small>}
+              {(item as any).time && <small>{formatDate((item as any).time)}</small>}
             </div>
           </div>
         ))}
       </div>
-      {Boolean(automationReason) && (
-        <div className="nx-automation-reason">
-          <small>Automation Reason</small>
-          <p>{asStr(automationReason)}</p>
-        </div>
-      )}
-    </CollapsibleIntelCard>
+    </DossierCard>
   )
 }
 
@@ -1150,10 +1073,17 @@ export const IntelligencePanel = (props: IntelligencePanelProps) => {
     if (thread) logIntelligencePanelData(thread)
   }, [thread?.id])
 
+  const handleCollapse = useCallback((e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); onCollapse() }, [onCollapse])
+  const handleOpenMap = useCallback((e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); onOpenMap() }, [onOpenMap])
+  const handleOpenDossier = useCallback((e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); onOpenDossier() }, [onOpenDossier])
+  const handleOpenAi = useCallback((e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); onOpenAi() }, [onOpenAi])
+
   if (!thread) return (
     <aside className="nx-intelligence-panel">
       <div className="nx-inbox__workspace-empty">
-        <p>Select a thread to view intelligence.</p>
+        <Icon name="inbox" />
+        <h3>Select a thread</h3>
+        <p>Choose a conversation to view intelligence.</p>
       </div>
     </aside>
   )
@@ -1161,62 +1091,41 @@ export const IntelligencePanel = (props: IntelligencePanelProps) => {
   return (
     <aside className={cls('nx-intelligence-panel', `is-mode-${panelMode}`)}>
       <header className="nx-intel-header">
-        <span className="nx-section-label">INTELLIGENCE</span>
-        <button 
-          type="button" 
-          className="nx-intel-collapse" 
-          onClick={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            onCollapse()
-          }} 
-          title="Collapse intelligence panel"
-        >
-          <Icon name="chevron-right" />
+        <span className="nx-section-label">DEAL COMMAND DOSSIER</span>
+        <button type="button" className="nx-intel-collapse" onClick={handleCollapse} title="Collapse panel">
+          <Icon name="close" />
         </button>
       </header>
 
       <div className="nx-intel-scroll-body">
-        <WorkflowControlCard 
-          thread={thread} 
-          onStatusChange={onStatusChange} 
-          onStageChange={onStageChange} 
-        />
-        <PropertyHeroCard thread={thread} intelligence={intelligence} />
-        <NextBestActionSection thread={thread} isSuppressed={isSuppressed} />
-        <OfferIntelligenceSection thread={thread} />
-        <DealIntelligenceSection thread={thread} />
-        <SellerContactSection thread={thread} />
-        <PropertySnapshotSection thread={thread} />
-        <AutomationTimelineSection thread={thread} />
+        <DossierShell>
+          <DealCommandHeader thread={thread} />
+          <WorkflowControl thread={thread} onStatusChange={onStatusChange} onStageChange={onStageChange} />
 
-        <div className="nx-intel-action-rail">
-          <button 
-            type="button" 
-            className="nx-intel-action-btn" 
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpenMap(); }}
-          >
-            <Icon name="map" />
-            <span>Map</span>
-          </button>
-          <button 
-            type="button" 
-            className="nx-intel-action-btn" 
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpenDossier(); }}
-          >
-            <Icon name="briefing" />
-            <span>Dossier</span>
-          </button>
-          <button 
-            type="button" 
-            className="nx-intel-action-btn" 
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpenAi(); }} 
-            disabled={isSuppressed}
-          >
-            <Icon name="spark" />
-            <span>AI Assist</span>
-          </button>
-        </div>
+          <div className="nx-dossier-workspace">
+            <PropertySnapshotCard thread={thread} intelligence={intelligence} />
+            <AIActionCard thread={thread} isSuppressed={isSuppressed} />
+            <OfferMemoCard thread={thread} />
+            <SellerOwnerCard thread={thread} />
+            <PropertyIntelligenceTabs thread={thread} intelligence={intelligence} />
+            <TimelineCard thread={thread} />
+            <LinkedRecordsCard thread={thread} />
+          </div>
+
+          <div className="nx-intel-action-rail">
+            <button type="button" className="nx-intel-action-btn" onClick={handleOpenMap}><Icon name="map" /> Map</button>
+            <button type="button" className="nx-intel-action-btn" onClick={handleOpenDossier}><Icon name="briefing" /> Dossier</button>
+            <div className="nx-intel-orb-trigger" onClick={handleOpenAi}>
+              <CopilotOrbTrigger 
+                size="md" 
+                isReady={!!thread.aiDraft} 
+                onClick={handleOpenAi} 
+              />
+              <span className="nx-intel-orb-label">AI ASSIST</span>
+            </div>
+
+          </div>
+        </DossierShell>
       </div>
     </aside>
   )
