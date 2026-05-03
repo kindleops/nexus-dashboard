@@ -21,6 +21,10 @@ export interface NormalizedPropertySnapshot {
   cashOffer: string
   finalScore: string
   streetViewUrl: string | null
+  unitCount: string
+  lotSize: string
+  occupancy: string
+  ownerType: string
 }
 
 export interface ExternalLinks {
@@ -85,7 +89,11 @@ export const normalizePropertySnapshot = (
     repairCost: (thread as any)?.estimatedRepairCost || get('estimated_repair_cost'),
     cashOffer: (thread as any)?.cashOffer || get('cash_offer'),
     finalScore: (thread as any)?.finalAcquisitionScore || get('final_acquisition_score'),
-    streetViewUrl: buildStreetViewUrl(address)
+    streetViewUrl: buildStreetViewUrl(address),
+    unitCount: (thread as any)?.unitCount || (thread as any)?.unit_count || (thread as any)?.units || get('unit_count'),
+    lotSize: (thread as any)?.lotSize || (thread as any)?.lot_size || (thread as any)?.lotSizeSqft || get('lot_size_sqft') || get('lot_size_acres'),
+    occupancy: (thread as any)?.occupancy || get('occupancy'),
+    ownerType: (thread as any)?.ownerType || (thread as any)?.owner_type || get('owner_type'),
   }
 }
 

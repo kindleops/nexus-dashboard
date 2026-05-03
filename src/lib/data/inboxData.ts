@@ -195,7 +195,10 @@ export const resolveInboxSellerNameWithSource = (row: Record<string, unknown>): 
   const ownerFirstName = asString(row.owner_first_name || row.ownerFirstName)
   const ownerLastName = asString(row.owner_last_name || row.ownerLastName)
 
-  const meta = (row.metadata || {}) as Record<string, unknown>
+  let meta: Record<string, unknown> = (row.metadata || row.meta || {}) as Record<string, unknown>
+  if (typeof meta === 'string') {
+    try { meta = JSON.parse(meta) as Record<string, unknown> } catch (e) { meta = {} }
+  }
 
   const candidates: Array<{ val: unknown; source: string }> = [
     { val: row.owner_display_name || row.ownerDisplayName, source: 'owner_display_name' },
@@ -221,8 +224,12 @@ export const resolveInboxSellerNameWithSource = (row: Record<string, unknown>): 
 
   // Final fallbacks
   const phoneRaw = asString(row.phoneNumber || row.phoneNumberId || row.canonicalE164 || row.seller_phone || row.phone || row.prospect_phone, '').trim()
-  if (phoneRaw) return { value: formatDisplayPhone(phoneRaw), source: 'phone_fallback' }
+  if (phoneRaw) {
+    if (DEV) console.log('[NexusInboxNameResolution] fallback to phone', { row, meta, phoneRaw })
+    return { value: formatDisplayPhone(phoneRaw), source: 'phone_fallback' }
+  }
 
+  if (DEV) console.log('[NexusInboxNameResolution] fallback to unknown', { row, meta })
   return { value: 'Unknown Seller', source: 'none' }
 }
 
@@ -236,13 +243,16 @@ export const resolveInboxPropertyAddressWithSource = (row: Record<string, unknow
   const zip = asString(row.property_address_zip || row.property_zip || row.zip || row.postal_code || row.property_zip)
   
   const combined = [street, city, state, zip].map(s => s.trim()).filter(Boolean).join(', ')
-  const meta = (row.metadata || {}) as Record<string, unknown>
+  let meta: Record<string, unknown> = (row.metadata || row.meta || {}) as Record<string, unknown>
+  if (typeof meta === 'string') {
+    try { meta = JSON.parse(meta) as Record<string, unknown> } catch (e) { meta = {} }
+  }
 
   const candidates: Array<{ val: unknown; source: string }> = [
     { val: row.property_address_full || row.propertyAddressFull, source: 'property_address_full' },
     { val: row.property_address || row.propertyAddress, source: 'property_address' },
     { val: row.address, source: 'address' },
-    { val: meta.property_address || meta.address || meta.propertyAddress, source: 'metadata_address' },
+    { val: meta.property_address || meta.address || meta.propertyAddress || meta.property_address_full, source: 'metadata_address' },
     { val: combined, source: 'combined_fields' },
   ]
 
@@ -253,6 +263,7 @@ export const resolveInboxPropertyAddressWithSource = (row: Record<string, unknow
     }
   }
 
+  if (DEV) console.log('[NexusInboxAddressResolution] fallback to no address', { row, meta })
   return { value: 'No Address', source: 'none' }
 }
 

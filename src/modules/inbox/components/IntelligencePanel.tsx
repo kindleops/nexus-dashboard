@@ -20,6 +20,50 @@ import {
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
 
+// ── Helpers ───────────────────────────────────────────────────────────────
+
+const normalizeText = (value: unknown): string => String(value ?? '').trim()
+
+const isMissingValue = (value: unknown): boolean => {
+  const text = normalizeText(value).toLowerCase()
+  return !text || text === 'unknown' || text === 'n/a' || text === 'null' || text === 'undefined' || text === 'none' || text === '-'
+}
+
+const asStr = (value: unknown): string => normalizeText(value)
+
+const missingLabel = (value: unknown, placeholder = '—'): string => (
+  isMissingValue(value) ? placeholder : normalizeText(value)
+)
+
+const fmtCurrency = (value: unknown): string | null => {
+  const raw = String(value ?? '').replace(/[,$\s]/g, '')
+  const num = Number(raw)
+  if (!Number.isFinite(num) || num === 0) return null
+  if (num >= 1_000_000) return `$${(num / 1_000_000).toFixed(1)}M`
+  if (num >= 1_000) return `$${Math.round(num / 1_000)}K`
+  return `$${Math.round(num).toLocaleString()}`
+}
+
+const fmtScore = (value: unknown): string | null => {
+  const raw = String(value ?? '').replace(/[^0-9.]/g, '')
+  const num = Number(raw)
+  if (!Number.isFinite(num)) return null
+  return `${Math.round(num)}/100`
+}
+
+const get = (thread: InboxWorkflowThread, key: string): unknown => {
+  const row = thread as unknown as Record<string, unknown>
+  return row[key] ?? row[key.replace(/_/g, '')] ?? row[key.charAt(0).toUpperCase() + key.slice(1)]
+}
+
+const isMultifamily = (thread: InboxWorkflowThread): boolean => {
+  const pt = normalizeText(get(thread, 'propertyType') || get(thread, 'property_type')).toLowerCase()
+  const units = Number(get(thread, 'unitCount') || get(thread, 'unit_count') || get(thread, 'units'))
+  return units >= 5 || pt.includes('multifamily') || pt.includes('apartment') || pt.includes('commercial')
+}
+
+// ── Workflow Control Card (unchanged) ─────────────────────────────────────
+
 const WorkflowControlCard = ({
   thread,
   onStatusChange,
@@ -69,7 +113,6 @@ const WorkflowControlCard = ({
       </header>
 
       <div className="nx-workflow-body">
-        {/* Row 1: Inbox Status (Operational) */}
         <div className="nx-workflow-row">
           <label>Inbox Status</label>
           <div className="nx-status-dropdown-wrap">
@@ -105,7 +148,6 @@ const WorkflowControlCard = ({
           </div>
         </div>
 
-        {/* Row 2: Seller Stage (Automated Flow) */}
         <div className="nx-workflow-row">
           <label>Seller Stage</label>
           <div className="nx-status-dropdown-wrap">
@@ -158,7 +200,6 @@ const WorkflowControlCard = ({
           </div>
         </div>
 
-        {/* Row 3: Automation State */}
         <div className="nx-workflow-row">
           <label>Automation</label>
           <span className="nx-auto-pill" style={{ '--auto-color': autoVisual.color } as any}>
@@ -166,7 +207,6 @@ const WorkflowControlCard = ({
           </span>
         </div>
 
-        {/* Row 4: Next Action */}
         <div className="nx-workflow-row nx-next-action-row">
           <Icon name="spark" />
           <p>{thread.nextSystemAction}</p>
@@ -176,47 +216,24 @@ const WorkflowControlCard = ({
   )
 }
 
-interface IntelligencePanelProps {
-  thread: InboxWorkflowThread | null
-  context: ThreadContext | null
-  intelligence: ThreadIntelligenceRecord | null
-  messages: ThreadMessage[]
-  isSuppressed: boolean
-  panelMode?: Exclude<PanelMode, 'hidden'>
-  onCollapse: () => void
-  onOpenMap: () => void
-  onOpenDossier: () => void
-  onOpenAi: () => void
-  onStatusChange: (status: InboxStatus) => void
-  onStageChange: (stage: SellerStage) => void
-}
-
-const normalizeText = (value: unknown): string => String(value ?? '').trim()
-
-const isMissingValue = (value: unknown): boolean => {
-  const text = normalizeText(value).toLowerCase()
-  return !text || text === 'unknown' || text === 'n/a' || text === 'null' || text === 'undefined' || text === 'none' || text === '-'
-}
-
-const missingLabel = (value: unknown, placeholder = '—') => (
-  isMissingValue(value) ? placeholder : normalizeText(value)
-)
-
+// ── Collapsible Card ──────────────────────────────────────────────────────
 
 const CollapsibleIntelCard = ({ 
   title, 
   icon, 
   children, 
-  defaultExpanded = true 
+  defaultExpanded = true,
+  accent,
 }: { 
   title: string; 
   icon: string; 
   children: React.ReactNode; 
-  defaultExpanded?: boolean 
+  defaultExpanded?: boolean;
+  accent?: 'blue' | 'green' | 'amber' | 'purple' | 'none';
 }) => {
   const [expanded, setExpanded] = useState(defaultExpanded)
   return (
-    <section className={cls('nx-intel-card', !expanded && 'is-collapsed')}>
+    <section className={cls('nx-intel-card', !expanded && 'is-collapsed', accent && accent !== 'none' && `is-accent-${accent}`)}>
       <button 
         type="button" 
         className="nx-intel-card__header" 
@@ -235,15 +252,33 @@ const CollapsibleIntelCard = ({
   )
 }
 
-const IntelRow = ({ label, value, icon }: { label: string; value: string | number; icon?: string }) => (
-  <div className="nx-intel-pill">
-    {icon && <i>{icon}</i>}
+// ── Stat Chip ─────────────────────────────────────────────────────────────
+
+const StatChip = ({ label, value, icon, color }: { label: string; value: string | null; icon?: string; color?: string }) => {
+  const missing = isMissingValue(value)
+  return (
+    <div className={cls('nx-stat-chip', missing && 'is-missing', color && `is-${color}`)}>
+      {icon && <span className="nx-stat-chip__icon">{icon}</span>}
+      <div className="nx-stat-chip__content">
+        <small>{label}</small>
+        <b>{missingLabel(value)}</b>
+      </div>
+    </div>
+  )
+}
+
+// ── Hero Value Row ────────────────────────────────────────────────────────
+
+const HeroValueRow = ({ label, value, accent }: { label: string; value: string; accent?: 'green' | 'red' | 'amber' | 'blue' }) => (
+  <div className={cls('nx-hero-row', accent && `is-${accent}`)}>
     <small>{label}</small>
-    <b className={cls(isMissingValue(value) && 'is-missing')}>{missingLabel(value)}</b>
+    <b>{value}</b>
   </div>
 )
 
-const PropertySnapshotCard = ({
+// ── Property Hero Card ────────────────────────────────────────────────────
+
+const PropertyHeroCard = ({
   thread,
   intelligence,
 }: {
@@ -254,9 +289,17 @@ const PropertySnapshotCard = ({
   const address = snapshot.fullAddress
   const streetViewUrl = snapshot.streetViewUrl
   const links = buildPropertyExternalLinks(address)
+  const market = snapshot.market || thread.market || thread.marketId || 'Unknown Market'
+  const propertyType = normalizeText(snapshot.propertyType || (get(thread, 'propertyType') as string) || 'Residential')
+  const multi = isMultifamily(thread)
+
+  const unitCount = get(thread, 'unitCount') || get(thread, 'unit_count') || get(thread, 'units')
+  const lotSize = get(thread, 'lotSize') || get(thread, 'lot_size_sqft') || get(thread, 'lotSizeSqft') || get(thread, 'lotSizeAcres')
+  const occupancy = get(thread, 'occupancy')
+  const ownerType = get(thread, 'ownerType') || get(thread, 'owner_type')
 
   return (
-    <section className="nx-intel-card nx-property-card">
+    <section className="nx-intel-card nx-property-hero-card">
       <div className="nx-intel-card__media">
         {streetViewUrl ? (
           <img src={streetViewUrl} alt="Street View" onError={(e) => (e.currentTarget.style.display = 'none')} />
@@ -274,71 +317,371 @@ const PropertySnapshotCard = ({
         </div>
       </div>
       
-      <div className="nx-intel-card__header-static">
-        <div className="nx-intel-card__title-row">
-          <strong>{address}</strong>
+      <div className="nx-intel-card__header-static nx-property-hero__info">
+        <div className="nx-property-hero__address">
+          <strong>{address || 'No Address'}</strong>
+          {multi && <span className="nx-badge nx-badge--multi">MULTIFAMILY</span>}
         </div>
-        <div className="nx-intel-card__sub-row">
-          <span>{snapshot.market || 'Unknown Market'}</span>
+        <div className="nx-property-hero__meta">
+          <span className="nx-market-tag">{market}</span>
           <span className="nx-divider">•</span>
-          <span>{snapshot.propertyType || 'Residential'}</span>
+          <span>{propertyType}</span>
+          {Boolean(unitCount) && !isMissingValue(unitCount) && (<><span className="nx-divider">•</span><span>{asStr(unitCount)} units</span></>)}
         </div>
-      </div>
-
-      <div className="nx-intel-grid nx-stats-grid">
-        <IntelRow label="Beds" value={snapshot.beds} icon="🛏" />
-        <IntelRow label="Baths" value={snapshot.baths} icon="🛁" />
-        <IntelRow label="Sqft" value={snapshot.sqft} icon="📐" />
-        <IntelRow label="Year Built" value={snapshot.yearBuilt} icon="🗓" />
-        <IntelRow label="Value" value={snapshot.estimatedValue} icon="💰" />
-        <IntelRow label="Cash Offer" value={snapshot.cashOffer} icon="⚡" />
-        <IntelRow label="Repair Est" value={snapshot.repairCost} icon="🛠" />
-        <IntelRow label="Final Score" value={snapshot.finalScore} icon="🎯" />
+        <div className="nx-property-hero__chips">
+          {Boolean(snapshot.beds) && !isMissingValue(snapshot.beds) && <span className="nx-pill">{snapshot.beds} Bed{snapshot.beds !== '1' ? 's' : ''}</span>}
+          {Boolean(snapshot.baths) && !isMissingValue(snapshot.baths) && <span className="nx-pill">{snapshot.baths} Bath{snapshot.baths !== '1' ? 's' : ''}</span>}
+          {Boolean(snapshot.sqft) && !isMissingValue(snapshot.sqft) && <span className="nx-pill">{Number(snapshot.sqft).toLocaleString()} sqft</span>}
+          {Boolean(snapshot.yearBuilt) && !isMissingValue(snapshot.yearBuilt) && <span className="nx-pill">Built {snapshot.yearBuilt}</span>}
+          {Boolean(lotSize) && !isMissingValue(lotSize) && <span className="nx-pill">{asStr(lotSize)} lot</span>}
+          {Boolean(occupancy) && !isMissingValue(occupancy) && <span className="nx-pill">{asStr(occupancy)}</span>}
+          {Boolean(ownerType) && !isMissingValue(ownerType) && <span className="nx-pill">{asStr(ownerType)}</span>}
+        </div>
       </div>
     </section>
   )
 }
 
-const DealIntelligenceCard = ({ thread }: { thread: InboxWorkflowThread }) => (
-  <CollapsibleIntelCard title="Deal Intelligence" icon="stats">
-    <div className="nx-intel-grid">
-       <IntelRow label="Final Score" value={thread.finalAcquisitionScore as any} />
-       <IntelRow label="Motivation Score" value={(thread as any).motivationScore} />
-       <IntelRow label="Equity" value={(thread as any).equityAmount} />
-       <IntelRow label="Offer/Value Spread" value={((thread as any).estimatedValue && (thread as any).cashOffer) ? (Number((thread as any).estimatedValue) - Number((thread as any).cashOffer)) : '—'} />
-       <IntelRow label="Seller Intent" value={thread.uiIntent || '—'} />
-       <IntelRow label="Next Step" value={(thread as any).dealNextStep || '—'} />
-    </div>
-  </CollapsibleIntelCard>
-)
+// ── Property Snapshot Section ─────────────────────────────────────────────
 
-const OwnerContactCard = ({ thread, intelligence }: { thread: InboxWorkflowThread, intelligence: any }) => (
-  <CollapsibleIntelCard title="Owner / Contact" icon="user">
-    <div className="nx-intel-grid">
-       <IntelRow label="Name" value={thread.ownerDisplayName || thread.ownerName} />
-       <IntelRow label="Type" value={(thread as any).ownerType || '—'} />
-       <IntelRow label="Phone" value={thread.phoneNumber || '—'} />
-       <IntelRow label="Confidence" value={(thread as any).phoneConfidence || '—'} />
-       <IntelRow label="Language" value={(thread as any).contactLanguage || '—'} />
-       <IntelRow label="Last Contact" value={formatRelativeTime(thread.lastOutboundAt || thread.lastMessageAt)} />
-       <IntelRow label="Timezone" value={(intelligence as any)?.timezone || '—'} />
-    </div>
-  </CollapsibleIntelCard>
-)
+const PropertySnapshotSection = ({ thread }: { thread: InboxWorkflowThread }) => {
+  const beds = get(thread, 'beds') || get(thread, 'bedrooms')
+  const baths = get(thread, 'baths') || get(thread, 'bathrooms')
+  const sqft = get(thread, 'sqft') || get(thread, 'livingAreaSqft')
+  const yearBuilt = get(thread, 'yearBuilt') || get(thread, 'year_built')
+  const lotSize = get(thread, 'lotSize') || get(thread, 'lot_size_sqft') || get(thread, 'lotSizeSqft') || get(thread, 'lotSizeAcres')
+  const propertyType = get(thread, 'propertyType') || get(thread, 'property_type')
+  const occupancy = get(thread, 'occupancy')
+  const ownerType = get(thread, 'ownerType') || get(thread, 'owner_type')
+  const multi = isMultifamily(thread)
 
-const AutomationMetadataCard = ({ thread, intelligence }: { thread: InboxWorkflowThread, intelligence: any }) => (
-  <CollapsibleIntelCard title="Automation / Metadata" icon="settings" defaultExpanded={false}>
-    <div className="nx-intel-grid">
-       <IntelRow label="Record Status" value={thread.inboxStatus} />
-       <IntelRow label="Conv Stage" value={thread.conversationStage} />
-       <IntelRow label="Auto-Reply" value={(intelligence as any)?.auto_reply_status || '—'} />
-       <IntelRow label="Queue Health" value={(thread as any).queueStatus || 'Healthy'} />
-       <IntelRow label="Last Status" value={thread.deliveryStatus || '—'} />
-       <IntelRow label="Record ID" value={thread.id} />
-    </div>
-  </CollapsibleIntelCard>
-)
+  const toChip = (v: unknown): string | null => {
+    if (v === null || v === undefined) return null
+    const n = Number(String(v).replace(/[,$\s]/g, ''))
+    if (Number.isFinite(n)) return String(n)
+    return String(v).trim() || null
+  }
 
+  return (
+    <section className="nx-intel-card nx-section-card">
+      <header className="nx-section-header">
+        <Icon name="layers" />
+        <span>Property Snapshot</span>
+      </header>
+      <div className="nx-stat-grid">
+        <StatChip label="Beds" value={toChip(beds)} color="blue" />
+        <StatChip label="Baths" value={toChip(baths)} color="blue" />
+        <StatChip label="Sqft" value={sqft ? `${Number(String(sqft).replace(/,/g, '')).toLocaleString()}` : null} color="blue" />
+        <StatChip label="Year Built" value={toChip(yearBuilt)} />
+        {Boolean(lotSize) && !isMissingValue(lotSize) && <StatChip label="Lot Size" value={toChip(lotSize)} />}
+        {Boolean(propertyType) && !isMissingValue(propertyType) && <StatChip label="Property Type" value={toChip(propertyType)} />}
+        {Boolean(occupancy) && !isMissingValue(occupancy) && <StatChip label="Occupancy" value={toChip(occupancy)} />}
+        {Boolean(ownerType) && !isMissingValue(ownerType) && <StatChip label="Owner Type" value={toChip(ownerType)} />}
+        {multi && (
+          <>
+            <StatChip label="Units" value={toChip(get(thread, 'unitCount') || get(thread, 'unit_count') || get(thread, 'units'))} color="purple" />
+            <StatChip label="Rent Roll" value="Needs rent roll" color="amber" />
+            <StatChip label="NOI" value="Needs occupancy" color="amber" />
+            <StatChip label="Cap Rate" value="Needs NOI" color="amber" />
+          </>
+        )}
+      </div>
+    </section>
+  )
+}
+
+// ── Deal Intelligence Section ─────────────────────────────────────────────
+
+const DealIntelligenceSection = ({ thread }: { thread: InboxWorkflowThread }) => {
+  const estimatedValue = get(thread, 'estimatedValue') || get(thread, 'estimated_value') || get(thread, 'zestimate')
+  const repairCost = get(thread, 'estimatedRepairCost') || get(thread, 'estimated_repair_cost') || get(thread, 'estimatedRepairs')
+  const finalScore = thread.finalAcquisitionScore || get(thread, 'finalScore') || get(thread, 'final_acquisition_score')
+  const equity = get(thread, 'equityAmount') || get(thread, 'equity_amount') || get(thread, 'equity')
+  const motivationScore = get(thread, 'motivationScore') || get(thread, 'motivation_score')
+  const riskLevel = get(thread, 'riskLevel') || get(thread, 'risk_level')
+  const sentiment = thread.sentiment
+
+  return (
+    <CollapsibleIntelCard title="Deal Intelligence" icon="trending-up" accent="green">
+      <div className="nx-hero-values">
+        <HeroValueRow 
+          label="Estimated Value" 
+          value={fmtCurrency(estimatedValue) || 'Needs valuation'} 
+          accent="blue"
+        />
+        <HeroValueRow 
+          label="Repair Estimate" 
+          value={fmtCurrency(repairCost) || 'Needs inspection'} 
+        />
+        <HeroValueRow 
+          label="Final Score" 
+          value={fmtScore(finalScore) || 'Not scored'} 
+          accent={finalScore && Number(String(finalScore).replace(/[^0-9.]/g, '')) >= 70 ? 'green' : 'amber'}
+        />
+        {Boolean(equity) && !isMissingValue(equity) && (
+          <HeroValueRow 
+            label="Equity" 
+            value={fmtCurrency(equity) || asStr(equity)} 
+            accent="green"
+          />
+        )}
+        {Boolean(motivationScore) && !isMissingValue(motivationScore) && (
+          <HeroValueRow 
+            label="Motivation Score" 
+            value={fmtScore(motivationScore) || asStr(motivationScore)} 
+          />
+        )}
+        {Boolean(riskLevel) && !isMissingValue(riskLevel) && (
+          <HeroValueRow 
+            label="Risk Level" 
+            value={asStr(riskLevel)} 
+            accent={asStr(riskLevel).toLowerCase().includes('high') ? 'red' : 'amber'}
+          />
+        )}
+        {sentiment && !isMissingValue(sentiment) && (
+          <HeroValueRow 
+            label="Sentiment" 
+            value={asStr(sentiment)} 
+          />
+        )}
+      </div>
+    </CollapsibleIntelCard>
+  )
+}
+
+// ── Offer Intelligence Section ────────────────────────────────────────────
+
+const OfferIntelligenceSection = ({ thread }: { thread: InboxWorkflowThread }) => {
+  const cashOffer = get(thread, 'cashOffer') || get(thread, 'cash_offer') || get(thread, 'mao')
+  const arv = get(thread, 'arv') || get(thread, 'afterRepairValue')
+  const aiOffer = get(thread, 'aiRecommendedOffer') || get(thread, 'ai_offer') || get(thread, 'ai_recommended_opening_offer')
+  const targetContract = get(thread, 'targetContract') || get(thread, 'target_contract')
+  const walkaway = get(thread, 'walkawayPrice') || get(thread, 'walkaway_price') || get(thread, 'walkaway')
+  const offerConfidence = get(thread, 'offerConfidence') || get(thread, 'offer_confidence') || get(thread, 'confidenceBand')
+  const nextRequired = get(thread, 'nextRequiredInfo') || get(thread, 'next_required_info')
+
+  const multi = isMultifamily(thread)
+  const rentRoll = get(thread, 'rentRoll') || get(thread, 'rent_roll')
+
+  let aiOfferDisplay = 'Needs Underwriting'
+  if (aiOffer && !isMissingValue(aiOffer)) {
+    aiOfferDisplay = fmtCurrency(aiOffer) || normalizeText(aiOffer)
+  } else if (multi && (!rentRoll || isMissingValue(rentRoll))) {
+    aiOfferDisplay = 'Needs rent roll'
+  } else if (!arv || isMissingValue(arv)) {
+    aiOfferDisplay = 'Needs ARV'
+  } else if (!cashOffer || isMissingValue(cashOffer)) {
+    aiOfferDisplay = 'Needs condition'
+  }
+
+  let nextRequiredDisplay = 'Awaiting underwriting'
+  if (nextRequired && !isMissingValue(nextRequired)) {
+    nextRequiredDisplay = asStr(nextRequired)
+  } else if (multi && (!rentRoll || isMissingValue(rentRoll))) {
+    nextRequiredDisplay = 'Need rent roll / occupancy'
+  } else if (!arv || isMissingValue(arv)) {
+    nextRequiredDisplay = 'Need ARV verification'
+  }
+
+  return (
+    <CollapsibleIntelCard title="Offer Intelligence" icon="zap" accent="amber">
+      <div className="nx-offer-stack">
+        <div className="nx-offer-row nx-offer-row--legacy">
+          <div className="nx-offer-row__label">
+            <Icon name="clock" />
+            <span>Legacy Cash Offer</span>
+          </div>
+          <div className="nx-offer-row__value">
+            {fmtCurrency(cashOffer) || 'No offer generated'}
+          </div>
+        </div>
+
+        <div className="nx-offer-row nx-offer-row--ai">
+          <div className="nx-offer-row__label">
+            <Icon name="spark" />
+            <span>AI Recommended Opening</span>
+          </div>
+          <div className={cls('nx-offer-row__value', isMissingValue(aiOffer) && 'is-placeholder')}>
+            {aiOfferDisplay}
+          </div>
+        </div>
+
+        <div className="nx-offer-row">
+          <div className="nx-offer-row__label">
+            <span>Target Contract</span>
+          </div>
+          <div className="nx-offer-row__value">
+            {fmtCurrency(targetContract) || 'Pending'}
+          </div>
+        </div>
+
+        <div className="nx-offer-row nx-offer-row--internal">
+          <div className="nx-offer-row__label">
+            <Icon name="eye" />
+            <span>Walkaway (Internal)</span>
+          </div>
+          <div className={cls('nx-offer-row__value', isMissingValue(walkaway) && 'is-placeholder')}>
+            {fmtCurrency(walkaway) || 'Needs underwriting'}
+          </div>
+        </div>
+
+        {Boolean(offerConfidence) && !isMissingValue(offerConfidence) && (
+          <div className="nx-offer-row">
+            <div className="nx-offer-row__label">
+              <span>Offer Confidence</span>
+            </div>
+            <div className="nx-offer-row__value">
+              {asStr(offerConfidence)}
+            </div>
+          </div>
+        )}
+
+        <div className="nx-offer-row nx-offer-row--next">
+          <div className="nx-offer-row__label">
+            <Icon name="alert" />
+            <span>Next Required Info</span>
+          </div>
+          <div className="nx-offer-row__value is-placeholder">
+            {nextRequiredDisplay}
+          </div>
+        </div>
+      </div>
+    </CollapsibleIntelCard>
+  )
+}
+
+// ── Seller / Contact Intelligence Section ─────────────────────────────────
+
+const SellerContactSection = ({ thread }: { thread: InboxWorkflowThread }) => {
+  const ownerName = thread.ownerDisplayName || thread.ownerName || normalizeText(get(thread, 'owner_display_name'))
+  const phone = thread.phoneNumber || thread.canonicalE164 || normalizeText(get(thread, 'seller_phone'))
+  const phoneType = get(thread, 'phoneType') || get(thread, 'phone_type')
+  const phoneConfidence = get(thread, 'phoneConfidence') || get(thread, 'phone_confidence')
+  const language = get(thread, 'contactLanguage') || get(thread, 'language') || get(thread, 'seller_language')
+  const lastIntent = thread.uiIntent || normalizeText(get(thread, 'lastIntent')) || normalizeText(get(thread, 'last_intent'))
+  const sellerPersona = get(thread, 'sellerPersona') || get(thread, 'seller_persona')
+  const ownerType = get(thread, 'ownerType') || get(thread, 'owner_type')
+
+  const initials = ownerName ? ownerName.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase() : '?'
+
+  return (
+    <CollapsibleIntelCard title="Seller / Contact" icon="user" accent="blue">
+      <div className="nx-contact-card">
+        <div className="nx-contact-avatar">
+          {initials}
+        </div>
+        <div className="nx-contact-info">
+          <strong>{ownerName || 'Unknown Seller'}</strong>
+          {Boolean(ownerType) && !isMissingValue(ownerType) && <span className="nx-contact-type">{asStr(ownerType)}</span>}
+        </div>
+      </div>
+      <div className="nx-contact-details">
+        {Boolean(phone) && <div className="nx-contact-row"><small>Best Phone</small><b>{phone}</b></div>}
+        {Boolean(phoneType) && !isMissingValue(phoneType) && <div className="nx-contact-row"><small>Phone Type</small><b>{asStr(phoneType)}</b></div>}
+        {Boolean(phoneConfidence) && !isMissingValue(phoneConfidence) && <div className="nx-contact-row"><small>Contact Confidence</small><b>{asStr(phoneConfidence)}</b></div>}
+        {Boolean(language) && !isMissingValue(language) && <div className="nx-contact-row"><small>Language</small><b>{asStr(language)}</b></div>}
+        {Boolean(lastIntent) && !isMissingValue(lastIntent) && <div className="nx-contact-row"><small>Last Intent</small><b>{asStr(lastIntent)}</b></div>}
+        {Boolean(sellerPersona) && !isMissingValue(sellerPersona) && <div className="nx-contact-row"><small>Seller Persona</small><b>{asStr(sellerPersona)}</b></div>}
+        <div className="nx-contact-row"><small>Last Contact</small><b>{formatRelativeTime(thread.lastOutboundAt || thread.lastMessageAt)}</b></div>
+      </div>
+    </CollapsibleIntelCard>
+  )
+}
+
+// ── Automation Timeline Section ───────────────────────────────────────────
+
+const AutomationTimelineSection = ({ thread }: { thread: InboxWorkflowThread }) => {
+  const firstTouchAt = normalizeText(get(thread, 'firstTouchAt') || get(thread, 'first_touch_at') || thread.updatedAt)
+  const sellerRepliedAt = normalizeText(get(thread, 'sellerRepliedAt') || get(thread, 'seller_replied_at') || thread.lastInboundAt)
+  const stageVisual = getSellerStageVisual(thread.conversationStage)
+  const autoVisual = automationStateVisuals[thread.automationState]
+  const queueStatus = thread.queueStatus
+
+  const timelineItems = [
+    { label: 'First Touch Sent', time: firstTouchAt, done: Boolean(firstTouchAt), icon: 'send' },
+    { label: 'Seller Replied', time: sellerRepliedAt, done: Boolean(sellerRepliedAt), icon: 'message' },
+    { label: 'Current Stage', time: '', done: true, active: true, icon: 'layers', label_extra: stageVisual.label },
+    { label: 'Automation', time: '', done: true, icon: 'bolt', label_extra: autoVisual.label },
+    { label: 'Queue Status', time: '', done: Boolean(queueStatus), icon: 'clock', label_extra: asStr(queueStatus) || 'Healthy' },
+  ]
+
+  return (
+    <CollapsibleIntelCard title="Automation Timeline" icon="activity" defaultExpanded={false}>
+      <div className="nx-timeline">
+        {timelineItems.map((item, idx) => (
+          <div key={idx} className={cls('nx-timeline-item', item.done && 'is-done', item.active && 'is-active')}>
+            <div className="nx-timeline-dot" />
+            <div className="nx-timeline-content">
+              <div className="nx-timeline-label">
+                <span>{item.label}</span>
+                {item.label_extra && <span className="nx-timeline-extra">{item.label_extra}</span>}
+              </div>
+              {item.time && <small>{formatRelativeTime(item.time)}</small>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </CollapsibleIntelCard>
+  )
+}
+
+// ── Next Best Action Section ──────────────────────────────────────────────
+
+const NextBestActionSection = ({ thread, isSuppressed }: { thread: InboxWorkflowThread; isSuppressed: boolean }) => {
+  const nextAction = thread.nextSystemAction || 'Review thread and determine next step'
+  const aiDraft = thread.aiDraft
+
+  return (
+    <section className="nx-intel-card nx-next-best-card">
+      <header className="nx-section-header">
+        <Icon name="spark" />
+        <span>Next Best Action</span>
+      </header>
+      <p className="nx-next-best__text">{nextAction}</p>
+      {aiDraft && !isSuppressed && (
+        <div className="nx-next-best__draft">
+          <small>AI Draft</small>
+          <p>{aiDraft}</p>
+        </div>
+      )}
+      <div className="nx-next-best__actions">
+        <button type="button" className="nx-nb-btn nx-nb-btn--primary" disabled={isSuppressed}>
+          <Icon name="clock" />
+          <span>Queue Reply</span>
+        </button>
+        <button type="button" className="nx-nb-btn">
+          <Icon name="file-text" />
+          <span>Edit</span>
+        </button>
+        <button type="button" className="nx-nb-btn nx-nb-btn--warn">
+          <Icon name="alert" />
+          <span>Mark Review</span>
+        </button>
+        <button type="button" className="nx-nb-btn nx-nb-btn--danger" disabled={isSuppressed}>
+          <Icon name="shield" />
+          <span>Suppress</span>
+        </button>
+      </div>
+    </section>
+  )
+}
+
+// ── Main Intelligence Panel ───────────────────────────────────────────────
+
+interface IntelligencePanelProps {
+  thread: InboxWorkflowThread | null
+  context: ThreadContext | null
+  intelligence: ThreadIntelligenceRecord | null
+  messages: ThreadMessage[]
+  isSuppressed: boolean
+  panelMode?: Exclude<PanelMode, 'hidden'>
+  onCollapse: () => void
+  onOpenMap: () => void
+  onOpenDossier: () => void
+  onOpenAi: () => void
+  onStatusChange: (status: InboxStatus) => void
+  onStageChange: (stage: SellerStage) => void
+}
 
 export const IntelligencePanel = (props: IntelligencePanelProps) => {
   const {
@@ -381,43 +724,46 @@ export const IntelligencePanel = (props: IntelligencePanelProps) => {
       </header>
 
       <div className="nx-intel-scroll-body">
-         <WorkflowControlCard 
-            thread={thread} 
-            onStatusChange={onStatusChange} 
-            onStageChange={onStageChange} 
-         />
-         <PropertySnapshotCard thread={thread} intelligence={intelligence} />
-         <DealIntelligenceCard thread={thread} />
-         <OwnerContactCard thread={thread} intelligence={intelligence} />
-         <AutomationMetadataCard thread={thread} intelligence={intelligence} />
+        <WorkflowControlCard 
+          thread={thread} 
+          onStatusChange={onStatusChange} 
+          onStageChange={onStageChange} 
+        />
+        <PropertyHeroCard thread={thread} intelligence={intelligence} />
+        <PropertySnapshotSection thread={thread} />
+        <DealIntelligenceSection thread={thread} />
+        <OfferIntelligenceSection thread={thread} />
+        <SellerContactSection thread={thread} />
+        <AutomationTimelineSection thread={thread} />
+        <NextBestActionSection thread={thread} isSuppressed={isSuppressed} />
 
-         <div className="nx-intel-action-rail">
-            <button 
-              type="button" 
-              className="nx-intel-action-btn" 
-              onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpenMap(); }}
-            >
-              <Icon name="map" />
-              <span>Map</span>
-            </button>
-            <button 
-              type="button" 
-              className="nx-intel-action-btn" 
-              onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpenDossier(); }}
-            >
-              <Icon name="briefing" />
-              <span>Dossier</span>
-            </button>
-            <button 
-              type="button" 
-              className="nx-intel-action-btn" 
-              onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpenAi(); }} 
-              disabled={isSuppressed}
-            >
-              <Icon name="spark" />
-              <span>AI Assist</span>
-            </button>
-         </div>
+        <div className="nx-intel-action-rail">
+          <button 
+            type="button" 
+            className="nx-intel-action-btn" 
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpenMap(); }}
+          >
+            <Icon name="map" />
+            <span>Map</span>
+          </button>
+          <button 
+            type="button" 
+            className="nx-intel-action-btn" 
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpenDossier(); }}
+          >
+            <Icon name="briefing" />
+            <span>Dossier</span>
+          </button>
+          <button 
+            type="button" 
+            className="nx-intel-action-btn" 
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpenAi(); }} 
+            disabled={isSuppressed}
+          >
+            <Icon name="spark" />
+            <span>AI Assist</span>
+          </button>
+        </div>
       </div>
     </aside>
   )

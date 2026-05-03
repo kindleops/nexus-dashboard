@@ -281,8 +281,29 @@ const withWorkflowState = (
 
   const lastMessageAt = thread.lastMessageIso || new Date().toISOString()
 
+  let ownerName = thread.ownerName
+  let ownerDisplayName = thread.ownerDisplayName
+  let subject = thread.subject
+  let propertyAddressFull = thread.propertyAddressFull
+
+  if (stateRow?.metadata) {
+    const meta = stateRow.metadata as AnyRecord
+    if (meta.owner_name) {
+      ownerName = asString(meta.owner_name, ownerName)
+      ownerDisplayName = ownerName
+    }
+    if (meta.property_address) {
+      subject = asString(meta.property_address, subject)
+      propertyAddressFull = subject
+    }
+  }
+
   return {
     ...thread,
+    ownerName,
+    ownerDisplayName,
+    subject,
+    propertyAddressFull,
     threadKey: toThreadKey(thread),
     inboxStatus,
     conversationStage,
@@ -578,7 +599,7 @@ export const fetchInboxThreads = async (params: InboxThreadsQuery = {}): Promise
         chunk(keys, 40).map((keyBatch) => (
           supabase
             .from('inbox_thread_state')
-            .select('thread_key,stage,status,priority,is_archived,is_read,is_pinned,is_starred,is_hidden,is_suppressed,last_read_at,archived_at,updated_at')
+            .select('thread_key,stage,status,priority,is_archived,is_read,is_pinned,is_starred,is_hidden,is_suppressed,last_read_at,archived_at,updated_at,metadata')
             .in('thread_key', keyBatch)
         )),
       )
