@@ -141,6 +141,22 @@ const buildPhoneVariants = (phone: string): string[] => {
   return Array.from(out)
 }
 
+const buildMessageEventFilter = (thread: InboxThread): string => {
+  const terms = [
+    thread.phoneNumber ? `from_phone_number.eq.${safeFilterValue(thread.phoneNumber)}` : '',
+    thread.phoneNumber ? `to_phone_number.eq.${safeFilterValue(thread.phoneNumber)}` : '',
+    thread.canonicalE164 ? `from_phone_number.eq.${safeFilterValue(thread.canonicalE164)}` : '',
+    thread.canonicalE164 ? `to_phone_number.eq.${safeFilterValue(thread.canonicalE164)}` : '',
+    thread.threadKey ? `message_event_key.eq.${safeFilterValue(thread.threadKey)}` : '',
+    thread.ownerId ? `master_owner_id.eq.${safeFilterValue(thread.ownerId)}` : '',
+    thread.prospectId ? `prospect_id.eq.${safeFilterValue(thread.prospectId)}` : '',
+    thread.propertyId ? `property_id.eq.${safeFilterValue(thread.propertyId)}` : '',
+    thread.id ? `thread_id.eq.${safeFilterValue(thread.id)}` : '',
+    thread.id ? `conversation_id.eq.${safeFilterValue(thread.id)}` : '',
+  ].filter(Boolean)
+  return terms.join(',')
+}
+
 const isMissingSchemaError = (err: unknown): boolean => {
   const code = (err as { code?: string } | null)?.code
   return code === '42P01' || code === '42703'
@@ -172,7 +188,7 @@ const inferInboxStatus = (
   thread: InboxThread,
   queueRow: AnyRecord | null,
 ): InboxStatus => {
-  const isArchived = Boolean(thread.isArchived || thread.status === 'archived')
+  const isArchived = Boolean((thread as any).isArchived || thread.status === 'archived')
   if (isArchived) return 'closed'
   
   if (thread.isOptOut) return 'suppressed'
@@ -199,7 +215,7 @@ const inferInboxStatus = (
 const inferSellerStage = (thread: InboxThread): SellerStage => {
   if (thread.isOptOut) return 'dead_suppressed'
   
-  const rawStage = asString((thread as any).current_stage || (thread as any).stage_code || (thread as any).workflowStage || thread.inboxStage, '').toLowerCase()
+  const rawStage = asString((thread as any).current_stage || (thread as any).stage_code || (thread as any).workflowStage || (thread as any).inboxStage, '').toLowerCase()
   if (rawStage.includes('owner')) return 'ownership_check'
   if (rawStage.includes('probe') || rawStage.includes('interest')) return 'interest_probe'
   if (rawStage.includes('discovery') || rawStage.includes('price')) return 'price_discovery'
@@ -209,7 +225,7 @@ const inferSellerStage = (thread: InboxThread): SellerStage => {
   if (rawStage.includes('contract') || rawStage.includes('path')) return 'contract_path'
   
   // Fallback to template use case
-  const useCase = asString(thread.templateUseCase || (thread as any).template_use_case, '').toLowerCase()
+  const useCase = asString((thread as any).templateUseCase || (thread as any).template_use_case, '').toLowerCase()
   if (useCase.includes('initial')) return 'ownership_check'
   if (useCase.includes('follow')) return 'interest_probe'
   if (useCase.includes('offer')) return 'offer_reveal'
@@ -218,7 +234,7 @@ const inferSellerStage = (thread: InboxThread): SellerStage => {
 }
 
 const getAutomationState = (thread: InboxThread): AutomationState => {
-  if (thread.isArchived || thread.isOptOut || thread.status === 'archived') return 'completed'
+  if ((thread as any).isArchived || thread.isOptOut || thread.status === 'archived') return 'completed'
   if (thread.uiIntent === 'info_request' || thread.uiIntent === 'needs_review') return 'manual_control'
   return 'active'
 }
@@ -233,6 +249,17 @@ const getNextSystemAction = (status: InboxStatus): string => {
   return 'Manual operator intervention recommended.'
 }
 
+const queueStateForThread = (thread: InboxThread, queueRows: AnyRecord[]): AnyRecord | null => {
+  const phoneVariants = buildPhoneVariants(thread.phoneNumber || thread.canonicalE164 || '')
+  return queueRows.find((row) => {
+    if (thread.id && row['thread_id'] === thread.id) return true
+    if (thread.id && row['conversation_id'] === thread.id) return true
+    if (thread.threadKey && row['queue_key'] === thread.threadKey) return true
+    if (row['to_phone_number'] && phoneVariants.includes(normalizePhone(row['to_phone_number']))) return true
+    return false
+  }) ?? null
+}
+
 const withWorkflowState = (
   thread: InboxThread,
   stateRow: AnyRecord | null,
@@ -241,7 +268,7 @@ const withWorkflowState = (
   const hasStateRow = Boolean(stateRow)
   const queueStatus = normalizeStatus(queueRow?.['queue_status'] ?? queueRow?.['status'] ?? '') || null
   
-  const isArchived = hasStateRow ? asBoolean(stateRow?.['is_archived'], false) : Boolean(thread.isArchived || thread.status === 'archived')
+  const isArchived = hasStateRow ? asBoolean(stateRow?.['is_archived'], false) : Boolean((thread as any).isArchived || thread.status === 'archived')
   const isRead = hasStateRow ? asBoolean(stateRow?.['is_read'], false) : !thread.unread
   
   const inboxStatus = hasStateRow 
@@ -779,7 +806,7 @@ export const hideThread = async (thread: InboxThread): Promise<WorkflowMutationR
   return persistWorkflowPatch(thread, { isHidden: true })
 }
 
-export const unhideThread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
+export const unhideThread = async (thread: InboxWorkflowThread): Promise<WorkflowMutationResult> => {
   return persistWorkflowPatch(thread, { isHidden: false })
 }
 

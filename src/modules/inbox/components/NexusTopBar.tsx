@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useEffect } from 'react'
 import type { QueueProcessorHealth } from '../../../lib/data/inboxData'
-import type { InboxStage, InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
+import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
 import { formatRelativeTime } from '../../../shared/formatters'
 import type { ActiveOverlay, NexusTheme } from '../inbox-layout-state'
-import { getStatusVisual, inboxStatusOptions, statusStyleVars } from '../status-visuals'
+import { getStatusVisual, getSellerStageVisual, automationStateVisuals } from '../status-visuals'
 import { buildInboxNotifications, NexusNotificationCenter, type NexusNotification } from './NexusNotificationCenter'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
@@ -17,8 +17,6 @@ interface NexusTopBarProps {
   onSelectSearchResult: (id: string) => void
   selectedThread: InboxWorkflowThread | null
   isSuppressed: boolean
-  onStageChange: (stage: InboxStage) => void
-  statusCounts: Partial<Record<InboxStage, number>>
   notificationCount: number
   queueProcessorHealth: QueueProcessorHealth | null
   queueProcessorHealthLoading: boolean
@@ -34,12 +32,6 @@ interface NexusTopBarProps {
   onOpenKpis: () => void
   onOpenActivity: () => void
   onResetLayout: () => void
-}
-
-const stageLabel = (thread: InboxWorkflowThread | null, isSuppressed: boolean) => {
-  if (!thread) return 'No Thread'
-  if (isSuppressed) return 'Suppressed'
-  return getStatusVisual(thread.inboxStage).label
 }
 
 const fallback = (value: unknown, placeholder = 'Unknown') => {
@@ -95,7 +87,6 @@ export const NexusTopBar = ({
   searchResults,
   onSelectSearchResult,
   selectedThread,
-  isSuppressed,
   notificationCount,
   queueProcessorHealth,
   queueProcessorHealthLoading,

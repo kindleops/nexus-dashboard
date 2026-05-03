@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState } from 'react'
 import type { ThreadContext, ThreadIntelligenceRecord, ThreadMessage } from '../../../lib/data/inboxData'
 import type { InboxStatus, SellerStage, InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import type { PanelMode } from '../inbox-layout-state'
@@ -30,6 +30,7 @@ const WorkflowControlCard = ({
   onStageChange: (stage: SellerStage) => void
 }) => {
   const [statusOpen, setStatusOpen] = useState(false)
+  const [stageOpen, setStageOpen] = useState(false)
   const statusVisual = getStatusVisual(thread.inboxStatus)
   const stageVisual = getSellerStageVisual(thread.conversationStage)
   const autoVisual = automationStateVisuals[thread.automationState]
@@ -46,6 +47,19 @@ const WorkflowControlCard = ({
     }
     onStatusChange(status)
     setStatusOpen(false)
+  }
+
+  const handleStageChange = (stage: SellerStage) => {
+    if (DEV) {
+      console.log(`[NexusWorkflowStatus]`, {
+        action: 'stage_change',
+        thread_id: thread.id.slice(-8),
+        old_stage: thread.conversationStage,
+        new_stage: stage
+      })
+    }
+    onStageChange(stage)
+    setStageOpen(false)
   }
 
   return (
@@ -94,21 +108,53 @@ const WorkflowControlCard = ({
         {/* Row 2: Seller Stage (Automated Flow) */}
         <div className="nx-workflow-row">
           <label>Seller Stage</label>
-          <div className="nx-stage-indicator">
-            <div className="nx-stage-progress">
-              {sellerStageOptions.map((opt, idx) => {
-                const isCurrent = opt.value === thread.conversationStage
-                const isPast = !isCurrent && sellerStageOptions.findIndex(o => o.value === thread.conversationStage) > idx
-                return (
-                  <div 
-                    key={opt.value} 
-                    className={cls('nx-stage-step', isCurrent && 'is-current', isPast && 'is-past')}
-                    title={opt.label}
-                  />
-                )
-              })}
+          <div className="nx-status-dropdown-wrap">
+            <button
+              type="button"
+              className="nx-workflow-status-btn"
+              style={statusStyleVars(stageVisual)}
+              onClick={() => setStageOpen(!stageOpen)}
+            >
+              <i className="nx-status-dot" />
+              <span>{stageVisual.label}</span>
+              <Icon name="chevron-down" />
+            </button>
+            
+            <div className="nx-stage-indicator" style={{ marginTop: 8 }}>
+              <div className="nx-stage-progress">
+                {sellerStageOptions.map((opt, idx) => {
+                  const isCurrent = opt.value === thread.conversationStage
+                  const isPast = !isCurrent && sellerStageOptions.findIndex(o => o.value === thread.conversationStage) > idx
+                  return (
+                    <div 
+                      key={opt.value} 
+                      className={cls('nx-stage-step', isCurrent && 'is-current', isPast && 'is-past')}
+                      title={opt.label}
+                    />
+                  )
+                })}
+              </div>
             </div>
-            <strong className="nx-stage-current-label">{stageVisual.label}</strong>
+
+            {stageOpen && (
+              <div className="nx-status-menu nx-liquid-panel">
+                {sellerStageOptions.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    className={cls(opt.value === thread.conversationStage && 'is-selected')}
+                    style={statusStyleVars(opt)}
+                    onClick={() => handleStageChange(opt.value as SellerStage)}
+                  >
+                    <i className="nx-status-dot" />
+                    <span>
+                      <strong>{opt.label}</strong>
+                      <small>{opt.description}</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 

@@ -77,7 +77,7 @@ export const buildInboxNotifications = ({
     })
   }
 
-  if (selectedThread?.inboxStage === 'needs_offer') {
+  if (selectedThread?.conversationStage === 'offer_reveal') {
     notifications.push({
       id: `offer-needed-${selectedThread.id}`,
       command_space: 'Offers',
@@ -100,7 +100,7 @@ export const buildInboxNotifications = ({
     })
   }
 
-  if (selectedThread?.isOptOut || selectedThread?.inboxStage === 'dnc_opt_out') {
+  if (selectedThread?.isOptOut || selectedThread?.inboxStatus === 'suppressed') {
     notifications.push({
       id: `suppressed-${selectedThread.id}`,
       command_space: 'SMS',

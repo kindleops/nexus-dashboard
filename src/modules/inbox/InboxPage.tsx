@@ -4,6 +4,7 @@ import { pushRoutePath } from '../../app/router'
 import { useInboxData, toWorkflowThread } from './inbox.adapter'
 import {
   updateThreadStage,
+  updateThreadStatus,
   starThread,
   unstarThread,
   pinThread,
@@ -12,7 +13,8 @@ import {
   unarchiveThread,
   markThreadRead,
   markThreadUnread,
-  type InboxStage,
+  type InboxStatus,
+  type SellerStage,
   type InboxWorkflowThread,
 } from '../../lib/data/inboxWorkflowData'
 import {
@@ -154,19 +156,12 @@ export default function InboxPage() {
   }, [rawThreads, optimisticPatches])
 
   const advancedFilterOptions = useMemo(() => getAdvancedFilterOptions(threads), [threads])
-  const statusCounts = useMemo(() => (
-    threads.reduce<Partial<Record<InboxStatus, number>>>((counts, thread) => {
-      counts[thread.inboxStatus] = (counts[thread.inboxStatus] ?? 0) + 1
-      return counts
-    }, {})
-  ), [threads])
-
+  
   const viewCounts = useMemo(() => {
     const local = getInboxViewCounts(threads)
     const pick = (backend: number | null | undefined, localVal: number) => {
       if (data.dataMode !== 'live') return localVal
       if (backend !== null && backend !== undefined) return backend
-      // Do NOT fallback to localVal 0 if we are in live mode but backend is still loading/null
       return null
     }
 
@@ -339,7 +334,7 @@ export default function InboxPage() {
     if (config.stage) setStageFilter(config.stage)
     if (config.view) setViewFilter(config.view)
     if (config.advanced) setAdvancedFilters((current) => ({ ...current, ...config.advanced }))
-  }, [])
+  }, [DEV])
 
   const applyRightSavedPreset = useCallback((preset: InboxSavedFilterPreset) => {
     if (DEV) {
@@ -355,7 +350,7 @@ export default function InboxPage() {
     if (config.stage) setRightStageFilter(config.stage)
     if (config.view) setRightViewFilter(config.view)
     if (config.advanced) setRightAdvancedFilters((current) => ({ ...current, ...config.advanced }))
-  }, [])
+  }, [DEV])
 
   const setActiveOverlay = useCallback((activeOverlay: ActiveOverlay) => {
     setLayoutState((current) => ({ ...current, activeOverlay }))
@@ -685,7 +680,7 @@ export default function InboxPage() {
     } catch (err) {
       emitNotification({ title: 'Error', detail: String(err), severity: 'critical' })
     }
-  }, [refreshInbox, liveThreadQuery])
+  }, [refreshInbox, liveThreadQuery, DEV])
 
   const handleThreadAction = useCallback(async (target: string | InboxWorkflowThread, action: string) => {
     const thread = typeof target === 'string' ? threads.find((t) => t.id === target) : target

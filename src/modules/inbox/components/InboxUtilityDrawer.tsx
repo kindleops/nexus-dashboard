@@ -25,7 +25,7 @@ export const MapDossierDrawer = ({
 }) => {
   const title = mode === 'map' ? 'Map View' : 'Deal Dossier'
   const address = fallback(context?.property?.address || thread?.propertyAddress || thread?.subject, 'Property Unknown')
-  const statusVisual = getStatusVisual(thread?.inboxStage, Boolean(thread?.isOptOut || thread?.inboxStatus === 'suppressed'))
+  const statusVisual = getStatusVisual(thread?.inboxStatus)
   const record = (thread ?? {}) as Record<string, unknown>
   const propertyRecord = (context?.property ?? {}) as Record<string, unknown>
   const lat = record['latitude'] ?? record['lat'] ?? propertyRecord['latitude'] ?? propertyRecord['lat']

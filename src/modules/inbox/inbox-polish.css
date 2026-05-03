@@ -550,8 +550,8 @@
 
 /* ── Thread row: meta row compact, no wrap ───────────────────────────────── */
 .nx-conversation-row__meta {
-  flex-wrap: nowrap;
-  overflow: hidden;
+  flex-wrap: wrap;
+  overflow: visible;
   gap: 5px;
   margin-top: 3px;
 }

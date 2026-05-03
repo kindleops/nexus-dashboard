@@ -1,4 +1,4 @@
-import { memo, useCallback } from 'react'
+import { memo } from 'react'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
 import { formatRelativeTime } from '../../../shared/formatters'
@@ -10,7 +10,7 @@ import {
   type InboxViewSelectValue,
   savedFilterOptions,
 } from '../inbox-ui-helpers'
-import { getStatusVisual, getSellerStageVisual, statusStyleVars, automationStateVisuals } from '../status-visuals'
+import { getStatusVisual, getSellerStageVisual, statusStyleVars } from '../status-visuals'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
@@ -150,11 +150,11 @@ export const ConversationRow = memo(({
         {/* Row 4: Footer (Badges + Hover Actions) */}
         <div className="nx-conversation-row__footer">
           <div className="nx-conversation-row__meta">
-            <span className="nx-stage-pill nx-status-pill" style={{ '--pill-color': visual.color, '--pill-bg': visual.bg, '--pill-border': visual.border } as Record<string, string>}>
+            <span className="nx-stage-pill nx-status-pill" style={{ color: visual.color, background: visual.bg, borderColor: visual.border }}>
               <i className="nx-status-dot" style={{ background: visual.dot }} />
               {visual.label}
             </span>
-            <span className="nx-stage-pill nx-conv-stage-pill">
+            <span className="nx-stage-pill nx-conv-stage-pill" style={{ color: stageVisual.color, background: stageVisual.bg, borderColor: stageVisual.border }}>
               {stageVisual.label}
             </span>
             <span className="nx-market-tag">{market}</span>

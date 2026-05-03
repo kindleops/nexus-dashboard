@@ -3,7 +3,7 @@ import type { CommandCenterStore } from '../../domain/types'
 import { formatRelativeTime } from '../../shared/formatters'
 import { fetchInboxModel, type InboxFetchOptions } from '../../lib/data/inboxData'
 import { isDev, shouldUseSupabase, useSupabaseData } from '../../lib/data/shared'
-import type { InboxWorkflowThread } from '../../lib/data/inboxWorkflowData'
+import type { InboxWorkflowThread, InboxStatus, SellerStage, AutomationState } from '../../lib/data/inboxWorkflowData'
 import { hasSupabaseEnv, supabaseAnonKeyPresent, supabaseUrlPresent } from '../../lib/supabaseClient'
 import { getSupabaseClient } from '../../lib/supabaseClient'
 
@@ -289,11 +289,17 @@ export const loadInbox = async (options: InboxFetchOptions = {}): Promise<InboxM
 
 export const toWorkflowThread = (t: InboxThread): InboxWorkflowThread => {
   const lastAt = t.lastMessageIso || new Date().toISOString()
+  const inboxStatus = (t.threadWorkflowStatus || (t.status === 'unread' ? 'new_reply' : 'waiting')) as InboxStatus
+  const conversationStage = (t.threadWorkflowStage || 'ownership_check') as SellerStage
+
   return {
     ...t,
     threadKey: t.threadKey || t.id,
-    inboxStatus: (t.threadWorkflowStatus || (t.status === 'unread' ? 'unread' : 'open')) as InboxWorkflowThread['inboxStatus'],
-    inboxStage: (t.threadWorkflowStage || 'needs_response') as InboxWorkflowThread['inboxStage'],
+    inboxStatus,
+    conversationStage,
+    inboxStage: conversationStage,
+    automationState: (t.threadIsArchived || t.threadIsSuppressed ? 'completed' : 'active') as AutomationState,
+    nextSystemAction: 'Review thread for system recommended next steps.',
     isArchived: t.threadIsArchived ?? (t.status === 'archived'),
     isRead: t.threadIsRead ?? (t.status === 'read' || t.unreadCount === 0),
     isPinned: t.threadIsPinned ?? false,
@@ -308,7 +314,7 @@ export const toWorkflowThread = (t: InboxThread): InboxWorkflowThread => {
     lastDirection: (t.directionUsed === 'inbound' || t.directionUsed === 'outbound' ? t.directionUsed : 'unknown'),
     updatedAt: lastAt,
     queueStatus: t.queueId ? 'queued' : null,
-  }
+  } as InboxWorkflowThread
 }
 
 const EMPTY_MODEL: InboxModel = {

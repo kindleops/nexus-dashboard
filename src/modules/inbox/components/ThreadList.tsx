@@ -1,5 +1,5 @@
 import { useMemo, useState, memo } from 'react'
-import type { InboxWorkflowThread, InboxStatusTab, InboxThreadsQuery, InboxStage } from '../../../lib/data/inboxWorkflowData'
+import type { InboxWorkflowThread, InboxStatusTab, InboxThreadsQuery, SellerStage } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
 import { formatRelativeTime } from '../../../shared/formatters'
 
@@ -17,7 +17,7 @@ interface ThreadListProps {
   searchQuery: string
   setSearchQuery: (q: string) => void
   loadingError?: string | null
-  onUpdateStage?: (id: string, stage: InboxStage) => void
+  onUpdateStage?: (id: string, stage: SellerStage) => void
   onArchive?: (thread: InboxWorkflowThread) => void
   onMarkRead?: (thread: InboxWorkflowThread) => void
 }
@@ -38,7 +38,7 @@ const ThreadRow = memo(({ thread, isSelected, onSelect }: { thread: InboxWorkflo
       <div className="nx-thread-row__subject">{thread.subject}</div>
       <div className="nx-thread-row__preview">{thread.preview}</div>
       <div className="nx-thread-row__meta">
-        <span className={cls('nx-stage-pill', `is-${thread.inboxStage}`)}>{thread.inboxStage}</span>
+        <span className={cls('nx-stage-pill', `is-${thread.inboxStatus}`)}>{thread.inboxStatus.replace(/_/g, ' ')}</span>
         {thread.unreadCount > 0 && <span className="nx-unread-dot" />}
       </div>
     </div>
@@ -59,7 +59,7 @@ export const ThreadList = memo(({
 
   const filtered = useMemo(() => {
     return threads.filter(t => {
-      const matchTab = workflowTab === 'all' || t.inboxStage === workflowTab
+      const matchTab = workflowTab === 'all' || (t.inboxStatus as any) === workflowTab
       const matchSearch = !searchQuery || 
         t.ownerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
         t.subject.toLowerCase().includes(searchQuery.toLowerCase())
@@ -98,18 +98,18 @@ export const ThreadList = memo(({
         </div>
 
         <div className="nx-quick-stages">
-          {(['all', 'lead', 'qualified', 'offer'] as InboxStatusTab[]).map(stage => (
+          {(['all', 'priority', 'needs_response', 'sent'] as InboxStatusTab[]).map(tab => (
             <button 
-              key={stage}
+              key={tab}
               type="button"
-              className={cls('nx-stage-filter', workflowTab === stage && 'is-active')}
+              className={cls('nx-stage-filter', workflowTab === tab && 'is-active')}
               onClick={(e) => {
                 e.preventDefault()
                 e.stopPropagation()
-                setWorkflowTab(stage)
+                setWorkflowTab(tab)
               }}
             >
-              {stage}
+              {tab.replace(/_/g, ' ')}
             </button>
           ))}
         </div>

@@ -50,8 +50,9 @@ export const buildPropertyExternalLinks = (address: string | null): ExternalLink
  * Build Google Street View API URL for an address.
  */
 export const buildStreetViewUrl = (address: string | null): string | null => {
-  if (!address || !GOOGLE_MAPS_API_KEY) return null
-  return `https://maps.googleapis.com/maps/api/streetview?size=600x300&location=${encodeURIComponent(address)}&fov=70&key=${GOOGLE_MAPS_API_KEY}`
+  if (!address) return null
+  const apiKey = GOOGLE_MAPS_API_KEY || 'AIzaSyAhOk7KZkduU4qywmrlq5ZqSOtgktHYiFk'
+  return `https://maps.googleapis.com/maps/api/streetview?size=600x300&location=${encodeURIComponent(address)}&fov=70&key=${apiKey}`
 }
 
 /**

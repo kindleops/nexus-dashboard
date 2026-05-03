@@ -3,10 +3,9 @@ import { createPortal } from 'react-dom'
 import { Icon } from '../../../shared/icons'
 import type {
   InboxAdvancedFilters,
-  InboxStageSelectValue,
-  InboxViewSelectValue,
 } from '../inbox-ui-helpers'
-import { stageOptions, viewOptions } from '../inbox-ui-helpers'
+import { type InboxViewSelectValue, type InboxStageSelectValue } from '../inbox-ui-helpers'
+import { inboxStatusOptions, sellerStageOptions } from '../status-visuals'
 import type { AdvancedFilterOptions } from './InboxSidebar'
 
 interface AdvancedFiltersPopoverProps {

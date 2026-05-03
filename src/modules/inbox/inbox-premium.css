@@ -727,6 +727,7 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
+  flex-wrap: wrap;
 }
 
 .nx-conversation-row__top strong {
@@ -821,8 +822,7 @@
   color: #cfe5ff;
   border: 1px solid rgba(91,182,255,0.24);
   background: var(--accent-cyan-soft);
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nx-stage-pill {
@@ -3109,7 +3109,10 @@
 .nx-liquid-popover--processor {
   right: 0;
   width: 292px;
-  backdrop-filter: blur(40px) saturate(180%);
+  background: rgba(15, 20, 31, 0.92) !important;
+  backdrop-filter: blur(48px) saturate(210%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.75), inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
 }
 
 .nx-processor-pop-grid {
@@ -4597,6 +4600,8 @@
 .nx-intelligence-panel .nx-intel-scroll-body {
   flex: 1 1 auto;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   padding: 10px 14px 18px;
   overflow-y: auto !important;
@@ -4867,6 +4872,7 @@
   background: var(--bg-panel-elevated);
   overflow: hidden;
   transition: all 0.2s ease;
+  flex-shrink: 0;
 }
 
 .nx-intel-card__header {
@@ -5805,10 +5811,12 @@
   left: 0 !important;
   z-index: 12070 !important;
   min-width: 320px !important;
-  max-height: 540px !important;
+  max-height: 440px !important;
+  overflow-y: auto !important;
   padding: 10px !important;
   border-radius: 16px !important;
-  display: grid !important;
+  display: flex !important;
+  flex-direction: column !important;
   gap: 6px !important;
   box-shadow: 0 32px 80px rgba(0,0,0,0.7) !important;
   animation: nx-popover-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
@@ -5925,6 +5933,9 @@
 .nx-workflow-card {
   padding: 16px;
   background: rgba(255, 255, 255, 0.03);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  overflow: visible !important;
 }
 
 .nx-workflow-body {
@@ -6071,15 +6082,78 @@
 
 /* ── SIDEBAR CONV STAGE PILL ─────────────────────────────────────────── */
 .nx-conv-stage-pill {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.45);
+  background: var(--pill-bg, rgba(255, 255, 255, 0.05));
+  border-color: var(--pill-border, rgba(255, 255, 255, 0.1));
+  color: var(--pill-color, rgba(255, 255, 255, 0.45));
   font-size: 10px;
-  text-transform: capitalize;
+  font-weight: 700;
 }
 
 .nx-thread-badge--stage {
   background: rgba(255, 255, 255, 0.05);
   color: rgba(255, 255, 255, 0.5);
   border-color: rgba(255, 255, 255, 0.08);
+}
+
+/* ── WORKFLOW MODAL ──────────────────────────────────────────────────────── */
+.nx-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  z-index: 20000;
+  display: flex;
+  place-items: center;
+  justify-content: center;
+  animation: nx-fade-in 0.2s ease;
+}
+
+.nx-status-menu-modal {
+  width: 360px;
+  max-width: 90vw;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  animation: nx-scale-up 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  padding: 0 !important;
+}
+
+.nx-status-menu-modal__hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.nx-status-menu-modal__hdr button {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
+  display: grid;
+  place-items: center;
+}
+
+.nx-status-menu-modal__hdr button:hover {
+  color: #fff;
+}
+
+.nx-status-menu-modal__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+@keyframes nx-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes nx-scale-up {
+  from { opacity: 0; transform: scale(0.96) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
 }

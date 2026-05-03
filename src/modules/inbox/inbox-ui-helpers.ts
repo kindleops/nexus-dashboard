@@ -9,15 +9,7 @@ import type { IconName } from '../../shared/icons'
 
 export type InboxStageSelectValue =
   | 'all_stages'
-  | 'ownership_confirmation'
-  | 'consider_selling'
-  | 'asking_price'
-  | 'condition_probe'
-  | 'offer_sent'
-  | 'needs_response'
-  | 'qualified'
-  | 'suppressed'
-  | 'closed'
+  | string
 
 export type InboxViewSelectValue =
   | 'priority'
@@ -208,8 +200,6 @@ export const savedFilterOptions: Array<{ value: InboxSavedFilterPreset; label: s
   { value: 'unassigned', label: 'Unassigned' },
 ]
 
-const closedStages = new Set(['not_interested', 'wrong_number', 'dnc_opt_out', 'archived', 'closed_converted'])
-
 const toText = (value: unknown): string => String(value ?? '').trim()
 const toLower = (value: unknown): string => toText(value).toLowerCase()
 
@@ -251,7 +241,7 @@ export const isSuppressedThread = (thread: InboxWorkflowThread): boolean => {
   if (priorityBucket === 'suppressed') return true
 
   const blob = [
-    thread.inboxStage,
+    thread.conversationStage,
     thread.inboxStatus,
     thread.preview,
     thread.lastMessageBody,
@@ -276,11 +266,11 @@ const matchesStageSelection = (thread: InboxWorkflowThread, stage: InboxStageSel
   if (stage === 'consider_selling') return containsAny(toLower(thread.lastMessageBody || thread.preview), ['consider', 'maybe', 'depends'])
   if (stage === 'asking_price') return containsAny(toLower(thread.lastMessageBody || thread.preview), ['price', 'offer', 'how much'])
   if (stage === 'condition_probe') return containsAny(toLower(thread.lastMessageBody || thread.preview), ['condition', 'repairs', 'tenant', 'vacant'])
-  if (stage === 'offer_sent') return thread.inboxStage === 'needs_offer' || thread.inboxStatus === 'sent'
-  if (stage === 'needs_response') return thread.inboxStage === 'needs_response' || Boolean(thread.needsResponse)
-  if (stage === 'qualified') return ['interested', 'needs_offer', 'needs_call'].includes(thread.inboxStage)
+  if (stage === 'offer_sent') return thread.conversationStage === 'offer_reveal' || thread.inboxStatus === 'waiting'
+  if (stage === 'needs_response') return thread.inboxStatus === 'new_reply' || thread.inboxStatus === 'needs_review' || Boolean(thread.needsResponse)
+  if (stage === 'qualified') return ['offer_reveal', 'negotiation', 'contract_path'].includes(thread.conversationStage)
   if (stage === 'suppressed') return isSuppressedThread(thread)
-  if (stage === 'closed') return thread.isArchived || closedStages.has(thread.inboxStage)
+  if (stage === 'closed') return thread.isArchived || thread.inboxStatus === 'closed'
   return true
 }
 
@@ -290,7 +280,7 @@ const matchesViewSelection = (thread: InboxWorkflowThread, view: InboxViewSelect
   const uiIntent = toLower(getField(thread, 'uiIntent') || getField(thread, 'ui_intent'))
   const priorityBucket = toLower(getField(thread, 'priorityBucket') || getField(thread, 'priority_bucket'))
   const showInPriority = Boolean(getField(thread, 'showInPriorityInbox') ?? getField(thread, 'show_in_priority_inbox'))
-  const isArchived = Boolean(thread.isArchived || thread.inboxStatus === 'archived')
+  const isArchived = Boolean(thread.isArchived || thread.inboxStatus === 'closed')
   const isSuppressed = isSuppressedThread(thread)
 
   if (view === 'priority') return showInPriority && !isArchived
@@ -304,7 +294,7 @@ const matchesViewSelection = (thread: InboxWorkflowThread, view: InboxViewSelect
     const assigned = getField(thread, 'assignedAgent') || getField(thread, 'sms_agent_id') || getField(thread, 'ownerId')
     return !assigned
   }
-  if (view === 'needs_response') return Boolean(thread.needsResponse) && !isArchived
+  if (view === 'needs_response') return (thread.inboxStatus === 'new_reply' || thread.inboxStatus === 'needs_review') && !isArchived
   if (view === 'archived') return isArchived
   if (view === 'sent') return uiIntent === 'sent' && !isArchived
   if (view === 'queued') return uiIntent === 'queued' && !isArchived
@@ -391,15 +381,10 @@ const matchesAdvancedFilters = (thread: InboxWorkflowThread, filters: InboxAdvan
     }
   }
 
-  // Composable Intent / Status / Stage checks
-  if (filters.state && toLower(thread.inboxStatus) !== toLower(filters.state)) return false
-  if (filters.priority && toLower(thread.priority) !== toLower(filters.priority)) return false
-  if (filters.zip && !toLower(getField(thread, 'zip')).includes(toLower(filters.zip))) return false
-
   return true
 }
 
-const matchesSearch = (thread: InboxWorkflowThread, query: string): boolean => {
+const matchesSearchInternal = (thread: InboxWorkflowThread, query: string): boolean => {
   if (!query.trim()) return true
   const q = toLower(query)
   return [
@@ -417,7 +402,8 @@ const matchesSearch = (thread: InboxWorkflowThread, query: string): boolean => {
     thread.lastMessageBody,
     thread.market,
     thread.marketId,
-    thread.inboxStage,
+    thread.conversationStage,
+    thread.inboxStatus,
   ].some((value) => toLower(value).includes(q))
 }
 
@@ -436,7 +422,7 @@ export const applyInboxFilters = (
   const skipView = options.skipViewFilter === true
   const skipStage = options.skipStageFilter === true
   return threads.filter((thread) => (
-    matchesSearch(thread, state.search) &&
+    matchesSearchInternal(thread, state.search) &&
     (skipStage || matchesStageSelection(thread, state.stage)) &&
     (skipView || matchesViewSelection(thread, state.view)) &&
     matchesAdvancedFilters(thread, state.advanced)
@@ -586,12 +572,12 @@ export const buildRightPanelSections = (
       id: 'deal_intelligence',
       title: 'Deal Intelligence',
       icon: 'brain',
-      summary: `${toText(get('aiScore') || 'Unknown')} AI • ${toText(thread.inboxStage)} stage`,
+      summary: `${toText(get('aiScore') || 'Unknown')} AI • ${toText(thread.conversationStage)} stage`,
       rows: [
         row('AI Score', get('aiScore')),
         row('Sentiment', thread.sentiment),
         row('Priority', thread.priority),
-        row('Stage', isSuppressed ? 'suppressed' : thread.inboxStage),
+        row('Stage', isSuppressed ? 'suppressed' : thread.conversationStage),
         row('Deal Status', thread.inboxStatus),
         row('Next Action', context?.dealContext?.nextAction || (isSuppressed ? 'No message needed' : 'Review thread')),
         row('Motivation Flags', get('motivationFlagsCount')),
@@ -924,7 +910,7 @@ export const buildBrainActivityEvents = (thread: InboxWorkflowThread, context: T
       entityType: 'ai',
       eventType: 'stage_inferred',
       title: 'Stage Inferred',
-      summary: `Workflow stage inferred as ${thread.inboxStage}.`,
+      summary: `Workflow stage inferred as ${thread.conversationStage}.`,
       timestamp: ts,
       source: 'AI Router',
       confidence: numberOrNull(getField(thread, 'confidence')) ?? undefined,
@@ -1069,7 +1055,7 @@ export const buildOfferActivityEvents = (thread: InboxWorkflowThread): ActivityE
 }
 
 export const buildContractActivityEvents = (thread: InboxWorkflowThread): ActivityEvent[] => {
-  const stage = toLower(thread.inboxStage)
+  const stage = toLower(thread.conversationStage)
   const ts = thread.updatedAt || thread.lastMessageAt
   const events: ActivityEvent[] = []
 
@@ -1109,7 +1095,7 @@ export const buildBuyerActivityEvents = (thread: InboxWorkflowThread): ActivityE
 }
 
 export const buildTitleActivityEvents = (thread: InboxWorkflowThread): ActivityEvent[] => {
-  const stage = toLower(thread.inboxStage)
+  const stage = toLower(thread.conversationStage)
   if (!containsAny(stage, ['title', 'closing'])) return []
   return [
     buildBaseEvent(thread.id, {
@@ -1132,10 +1118,10 @@ const buildStageActivityEvents = (thread: InboxWorkflowThread): ActivityEvent[] 
       entityType: 'stage',
       eventType: 'stage_changed',
       title: 'Stage Advanced',
-      summary: `Lead is currently in ${thread.inboxStage.replace(/_/g, ' ')}.`,
+      summary: `Lead is currently in ${thread.conversationStage.replace(/_/g, ' ')}.`,
       timestamp: thread.updatedAt || thread.lastMessageAt,
       source: 'Workflow Engine',
-      status: thread.inboxStage,
+      status: thread.conversationStage,
     }),
   ]
 

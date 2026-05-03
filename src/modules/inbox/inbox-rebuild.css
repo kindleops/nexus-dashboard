@@ -365,9 +365,10 @@
 
 .nx-inbox.is-operator-rebuild .nx-conversation-row__meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .nx-inbox.is-operator-rebuild .nx-conversation-row__hover-actions {
