@@ -289,30 +289,26 @@ export const loadInbox = async (options: InboxFetchOptions = {}): Promise<InboxM
     return emptyLiveErrorModel(liveFetchError)
   }
 
-  if (shouldUseSupabase()) {
-    try {
-      const result = await withTimeout(
-        (signal) => fetchInboxModel({ ...options, signal }),
-        LIVE_INBOX_TIMEOUT_MS,
-        `Live Inbox request timed out after ${LIVE_INBOX_TIMEOUT_MS}ms`,
-      )
-      if (isDev) console.log('[NexusInbox] Data source: live', { threadCount: result.threads.length })
-      return result
-    } catch (error) {
-      const liveFetchError = error instanceof Error ? error.message : String(error)
-      if (isDev) {
-        console.error('[NEXUS] Inbox Supabase live load failed.', error)
-      }
-      return emptyLiveErrorModel(liveFetchError)
+  // Always try live if env vars exist
+  try {
+    const result = await withTimeout(
+      (signal) => fetchInboxModel({ ...options, signal }),
+      LIVE_INBOX_TIMEOUT_MS,
+      `Live Inbox request timed out after ${LIVE_INBOX_TIMEOUT_MS}ms`,
+    )
+    if (isDev) console.log('[NexusInbox] Data source: live', { 
+      threadCount: result.threads.length,
+      dataMode: result.dataMode,
+      totalCount: result.totalCount,
+    })
+    return result
+  } catch (error) {
+    const liveFetchError = error instanceof Error ? error.message : String(error)
+    if (isDev) {
+      console.error('[NEXUS] Inbox Supabase live load failed.', error)
     }
+    return emptyLiveErrorModel(liveFetchError)
   }
-
-  if (isDev) {
-    console.log('[NexusInbox] Data source: mock_preview')
-  }
-  const { loadCommandCenterStore } = await import('../../domain/normalize-command-center')
-  const store = await loadCommandCenterStore()
-  return adaptInboxModel(store)
 }
 
 export const toWorkflowThread = (t: InboxThread): InboxWorkflowThread => {
@@ -418,9 +414,29 @@ export const useInboxData = () => {
   const requestSeqRef = useRef(0)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Realtime config
+  const realtimeEnabled = String(import.meta.env.VITE_INBOX_REALTIME_ENABLED ?? 'false').toLowerCase() === 'true'
+  const minRefreshMs = 15000 // 15 seconds minimum between automatic refreshes
+  const lastRefreshAtRef = useRef<string | null>(null)
+  const loadingRef = useRef(false)
+
+  useEffect(() => {
+    if (isDev) {
+      console.log('[useInboxData] initialized', {
+        realtimeEnabled,
+        dataSource: shouldUseSupabase() ? 'live' : 'mock',
+        hasEnvVars: hasSupabaseEnv,
+      })
+    }
+  }, [realtimeEnabled])
+
   useEffect(() => {
     dataRef.current = data
   }, [data])
+
+  useEffect(() => {
+    loadingRef.current = loading
+  }, [loading])
 
   const runLoad = useCallback(async (options: InboxFetchOptions, mode: 'refresh' | 'append') => {
     const requestSeq = ++requestSeqRef.current
@@ -432,9 +448,22 @@ export const useInboxData = () => {
     const runOptions = { ...options, signal: controller.signal }
     try {
       const model = await loadInbox(runOptions)
-      if (requestSeq !== requestSeqRef.current) return dataRef.current
+      if (requestSeq !== requestSeqRef.current) {
+        if (isDev) console.log('[useInboxData] request superseded', { requestSeq, current: requestSeqRef.current })
+        return dataRef.current
+      }
       setData((prev) => mergeInboxModels(prev, model ?? EMPTY_MODEL, mode))
       setError(null)
+      lastRefreshAtRef.current = new Date().toISOString()
+      if (isDev) {
+        console.log('[useInboxData] refresh complete', {
+          refreshReason: 'manual',
+          lastRefreshAt: lastRefreshAtRef.current,
+          rowCount: model?.threads?.length ?? 0,
+          totalCount: model?.totalCount ?? 0,
+          dataMode: model?.dataMode,
+        })
+      }
       return model
     } catch (err) {
       if (controller.signal.aborted) return dataRef.current
@@ -447,6 +476,22 @@ export const useInboxData = () => {
   }, [])
 
   const refresh = useCallback(async (options: InboxFetchOptions = {}) => {
+    // Check minimum time between refreshes for automatic triggers
+    if (options._automatic) {
+      const now = Date.now()
+      const lastRefresh = lastRefreshAtRef.current ? new Date(lastRefreshAtRef.current).getTime() : 0
+      if (now - lastRefresh < minRefreshMs) {
+        if (isDev) {
+          console.log('[useInboxData] skippedRefreshReason: min interval not met', {
+            lastRefreshAt: lastRefreshAtRef.current,
+            msSinceLast: now - lastRefresh,
+            minMs: minRefreshMs,
+          })
+        }
+        return dataRef.current
+      }
+    }
+
     lastFetchRef.current = {
       ...lastFetchRef.current,
       ...options,
@@ -486,7 +531,6 @@ export const useInboxData = () => {
     void refresh()
 
     let channel: ReturnType<ReturnType<typeof getSupabaseClient>['channel']> | null = null
-    let pollInterval: ReturnType<typeof setInterval> | null = null
     let refreshTimeout: ReturnType<typeof setTimeout> | null = null
 
     const markRecentlyUpdated = (threadId: string) => {
@@ -500,15 +544,18 @@ export const useInboxData = () => {
       }, 5000)
     }
 
-    if (shouldUseSupabase()) {
+    if (shouldUseSupabase() && realtimeEnabled) {
       const supabase = getSupabaseClient()
       const triggerRefresh = (payload: any) => {
         const threadId = payload?.new?.thread_key || payload?.new?.threadKey || payload?.old?.thread_key || payload?.old?.threadKey
         if (threadId) markRecentlyUpdated(threadId)
         if (refreshTimeout) clearTimeout(refreshTimeout)
         refreshTimeout = setTimeout(() => {
-          if (!cancelled) void refresh()
-        }, 500)
+          if (!cancelled) {
+            if (isDev) console.log('[useInboxData] realtime refresh triggered', { threadId, refreshReason: 'realtime' })
+            void refresh({ _automatic: true })
+          }
+        }, 2000) // Debounce realtime events
       }
 
       channel = supabase
@@ -519,21 +566,20 @@ export const useInboxData = () => {
         .subscribe((status) => {
           setData((prev) => ({ ...prev, realtimeConnected: status === 'SUBSCRIBED' }))
         })
-    }
 
-    pollInterval = setInterval(() => {
-      if (!cancelled) void refresh()
-    }, 7500)
+      if (isDev) console.log('[useInboxData] realtime subscriptions active')
+    } else {
+      if (isDev) console.log('[useInboxData] realtime disabled', { realtimeEnabled, shouldUseSupabase: shouldUseSupabase() })
+    }
 
     return () => {
       cancelled = true
       abortRef.current?.abort()
       if (debounceRef.current) clearTimeout(debounceRef.current)
       if (refreshTimeout) clearTimeout(refreshTimeout)
-      if (pollInterval) clearInterval(pollInterval)
       if (channel) void getSupabaseClient().removeChannel(channel)
     }
-  }, [refresh])
+  }, [refresh, realtimeEnabled])
 
   return { data, loading, error, refresh, loadMore, recentlyUpdatedThreadIds }
 }

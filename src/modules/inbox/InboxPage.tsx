@@ -1028,44 +1028,42 @@ export default function InboxPage() {
         {showLeftPanel && (
           <InboxSidebar
             threads={filtered}
-            activeViewFilter={viewFilter}
             selectedId={selected?.id ?? null}
+            activeViewFilter={viewFilter}
             onSelect={handleSelect}
             savedPreset={savedPreset}
             onApplySavedPreset={applySavedPreset}
-            onThreadAction={handleThreadAction}
             viewCounts={viewCounts}
             onOpenAdvancedFilters={() => setActiveOverlay('filters')}
             onClearFilters={handleResetFilters}
-            loadingError={DEV && data.liveFetchStatus === 'error' ? data.liveFetchError : null}
-            visibleThreadCount={visibleThreadCount}
-            canLoadMore={Boolean(data.pagination?.hasMore)}
             onLoadMore={handleLoadMore}
+            canLoadMore={Boolean(data.pagination?.hasMore)}
             recentlyUpdatedThreadIds={recentlyUpdatedThreadIds}
             searchQuery={searchQuery}
             onSearchQueryChange={setSearchQuery}
+            visibleThreadCount={visibleThreadCount}
+            loadingError={data.liveFetchError}
           />
         )}
 
         {isDoubleSided && (
           <InboxSidebar
             threads={rightFiltered}
-            activeViewFilter={rightViewFilter}
             selectedId={selected?.id ?? null}
+            activeViewFilter={rightViewFilter}
             onSelect={handleSelect}
             savedPreset={rightSavedPreset}
             onApplySavedPreset={applyRightSavedPreset}
-            onThreadAction={handleThreadAction}
             viewCounts={viewCounts}
             onOpenAdvancedFilters={() => setActiveOverlay('filters')}
             onClearFilters={handleResetFilters}
-            loadingError={null}
-            visibleThreadCount={visibleThreadCount}
-            canLoadMore={Boolean(data.pagination?.hasMore)}
             onLoadMore={handleLoadMore}
+            canLoadMore={Boolean(data.pagination?.hasMore)}
             recentlyUpdatedThreadIds={recentlyUpdatedThreadIds}
             searchQuery={searchQuery}
             onSearchQueryChange={setSearchQuery}
+            visibleThreadCount={visibleThreadCount}
+            loadingError={data.liveFetchError}
           />
         )}
 

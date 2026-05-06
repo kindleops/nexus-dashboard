@@ -54,6 +54,8 @@ export interface InboxFetchOptions {
   limit?: number
   map?: boolean
   filters?: InboxThreadFilters
+  /** @internal */
+  _automatic?: boolean
 }
 
 export interface LiveInboxFetchParams {

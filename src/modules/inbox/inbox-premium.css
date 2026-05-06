@@ -10180,6 +10180,27 @@
   margin-top: 4px;
 }
 
+.nx-sidebar__dev-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.nx-sidebar__dev-banner span {
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(197, 207, 223, 0.7);
+  display: inline-flex;
+  align-items: center;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
 .nx-inbox-badge {
   display: inline-flex;
   align-items: center;

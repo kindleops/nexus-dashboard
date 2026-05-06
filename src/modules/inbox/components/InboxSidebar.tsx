@@ -34,14 +34,13 @@ interface InboxSidebarProps {
   viewCounts: Record<string, number | null | undefined>
   onOpenAdvancedFilters: () => void
   onClearFilters?: () => void
-  loadingError: string | null
-  visibleThreadCount: number
-  canLoadMore: boolean
   onLoadMore: () => void
-  onThreadAction?: (id: string, action: 'star' | 'unstar' | 'pin' | 'unpin' | 'archive' | 'hide') => void
+  canLoadMore: boolean
   recentlyUpdatedThreadIds?: Set<string>
   searchQuery?: string
   onSearchQueryChange?: (value: string) => void
+  visibleThreadCount?: number
+  loadingError?: string | null
 }
 
 type QueuePreset =
@@ -53,22 +52,33 @@ type QueuePreset =
   | 'missing_context'
   | 'suppressed'
 
+type CategoryKey =
+  | 'hot_leads'
+  | 'needs_review'
+  | 'new_inbound'
+  | 'automated'
+  | 'outbound_active'
+  | 'cold_no_response'
+  | 'dnc_opt_out'
+  | 'all'
+
 const QUEUE_PRESETS: QueuePreset[] = ['positive_hot', 'manual_review', 'needs_reply', 'auto_replied', 'outbound_only', 'missing_context', 'suppressed']
 
 const QUEUE_CONFIG: Array<{
   preset: QueuePreset
+  category: CategoryKey
   icon: string
   label: string
   accentClass: string
   countKey: string
 }> = [
-  { preset: 'positive_hot', icon: '🔥', label: 'HOT LEADS', accentClass: 'is-hot', countKey: 'positive_hot' },
-  { preset: 'manual_review', icon: '⚠', label: 'NEEDS REVIEW', accentClass: 'is-review', countKey: 'manual_review' },
-  { preset: 'needs_reply', icon: '📨', label: 'NEW INBOUND', accentClass: 'is-inbound', countKey: 'needs_reply' },
-  { preset: 'auto_replied', icon: '🤖', label: 'AUTOMATED', accentClass: 'is-automated', countKey: 'auto_replied' },
-  { preset: 'outbound_only', icon: '📤', label: 'OUTBOUND ACTIVE', accentClass: 'is-outbound', countKey: 'outbound_only' },
-  { preset: 'missing_context', icon: '🧊', label: 'COLD / NO RESPONSE', accentClass: 'is-cold', countKey: 'missing_context' },
-  { preset: 'suppressed', icon: '🚫', label: 'DNC / OPT OUT', accentClass: 'is-dnc', countKey: 'suppressed' },
+  { preset: 'positive_hot', category: 'hot_leads', icon: '🔥', label: 'HOT LEADS', accentClass: 'is-hot', countKey: 'positive_hot' },
+  { preset: 'manual_review', category: 'needs_review', icon: '⚠', label: 'NEEDS REVIEW', accentClass: 'is-review', countKey: 'manual_review' },
+  { preset: 'needs_reply', category: 'new_inbound', icon: '📨', label: 'NEW INBOUND', accentClass: 'is-inbound', countKey: 'needs_reply' },
+  { preset: 'auto_replied', category: 'automated', icon: '🤖', label: 'AUTOMATED', accentClass: 'is-automated', countKey: 'auto_replied' },
+  { preset: 'outbound_only', category: 'outbound_active', icon: '📤', label: 'OUTBOUND ACTIVE', accentClass: 'is-outbound', countKey: 'outbound_only' },
+  { preset: 'missing_context', category: 'cold_no_response', icon: '🧊', label: 'COLD / NO RESPONSE', accentClass: 'is-cold', countKey: 'missing_context' },
+  { preset: 'suppressed', category: 'dnc_opt_out', icon: '🚫', label: 'DNC / OPT OUT', accentClass: 'is-dnc', countKey: 'suppressed' },
 ]
 
 const VIEW_TO_QUEUE_PRESET: Partial<Record<InboxViewSelectValue, QueuePreset>> = {
@@ -110,30 +120,6 @@ const readNumber = (thread: InboxWorkflowThread, ...keys: string[]) => {
   return null
 }
 
-const readCategory = (thread: InboxWorkflowThread) =>
-  readString(thread, 'inboxCategory', 'inbox_category', 'priorityBucket', 'priority_bucket').toLowerCase()
-
-const mapThreadToQueuePreset = (thread: InboxWorkflowThread): QueuePreset => {
-  const category = readCategory(thread)
-  if (category === 'hot_leads') return 'positive_hot'
-  if (category === 'needs_review') return 'manual_review'
-  if (category === 'new_inbound') return 'needs_reply'
-  if (category === 'automated') return 'auto_replied'
-  if (category === 'outbound_active') return 'outbound_only'
-  if (category === 'dnc_opt_out') return 'suppressed'
-  if (category === 'cold_no_response' || category === 'all') return 'missing_context'
-
-  const stage = readString(thread, 'threadWorkflowStage', 'workflowStage', 'conversationStage').toLowerCase()
-  const automation = readString(thread, 'autoReplyStatus', 'automationState', 'queueStatus').toLowerCase()
-  const preview = readString(thread, 'latest_message_body', 'latestMessageBody', 'lastMessageBody', 'preview').toLowerCase()
-
-  if (automation.includes('auto') || automation.includes('queued') || automation.includes('sent')) return 'auto_replied'
-  if (stage.includes('dnc') || stage.includes('wrong') || preview.includes('stop')) return 'suppressed'
-  if (stage.includes('offer') || stage.includes('sent_waiting') || automation.includes('waiting')) return 'outbound_only'
-  if (preview.includes('yes') || preview.includes('interested')) return 'positive_hot'
-  return 'missing_context'
-}
-
 const getInitials = (value: string) =>
   value
     .split(/\s+/)
@@ -142,6 +128,18 @@ const getInitials = (value: string) =>
     .map((part) => part[0]?.toUpperCase() ?? '')
     .join('') || '+('
 
+const normalizeCategory = (thread: InboxWorkflowThread): CategoryKey => {
+  const category = readString(thread, 'inbox_category', 'inboxCategory', 'priorityBucket', 'priority_bucket').toLowerCase()
+  if (category === 'hot_leads') return 'hot_leads'
+  if (category === 'needs_review') return 'needs_review'
+  if (category === 'new_inbound') return 'new_inbound'
+  if (category === 'automated') return 'automated'
+  if (category === 'outbound_active') return 'outbound_active'
+  if (category === 'dnc_opt_out') return 'dnc_opt_out'
+  if (category === 'cold_no_response' || category === 'all') return 'cold_no_response'
+  return 'cold_no_response'
+}
+
 const resolvePropertyTypeBadge = (thread: InboxWorkflowThread) => {
   const propertyType = readString(thread, 'propertyType', 'property_type', 'assetType', 'asset_type')
   if (!propertyType) return null
@@ -149,8 +147,8 @@ const resolvePropertyTypeBadge = (thread: InboxWorkflowThread) => {
 }
 
 const resolveStageBadge = (thread: InboxWorkflowThread) => {
-  const raw = readString(thread, 'conversationStage', 'conversation_stage') || thread.conversationStage || thread.inboxStatus
-  if (!raw) return 'Not enriched'
+  const raw = readString(thread, 'threadWorkflowStage', 'workflowStage', 'queue_stage', 'detected_intent', 'conversationStage', 'inbox_category')
+  if (!raw) return 'Unknown Stage'
   return raw.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())
 }
 
@@ -162,9 +160,9 @@ interface ConversationRowProps {
 }
 
 const ConversationRow = memo(({ thread, selected, queuePreset, onSelect }: ConversationRowProps) => {
-  const name = resolveThreadPrimaryName(thread) || thread.phoneNumber || thread.canonicalE164 || 'Unknown contact'
-  const address = resolveThreadAddressLine(thread) || 'No linked property'
-  const preview = readString(thread, 'latestMessageBody', 'lastMessageBody', 'preview') || 'No recent message'
+  const name = resolveThreadPrimaryName(thread) || readString(thread, 'best_phone', 'canonical_e164', 'phone') || 'Unknown Owner'
+  const address = resolveThreadAddressLine(thread) || readString(thread, 'property_address_full', 'propertyAddressFull') || 'No linked property'
+  const preview = readString(thread, 'latest_message_body', 'latestMessageBody', 'lastMessageBody', 'preview') || 'No recent message'
   const market = resolveThreadMarketBadge(thread)
   const propertyType = resolvePropertyTypeBadge(thread)
   const ownerType = readString(thread, 'ownerType', 'owner_type')
@@ -173,9 +171,9 @@ const ConversationRow = memo(({ thread, selected, queuePreset, onSelect }: Conve
   const stage = resolveStageBadge(thread)
   const time = thread.lastMessageAt || thread.lastMessageIso || thread.updatedAt
   const avatarToneClass = queuePreset === 'suppressed' ? 'is-dnc' : queuePreset === 'positive_hot' ? 'is-hot' : 'is-default'
-  const previewText = preview.replace(/\s+/g, ' ').trim()
+  const previewText = preview.replace(/\s+/g, ' ').trim() || 'No recent message'
   const badges = [
-    market?.toUpperCase(),
+    market ? market.toUpperCase() : null,
     propertyType?.toUpperCase(),
     ownerType && /(llc|corp|corporate|company)/i.test(ownerType) ? 'CORPORATE' : null,
     language && !/english|en\b/i.test(language) ? language.toUpperCase() : null,
@@ -202,7 +200,7 @@ const ConversationRow = memo(({ thread, selected, queuePreset, onSelect }: Conve
           </div>
         </div>
         <div className="nx-thread-card__middle">
-          <div className="nx-thread-card__address">{address || 'No linked property'}</div>
+          <div className="nx-thread-card__address">{address}</div>
           <span className="nx-thread-card__action">{stage}</span>
         </div>
         <div className="nx-thread-card__preview">{previewText}</div>
@@ -250,20 +248,25 @@ export const InboxSidebar = ({
       .filter((thread) => !recentlyUpdatedThreadIds.has(`hidden:${thread.id}`)),
     [threads, visibleThreadCount, recentlyUpdatedThreadIds],
   )
+
   const groupedThreads = useMemo(() => {
-    const initial = Object.fromEntries(QUEUE_PRESETS.map((preset) => [preset, [] as InboxWorkflowThread[]])) as Record<QueuePreset, InboxWorkflowThread[]>
+    const initial = Object.fromEntries(QUEUE_CONFIG.map((group) => [group.preset, [] as InboxWorkflowThread[]])) as Record<QueuePreset, InboxWorkflowThread[]>
     visibleThreads.forEach((thread) => {
-      initial[mapThreadToQueuePreset(thread)].push(thread)
+      const category = normalizeCategory(thread)
+      const match = QUEUE_CONFIG.find((group) => group.category === category)?.preset ?? 'missing_context'
+      initial[match].push(thread)
     })
     return initial
   }, [visibleThreads])
+
   const firstPopulatedQueue = useMemo(
     () => QUEUE_PRESETS.find((preset) => groupedThreads[preset].length > 0) ?? 'missing_context',
     [groupedThreads],
   )
+
   const expandedQueue = useMemo(() => {
     if (QUEUE_PRESETS.includes(savedPreset as QueuePreset)) return savedPreset as QueuePreset
-    return VIEW_TO_QUEUE_PRESET[activeViewFilter as InboxViewSelectValue] ?? firstPopulatedQueue
+    return VIEW_TO_QUEUE_PRESET[activeViewFilter] ?? firstPopulatedQueue
   }, [savedPreset, activeViewFilter, firstPopulatedQueue])
 
   const totalCount = viewCounts.review_required ?? viewCounts.all ?? threads.length
@@ -271,14 +274,16 @@ export const InboxSidebar = ({
   useEffect(() => {
     if (!import.meta.env.DEV) return
     const categoryCounts = Object.fromEntries(QUEUE_PRESETS.map((preset) => [preset, groupedThreads[preset].length]))
+    const firstThread = visibleThreads[0]
     console.log('[NEXUS Left Inbox Diagnostics]', {
       rawHydratedRows: threads.length,
-      normalizedThreads: visibleThreads.length,
-      categoryCounts,
+      normalizedRows: threads.length,
+      visibleRows: visibleThreads.length,
+      groupedCategoryRows: categoryCounts,
       activeCategory: expandedQueue,
-      visibleThreads: groupedThreads[expandedQueue]?.length ?? 0,
+      firstThreadKey: firstThread?.threadKey ?? firstThread?.id ?? null,
     })
-  }, [threads.length, visibleThreads.length, groupedThreads, expandedQueue])
+  }, [threads, visibleThreads, groupedThreads, expandedQueue])
 
   return (
     <aside className="nx-sidebar nx-sidebar--premium">
@@ -299,11 +304,21 @@ export const InboxSidebar = ({
         </div>
 
         <div className="nx-sidebar__badge-row">
-          <span className="nx-inbox-badge is-hot">🔥 {formatCount(numberOrNull(viewCounts.positive_hot) ?? 0)}</span>
-          <span className="nx-inbox-badge is-review">⚠️ {formatCount(numberOrNull(viewCounts.manual_review) ?? 0)}</span>
-          <span className="nx-inbox-badge is-new">📨 {formatCount(numberOrNull(viewCounts.needs_reply) ?? 0)}</span>
+          <span className="nx-inbox-badge is-hot">🔥 {formatCount(numberOrNull(viewCounts.positive_hot) ?? groupedThreads.positive_hot.length)}</span>
+          <span className="nx-inbox-badge is-review">⚠️ {formatCount(numberOrNull(viewCounts.manual_review) ?? groupedThreads.manual_review.length)}</span>
+          <span className="nx-inbox-badge is-new">📨 {formatCount(numberOrNull(viewCounts.needs_reply) ?? groupedThreads.needs_reply.length)}</span>
           <span className="nx-sidebar__total-count">{formatCount(numberOrNull(totalCount) ?? 0)}</span>
         </div>
+
+        {import.meta.env.DEV && (
+          <div className="nx-sidebar__dev-banner">
+            <span>HYDRATED {threads.length}</span>
+            <span>NORMALIZED {threads.length}</span>
+            <span>VISIBLE {visibleThreads.length}</span>
+            <span>{expandedQueue.replace(/_/g, ' ').toUpperCase()}</span>
+            <span>{visibleThreads[0]?.threadKey ?? visibleThreads[0]?.id ?? 'NO THREADS'}</span>
+          </div>
+        )}
 
         <label className="nx-sidebar-search">
           <Icon name="search" />
@@ -326,8 +341,8 @@ export const InboxSidebar = ({
       <div className="nx-queue-groups">
         {QUEUE_CONFIG.map((group) => {
           const expanded = expandedQueue === group.preset
-          const count = viewCounts[group.countKey] ?? 0
           const groupThreads = groupedThreads[group.preset]
+          const count = viewCounts[group.countKey] ?? groupThreads.length
           return (
             <section key={group.preset} className={cls('nx-queue-group', group.accentClass, expanded && 'is-expanded')}>
               <button
