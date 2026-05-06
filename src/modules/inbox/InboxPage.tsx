@@ -221,8 +221,8 @@ export default function InboxPage() {
     const local = getInboxViewCounts(threads)
     const pick = (backend: number | null | undefined, localVal: number) => {
       if (data.dataMode !== 'live') return localVal
-      if (backend !== null && backend !== undefined) return backend
-      return null
+      if (backend !== null && backend !== undefined) return Math.max(backend, localVal)
+      return localVal
     }
 
     const priority = pick(data.priorityInboxCount, local.priority)

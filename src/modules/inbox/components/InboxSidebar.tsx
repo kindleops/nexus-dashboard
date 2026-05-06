@@ -120,6 +120,49 @@ const readNumber = (thread: InboxWorkflowThread, ...keys: string[]) => {
   return null
 }
 
+const getActivityTime = (thread: InboxWorkflowThread) => {
+  const iso = thread.lastMessageAt || thread.lastMessageIso || readString(thread, 'latest_message_at', 'latestMessageAt', 'updatedAt')
+  const ts = iso ? new Date(iso).getTime() : Number.NaN
+  return Number.isFinite(ts) ? ts : 0
+}
+
+const resolveQueuePreset = (thread: InboxWorkflowThread): QueuePreset => {
+  const category = readString(thread, 'inbox_category', 'inboxCategory', 'priorityBucket', 'priority_bucket').toLowerCase()
+  const latestDirection = readString(thread, 'latest_message_direction', 'latestDirection').toLowerCase()
+  const queueStatus = readString(thread, 'queue_status', 'queueStatus', 'autoReplyStatus').toLowerCase()
+  const queueStage = readString(thread, 'queue_stage', 'threadWorkflowStage', 'workflowStage').toLowerCase()
+  const detectedIntent = readString(thread, 'detected_intent', 'uiIntent').toLowerCase()
+  const preview = readString(thread, 'latest_message_body', 'latestMessageBody', 'lastMessageBody', 'preview').toLowerCase()
+  const isHotLead = Boolean((thread as unknown as Record<string, unknown>).is_hot_lead)
+  const isNewInbound = Boolean((thread as unknown as Record<string, unknown>).is_new_inbound)
+  const isDnc = Boolean((thread as unknown as Record<string, unknown>).is_dnc)
+  const score = readNumber(thread, 'finalAcquisitionScore', 'final_acquisition_score', 'priorityScore', 'priority_score') ?? 0
+  const hoursSinceActivity = Math.max(0, (Date.now() - getActivityTime(thread)) / 36e5)
+
+  if (category === 'dnc_opt_out' || isDnc || /stop|wrong number|not interested|remove|do not call|dnc|opt out/.test(preview)) return 'suppressed'
+  if (category === 'hot_leads' || isHotLead || /interested|yes|sell|asking price|call me|offer/.test(preview) || score >= 74) return 'positive_hot'
+  if (category === 'needs_review' || queueStatus === 'failed' || queueStatus === 'paused_global_lock' || /manual|review|unclear|ambiguous/.test(`${queueStage} ${detectedIntent}`)) return 'manual_review'
+  if (category === 'new_inbound' || isNewInbound || latestDirection === 'inbound') return 'needs_reply'
+  if (category === 'automated' || queueStatus === 'queued' || /queued|automation/.test(queueStatus)) return 'auto_replied'
+  if (category === 'outbound_active') return 'outbound_only'
+  if (category === 'cold_no_response') return 'missing_context'
+  if (latestDirection === 'outbound' && /sent|delivered/.test(queueStatus) && hoursSinceActivity <= 72) return 'outbound_only'
+  if (latestDirection === 'outbound' && /sent|delivered/.test(queueStatus)) return 'missing_context'
+  if (latestDirection === 'outbound' && !queueStatus) return 'missing_context'
+  return 'missing_context'
+}
+
+const getQueueCount = (
+  preset: QueuePreset,
+  backendCount: number | null | undefined,
+  localCount: number,
+) => {
+  if (preset === 'missing_context' || preset === 'outbound_only' || preset === 'manual_review' || preset === 'auto_replied') {
+    return Math.max(numberOrNull(backendCount) ?? 0, localCount)
+  }
+  return numberOrNull(backendCount) ?? localCount
+}
+
 const matchesSearch = (thread: InboxWorkflowThread, query: string) => {
   const search = query.trim().toLowerCase()
   if (!search) return true
@@ -142,18 +185,6 @@ const getInitials = (value: string) =>
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase() ?? '')
     .join('') || '+('
-
-const normalizeCategory = (thread: InboxWorkflowThread): CategoryKey => {
-  const category = readString(thread, 'inbox_category', 'inboxCategory', 'priorityBucket', 'priority_bucket').toLowerCase()
-  if (category === 'hot_leads') return 'hot_leads'
-  if (category === 'needs_review') return 'needs_review'
-  if (category === 'new_inbound') return 'new_inbound'
-  if (category === 'automated') return 'automated'
-  if (category === 'outbound_active') return 'outbound_active'
-  if (category === 'dnc_opt_out') return 'dnc_opt_out'
-  if (category === 'cold_no_response' || category === 'all') return 'cold_no_response'
-  return 'cold_no_response'
-}
 
 const resolvePropertyTypeBadge = (thread: InboxWorkflowThread) => {
   const propertyType = readString(thread, 'propertyType', 'property_type', 'assetType', 'asset_type')
@@ -273,9 +304,7 @@ export const InboxSidebar = ({
   const groupedThreads = useMemo(() => {
     const initial = Object.fromEntries(QUEUE_CONFIG.map((group) => [group.preset, [] as InboxWorkflowThread[]])) as Record<QueuePreset, InboxWorkflowThread[]>
     visibleThreads.forEach((thread) => {
-      const category = normalizeCategory(thread)
-      const match = QUEUE_CONFIG.find((group) => group.category === category)?.preset ?? 'missing_context'
-      initial[match].push(thread)
+      initial[resolveQueuePreset(thread)].push(thread)
     })
     return initial
   }, [visibleThreads])
@@ -354,7 +383,7 @@ export const InboxSidebar = ({
         {QUEUE_CONFIG.map((group) => {
           const expanded = expandedQueue === group.preset
           const groupThreads = groupedThreads[group.preset]
-          const count = viewCounts[group.countKey] ?? groupThreads.length
+          const count = getQueueCount(group.preset, viewCounts[group.countKey], groupThreads.length)
           return (
             <section key={group.preset} className={cls('nx-queue-group', group.accentClass, expanded && 'is-expanded')}>
               <button

@@ -404,7 +404,10 @@ const applyInboxAdvancedServerFilters = (query: any, filters: Record<string, any
   if (filters.ownerType) q = q.eq('owner_type', filters.ownerType)
   if (filters.bestContactWindow) q = q.ilike('best_contact_window', `%${filters.bestContactWindow}%`)
   
-  if (filters.priority) q = q.gte('priority_sort_score', filters.priority === 'urgent' ? 80 : 50)
+  if (filters.priority) {
+    const threshold = filters.priority === 'urgent' ? 80 : 50
+    q = q.gte('final_acquisition_score', threshold)
+  }
   
   if (filters.aiScoreMin !== undefined) q = q.gte('final_acquisition_score', filters.aiScoreMin)
   if (filters.motivationMin !== undefined) q = q.gte('motivation_score', filters.motivationMin)
@@ -416,6 +419,22 @@ const applyInboxAdvancedServerFilters = (query: any, filters: Record<string, any
   if (filters.activityDateTo) q = q.lte('latest_message_at', filters.activityDateTo)
 
   return q
+}
+
+const hasMeaningfulAdvancedFilters = (filters: Record<string, unknown> | undefined): boolean => {
+  if (!filters) return false
+  return Object.entries(filters).some(([key, value]) => {
+    if (value === null || value === undefined) return false
+    if (typeof value === 'string') {
+      const trimmed = value.trim()
+      if (!trimmed) return false
+      if (key === 'outOfStateOwner' && trimmed === 'all') return false
+      return true
+    }
+    if (typeof value === 'number') return Number.isFinite(value)
+    if (typeof value === 'boolean') return value
+    return true
+  })
 }
 
 const getHydratedCategoriesForView = (view: string | undefined): HydratedInboxCategory[] => {
@@ -1441,9 +1460,8 @@ export const getInboxThreads = async (
   if (options.signal) countQuery = countQuery.abortSignal(options.signal)
 
   const { count: totalAvailable, error: countError } = await countQuery
-  if (countError) {
-    if (DEV) console.error('[getInboxThreads] countQuery error:', mapErrorMessage(countError))
-    throw new Error(mapErrorMessage(countError))
+  if (countError && DEV) {
+    console.warn('[getInboxThreads] countQuery fallback:', mapErrorMessage(countError))
   }
 
   let query: any = supabase
@@ -1659,7 +1677,7 @@ export const getInboxThreads = async (
       offset: startOffset,
       limit: maxRows,
       returned: rows.length,
-      totalAvailable: totalAvailable ?? rows.length,
+      totalAvailable: countError ? rows.length : (totalAvailable ?? rows.length),
     })
     console.log('[getInboxThreads] normalizedThreads', {
       count: threads.length,
@@ -1667,7 +1685,7 @@ export const getInboxThreads = async (
     })
   }
 
-  return { threads, totalAvailable: totalAvailable ?? rows.length }
+  return { threads, totalAvailable: countError ? rows.length : (totalAvailable ?? rows.length) }
 }
 
 export const fetchInboxMapPins = async (
@@ -1736,35 +1754,65 @@ export const fetchInboxModel = async (options: InboxFetchOptions = {}): Promise<
   ])
   const { threads, totalAvailable } = threadsResult
   const supabase = getSupabaseClient()
-  const hasScopedFilters = Boolean(filterState.query?.trim()) || Object.keys(filterState.advanced || {}).length > 0 || (filterState.stage && filterState.stage !== 'all_stages')
+  const hasScopedFilters =
+    Boolean(filterState.query?.trim()) ||
+    hasMeaningfulAdvancedFilters(filterState.advanced) ||
+    Boolean(filterState.stage && filterState.stage !== 'all_stages')
   let countsRows: AnyRecord[] = []
 
-  if (hasScopedFilters) {
-    const countQueries = HYDRATED_INBOX_CATEGORIES.map(async (category) => {
-      let categoryQuery: any = supabase
-        .from(HYDRATED_INBOX_THREADS_VIEW)
-        .select('thread_key', { count: 'exact', head: true })
-        .eq('inbox_category', category)
-      categoryQuery = applyInboxSearchServerFilter(categoryQuery, filterState.query)
-      categoryQuery = applyInboxAdvancedServerFilters(categoryQuery, filterState.advanced)
-      if (filterState.stage && filterState.stage !== 'all_stages' && SERVER_INBOX_THREAD_STAGE_VALUES.has(filterState.stage)) {
-        categoryQuery = categoryQuery.eq('thread_stage', filterState.stage)
-      }
-      if (options.signal) categoryQuery = categoryQuery.abortSignal(options.signal)
-      const result = await categoryQuery
-      if (result.error) throw new Error(mapErrorMessage(result.error))
-      return { inbox_category: category, count: result.count ?? 0 }
-    })
-    countsRows = await Promise.all(countQueries)
-  } else {
-    let countsQuery: any = supabase.from(HYDRATED_INBOX_COUNTS_VIEW).select('*')
-    if (options.signal) countsQuery = countsQuery.abortSignal(options.signal)
-    const { data: rawCountRows, error: countsError } = await countsQuery
-    if (countsError) throw new Error(mapErrorMessage(countsError))
-    countsRows = safeArray(rawCountRows as AnyRecord[])
+  try {
+    if (hasScopedFilters) {
+      const countQueries = HYDRATED_INBOX_CATEGORIES.map(async (category) => {
+        let categoryQuery: any = supabase
+          .from(HYDRATED_INBOX_THREADS_VIEW)
+          .select('thread_key', { count: 'exact', head: true })
+          .eq('inbox_category', category)
+        categoryQuery = applyInboxSearchServerFilter(categoryQuery, filterState.query)
+        categoryQuery = applyInboxAdvancedServerFilters(categoryQuery, filterState.advanced)
+        if (filterState.stage && filterState.stage !== 'all_stages' && SERVER_INBOX_THREAD_STAGE_VALUES.has(filterState.stage)) {
+          categoryQuery = categoryQuery.eq('queue_stage', filterState.stage)
+        }
+        if (options.signal) categoryQuery = categoryQuery.abortSignal(options.signal)
+        const result = await categoryQuery
+        if (result.error) throw new Error(mapErrorMessage(result.error))
+        return { inbox_category: category, count: result.count ?? 0 }
+      })
+      countsRows = await Promise.all(countQueries)
+    } else {
+      let countsQuery: any = supabase.from(HYDRATED_INBOX_COUNTS_VIEW).select('*')
+      if (options.signal) countsQuery = countsQuery.abortSignal(options.signal)
+      const { data: rawCountRows, error: countsError } = await countsQuery
+      if (countsError) throw new Error(mapErrorMessage(countsError))
+      countsRows = safeArray(rawCountRows as AnyRecord[])
+    }
+  } catch (error) {
+    if (DEV) {
+      console.warn('[fetchInboxModel] counts fallback activated', {
+        error: mapErrorMessage(error),
+        hasScopedFilters,
+        query: filterState.query ?? '',
+        stage: filterState.stage ?? 'all_stages',
+      })
+    }
   }
 
   const categoryCounts = normalizeHydratedCategoryCounts(countsRows)
+  if (countsRows.length === 0) {
+    threads.forEach((thread) => {
+      const threadRecord = thread as unknown as AnyRecord
+      const bucket = asString(
+        threadRecord.inbox_category ??
+        threadRecord.inboxCategory ??
+        thread.priorityBucket,
+        '',
+      ).toLowerCase()
+      if (bucket in categoryCounts) {
+        categoryCounts[bucket as HydratedInboxCategory] += 1
+      } else {
+        categoryCounts.all += 1
+      }
+    })
+  }
   const priorityInboxCount = categoryCounts.hot_leads + categoryCounts.needs_review + categoryCounts.new_inbound
   const activeInboxCount = categoryCounts.automated + categoryCounts.outbound_active
   const waitingInboxCount = categoryCounts.cold_no_response

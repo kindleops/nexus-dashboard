@@ -37,6 +37,7 @@ export type InboxViewSelectValue =
   | 'sent'
   | 'queued'
   | 'failed'
+  | 'outbound_active'
 
 
 export type InboxSavedFilterPreset =
