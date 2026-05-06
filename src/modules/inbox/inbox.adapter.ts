@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { CommandCenterStore } from '../../domain/types'
 import { formatRelativeTime } from '../../shared/formatters'
-import { fetchInboxModel, fetchLiveInbox, type InboxFetchOptions, type LiveInboxMapPin, type LiveInboxPagination } from '../../lib/data/inboxData'
+import { fetchInboxModel, type InboxFetchOptions, type LiveInboxMapPin, type LiveInboxPagination } from '../../lib/data/inboxData'
 import { isDev, shouldUseSupabase, useSupabaseData } from '../../lib/data/shared'
 import type { InboxWorkflowThread, InboxStatus, SellerStage, AutomationState } from '../../lib/data/inboxWorkflowData'
 import { hasSupabaseEnv, supabaseAnonKeyPresent, supabaseUrlPresent } from '../../lib/supabaseClient'
@@ -208,6 +208,12 @@ export interface InboxModel {
   counts?: Record<string, number | null | undefined>
   mapPins?: LiveInboxMapPin[]
   pagination?: LiveInboxPagination | null
+  loadedCount?: number
+  fullyHydratedCount?: number
+  partiallyHydratedCount?: number
+  orphanCount?: number
+  latestFetchMs?: number
+  realtimeConnected?: boolean
 }
 
 export const adaptInboxModel = (store: CommandCenterStore): InboxModel => {
@@ -373,6 +379,12 @@ const EMPTY_MODEL: InboxModel = {
   hiddenThreadsCount: null,
   suppressedThreadsCount: null,
   lastLiveFetchAt: null,
+  loadedCount: 0,
+  fullyHydratedCount: 0,
+  partiallyHydratedCount: 0,
+  orphanCount: 0,
+  latestFetchMs: 0,
+  realtimeConnected: false,
 }
 
 
@@ -394,50 +406,6 @@ const mergeInboxModels = (prev: InboxModel, next: InboxModel, mode: 'refresh' | 
     mapPins: next.mapPins && next.mapPins.length > 0 ? next.mapPins : prev.mapPins,
     pagination: next.pagination ?? prev.pagination ?? null,
   }
-}
-
-const modelFromLiveResponse = (live: Awaited<ReturnType<typeof fetchLiveInbox>>): InboxModel => ({
-  ...EMPTY_MODEL,
-  threads: live.threads,
-  unreadCount: live.counts.needsReply ?? live.counts.needs_reply ?? live.threads.filter((thread) => thread.needsReply || thread.needsResponse).length,
-  urgentCount: live.counts.positive ?? live.threads.filter((thread) => thread.priority === 'urgent').length,
-  totalCount: live.pagination.total ?? live.counts.total ?? live.counts.all ?? live.threads.length,
-  aiDraftCount: live.counts.autoRepliesQueued ?? live.counts.auto_replies_queued ?? live.threads.filter((thread) => Boolean(thread.aiDraft)).length,
-  dataMode: 'live',
-  liveFetchStatus: 'active',
-  liveFetchError: null,
-  messageEventsCount: live.counts.active ?? null,
-  messageEventsRawCount: live.counts.messages ?? null,
-  groupedThreadCount: live.counts.total ?? live.pagination.total ?? null,
-  priorityInboxCount: live.counts.priority ?? live.counts.needsReply ?? null,
-  activeInboxCount: live.counts.active ?? null,
-  waitingInboxCount: live.counts.waiting ?? null,
-  allInboxCount: live.counts.all ?? live.counts.total ?? live.pagination.total ?? null,
-  unreadThreadsCount: live.counts.unread ?? live.counts.needsReply ?? null,
-  sendQueueCount: live.counts.autoRepliesQueued ?? live.counts.auto_replies_queued ?? null,
-  archivedThreadsCount: live.counts.archived ?? null,
-  hiddenThreadsCount: live.counts.hidden ?? null,
-  suppressedThreadsCount: live.counts.suppressed ?? live.counts.optOut ?? live.counts.opt_out ?? null,
-  lastLiveFetchAt: new Date().toISOString(),
-  counts: live.counts,
-  mapPins: live.mapPins,
-  pagination: live.pagination,
-})
-
-const loadLiveOrFallback = async (options: InboxFetchOptions): Promise<InboxModel> => {
-  const view = options.filters?.view ?? 'all'
-  const direction = view === 'inbound' ? 'inbound' : view === 'outbound' ? 'outbound' : 'all'
-  const live = await fetchLiveInbox({
-    filter: view,
-    direction,
-    q: options.filters?.query ?? '',
-    keywordGroup: ['positive_hot', 'offer_requested', 'wrong_number', 'opt_out', 'manual_review'].includes(view) ? view : '',
-    cursor: options.cursor ?? null,
-    limit: options.limit ?? options.maxRows ?? 200,
-    map: options.map ?? true,
-    signal: options.signal,
-  })
-  return modelFromLiveResponse(live)
 }
 
 export const useInboxData = () => {
@@ -464,13 +432,7 @@ export const useInboxData = () => {
 
     const runOptions = { ...options, signal: controller.signal }
     try {
-      let model: InboxModel
-      try {
-        model = await loadLiveOrFallback(runOptions)
-      } catch (liveError) {
-        if (isDev) console.warn('[NEXUS] Live inbox API unavailable; falling back to configured data source.', liveError)
-        model = await loadInbox(runOptions)
-      }
+      const model = await loadInbox(runOptions)
       if (requestSeq !== requestSeqRef.current) return dataRef.current
       setData((prev) => mergeInboxModels(prev, model ?? EMPTY_MODEL, mode))
       setError(null)
@@ -552,10 +514,11 @@ export const useInboxData = () => {
 
       channel = supabase
         .channel('nexus-inbox-realtime')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'inbox_thread_state' }, triggerRefresh)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'message_events' }, triggerRefresh)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'send_queue' }, triggerRefresh)
-        .subscribe()
+        .subscribe((status) => {
+          setData((prev) => ({ ...prev, realtimeConnected: status === 'SUBSCRIBED' }))
+        })
     }
 
     pollInterval = setInterval(() => {

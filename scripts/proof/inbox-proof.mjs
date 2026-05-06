@@ -50,10 +50,8 @@ const runStaticInboxProof = () => {
     'No messages loaded for this thread.',
   ])
 
-  assertContains('priority command header restored', 'src/modules/inbox/components/InboxSidebar.tsx', [
+  assertContains('left inbox shell restored', 'src/modules/inbox/components/InboxSidebar.tsx', [
     'ACQUISITIONS INBOX',
-    'PRIORITY INBOX',
-    'Actionable signals & urgent replies',
     'Owner, address, phone, APN...',
   ])
 
@@ -94,25 +92,24 @@ const runStaticInboxProof = () => {
     'LAND / TAX',
   ])
 
-  assertContains('supabase hydration path remains primary', 'src/lib/data/inboxData.ts', [
-    'message_events',
-    'send_queue',
-    'get_thread_enrichment',
-    'get_property_coordinates',
-    'provider_message_sid',
-    'queue_id',
-    'textgrid_numbers',
+  assertContains('hydrated supabase loader exists', 'src/lib/data/inboxData.ts', [
+    'HYDRATED_INBOX_THREADS_VIEW = \'inbox_threads_hydrated\'',
+    'HYDRATED_INBOX_COUNTS_VIEW = \'inbox_category_counts\'',
+    'HYDRATED_INBOX_PAGE_SIZE = 200',
+    '.order(\'priority_sort_score\'',
+    '.eq(\'inbox_category\'',
+    '.in(\'inbox_category\'',
   ])
 
-  assertContains('thread hydration aliases exist', 'src/lib/data/inboxData.ts', [
-    'thread_id: threadKey',
-    'latest_message_body:',
-    'latest_message_direction:',
-    'latest_activity_at:',
-    'inbound_count:',
-    'outbound_count:',
-    'hydrationConfidence:',
-    'hydrationSource:',
+  assertContains('thread cards use hydrated market and latest message fields', 'src/lib/data/inboxData.ts', [
+    'prospect_name',
+    'owner_full_name',
+    'display_phone',
+    'property_address_full',
+    'latest_message_body',
+    'property_type',
+    'detected_intent',
+    'thread_stage',
   ])
 
   assertContains('workflow thread preserves hydration aliases', 'src/modules/inbox/inbox.adapter.ts', [
@@ -128,13 +125,17 @@ const runStaticInboxProof = () => {
 
   assertContains('premium no-vertical-text CSS guards exist', 'src/modules/inbox/inbox-premium.css', [
     '.nx-intel-field {',
-    'grid-template-columns: minmax(160px, 1fr) minmax(0, 1.4fr);',
+    'grid-template-columns: minmax(150px, 0.92fr) minmax(0, 1.4fr);',
     '.nx-intel-field__value {',
     'word-break: break-word;',
   ])
 
+  assertContains('right dossier consumes hydrated selected thread immediately', 'src/modules/inbox/InboxPage.tsx', [
+    'setThreadIntelligence((selected ?? null)',
+    'setThreadIntelligence({',
+  ])
+
   assertContains('premium sidebar selectors exist', 'src/modules/inbox/inbox-premium.css', [
-    '.nx-priority-inbox-block',
     '.nx-queue-group__header',
     '.nx-thread-card',
     '.nx-ai-assist-card',
@@ -162,7 +163,6 @@ const tryBrowserProof = async () => {
     await page.waitForTimeout(1500)
 
     const mustExist = [
-      ['priority inbox block', '.nx-priority-inbox-block'],
       ['queue groups', '.nx-queue-group__header'],
       ['chat area', '.nx-chat-container'],
       ['dossier area', '.nx-intelligence-panel'],

@@ -131,7 +131,7 @@ export default function InboxPage() {
   const [draftText, setDraftText] = useState('')
   const [selectedMessages, setSelectedMessages] = useState<ThreadMessage[]>([])
   const [pendingMessagesByThread, setPendingMessagesByThread] = useState<Record<string, ThreadMessage[]>>({})
-  const [visibleThreadCount, setVisibleThreadCount] = useState(1000)
+  const [visibleThreadCount, setVisibleThreadCount] = useState(200)
   const [mapSourceMode, setMapSourceMode] = useState<MapSourceMode>(defaultMapSourceMode)
 
   const [messagesLoading, setMessagesLoading] = useState(false)
@@ -240,15 +240,15 @@ export default function InboxPage() {
       waiting,
       all,
       unread,
-      needs_reply: local.needs_reply,
-      positive_hot: local.positive_hot,
-      missing_context: local.missing_context,
-      auto_replied: local.auto_replied,
+      needs_reply: pick(data.counts?.needs_reply, local.needs_reply),
+      positive_hot: pick(data.counts?.positive_hot, local.positive_hot),
+      missing_context: pick(data.counts?.missing_context, local.missing_context),
+      auto_replied: pick(data.counts?.auto_replied, local.auto_replied),
       auto_reply_failed: local.auto_reply_failed,
       offer_requested: local.offer_requested,
       wrong_number: local.wrong_number,
-      opt_out: local.opt_out,
-      manual_review: local.manual_review,
+      opt_out: pick(data.counts?.suppressed, local.opt_out),
+      manual_review: pick(data.counts?.manual_review, local.manual_review),
       my_priority: priority,
       new_inbounds: active,
       offer_needed: waiting,
@@ -326,12 +326,19 @@ export default function InboxPage() {
     if (!DEV) return
     const first = filtered[0] as unknown as { uiIntent?: string; ui_intent?: string; priorityBucket?: string; priority_bucket?: string } | undefined
     console.log('[NEXUS Inbox Diagnostics]', {
-      totalReturnedThreads: threads.length,
+      totalCount: data.totalCount,
+      loadedCount: data.loadedCount ?? threads.length,
       activeFilterKey: viewFilter,
+      activeCategory: viewFilter,
+      fullyHydratedCount: data.fullyHydratedCount ?? 0,
+      partiallyHydratedCount: data.partiallyHydratedCount ?? 0,
+      orphanCount: data.orphanCount ?? 0,
+      latestFetchMs: data.latestFetchMs ?? 0,
+      realtimeConnected: data.realtimeConnected ?? false,
       firstThreadUiIntent: first?.uiIntent ?? first?.ui_intent ?? null,
       firstThreadPriorityBucket: first?.priorityBucket ?? first?.priority_bucket ?? null,
     })
-  }, [DEV, filtered, threads.length, viewFilter])
+  }, [DEV, data, filtered, threads.length, viewFilter])
 
   const selectedSuppressed = useMemo(() => (selected ? isSuppressedThread(selected) : false), [selected])
 
@@ -451,7 +458,7 @@ export default function InboxPage() {
   }), [layoutState.inboxMode, viewFilter, stageFilter, searchQuery, advancedFilters])
 
   useEffect(() => {
-    setVisibleThreadCount(1000)
+    setVisibleThreadCount(200)
     refreshInbox({ filters: liveThreadQuery })
   }, [liveThreadQuery, refreshInbox])
 
@@ -487,6 +494,7 @@ export default function InboxPage() {
       setMessagesLoading(true)
       setContextLoading(true)
     }
+    setThreadIntelligence((selected ?? null) as unknown as ThreadIntelligenceRecord | null)
 
     let active = true
 
@@ -498,7 +506,10 @@ export default function InboxPage() {
       if (!active) return
       setSelectedMessages(messages)
       setThreadContext(context)
-      setThreadIntelligence(intelligence)
+      setThreadIntelligence({
+        ...((selected ?? {}) as unknown as ThreadIntelligenceRecord),
+        ...((intelligence ?? {}) as ThreadIntelligenceRecord),
+      })
 
       const deliveredByBody = new Set(
         messages
@@ -1028,7 +1039,7 @@ export default function InboxPage() {
             onClearFilters={handleResetFilters}
             loadingError={DEV && data.liveFetchStatus === 'error' ? data.liveFetchError : null}
             visibleThreadCount={visibleThreadCount}
-            canLoadMore={true}
+            canLoadMore={Boolean(data.pagination?.hasMore)}
             onLoadMore={handleLoadMore}
             recentlyUpdatedThreadIds={recentlyUpdatedThreadIds}
             searchQuery={searchQuery}
@@ -1050,7 +1061,7 @@ export default function InboxPage() {
             onClearFilters={handleResetFilters}
             loadingError={null}
             visibleThreadCount={visibleThreadCount}
-            canLoadMore={true}
+            canLoadMore={Boolean(data.pagination?.hasMore)}
             onLoadMore={handleLoadMore}
             recentlyUpdatedThreadIds={recentlyUpdatedThreadIds}
             searchQuery={searchQuery}
