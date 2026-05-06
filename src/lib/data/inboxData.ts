@@ -1,6 +1,6 @@
 import { formatRelativeTime } from '../../shared/formatters'
 import type { InboxModel, InboxThread } from '../../modules/inbox/inbox.adapter'
-import { getSupabaseClient } from '../supabaseClient'
+import { getSupabaseClient, hasSupabaseEnv } from '../supabaseClient'
 import {
   asBoolean,
   asIso,
@@ -356,15 +356,19 @@ const applyInboxSearchServerFilter = (query: any, text: string | undefined): any
   if (!text || !text.trim()) return query
   const term = `%${text.trim()}%`
   return query.or(
-    `owner_full_name.ilike.${term},` +
+    `owner_name.ilike.${term},` +
     `prospect_name.ilike.${term},` +
-    `display_phone.ilike.${term},` +
+    `first_name.ilike.${term},` +
+    `best_phone.ilike.${term},` +
+    `phone.ilike.${term},` +
+    `canonical_e164.ilike.${term},` +
     `property_address_full.ilike.${term},` +
     `market.ilike.${term},` +
     `latest_message_body.ilike.${term},` +
     `property_type.ilike.${term},` +
     `detected_intent.ilike.${term},` +
-    `thread_stage.ilike.${term}`
+    `queue_stage.ilike.${term},` +
+    `inbox_category.ilike.${term}`
   )
 }
 
@@ -1402,6 +1406,17 @@ export const getInboxThreads = async (
   options: InboxFetchOptions = {},
 ): Promise<{ threads: InboxThread[], totalAvailable: number }> => {
   const supabase = getSupabaseClient()
+  const supabaseEnabled = hasSupabaseEnv && shouldUseSupabase()
+  
+  if (DEV) {
+    console.log('[getInboxThreads] supabaseEnabled=', supabaseEnabled, {
+      hasSupabaseEnv,
+      shouldUseSupabase: shouldUseSupabase(),
+      url: import.meta.env.VITE_SUPABASE_URL ? 'set' : 'missing',
+      key: import.meta.env.VITE_SUPABASE_ANON_KEY ? 'set' : 'missing',
+    })
+  }
+
   const maxRows = Number.isFinite(options.maxRows ?? Number.NaN)
     ? Math.max(1, Number(options.maxRows))
     : HYDRATED_INBOX_PAGE_SIZE
@@ -1415,15 +1430,19 @@ export const getInboxThreads = async (
     .select('thread_key', { count: 'exact', head: true })
   countQuery = applyInboxSearchServerFilter(countQuery, filterState.query)
   countQuery = applyInboxAdvancedServerFilters(countQuery, filterState.advanced)
-  if (filterState.stage && filterState.stage !== 'all_stages' && SERVER_INBOX_THREAD_STAGE_VALUES.has(filterState.stage)) {
-    countQuery = countQuery.eq('thread_stage', filterState.stage)
+  // Use queue_stage (actual column) not thread_stage
+  if (filterState.stage && filterState.stage !== 'all_stages') {
+    countQuery = countQuery.eq('queue_stage', filterState.stage)
   }
   if (viewCategories.length === 1) countQuery = countQuery.eq('inbox_category', viewCategories[0])
   if (viewCategories.length > 1) countQuery = countQuery.in('inbox_category', viewCategories)
   if (options.signal) countQuery = countQuery.abortSignal(options.signal)
 
   const { count: totalAvailable, error: countError } = await countQuery
-  if (countError) throw new Error(mapErrorMessage(countError))
+  if (countError) {
+    if (DEV) console.error('[getInboxThreads] countQuery error:', mapErrorMessage(countError))
+    throw new Error(mapErrorMessage(countError))
+  }
 
   let query: any = supabase
     .from(HYDRATED_INBOX_THREADS_VIEW)
@@ -1434,50 +1453,95 @@ export const getInboxThreads = async (
 
   query = applyInboxSearchServerFilter(query, filterState.query)
   query = applyInboxAdvancedServerFilters(query, filterState.advanced)
-  if (filterState.stage && filterState.stage !== 'all_stages' && SERVER_INBOX_THREAD_STAGE_VALUES.has(filterState.stage)) {
-    query = query.eq('thread_stage', filterState.stage)
+  // Use queue_stage (actual column) not thread_stage
+  if (filterState.stage && filterState.stage !== 'all_stages') {
+    query = query.eq('queue_stage', filterState.stage)
   }
   if (viewCategories.length === 1) query = query.eq('inbox_category', viewCategories[0])
   if (viewCategories.length > 1) query = query.in('inbox_category', viewCategories)
   if (options.signal) query = query.abortSignal(options.signal)
 
   const { data, error } = await query
-  if (error) throw new Error(mapErrorMessage(error))
+  if (error) {
+    if (DEV) console.error('[getInboxThreads] query error:', mapErrorMessage(error))
+    throw new Error(mapErrorMessage(error))
+  }
 
   const rows = safeArray(data as AnyRecord[])
+
+  if (DEV) {
+    console.log('[getInboxThreads] rawHydratedRows=', rows.length, {
+      totalAvailable,
+      firstHydratedRow: rows[0] ? Object.keys(rows[0]) : null,
+      view: filterState.view,
+      stage: filterState.stage,
+      query: filterState.query,
+    })
+  }
+
   const threads: InboxThread[] = rows.map((row, index) => {
-    const threadKey = asString(row.thread_key ?? row.thread_id ?? row.id, '') || `hydrated-thread:${startOffset + index}`
-    const latestMessageIso = asIso(row.latest_message_at ?? row.latest_activity_at) ?? new Date().toISOString()
+    const threadKey = asString(row.thread_key, '') || `hydrated-thread:${startOffset + index}`
+    
+    if (DEV && index === 0) {
+      console.log('[getInboxThreads] normalizing row[0]:', {
+        thread_key: row.thread_key,
+        prospect_name: row.prospect_name,
+        owner_name: row.owner_name,
+        first_name: row.first_name,
+        best_phone: row.best_phone,
+        canonical_e164: row.canonical_e164,
+        phone: row.phone,
+        property_address_full: row.property_address_full,
+        latest_message_body: row.latest_message_body ? String(row.latest_message_body).slice(0, 50) : null,
+        latest_message_at: row.latest_message_at,
+        inbox_category: row.inbox_category,
+        queue_stage: row.queue_stage,
+        detected_intent: row.detected_intent,
+      })
+    }
+
+    const latestMessageIso = asIso(row.latest_message_at) ?? new Date().toISOString()
     const category = asString(row.inbox_category, '').toLowerCase() as HydratedInboxCategory
     const finalAcquisitionScore = asNumber(row.final_acquisition_score, 0)
-    const latestDirection = normalizeMessageDirection({ direction: row.latest_message_direction ?? row.latest_direction })
+    const latestDirection = normalizeMessageDirection({ direction: row.latest_direction })
     const unreadCount = Math.max(0, asNumber(row.unread_count, latestDirection === 'inbound' ? 1 : 0))
+    
+    // Normalize name: prospect_name || owner_name || first_name || best_phone || canonical_e164 || phone
     const prospectName = asString(row.prospect_name, '')
-    const ownerFullName = asString(row.owner_full_name, '')
-    const displayPhone = asString(row.display_phone ?? row.best_phone, '')
-    const ownerDisplayName = prospectName || ownerFullName || displayPhone || 'Unknown Seller'
-    const address = asString(row.property_address_full ?? row.property_address, '') || 'No linked property'
+    const ownerName = asString(row.owner_name, '')
+    const firstName = asString(row.first_name, '')
+    const bestPhone = asString(row.best_phone, '')
+    const canonicalE164 = asString(row.canonical_e164, '')
+    const phone = asString(row.phone, '')
+    const ownerDisplayName = prospectName || ownerName || firstName || bestPhone || canonicalE164 || phone || 'Unknown Seller'
+    
+    // Normalize phone: best_phone || canonical_e164 || phone
+    const displayPhone = bestPhone || canonicalE164 || phone || ''
+    
+    // Normalize address: property_address_full
+    const address = asString(row.property_address_full, '') || 'No linked property'
+    
     const market = asString(row.market, '')
-    const marketFallback = [asString(row.property_city, ''), asString(row.property_state, '')].filter(Boolean).join(', ')
-    const marketLabel = market || marketFallback || 'Unknown Market'
-    const latestBody = asString(row.latest_message_body ?? row.latest_inbound_body ?? row.latest_outbound_body, '') || 'No message yet'
-    const ownerType = asString(row.owner_type, '')
-    const language = asString(row.language, '')
+    const marketLabel = market || 'Unknown Market'
+    
+    const latestBody = asString(row.latest_message_body, '') || 'No message yet'
     const propertyType = asString(row.property_type, '')
-    const queueStatus = normalizeStatus(row.queue_status ?? row.automation_state ?? row.thread_status ?? '')
-    const automationState = normalizeStatus(row.automation_state ?? row.queue_status ?? '')
-    const threadStage = normalizeStatus(row.thread_stage ?? row.stage ?? 'needs_response')
-    const detectedIntent = normalizeStatus(row.detected_intent ?? row.intent ?? '')
-    const isDnc = category === 'dnc_opt_out' || asBoolean(row.dnc_flag ?? row.is_dnc ?? row.is_opt_out, false)
+    const queueStatus = normalizeStatus(row.queue_status ?? '')
+    const automationState = normalizeStatus(row.queue_status ?? '')
+    // Stage: queue_stage || detected_intent || inbox_category
+    const threadStage = normalizeStatus(row.queue_stage ?? row.detected_intent ?? row.inbox_category ?? 'needs_response')
+    const detectedIntent = normalizeStatus(row.detected_intent ?? '')
+    const isDnc = asBoolean(row.is_dnc, false) || category === 'dnc_opt_out'
     const isAutomated = category === 'automated' || automationState.includes('auto')
+    
     const status: InboxThread['status'] = unreadCount > 0 ? 'unread' : 'read'
     const priority: InboxThread['priority'] =
-      category === 'hot_leads' ? 'urgent'
-      : category === 'needs_review' || category === 'new_inbound' ? 'high'
+      category === 'hot_leads' || asBoolean(row.is_hot_lead, false) ? 'urgent'
+      : category === 'needs_review' || category === 'new_inbound' || asBoolean(row.is_new_inbound, false) ? 'high'
       : category === 'dnc_opt_out' ? 'low'
       : 'normal'
     const sentiment: InboxThread['sentiment'] =
-      category === 'hot_leads' ? 'hot'
+      category === 'hot_leads' || asBoolean(row.is_hot_lead, false) ? 'hot'
       : category === 'needs_review' || category === 'new_inbound' ? 'warm'
       : category === 'dnc_opt_out' || category === 'cold_no_response' ? 'cold'
       : 'neutral'
@@ -1485,13 +1549,10 @@ export const getInboxThreads = async (
     const labels = [
       marketLabel,
       propertyType,
-      ownerType.toLowerCase().includes('corporate') || ownerType.toLowerCase().includes('company') ? 'corporate' : '',
-      language && !language.toLowerCase().includes('english') ? language : '',
-      isDnc ? 'DNC / OPT OUT' : '',
-      isAutomated ? 'AI ACTIVE' : '',
+      asString(row.language_preference, ''),
     ].filter(Boolean)
 
-    return {
+    const normalized = {
       ...row,
       id: threadKey,
       threadKey,
@@ -1499,7 +1560,7 @@ export const getInboxThreads = async (
       leadId: asString(row.property_id ?? row.master_owner_id ?? row.prospect_id, '') || threadKey,
       marketId: marketLabel,
       ownerName: ownerDisplayName,
-      ownerDisplayName: ownerFullName || prospectName || ownerDisplayName,
+      ownerDisplayName,
       subject: address,
       preview: latestBody,
       latest_message_body: latestBody,
@@ -1525,33 +1586,27 @@ export const getInboxThreads = async (
       propertyId: asString(row.property_id, '') || undefined,
       phoneNumber: displayPhone || undefined,
       sellerPhone: displayPhone || undefined,
-      canonicalE164: displayPhone || undefined,
-      bestPhone: displayPhone || undefined,
+      canonicalE164: canonicalE164 || undefined,
+      bestPhone: bestPhone || undefined,
       market: marketLabel,
       marketName: marketLabel,
       propertyAddress: address === 'No linked property' ? undefined : address,
       propertyAddressFull: address,
-      propertyCity: asString(row.property_city, ''),
-      propertyState: asString(row.property_state, ''),
-      propertyZip: asString(row.property_zip, ''),
       propertyType: propertyType || undefined,
       beds: row.beds as string | number,
       baths: row.baths as string | number,
       sqft: row.sqft as string | number,
       yearBuilt: row.year_built as string | number,
-      effectiveYear: row.effective_year_build as string | number,
-      equityAmount: asNumber(row.estimated_equity_amount ?? row.equity_amount, 0),
+      equityAmount: asNumber(row.equity_percent, 0) > 0 && asNumber(row.estimated_value, 0) > 0
+        ? (asNumber(row.equity_percent, 0) / 100) * asNumber(row.estimated_value, 0)
+        : 0,
       equityPercent: asNumber(row.equity_percent, 0),
       estimatedRepairCost: asNumber(row.estimated_repair_cost, 0),
       estimatedValue: row.estimated_value ?? null,
-      cashOffer: row.legacy_cash_offer ?? null,
       finalAcquisitionScore: finalAcquisitionScore || null,
-      motivationScore: asNumber(row.financial_pressure_score ?? row.priority_score, 0),
-      ownerType: ownerType || undefined,
-      contactLanguage: language || undefined,
-      isAbsentee: asBoolean(row.is_absentee, false),
-      isOwnerOccupied: asBoolean(row.is_owner_occupied, false),
-      isTaxDelinquent: asBoolean(row.tax_delinquent, false),
+      motivationScore: asNumber(row.priority_score, 0),
+      ownerType: asString(row.owner_type, '') || undefined,
+      contactLanguage: asString(row.language_preference, '') || undefined,
       lat: asNumber(row.latitude, 0) || undefined,
       lng: asNumber(row.longitude, 0) || undefined,
       uiIntent: detectedIntent,
@@ -1566,16 +1621,24 @@ export const getInboxThreads = async (
       threadIsStarred: false,
       threadIsHidden: false,
       threadIsSuppressed: isDnc,
-      showInPriorityInbox: HYDRATED_PRIORITY_CATEGORIES.has(category),
+      showInPriorityInbox: HYDRATED_PRIORITY_CATEGORIES.has(category) || asBoolean(row.is_hot_lead, false) || asBoolean(row.is_new_inbound, false),
       needsResponse: HYDRATED_PRIORITY_CATEGORIES.has(category),
       autoReplyStatus: automationState || queueStatus || undefined,
-      queueId: asString(row.queue_id, '') || undefined,
-      providerMessageSid: asString(row.provider_message_sid, '') || undefined,
-      lastInboundAt: latestDirection === 'inbound' ? latestMessageIso : asIso(row.last_inbound_at),
-      lastOutboundAt: latestDirection === 'outbound' ? latestMessageIso : asIso(row.last_outbound_at),
-      hydrationConfidence: (asString(row.hydration_confidence, '').toLowerCase() as InboxThread['hydrationConfidence']) || 'high',
-      hydrationSource: asString(row.hydration_source, '') || HYDRATED_INBOX_THREADS_VIEW,
     }
+
+    if (DEV && index === 0) {
+      console.log('[getInboxThreads] normalized thread[0]:', {
+        id: normalized.id,
+        ownerName: normalized.ownerName,
+        subject: normalized.subject,
+        status: normalized.status,
+        priority: normalized.priority,
+        category,
+        normalizationDropReasons: !normalized.id ? ['missing thread_key'] : [],
+      })
+    }
+
+    return normalized
   })
 
   if (DEV) {

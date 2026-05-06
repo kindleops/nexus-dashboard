@@ -103,13 +103,13 @@ const runStaticInboxProof = () => {
 
   assertContains('thread cards use hydrated market and latest message fields', 'src/lib/data/inboxData.ts', [
     'prospect_name',
-    'owner_full_name',
-    'display_phone',
+    'owner_name',
+    'best_phone',
     'property_address_full',
     'latest_message_body',
     'property_type',
     'detected_intent',
-    'thread_stage',
+    'queue_stage',
   ])
 
   assertContains('workflow thread preserves hydration aliases', 'src/modules/inbox/inbox.adapter.ts', [
