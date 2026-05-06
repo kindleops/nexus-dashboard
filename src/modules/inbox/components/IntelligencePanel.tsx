@@ -7,7 +7,7 @@ import {
   buildPropertyExternalLinks,
   buildAerialViewUrl,
 } from '../inbox-normalization'
-import { Icon } from '../../../shared/icons'
+import { Icon, type IconName } from '../../../shared/icons'
 import { formatRelativeTime } from '../../../shared/formatters'
 import {
   automationStateVisuals,
@@ -1038,6 +1038,454 @@ const TimelineCard = ({ thread }: { thread: InboxWorkflowThread }) => {
   )
 }
 
+
+// ── Tabbed Intelligence System ────────────────────────────────────────────
+
+type IntelligenceTabId =
+  | 'overview'
+  | 'prospect'
+  | 'owner'
+  | 'property'
+  | 'portfolio'
+  | 'financial'
+  | 'conversation'
+  | 'automation'
+  | 'timeline'
+
+const INTELLIGENCE_TABS: Array<{ id: IntelligenceTabId; label: string }> = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'prospect', label: 'Prospect' },
+  { id: 'owner', label: 'Owner' },
+  { id: 'property', label: 'Property Intel' },
+  { id: 'portfolio', label: 'Portfolio' },
+  { id: 'financial', label: 'Financial' },
+  { id: 'conversation', label: 'Conversation' },
+  { id: 'automation', label: 'Automation' },
+  { id: 'timeline', label: 'Timeline' },
+]
+
+const getFromRecord = (record: Record<string, unknown> | null | undefined, key: string): unknown => {
+  if (!record) return null
+  return record[key] ?? record[key.replace(/_/g, '')] ?? record[key.charAt(0).toUpperCase() + key.slice(1)]
+}
+
+const getAny = (
+  thread: InboxWorkflowThread,
+  intelligence: ThreadIntelligenceRecord | null,
+  keys: string[],
+): unknown => {
+  for (const key of keys) {
+    const threadValue = get(thread, key)
+    if (isPresent(threadValue)) return threadValue
+    const intelValue = getFromRecord(intelligence, key)
+    if (isPresent(intelValue)) return intelValue
+  }
+  return null
+}
+
+const formatScore = (value: unknown): string | null => {
+  if (!isPresent(value)) return null
+  const num = Number(String(value).replace(/[^0-9.]/g, ''))
+  return Number.isFinite(num) ? `${Math.round(num)}/100` : asStr(value)
+}
+
+const formatCount = (value: unknown): string | null => isPresent(value) ? Number(String(value).replace(/,/g, '')).toLocaleString() : null
+
+const formatYesNo = (value: unknown): 'Yes' | 'No' => {
+  const normalized = normalizeText(value).toLowerCase()
+  if (['true', 'yes', 'y', '1', 'active'].includes(normalized)) return 'Yes'
+  return value === true ? 'Yes' : 'No'
+}
+
+const FieldTile = ({ label, value, tone = 'default' }: { label: string; value: unknown; tone?: 'default' | 'good' | 'warn' | 'bad' | 'accent' }) => (
+  <div className={cls('nx-intel-field', tone !== 'default' && `is-${tone}`)}>
+    <span>{label}</span>
+    <strong>{isPresent(value) ? asStr(value) : 'Not enriched'}</strong>
+  </div>
+)
+
+const FieldGrid = ({ children, columns = 2 }: { children: React.ReactNode; columns?: 2 | 3 }) => (
+  <div className={cls('nx-intel-field-grid', columns === 3 && 'is-3-col')}>{children}</div>
+)
+
+const PanelSection = ({ title, icon = 'grid', children }: { title: string; icon?: IconName; children: React.ReactNode }) => (
+  <section className="nx-intel-section">
+    <div className="nx-intel-section__title"><Icon name={icon} /><span>{title}</span></div>
+    {children}
+  </section>
+)
+
+const MatchBadge = ({ label, tone }: { label: string; tone: 'green' | 'yellow' | 'red' }) => (
+  <span className={cls('nx-match-badge', `is-${tone}`)}>{label}</span>
+)
+
+const YesNoBadge = ({ label, yes }: { label: string; yes: boolean }) => (
+  <span className={cls('nx-binary-badge', yes ? 'is-yes' : 'is-no')}>{label}: {yes ? 'Yes' : 'No'}</span>
+)
+
+const buildMatchBadges = (thread: InboxWorkflowThread, intelligence: ThreadIntelligenceRecord | null) => {
+  const tags = String(getAny(thread, intelligence, ['contactMatchTags', 'contact_match_tags', 'match_tags']) || '')
+    .split(/[;,|]/)
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+  const ownerType = normalizeText(getAny(thread, intelligence, ['ownerType', 'owner_type'])).toLowerCase()
+  const confidence = Number(getAny(thread, intelligence, ['matchingConfidence', 'match_confidence', 'phoneConfidence', 'phone_confidence']) || 0)
+  const out = new Map<string, 'green' | 'yellow' | 'red'>()
+
+  if (confidence >= 80 || thread.ownerId) out.set('Likely Owner', 'green')
+  else if (confidence >= 45 || thread.prospectId) out.set('Potential Owner', 'yellow')
+  if (ownerType.includes('llc') || ownerType.includes('corpor') || ownerType.includes('company')) out.set('Linked To Company', 'green')
+  if (tags.some((tag) => /company|business|entity/i.test(tag))) out.set('Potential Company Link', 'yellow')
+  if (tags.some((tag) => /family|relative/i.test(tag))) out.set('Family Match', 'yellow')
+  if (tags.some((tag) => /resident|occupant/i.test(tag))) out.set('Resident Match', 'yellow')
+  if (tags.some((tag) => /renter|tenant/i.test(tag))) out.set('Likely Renter', 'red')
+  if (thread.isOptOut || confidence < 30) out.set('Wrong Contact Risk', 'red')
+  if (!out.size) out.set('Potential Owner', 'yellow')
+  return Array.from(out.entries()).map(([label, tone]) => ({ label, tone }))
+}
+
+const DossierTabNav = ({ active, onChange }: { active: IntelligenceTabId; onChange: (tab: IntelligenceTabId) => void }) => (
+  <nav className="nx-intelligence-tabs" aria-label="Deal intelligence tabs">
+    {INTELLIGENCE_TABS.map((tab) => (
+      <button
+        key={tab.id}
+        type="button"
+        className={cls('nx-intelligence-tab', active === tab.id && 'is-active')}
+        onClick={() => onChange(tab.id)}
+      >
+        <span>{tab.label}</span>
+      </button>
+    ))}
+  </nav>
+)
+
+const OverviewPanel = ({ thread, intelligence, messages }: { thread: InboxWorkflowThread; intelligence: ThreadIntelligenceRecord | null; messages: ThreadMessage[] }) => {
+  const action = getNextBestAction(thread)
+  const latestInbound = messages.find((message) => message.direction === 'inbound')?.body || thread.latestMessageBody || thread.lastMessageBody
+  return (
+    <div className="nx-intel-panel-grid">
+      <PanelSection title="Acquisition Command" icon="spark">
+        <FieldGrid columns={3}>
+          <FieldTile label="Acquisition Score" value={formatScore(getAny(thread, intelligence, ['finalAcquisitionScore', 'final_acquisition_score', 'acquisition_score', 'motivationScore']))} tone="good" />
+          <FieldTile label="Deal Strength" value={getAny(thread, intelligence, ['dealStrength', 'deal_strength', 'priorityBucket']) || thread.priority} tone="accent" />
+          <FieldTile label="Close Probability" value={formatPercent(getAny(thread, intelligence, ['closeProbability', 'estimatedCloseProbability', 'close_probability'])) || formatPercent(thread.motivationScore)} />
+          <FieldTile label="Intent Classification" value={thread.uiIntent || getAny(thread, intelligence, ['intent_classification', 'seller_intent'])} />
+          <FieldTile label="Lead Status" value={getStatusVisual(thread.inboxStatus).label} />
+          <FieldTile label="Seller Responsiveness" value={getAny(thread, intelligence, ['sellerResponsiveness', 'seller_responsiveness']) || (thread.lastInboundAt ? 'Responsive' : 'Unproven')} />
+        </FieldGrid>
+      </PanelSection>
+      <PanelSection title="AI Recommendation" icon="spark">
+        <div className="nx-intel-copy-card">
+          <strong>{action.title}</strong>
+          <p>{action.reason}</p>
+          <div className="nx-intel-badge-row">
+            <QuietBadge label={`Next: ${thread.nextSystemAction || action.suggestedReply || 'Monitor thread'}`} tone="accent" />
+            <QuietBadge label={`Automation ${automationStateVisuals[thread.automationState].label}`} />
+            <QuietBadge label={`Health ${thread.queueStatus || 'Healthy'}`} tone={thread.queueStatus === 'stuck' ? 'warning' : 'success'} />
+          </div>
+        </div>
+      </PanelSection>
+      <PanelSection title="Latest Inbound Summary" icon="message">
+        <p className="nx-intel-body-copy">{latestInbound || 'No inbound message has been captured for this thread yet.'}</p>
+      </PanelSection>
+      <PanelSection title="Recent Activity Preview" icon="activity">
+        <MiniTimeline thread={thread} messages={messages} limit={4} />
+      </PanelSection>
+    </div>
+  )
+}
+
+const ProspectPanel = ({ thread, intelligence }: { thread: InboxWorkflowThread; intelligence: ThreadIntelligenceRecord | null }) => {
+  const badges = buildMatchBadges(thread, intelligence)
+  return (
+    <div className="nx-intel-panel-grid">
+      <PanelSection title="Prospect Identity" icon="users">
+        <div className="nx-match-badge-row">{badges.map((badge) => <MatchBadge key={badge.label} label={badge.label} tone={badge.tone} />)}</div>
+        <FieldGrid>
+          <FieldTile label="Prospect Name" value={getAny(thread, intelligence, ['prospectName', 'prospect_full_name', 'sellerName']) || thread.ownerDisplayName || thread.ownerName} tone="accent" />
+          <FieldTile label="Matching Confidence" value={formatScore(getAny(thread, intelligence, ['matchingConfidence', 'match_confidence', 'phoneConfidence']))} />
+          <FieldTile label="Contact Match Tags" value={getAny(thread, intelligence, ['contactMatchTags', 'contact_match_tags', 'matchedKeywords'])} />
+          <FieldTile label="Age" value={getAny(thread, intelligence, ['age', 'prospect_age'])} />
+          <FieldTile label="Marital Status" value={getAny(thread, intelligence, ['maritalStatus', 'marital_status'])} />
+          <FieldTile label="Gender" value={getAny(thread, intelligence, ['gender'])} />
+          <FieldTile label="Language" value={getAny(thread, intelligence, ['contactLanguage', 'language', 'seller_language'])} />
+          <FieldTile label="Education" value={getAny(thread, intelligence, ['education'])} />
+          <FieldTile label="Household Income" value={formatMoney(getAny(thread, intelligence, ['householdIncome', 'household_income']))} />
+          <FieldTile label="Net Asset Value" value={formatMoney(getAny(thread, intelligence, ['netAssetValue', 'net_asset_value']))} />
+          <FieldTile label="Occupation" value={getAny(thread, intelligence, ['occupation'])} />
+          <FieldTile label="Occupation Group" value={getAny(thread, intelligence, ['occupationGroup', 'occupation_group'])} />
+          <FieldTile label="Prospect Tags" value={getAny(thread, intelligence, ['prospectTags', 'prospect_tags', 'labels'])} />
+          <FieldTile label="Phone Number" value={fmtPhone(thread.phoneNumber || thread.canonicalE164 || getAny(thread, intelligence, ['phone', 'phone_number']))} tone="good" />
+          <FieldTile label="Phone Carrier" value={getAny(thread, intelligence, ['phoneCarrier', 'phone_carrier', 'carrier'])} />
+          <FieldTile label="Email" value={getAny(thread, intelligence, ['email', 'ownerEmail', 'owner_email'])} />
+          <FieldTile label="Contactability Score" value={formatScore(getAny(thread, intelligence, ['contactabilityScore', 'contactability_score', 'phoneConfidence']))} />
+        </FieldGrid>
+      </PanelSection>
+    </div>
+  )
+}
+
+const OwnerPanel = ({ thread, intelligence }: { thread: InboxWorkflowThread; intelligence: ThreadIntelligenceRecord | null }) => (
+  <div className="nx-intel-panel-grid">
+    <PanelSection title="Owner Operations" icon="user">
+      <FieldGrid>
+        <FieldTile label="Priority Tier" value={thread.priority || getAny(thread, intelligence, ['priorityTier', 'priority_tier'])} tone="accent" />
+        <FieldTile label="Priority Score" value={formatScore(getAny(thread, intelligence, ['priorityScore', 'priority_score', 'finalAcquisitionScore']))} />
+        <FieldTile label="Best Contact Window" value={getAny(thread, intelligence, ['bestContactWindow', 'best_contact_window', 'bestContactTime']) || 'Afternoon'} />
+        <FieldTile label="Ownership Years" value={getAny(thread, intelligence, ['ownershipYears', 'years_owned'])} />
+        <FieldTile label="Owner Occupied" value={formatYesNo(thread.isOwnerOccupied || getAny(thread, intelligence, ['owner_occupied']))} tone={thread.isOwnerOccupied ? 'good' : 'bad'} />
+        <FieldTile label="Absentee Status" value={formatYesNo(thread.isAbsentee || getAny(thread, intelligence, ['absentee', 'absentee_status']))} tone={thread.isAbsentee ? 'warn' : 'good'} />
+        <FieldTile label="Corporate Flag" value={formatYesNo(getAny(thread, intelligence, ['corporateFlag', 'corporate_flag']))} />
+        <FieldTile label="Trust Flag" value={formatYesNo(getAny(thread, intelligence, ['trustFlag', 'trust_flag']))} />
+        <FieldTile label="LLC Flag" value={formatYesNo(String(getAny(thread, intelligence, ['ownerType', 'owner_type'])).toLowerCase().includes('llc'))} />
+        <FieldTile label="Vacancy Risk" value={formatYesNo(thread.isVacant || getAny(thread, intelligence, ['vacancyRisk', 'vacancy_risk']))} tone={thread.isVacant ? 'warn' : 'good'} />
+        <FieldTile label="Seller Persona" value={getAny(thread, intelligence, ['sellerPersona', 'seller_persona']) || getSellerStageVisual(thread.conversationStage).label} />
+        <FieldTile label="Motivation Drivers" value={getAny(thread, intelligence, ['motivationDrivers', 'motivation_drivers', 'motivationSummary', 'distressTags'])} />
+        <FieldTile label="Decision Maker Confidence" value={formatScore(getAny(thread, intelligence, ['decisionMakerConfidence', 'decision_maker_confidence', 'matchingConfidence']))} />
+      </FieldGrid>
+    </PanelSection>
+  </div>
+)
+
+const PropertyIntelPanel = ({ thread, intelligence }: { thread: InboxWorkflowThread; intelligence: ThreadIntelligenceRecord | null }) => {
+  const snapshot = normalizePropertySnapshot(intelligence, thread)
+  const address = snapshot.fullAddress || thread.propertyAddress || thread.subject || null
+  const extLinks = buildPropertyExternalLinks(address)
+  const value = getAny(thread, intelligence, ['estimatedValue', 'estimated_value', 'zestimate'])
+  const equity = getAny(thread, intelligence, ['equityAmount', 'equity', 'equity_amount'])
+  return (
+    <div className="nx-intel-panel-grid">
+      <PanelSection title="Asset Profile" icon="layers">
+        <FieldGrid>
+          <FieldTile label="Asset Type" value={snapshot.propertyType || getAny(thread, intelligence, ['propertyType', 'property_type'])} />
+          <FieldTile label="Occupancy" value={snapshot.occupancy || getAny(thread, intelligence, ['occupancy'])} />
+          <FieldTile label="Lot Size" value={snapshot.lotSize || getAny(thread, intelligence, ['lotSize', 'lot_size_sqft'])} />
+          <FieldTile label="Zoning" value={getAny(thread, intelligence, ['zoning', 'zoning_code'])} />
+          <FieldTile label="County" value={getAny(thread, intelligence, ['county', 'property_county'])} />
+          <FieldTile label="Subdivision" value={getAny(thread, intelligence, ['subdivision'])} />
+          <FieldTile label="School District" value={getAny(thread, intelligence, ['schoolDistrict', 'school_district'])} />
+          <FieldTile label="Stories" value={getAny(thread, intelligence, ['stories', 'num_stories'])} />
+          <FieldTile label="Garage" value={getAny(thread, intelligence, ['garageOrParking', 'garage_or_parking'])} />
+          <FieldTile label="Roof" value={getAny(thread, intelligence, ['roofCover', 'roof_cover'])} />
+          <FieldTile label="HVAC" value={getAny(thread, intelligence, ['hvacType', 'hvac_type', 'ac_heating'])} />
+          <FieldTile label="Foundation" value={getAny(thread, intelligence, ['foundation', 'foundation_type'])} />
+          <FieldTile label="Construction Type" value={getAny(thread, intelligence, ['constructionType', 'construction_type'])} />
+        </FieldGrid>
+      </PanelSection>
+      <PanelSection title="Valuation" icon="trending-up">
+        <FieldGrid>
+          <FieldTile label="Estimated Value" value={formatMoney(value)} tone="good" />
+          <FieldTile label="ARV" value={formatMoney(getAny(thread, intelligence, ['arv', 'afterRepairValue', 'after_repair_value']))} />
+          <FieldTile label="Walkaway" value={formatMoney(getAny(thread, intelligence, ['walkawayPrice', 'walkaway_price', 'walkaway_internal']))} />
+          <FieldTile label="Price Per Sqft" value={formatMoney(getAny(thread, intelligence, ['pricePerSqft', 'price_per_sqft']))} />
+          <FieldTile label="AI Confidence" value={formatScore(getAny(thread, intelligence, ['aiConfidence', 'ai_confidence', 'offerConfidence']))} />
+          <FieldTile label="Acquisition Score" value={formatScore(getAny(thread, intelligence, ['finalAcquisitionScore', 'acquisition_score']))} />
+          <FieldTile label="Deal Strength" value={getAny(thread, intelligence, ['dealStrength', 'deal_strength']) || thread.priority} />
+        </FieldGrid>
+      </PanelSection>
+      <PanelSection title="Distress" icon="alert">
+        <FieldGrid>
+          <FieldTile label="Tax Delinquent" value={formatYesNo(thread.isTaxDelinquent)} tone={thread.isTaxDelinquent ? 'warn' : 'good'} />
+          <FieldTile label="Active Lien" value={formatYesNo(thread.hasLien || getAny(thread, intelligence, ['activeLien', 'active_lien']))} tone={thread.hasLien ? 'warn' : 'good'} />
+          <FieldTile label="Distress Tags" value={getAny(thread, intelligence, ['distressTags', 'distress_tags', 'podioTags'])} />
+          <FieldTile label="Foreclosure Indicators" value={formatYesNo(getAny(thread, intelligence, ['foreclosureIndicators', 'foreclosure_indicators']))} />
+          <FieldTile label="Motivation Stack" value={getAny(thread, intelligence, ['motivationStack', 'motivation_stack', 'motivationSummary'])} />
+        </FieldGrid>
+      </PanelSection>
+      <PanelSection title="Mortgage Stack" icon="stats">
+        <FieldGrid>
+          <FieldTile label="Loan Balance" value={formatMoney(getAny(thread, intelligence, ['loanBalance', 'loan_balance', 'mortgageBalance']))} />
+          <FieldTile label="Equity" value={formatMoney(equity)} tone="good" />
+          <FieldTile label="Equity %" value={formatPercent(getAny(thread, intelligence, ['equityPercent', 'equity_percent']))} />
+          <FieldTile label="Estimated Payment" value={formatMoney(getAny(thread, intelligence, ['estimatedPayment', 'estimated_payment']))} />
+          <FieldTile label="Position Count" value={formatCount(getAny(thread, intelligence, ['positionCount', 'position_count']))} />
+        </FieldGrid>
+      </PanelSection>
+      <PanelSection title="External Links" icon="arrow-up-right">
+        <div className="nx-links-grid is-command-links">
+          <LinkedRecordButton label="Zillow" url={extLinks.zillow} icon="globe" />
+          <LinkedRecordButton label="Redfin" url={`https://www.redfin.com/stingray/do/query-location?location=${encodeURIComponent(address || '')}`} icon="globe" />
+          <LinkedRecordButton label="County" url={asStr(getAny(thread, intelligence, ['countyUrl', 'county_url'])) || undefined} icon="briefing" />
+          <LinkedRecordButton label="Parcel Viewer" url={asStr(getAny(thread, intelligence, ['parcelViewerUrl', 'parcel_viewer_url'])) || undefined} icon="map" />
+          <LinkedRecordButton label="Google Maps" url={extLinks.googleSearch} icon="map" />
+          <LinkedRecordButton label="Street View" url={extLinks.streetView} icon="map" />
+          <LinkedRecordButton label="Satellite" url={buildAerialViewUrl(address || '')} icon="map" />
+        </div>
+      </PanelSection>
+    </div>
+  )
+}
+
+const PortfolioPanel = ({ thread, intelligence }: { thread: InboxWorkflowThread; intelligence: ThreadIntelligenceRecord | null }) => (
+  <div className="nx-intel-panel-grid">
+    <PanelSection title="Portfolio Exposure" icon="layers">
+      <FieldGrid>
+        <FieldTile label="Portfolio Property Count" value={formatCount(getAny(thread, intelligence, ['portfolioPropertyCount', 'portfolio_property_count', 'propertyCount']))} />
+        <FieldTile label="Property Type Majority" value={getAny(thread, intelligence, ['propertyTypeMajority', 'property_type_majority']) || getAny(thread, intelligence, ['propertyType'])} />
+        <FieldTile label="SFR Count" value={formatCount(getAny(thread, intelligence, ['sfrCount', 'sfr_count']))} />
+        <FieldTile label="MF Count" value={formatCount(getAny(thread, intelligence, ['mfCount', 'mf_count']))} />
+        <FieldTile label="Total Units" value={formatCount(getAny(thread, intelligence, ['totalUnits', 'total_units', 'unitCount']))} />
+        <FieldTile label="Portfolio Value" value={formatMoney(getAny(thread, intelligence, ['portfolioValue', 'portfolio_value']))} tone="good" />
+        <FieldTile label="Total Equity" value={formatMoney(getAny(thread, intelligence, ['totalEquity', 'total_equity', 'equityAmount']))} tone="good" />
+        <FieldTile label="Total Debt" value={formatMoney(getAny(thread, intelligence, ['totalDebt', 'total_debt']))} />
+        <FieldTile label="Estimated Monthly Debt Payment" value={formatMoney(getAny(thread, intelligence, ['estimatedMonthlyDebtPayment', 'estimated_monthly_debt_payment']))} />
+        <FieldTile label="Portfolio Geography" value={getAny(thread, intelligence, ['portfolioGeography', 'portfolio_geography']) || thread.market} />
+        <FieldTile label="Average Equity %" value={formatPercent(getAny(thread, intelligence, ['averageEquityPercent', 'average_equity_percent', 'equityPercent']))} />
+        <FieldTile label="Avg Ownership Years" value={getAny(thread, intelligence, ['avgOwnershipYears', 'avg_ownership_years', 'ownershipYears'])} />
+      </FieldGrid>
+    </PanelSection>
+  </div>
+)
+
+const FinancialPanel = ({ thread, intelligence }: { thread: InboxWorkflowThread; intelligence: ThreadIntelligenceRecord | null }) => {
+  const taxYes = thread.isTaxDelinquent || formatYesNo(getAny(thread, intelligence, ['portfolioTaxDelinquentCount', 'portfolio_tax_delinquent_count'])) === 'Yes'
+  const lienYes = thread.hasLien || formatYesNo(getAny(thread, intelligence, ['portfolioLienCount', 'portfolio_lien_count', 'activeLien'])) === 'Yes'
+  return (
+    <div className="nx-intel-panel-grid">
+      <PanelSection title="Financial Pressure" icon="stats">
+        <div className="nx-binary-badge-row">
+          <YesNoBadge label="Tax Delinquent" yes={Boolean(taxYes)} />
+          <YesNoBadge label="Active Lien" yes={Boolean(lienYes)} />
+        </div>
+        <FieldGrid>
+          <FieldTile label="Financial Pressure Score" value={formatScore(getAny(thread, intelligence, ['financialPressureScore', 'financial_pressure_score', 'motivationScore']))} tone="warn" />
+          <FieldTile label="Urgency Count" value={formatCount(getAny(thread, intelligence, ['urgencyCount', 'urgency_count']))} />
+          <FieldTile label="Portfolio Tax Delinquent Count" value={formatCount(getAny(thread, intelligence, ['portfolioTaxDelinquentCount', 'portfolio_tax_delinquent_count']))} />
+          <FieldTile label="Portfolio Lien Count" value={formatCount(getAny(thread, intelligence, ['portfolioLienCount', 'portfolio_lien_count']))} />
+          <FieldTile label="Oldest Tax Year" value={getAny(thread, intelligence, ['oldestTaxYear', 'oldest_tax_year'])} />
+          <FieldTile label="Total Tax Amount" value={formatMoney(getAny(thread, intelligence, ['totalTaxAmount', 'total_tax_amount', 'tax_amount']))} />
+          <FieldTile label="Estimated Cash Distress" value={formatMoney(getAny(thread, intelligence, ['estimatedCashDistress', 'estimated_cash_distress']))} />
+          <FieldTile label="High Risk Flags" value={getAny(thread, intelligence, ['highRiskFlags', 'high_risk_flags', 'distressTags'])} tone="bad" />
+        </FieldGrid>
+      </PanelSection>
+    </div>
+  )
+}
+
+const ConversationPanel = ({ thread, intelligence, messages }: { thread: InboxWorkflowThread; intelligence: ThreadIntelligenceRecord | null; messages: ThreadMessage[] }) => {
+  const inbound = messages.find((message) => message.direction === 'inbound')
+  const outbound = messages.find((message) => message.direction === 'outbound')
+  return (
+    <div className="nx-intel-panel-grid">
+      <PanelSection title="Conversation Intelligence" icon="message">
+        <FieldGrid>
+          <FieldTile label="Latest Inbound" value={inbound?.body || thread.latestMessageBody || thread.lastMessageBody} tone="accent" />
+          <FieldTile label="Latest Outbound" value={outbound?.body || getAny(thread, intelligence, ['latestOutbound', 'latest_outbound'])} />
+          <FieldTile label="AI Classification" value={thread.uiIntent || getAny(thread, intelligence, ['aiClassification', 'ai_classification'])} />
+          <FieldTile label="Seller Sentiment" value={thread.sentiment || getAny(thread, intelligence, ['sellerSentiment', 'seller_sentiment'])} />
+          <FieldTile label="Objection Type" value={getAny(thread, intelligence, ['objectionType', 'objection_type'])} />
+          <FieldTile label="Seller Intent" value={thread.uiIntent || getAny(thread, intelligence, ['sellerIntent', 'seller_intent'])} />
+          <FieldTile label="Timeline" value={getAny(thread, intelligence, ['sellerTimeline', 'timeline']) || (thread.lastMessageAt ? formatRelativeTime(thread.lastMessageAt) : null)} />
+          <FieldTile label="Thread State" value={getStatusVisual(thread.inboxStatus).label} />
+          <FieldTile label="Current Stage" value={getSellerStageVisual(thread.conversationStage).label} />
+          <FieldTile label="Queued Reply" value={thread.aiDraft || getAny(thread, intelligence, ['queuedReply', 'queued_reply'])} />
+          <FieldTile label="Automation Confidence" value={formatScore(getAny(thread, intelligence, ['automationConfidence', 'automation_confidence', 'offerConfidence']))} />
+          <FieldTile label="Escalation Flags" value={getAny(thread, intelligence, ['escalationFlags', 'escalation_flags']) || (thread.inboxStatus === 'needs_review' ? 'Needs review' : null)} />
+        </FieldGrid>
+      </PanelSection>
+    </div>
+  )
+}
+
+const AutomationPanel = ({ thread, intelligence }: { thread: InboxWorkflowThread; intelligence: ThreadIntelligenceRecord | null }) => {
+  const autoVisual = automationStateVisuals[thread.automationState]
+  return (
+    <div className="nx-intel-panel-grid">
+      <PanelSection title="Automation Control" icon="bolt">
+        <FieldGrid>
+          <FieldTile label="Queue Health" value={thread.queueStatus || 'Healthy'} tone={thread.queueStatus === 'stuck' ? 'bad' : 'good'} />
+          <FieldTile label="Automation Active" value={thread.automationState === 'active' ? 'Yes' : 'No'} tone={thread.automationState === 'active' ? 'good' : 'warn'} />
+          <FieldTile label="Last Run" value={formatDate(getAny(thread, intelligence, ['lastRun', 'last_run', 'updatedAt']) || thread.updatedAt)} />
+          <FieldTile label="Auto Reply Status" value={thread.autoReplyStatus || getAny(thread, intelligence, ['autoReplyStatus', 'auto_reply_status'])} />
+          <FieldTile label="Send Eligibility" value={thread.isOptOut || thread.isSuppressed ? 'Suppressed' : 'Eligible'} tone={thread.isOptOut || thread.isSuppressed ? 'bad' : 'good'} />
+          <FieldTile label="Suppression Status" value={thread.isOptOut || thread.isSuppressed ? 'Suppressed' : 'Clear'} />
+          <FieldTile label="Retry State" value={getAny(thread, intelligence, ['retryState', 'retry_state']) || thread.deliveryStatus} />
+          <FieldTile label="Fallback Mode" value={getAny(thread, intelligence, ['fallbackMode', 'fallback_mode']) || 'Operator review'} />
+          <FieldTile label="Routing Market" value={thread.market || thread.marketId} />
+          <FieldTile label="Assigned Number" value={fmtPhone(thread.ourNumber || getAny(thread, intelligence, ['assignedNumber', 'assigned_number']))} />
+          <FieldTile label="AI Routing Reason" value={getAny(thread, intelligence, ['aiRoutingReason', 'ai_routing_reason']) || autoVisual.label} />
+        </FieldGrid>
+      </PanelSection>
+      <PanelSection title="Automation Logs Preview" icon="activity">
+        <MiniTimeline thread={thread} messages={[]} limit={3} />
+      </PanelSection>
+    </div>
+  )
+}
+
+const MiniTimeline = ({ thread, messages, limit = 8 }: { thread: InboxWorkflowThread; messages: ThreadMessage[]; limit?: number }) => {
+  const messageItems = messages.slice(0, limit).map((message) => ({
+    label: message.direction === 'inbound' ? 'Seller replied' : 'Queue sent',
+    time: message.timelineAt || message.createdAt,
+    detail: message.body,
+    done: true,
+    active: message.direction === 'inbound' && thread.inboxStatus === 'new_reply',
+  }))
+  const syntheticItems = [
+    { label: 'First touch', time: get(thread, 'firstTouchAt') || thread.updatedAt, detail: 'Initial contact sequence opened.', done: true },
+    { label: 'AI classified', time: thread.lastMessageAt, detail: thread.uiIntent || getSellerStageVisual(thread.conversationStage).label, done: true },
+    { label: 'Auto response queued', time: thread.aiDraft ? thread.updatedAt : null, detail: thread.aiDraft || 'No draft queued.', done: Boolean(thread.aiDraft) },
+    { label: 'Delivered', time: thread.lastOutboundAt, detail: thread.deliveryStatus || 'Outbound delivery recorded.', done: Boolean(thread.lastOutboundAt) },
+    { label: 'Escalation triggered', time: thread.inboxStatus === 'needs_review' ? thread.updatedAt : null, detail: 'Operator review required.', done: thread.inboxStatus === 'needs_review', active: thread.inboxStatus === 'needs_review' },
+    { label: 'Offer generated', time: get(thread, 'offerGeneratedAt') || get(thread, 'offer_generated_at'), detail: formatMoney(thread.cashOffer) || 'Awaiting offer model.', done: isPresent(thread.cashOffer) },
+  ]
+  const items = (messageItems.length ? messageItems : syntheticItems).slice(0, limit)
+  return (
+    <div className="nx-war-room-timeline">
+      {items.map((item, index) => (
+        <div key={`${item.label}-${index}`} className={cls('nx-war-room-timeline__item', item.done && 'is-done', item.active && 'is-active')}>
+          <div className="nx-war-room-timeline__node" />
+          <div className="nx-war-room-timeline__content">
+            <strong>{item.label}</strong>
+            <span>{item.time ? formatDate(item.time) : 'Pending'}</span>
+            <p>{item.detail}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+const TimelinePanel = ({ thread, messages }: { thread: InboxWorkflowThread; messages: ThreadMessage[] }) => (
+  <div className="nx-intel-panel-grid">
+    <PanelSection title="Cinematic Execution Timeline" icon="activity">
+      <MiniTimeline thread={thread} messages={messages} limit={8} />
+    </PanelSection>
+  </div>
+)
+
+const TabbedIntelligenceSystem = ({
+  thread,
+  intelligence,
+  messages,
+  isSuppressed,
+}: {
+  thread: InboxWorkflowThread
+  intelligence: ThreadIntelligenceRecord | null
+  messages: ThreadMessage[]
+  isSuppressed: boolean
+}) => {
+  const [activeTab, setActiveTab] = useState<IntelligenceTabId>('overview')
+
+  return (
+    <div className="nx-tabbed-intelligence-system">
+      <PropertySnapshotCard thread={thread} intelligence={intelligence} />
+      <DossierTabNav active={activeTab} onChange={setActiveTab} />
+      <div key={activeTab} className="nx-active-intelligence-panel">
+        {activeTab === 'overview' && <> <OverviewPanel thread={thread} intelligence={intelligence} messages={messages} /> <AIActionCard thread={thread} isSuppressed={isSuppressed} /> </>}
+        {activeTab === 'prospect' && <ProspectPanel thread={thread} intelligence={intelligence} />}
+        {activeTab === 'owner' && <> <OwnerPanel thread={thread} intelligence={intelligence} /> <SellerOwnerCard thread={thread} /> </>}
+        {activeTab === 'property' && <> <PropertyIntelPanel thread={thread} intelligence={intelligence} /> <PropertyIntelligenceTabs thread={thread} intelligence={intelligence} /> <LinkedRecordsCard thread={thread} /> </>}
+        {activeTab === 'portfolio' && <PortfolioPanel thread={thread} intelligence={intelligence} />}
+        {activeTab === 'financial' && <> <FinancialPanel thread={thread} intelligence={intelligence} /> <OfferMemoCard thread={thread} /> </>}
+        {activeTab === 'conversation' && <ConversationPanel thread={thread} intelligence={intelligence} messages={messages} />}
+        {activeTab === 'automation' && <AutomationPanel thread={thread} intelligence={intelligence} />}
+        {activeTab === 'timeline' && <> <TimelinePanel thread={thread} messages={messages} /> <TimelineCard thread={thread} /> </>}
+      </div>
+    </div>
+  )
+}
+
 // ── Main Intelligence Panel ───────────────────────────────────────────────
 
 interface IntelligencePanelProps {
@@ -1059,6 +1507,7 @@ export const IntelligencePanel = (props: IntelligencePanelProps) => {
   const {
     thread,
     intelligence,
+    messages,
     isSuppressed,
     panelMode = 'default',
     onCollapse,
@@ -1102,14 +1551,8 @@ export const IntelligencePanel = (props: IntelligencePanelProps) => {
           <DealCommandHeader thread={thread} />
           <WorkflowControl thread={thread} onStatusChange={onStatusChange} onStageChange={onStageChange} />
 
-          <div className="nx-dossier-workspace">
-            <PropertySnapshotCard thread={thread} intelligence={intelligence} />
-            <AIActionCard thread={thread} isSuppressed={isSuppressed} />
-            <OfferMemoCard thread={thread} />
-            <SellerOwnerCard thread={thread} />
-            <PropertyIntelligenceTabs thread={thread} intelligence={intelligence} />
-            <TimelineCard thread={thread} />
-            <LinkedRecordsCard thread={thread} />
+          <div className="nx-dossier-workspace nx-dossier-workspace--tabbed">
+            <TabbedIntelligenceSystem thread={thread} intelligence={intelligence} messages={messages} isSuppressed={isSuppressed} />
           </div>
 
           <div className="nx-intel-action-rail">
