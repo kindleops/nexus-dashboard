@@ -275,7 +275,7 @@ export const InboxSidebar = ({
             <div className="nx-priority-command-card__liquid-bg" />
             <div className="nx-priority-command-card__left">
               <span className="nx-priority-command-card__title">PRIORITY INBOX</span>
-              <p className="nx-priority-command-card__sub">Actionable signals &amp; urgent replies</p>
+              <p className="nx-priority-command-card__sub">Actionable signals & urgent replies</p>
             </div>
             <strong className="nx-priority-command-card__count">{formatCount(numberOrNull(commandCount) ?? 0)}</strong>
           </div>

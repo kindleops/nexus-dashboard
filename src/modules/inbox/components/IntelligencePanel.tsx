@@ -1613,7 +1613,7 @@ export const PropertySnapshotCard = ({ thread, intelligence }: { thread: InboxWo
   )
 }
 
-const DealStateCard = ({ thread }: { thread: InboxWorkflowThread }) => {
+export const DealStateCard = ({ thread }: { thread: InboxWorkflowThread }) => {
   const hasArv = isPresent(get(thread, 'arv') || get(thread, 'afterRepairValue') || get(thread, 'after_repair_value'))
   const next = thread.nextSystemAction || 'Review thread for system recommended next steps.'
   const state = getStatusVisual(thread.inboxStatus).label.toUpperCase()
@@ -1993,7 +1993,6 @@ export const IntelligencePanel = ({
       <div className="nx-intel-scroll-body">
         <SellerCommandCard thread={thread} onStatusChange={onStatusChange} onStageChange={onStageChange} />
         <PremiumPropertySnapshotCard thread={thread} intelligence={intelligence} />
-        <DealStateCard thread={thread} />
         <PremiumOfferMemoCard thread={thread} />
         <ContactIntelligenceCard thread={thread} intelligence={intelligence} />
         <TimelineCard thread={thread} />

@@ -1541,20 +1541,25 @@ export const getInboxThreads = async (
 
     const thread: InboxThread = {
       id: threadKey,
+      thread_id: threadKey,
       leadId: asString(row['property_id'], '') || asString(row['master_owner_id'], '') || threadKey,
       marketId: asString(row['market'], 'unknown') || 'unknown',
       ownerName: ownerDisplayName,
       subject: propertyAddressFull,
       preview: asString(row['latest_message_body'], '') || 'No message preview',
+      latest_message_body: asString(row['latest_message_body'], '') || 'No message preview',
       status,
       priority,
       sentiment,
       messageCount: asNumber(row['inbound_message_count'], 0) + asNumber(row['outbound_message_count'], 0),
       lastMessageLabel: formatRelativeTime(latestMessageIso),
       lastMessageIso: latestMessageIso,
+      latest_activity_at: latestMessageIso,
       unreadCount,
       aiDraft: showInPriorityInbox ? 'Draft response ready for operator review.' : null,
       labels: [asString(row['market'], 'unknown'), uiIntent],
+      inbound_count: asNumber(row['inbound_message_count'], 0),
+      outbound_count: asNumber(row['outbound_message_count'], 0),
       threadKey,
       ownerId: asString(row['master_owner_id'], '') || undefined,
       prospectId: asString(row['prospect_id'], '') || undefined,
@@ -1576,6 +1581,7 @@ export const getInboxThreads = async (
       propertyAddressFull,
       latestMessageBody: asString(row['latest_message_body'], '') || undefined,
       latestMessageAt: latestMessageIso,
+      latest_message_direction: latestDirection,
       cashOffer: row['cash_offer'] ?? enrichmentRow?.['cash_offer'] ?? null,
       estimatedValue: row['estimated_value'] ?? enrichmentRow?.['estimated_value'] ?? null,
       finalAcquisitionScore: row['final_acquisition_score'] ?? enrichmentRow?.['final_acquisition_score'] ?? null,
@@ -1625,6 +1631,8 @@ export const getInboxThreads = async (
       threadIsRead: isRead,
       threadIsHidden: asBoolean(row['is_hidden'], false),
       threadIsSuppressed: asBoolean(row['is_suppressed'], false),
+      hydrationConfidence: (enrichmentRow ? 'high' : 'medium'),
+      hydrationSource: enrichmentRow ? 'nexus_inbox_threads_v + get_thread_enrichment' : 'nexus_inbox_threads_v',
     }
 
     const propId = thread.propertyId || ''

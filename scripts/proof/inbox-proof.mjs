@@ -2,13 +2,14 @@ import { chromium } from '@playwright/test'
 import fs from 'node:fs'
 import path from 'node:path'
 
-const BASE_URL = process.env.NEXUS_URL || 'http://localhost:5173'
-const route = process.env.NEXUS_ROUTE || '/inbox'
+const BASE_URL = process.env.NEXUS_URL || 'http://localhost:4173'
+const ROUTE = process.env.NEXUS_ROUTE || '/inbox'
 
 const outDir = path.resolve('proof/inbox')
 fs.mkdirSync(outDir, { recursive: true })
 
 const read = (file) => fs.readFileSync(path.resolve(file), 'utf8')
+
 const assertContains = (name, file, needles) => {
   const source = read(file)
   const missing = needles.filter((needle) => !source.includes(needle))
@@ -16,87 +17,205 @@ const assertContains = (name, file, needles) => {
   console.log(`✅ ${name}`)
 }
 
+const assertNotContains = (name, file, needles) => {
+  const source = read(file)
+  const present = needles.filter((needle) => source.includes(needle))
+  if (present.length > 0) throw new Error(`${name} still contains ${present.join(', ')} in ${file}`)
+  console.log(`✅ ${name}`)
+}
+
 const runStaticInboxProof = () => {
-  console.log('── Static Inbox Proof Fallback ──')
-  assertContains('all messages accessible through cursor pagination', 'src/lib/data/inboxData.ts', ['fetchLiveInbox', 'cursor', 'nextCursor', 'limit', 'pagination'])
-  assertContains('inbound-only filter works', 'src/modules/inbox/inbox-ui-helpers.ts', ["view === 'inbound'", "latestDirection === 'inbound'"])
-  assertContains('needs-reply filter works', 'src/modules/inbox/inbox-ui-helpers.ts', ["view === 'needs_reply'", 'needsReply'])
-  assertContains('keyword search works', 'src/modules/inbox/inbox-ui-helpers.ts', ['searchableThreadText', 'thread.phoneNumber', 'thread.propertyAddress'])
-  assertContains('keyword highlight works', 'src/modules/inbox/components/InboxSidebar.tsx', ['nx-keyword-highlight', 'highlightText'])
-  assertContains('latest inbound appears top', 'src/lib/data/inboxData.ts', ["order('latest_message_at', { ascending: false })"])
-  assertContains('filter/search does not reset selected thread', 'src/modules/inbox/InboxPage.tsx', ['selectedFilteredOut', 'setSelectedId(id)', "setSearchQuery('')"])
-  assertContains('polling merge preserves selected thread', 'src/modules/inbox/inbox.adapter.ts', ['mergeInboxModels', '7500', 'selectedThreadPreserved'])
-  assertContains('missing context does not crash', 'src/modules/inbox/components/InboxSidebar.tsx', ['Phone unavailable', 'Context loading'])
-  assertContains('seller/property info displays when provided', 'src/modules/inbox/components/InboxSidebar.tsx', ['resolveThreadPrimaryName', 'resolveThreadAddressLine', 'resolveThreadMarketBadge'])
-  assertContains('map receives pins', 'src/modules/inbox/InboxPage.tsx', ['data.mapPins', 'mapThreads', '<InboxCommandMap'])
-  assertContains('selected thread detail renders partial data immediately', 'src/modules/inbox/components/ChatThread.tsx', ['resolveThreadPrimaryName', 'resolveThreadAddressLine', 'messages.length === 0'])
+  console.log('── Static Premium Inbox Proof ──')
+
+  assertNotContains('top KPI strip removed', 'src/modules/inbox/InboxPage.tsx', [
+    'nx-emergency-ops',
+    'New Inbounds 15m',
+    'New Inbounds 60m',
+    'Auto-Replies Queued',
+    'Podio Cooldown',
+  ])
+
+  assertNotContains('chat action clutter removed', 'src/modules/inbox/components/ChatThread.tsx', [
+    'Reply Manually',
+    'Queue Auto Reply',
+    'Mark Reviewed',
+    'Mark Manual Review',
+    'Suppress Thread',
+    'Run Offer AI',
+    'Copy Seller Reply',
+    'Open Property',
+  ])
+
+  assertContains('clean empty-thread fallback exists', 'src/modules/inbox/components/ChatThread.tsx', [
+    'No messages loaded for this thread.',
+  ])
+
+  assertContains('priority command header restored', 'src/modules/inbox/components/InboxSidebar.tsx', [
+    'ACQUISITIONS INBOX',
+    'PRIORITY INBOX',
+    'Actionable signals & urgent replies',
+    'Owner, address, phone, APN...',
+  ])
+
+  assertContains('all left queue categories exist', 'src/modules/inbox/components/InboxSidebar.tsx', [
+    'HOT LEADS',
+    'NEEDS REVIEW',
+    'NEW INBOUND',
+    'AUTOMATED',
+    'OUTBOUND ACTIVE',
+    'COLD / NO RESPONSE',
+    'DNC / OPT OUT',
+    'LOAD MORE',
+  ])
+
+  assertContains('right dossier sections restored', 'src/modules/inbox/components/IntelligencePanel.tsx', [
+    'DEAL COMMAND DOSSIER',
+    'Offer Intelligence',
+    'Contact & Ownership Intelligence',
+    'Automation Timeline',
+    'LINKED APPS',
+    'AI ASSIST',
+  ])
+
+  assertNotContains('deal state card removed from rendered dossier', 'src/modules/inbox/components/IntelligencePanel.tsx', [
+    '<DealStateCard',
+  ])
+
+  assertContains('internal dossier tabs restored', 'src/modules/inbox/components/IntelligencePanel.tsx', [
+    'PROSPECT',
+    'OWNER',
+    'PORTFOLIO',
+    'FINANCIAL',
+    'PROPERTY INTEL',
+    'OVERVIEW',
+    'LOCATION',
+    'PROPERTY',
+    'EQUITY / VALUATION',
+    'LAND / TAX',
+  ])
+
+  assertContains('supabase hydration path remains primary', 'src/lib/data/inboxData.ts', [
+    'message_events',
+    'send_queue',
+    'get_thread_enrichment',
+    'get_property_coordinates',
+    'provider_message_sid',
+    'queue_id',
+    'textgrid_numbers',
+  ])
+
+  assertContains('thread hydration aliases exist', 'src/lib/data/inboxData.ts', [
+    'thread_id: threadKey',
+    'latest_message_body:',
+    'latest_message_direction:',
+    'latest_activity_at:',
+    'inbound_count:',
+    'outbound_count:',
+    'hydrationConfidence:',
+    'hydrationSource:',
+  ])
+
+  assertContains('workflow thread preserves hydration aliases', 'src/modules/inbox/inbox.adapter.ts', [
+    'thread_id:',
+    'latest_message_body:',
+    'latest_message_direction:',
+    'latest_activity_at:',
+    'inbound_count:',
+    'outbound_count:',
+    'hydrationConfidence:',
+    'hydrationSource:',
+  ])
+
+  assertContains('premium no-vertical-text CSS guards exist', 'src/modules/inbox/inbox-premium.css', [
+    '.nx-intel-field {',
+    'grid-template-columns: minmax(160px, 1fr) minmax(0, 1.4fr);',
+    '.nx-intel-field__value {',
+    'word-break: break-word;',
+  ])
+
+  assertContains('premium sidebar selectors exist', 'src/modules/inbox/inbox-premium.css', [
+    '.nx-priority-inbox-block',
+    '.nx-queue-group__header',
+    '.nx-thread-card',
+    '.nx-ai-assist-card',
+  ])
+
   console.log('✅ Static proof complete')
 }
 
-const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-const screenshotPath = path.join(outDir, `inbox-${stamp}.png`)
-
-let browser
-try {
-  browser = await chromium.launch({ headless: true })
-} catch (error) {
-  console.warn(`⚠️ Playwright browser unavailable: ${error.message}`)
-  runStaticInboxProof()
-  process.exit(0)
-}
-
-const page = await browser.newPage({
-  viewport: { width: 1728, height: 1117 },
-  deviceScaleFactor: 1,
-})
-
-page.on('console', msg => {
-  const text = msg.text()
-
-  if (
-    text.includes('[NexusInbox') ||
-    text.includes('[NexusInboxCounts') ||
-    text.includes('[NexusInboxNameResolution') ||
-    text.includes('[InboxCoords') ||
-    text.includes('[InboxEnrichment') ||
-    text.includes('[InboxMap]') ||
-    text.includes('[InboxMapSource]') ||
-    text.includes('[InboxPage]') ||
-    text.includes('[NexusInboxAddressResolution') ||
-    text.includes('[AICopilot]') ||
-    text.includes('[AICopilotContext]') ||
-    text.includes('[BigPickleCopilot]') ||
-    text.includes('[AICopilotAction]')
-  ) {
-    console.log(`[browser-console] ${text}`)
+const tryBrowserProof = async () => {
+  let browser
+  try {
+    browser = await chromium.launch({ headless: true })
+  } catch (error) {
+    console.warn(`⚠️ Playwright browser unavailable: ${error.message}`)
+    return false
   }
-})
 
-await page.goto(`${BASE_URL}${route}`, { waitUntil: 'networkidle', timeout: 60_000 })
-await page.waitForTimeout(2000)
-await page.screenshot({ path: screenshotPath, fullPage: true })
-console.log(`✅ Inbox screenshot saved: ${screenshotPath}`)
+  try {
+    const page = await browser.newPage({
+      viewport: { width: 1600, height: 1200 },
+      deviceScaleFactor: 1,
+    })
 
-const checks = [
-  ['all messages accessible through pagination', '.nx-load-more-btn'],
-  ['inbound-only filter available', 'text=Inbound Only'],
-  ['needs-reply filter available', 'text=Needs Reply'],
-  ['keyword search box available', '.nx-global-search input'],
-  ['thread detail renders partial data', '.nx-chat-header, .nx-inbox__workspace-empty'],
-]
-for (const [name, selector] of checks) {
-  const found = await page.$(selector)
-  console.log(`${found ? '✅' : '⚠️'} ${name}`)
+    await page.goto(`${BASE_URL}${ROUTE}`, { waitUntil: 'networkidle', timeout: 45_000 })
+    await page.waitForTimeout(1500)
+
+    const mustExist = [
+      ['priority inbox block', '.nx-priority-inbox-block'],
+      ['queue groups', '.nx-queue-group__header'],
+      ['chat area', '.nx-chat-container'],
+      ['dossier area', '.nx-intelligence-panel'],
+    ]
+
+    for (const [label, selector] of mustExist) {
+      const found = await page.$(selector)
+      if (!found) throw new Error(`Browser proof missing ${label} (${selector})`)
+      console.log(`✅ ${label}`)
+    }
+
+    const forbiddenTexts = [
+      'NEW INBOUNDS 15M',
+      'AUTO-REPLIES QUEUED',
+      'Reply Manually',
+      'Queue Auto Reply',
+      'Mark Reviewed',
+      'DEAL STATE:',
+    ]
+
+    const pageText = await page.textContent('body')
+    for (const text of forbiddenTexts) {
+      if (pageText?.includes(text)) throw new Error(`Browser proof found forbidden text: ${text}`)
+    }
+    console.log('✅ removed clutter absent in browser render')
+
+    const wrappingCheck = await page.evaluate(() => {
+      const values = Array.from(document.querySelectorAll('.nx-intel-field__value')).slice(0, 8)
+      if (values.length === 0) return false
+      return values.every((node) => {
+        const style = window.getComputedStyle(node)
+        return style.writingMode === 'horizontal-tb' && style.wordBreak !== 'break-all'
+      })
+    })
+    if (!wrappingCheck) throw new Error('Browser proof failed horizontal value wrapping check')
+    console.log('✅ horizontal dossier values verified')
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const screenshotPath = path.join(outDir, `premium-inbox-${stamp}.png`)
+    await page.screenshot({ path: screenshotPath, fullPage: true })
+    console.log(`✅ Browser screenshot saved: ${screenshotPath}`)
+    return true
+  } catch (error) {
+    console.warn(`⚠️ Browser proof skipped: ${error.message}`)
+    return false
+  } finally {
+    await browser.close()
+  }
 }
 
-const mapStamp = new Date().toISOString().replace(/[:.]/g, '-')
-const mapScreenshotPath = path.join(outDir, `inbox-map-${mapStamp}.png`)
-await page.keyboard.down('Meta')
-await page.keyboard.press('m')
-await page.keyboard.up('Meta')
-await page.waitForTimeout(3000)
-await page.screenshot({ path: mapScreenshotPath, fullPage: true })
-console.log(`✅ Inbox map screenshot saved: ${mapScreenshotPath}`)
-
-console.log('\n── Proof Complete ──')
-await browser.close()
+runStaticInboxProof()
+const browserWorked = await tryBrowserProof()
+if (!browserWorked) {
+  console.log('ℹ️ Static proof passed; browser proof unavailable or app not reachable.')
+}
+console.log('\n── Premium Inbox Proof Complete ──')

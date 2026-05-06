@@ -172,6 +172,14 @@ export interface InboxThread {
   autoReplyStatus?: string
   needsReply?: boolean
   matchedKeywords?: string[]
+  thread_id?: string
+  latest_message_body?: string
+  latest_message_direction?: string
+  latest_activity_at?: string
+  inbound_count?: number
+  outbound_count?: number
+  hydrationConfidence?: 'high' | 'medium' | 'low'
+  hydrationSource?: string
 }
 
 export interface InboxModel {
@@ -310,6 +318,7 @@ export const toWorkflowThread = (t: InboxThread): InboxWorkflowThread => {
   return {
     ...t,
     threadKey: t.threadKey || t.id,
+    thread_id: t.thread_id || t.threadKey || t.id,
     inboxStatus,
     conversationStage,
     inboxStage: conversationStage,
@@ -328,6 +337,13 @@ export const toWorkflowThread = (t: InboxThread): InboxWorkflowThread => {
     lastMessageBody: t.latestMessageBody || t.preview,
     lastDirection: (t.latestDirection === 'inbound' || t.latestDirection === 'outbound' ? t.latestDirection : (t.directionUsed === 'inbound' || t.directionUsed === 'outbound' ? t.directionUsed : 'unknown')),
     latestDirection: t.latestDirection ?? t.directionUsed,
+    latest_message_body: t.latest_message_body ?? t.latestMessageBody ?? t.preview,
+    latest_message_direction: t.latest_message_direction ?? t.latestDirection ?? t.directionUsed,
+    latest_activity_at: t.latest_activity_at ?? lastAt,
+    inbound_count: t.inbound_count ?? 0,
+    outbound_count: t.outbound_count ?? 0,
+    hydrationConfidence: t.hydrationConfidence ?? t.groupingConfidence ?? 'medium',
+    hydrationSource: t.hydrationSource ?? t.groupingMethod ?? 'live_inbox',
     autoReplyStatus: t.autoReplyStatus,
     matchedKeywords: t.matchedKeywords,
     updatedAt: lastAt,

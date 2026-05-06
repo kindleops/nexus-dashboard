@@ -1013,27 +1013,6 @@ export default function InboxPage() {
         onResetLayout={() => setLayoutState(resetLayoutMode)}
       />
 
-      <section className="nx-emergency-ops" aria-label="Emergency operations inbox stats">
-        {[
-          ['New Inbounds 15m', data.counts?.newInbounds15m ?? data.counts?.new_inbounds_15m],
-          ['New Inbounds 60m', data.counts?.newInbounds60m ?? data.counts?.new_inbounds_60m],
-          ['Needs Reply', data.counts?.needsReply ?? data.unreadThreadsCount ?? viewCounts.needs_reply],
-          ['Auto-Replies Queued', data.counts?.autoRepliesQueued ?? data.sendQueueCount],
-          ['Auto-Replies Sent', data.counts?.autoRepliesSent ?? data.counts?.auto_replies_sent],
-          ['Auto-Replies Failed', data.counts?.autoRepliesFailed ?? data.counts?.auto_reply_failed],
-          ['Positive Replies', data.counts?.positiveReplies ?? viewCounts.positive_hot],
-          ['Missing Context', data.counts?.missingContext ?? viewCounts.missing_context],
-          ['Cold Outbound', data.counts?.coldOutboundStatus ?? 'partial'],
-          ['Queue Lock', data.counts?.queueLockActive ?? 'partial'],
-          ['Podio Cooldown', data.counts?.podioCooldown ?? 'partial'],
-        ].map(([label, value]) => (
-          <div key={String(label)} className="nx-emergency-ops__stat">
-            <span>{label}</span>
-            <strong>{value === null || value === undefined ? 'partial' : String(value)}</strong>
-          </div>
-        ))}
-      </section>
-
       <div className="nx-inbox-shell">
         {showLeftPanel && (
           <InboxSidebar

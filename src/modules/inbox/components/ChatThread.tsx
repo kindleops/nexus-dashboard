@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import type { ThreadMessage } from '../../../lib/data/inboxData'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
@@ -61,24 +60,6 @@ export const ChatThread = ({
   onToggleArchive,
   searchQuery = '',
 }: ChatThreadProps) => {
-  const [pendingAction, setPendingAction] = useState<string | null>(null)
-
-  const runTriageAction = async (action: string) => {
-    if (!thread) return
-    setPendingAction(action)
-    try {
-      await fetch(`/api/internal/dashboard/inbox/thread/${encodeURIComponent(thread.threadKey || thread.id)}/action`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
-      })
-    } catch (error) {
-      console.warn('[NexusInboxActionFailed]', { action, error })
-    } finally {
-      setPendingAction(null)
-    }
-  }
-
   if (!thread) return (
     <div className="nx-chat-container is-empty">
       <div className="nx-inbox__workspace-empty">
@@ -129,25 +110,6 @@ export const ChatThread = ({
           </div>
         </div>
         <div className="nx-chat-header__actions">
-
-          {['Reply Manually', 'Queue Auto Reply', 'Mark Reviewed', 'Mark Manual Review', 'Suppress Thread', 'Run Offer AI', 'Copy Seller Reply', 'Open Property', 'Open Owner'].map((action) => (
-            <button
-              key={action}
-              type="button"
-              className="nx-chat-action nx-triage-action"
-              disabled={pendingAction === action}
-              onClick={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                if (action === 'Copy Seller Reply') void navigator.clipboard?.writeText(thread.lastMessageBody || thread.preview || '')
-                void runTriageAction(action)
-              }}
-              title={action}
-            >
-              {pendingAction === action ? '…' : action}
-            </button>
-          ))}
-
           <button
             type="button"
             className={cls('nx-chat-action', isStarred && 'is-active')}
@@ -242,7 +204,7 @@ export const ChatThread = ({
         ))}
         {messages.length === 0 && !loading && (
           <div className="nx-inbox__messages-empty">
-            <p>No messages in this thread yet.</p>
+            <p>No messages loaded for this thread.</p>
           </div>
         )}
       </div>
