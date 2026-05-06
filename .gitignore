@@ -22,3 +22,50 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Tool and cache directories
+.aider/
+.aider.chat.history.md
+.aider.input.history
+.aider.tags.cache.v4/
+.antigravity/
+.cache/
+.claude.json
+.claude/
+.cline/
+.codex/
+.config/
+.copilot/
+.cursor/
+.docker/
+.gemini/
+.lesshst
+.npm/
+.ollama/
+.opencode/
+.overture/
+.pixel-agents/
+.supabase/
+.viminfo
+.warp/
+.wdm/
+.zsh_history
+.zsh_sessions/
+.zshrc
+.gitconfig
+
+# OS and shell
+*.local-backup
+.Trash/
+
+# Project exclusions
+agent-lab/
+nextaos/
+podio-ops/
+podio_fields/
+podio_options.json
+rei-automation
+reivesti-platform-design/
+scripts-podio/
+scripts.local-backup
+Google\ Drive
