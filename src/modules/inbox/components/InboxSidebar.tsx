@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
 import { formatRelativeTime } from '../../../shared/formatters'
@@ -6,15 +6,12 @@ import {
   resolveThreadAddressLine,
   resolveThreadMarketBadge,
   resolveThreadPrimaryName,
-  getThreadMatchedKeywords,
   type InboxSavedFilterPreset,
   type InboxViewSelectValue,
   savedFilterOptions,
 } from '../inbox-ui-helpers'
-import { getStatusVisual, getSellerStageVisual, statusStyleVars } from '../status-visuals'
 
-const cls = (...tokens: Array<string | false | null | undefined>) =>
-  tokens.filter(Boolean).join(' ')
+const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
 
 export interface AdvancedFilterOptions {
   markets: string[]
@@ -45,235 +42,165 @@ interface InboxSidebarProps {
   onThreadAction?: (id: string, action: 'star' | 'unstar' | 'pin' | 'unpin' | 'archive' | 'hide') => void
   recentlyUpdatedThreadIds?: Set<string>
   searchQuery?: string
+  onSearchQueryChange?: (value: string) => void
 }
 
-const fallback = (value: unknown, placeholder = '') => {
-  const text = String(value ?? '').trim()
-  return text || placeholder
+type QueuePreset =
+  | 'positive_hot'
+  | 'manual_review'
+  | 'needs_reply'
+  | 'auto_replied'
+  | 'outbound_only'
+  | 'missing_context'
+  | 'suppressed'
+
+const MODE_PRESETS: InboxSavedFilterPreset[] = ['my_priority', 'new_inbounds', 'offer_needed', 'review_required']
+const QUEUE_PRESETS: QueuePreset[] = ['positive_hot', 'manual_review', 'needs_reply', 'auto_replied', 'outbound_only', 'missing_context', 'suppressed']
+
+const MODE_COUNT_KEYS: Record<InboxSavedFilterPreset, string> = {
+  my_priority: 'my_priority',
+  new_inbounds: 'new_inbounds',
+  offer_needed: 'offer_needed',
+  review_required: 'review_required',
+  all_messages: 'all',
+  inbound_only: 'inbound',
+  outbound_only: 'outbound_only',
+  needs_reply: 'needs_reply',
+  positive_hot: 'positive_hot',
+  offer_requested: 'offer_requested',
+  opt_out: 'suppressed',
+  manual_review: 'manual_review',
+  auto_replied: 'auto_replied',
+  auto_reply_failed: 'auto_reply_failed',
+  missing_context: 'missing_context',
+  suppressed: 'suppressed',
+  wrong_numbers: 'wrong_number',
+  language_focus: 'all',
+  high_motivation: 'active',
+  starred: 'starred',
+  pinned: 'pinned',
+  unassigned: 'unassigned',
 }
 
-const readClassifier = (thread: InboxWorkflowThread) => {
+const QUEUE_CONFIG: Array<{
+  preset: QueuePreset
+  icon: string
+  label: string
+  accentClass: string
+  countKey: string
+}> = [
+  { preset: 'positive_hot', icon: '🔥', label: 'HOT LEADS', accentClass: 'is-hot', countKey: 'positive_hot' },
+  { preset: 'manual_review', icon: '⚠', label: 'NEEDS REVIEW', accentClass: 'is-review', countKey: 'manual_review' },
+  { preset: 'needs_reply', icon: '📨', label: 'NEW INBOUND', accentClass: 'is-inbound', countKey: 'needs_reply' },
+  { preset: 'auto_replied', icon: '🤖', label: 'AUTOMATED', accentClass: 'is-automated', countKey: 'auto_replied' },
+  { preset: 'outbound_only', icon: '📤', label: 'OUTBOUND ACTIVE', accentClass: 'is-outbound', countKey: 'outbound_only' },
+  { preset: 'missing_context', icon: '🧊', label: 'COLD / NO RESPONSE', accentClass: 'is-cold', countKey: 'missing_context' },
+  { preset: 'suppressed', icon: '🚫', label: 'DNC / OPT OUT', accentClass: 'is-dnc', countKey: 'suppressed' },
+]
+
+const numberOrNull = (value: unknown): number | null => {
+  const num = Number(value)
+  return Number.isFinite(num) ? num : null
+}
+
+const formatCount = (value: number | null | undefined) => {
+  if (value === null || value === undefined) return '—'
+  return `${value}`
+}
+
+const readString = (thread: InboxWorkflowThread, ...keys: string[]) => {
   const row = thread as unknown as Record<string, unknown>
-  const uiIntent = String(row.uiIntent ?? row.ui_intent ?? '').trim().toLowerCase()
-  const priorityBucket = String(row.priorityBucket ?? row.priority_bucket ?? '').trim().toLowerCase()
-  return { uiIntent, priorityBucket }
+  for (const key of keys) {
+    const value = row[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return ''
 }
 
-const primaryPresetOptions = savedFilterOptions.filter((option) => (
-  option.value === 'my_priority' ||
-  option.value === 'new_inbounds' ||
-  option.value === 'offer_needed' ||
-  option.value === 'review_required'
-))
-
-const secondaryPresetOptions = savedFilterOptions.filter((option) => (
-  !primaryPresetOptions.some((primary) => primary.value === option.value)
-))
-
-
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-
-const highlightText = (text: string, terms: string[]) => {
-  const cleanTerms = terms.map((term) => term.trim()).filter((term) => term.length > 1).slice(0, 8)
-  if (cleanTerms.length === 0) return text
-  const re = new RegExp(`(${cleanTerms.map(escapeRegExp).join('|')})`, 'ig')
-  return text.split(re).map((part, index) => (
-    cleanTerms.some((term) => term.toLowerCase() === part.toLowerCase())
-      ? <mark key={`${part}-${index}`} className="nx-keyword-highlight">{part}</mark>
-      : part
-  ))
-}
-const compactBadgesForThread = (thread: InboxWorkflowThread): string[] => {
+const readNumber = (thread: InboxWorkflowThread, ...keys: string[]) => {
   const row = thread as unknown as Record<string, unknown>
-  const latestDirection = String(row.latestDirection ?? row.lastDirection ?? row.directionUsed ?? '').toLowerCase()
-  const autoStatus = String(row.autoReplyStatus ?? row.auto_reply_status ?? row.queueStatus ?? '').toLowerCase()
-  const badges: string[] = []
-  if (thread.needsResponse || row.needsReply || latestDirection === 'inbound') badges.push('Needs Reply')
-  if (thread.sentiment === 'hot') badges.push('Positive')
-  if (['queued', 'sent', 'delivered'].some((status) => autoStatus.includes(status))) badges.push('Auto-Replied')
-  if (['failed', 'blocked', 'error'].some((status) => autoStatus.includes(status))) badges.push('Failed/Blocked')
-  return Array.from(new Set(badges)).slice(0, 4)
+  for (const key of keys) {
+    const value = row[key]
+    const num = Number(String(value ?? '').replace(/[^0-9.]/g, ''))
+    if (Number.isFinite(num) && num > 0) return Math.round(num)
+  }
+  return null
+}
+
+const getInitials = (value: string) =>
+  value
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .join('') || '+('
+
+const resolvePropertyTypeBadge = (thread: InboxWorkflowThread) => {
+  const propertyType = readString(thread, 'propertyType', 'property_type', 'assetType', 'asset_type')
+  if (!propertyType) return null
+  return propertyType.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())
+}
+
+const resolveStageBadge = (thread: InboxWorkflowThread) => {
+  const raw = readString(thread, 'conversationStage', 'conversation_stage') || thread.conversationStage || thread.inboxStatus
+  if (!raw) return 'Not enriched'
+  return raw.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())
 }
 
 interface ConversationRowProps {
   thread: InboxWorkflowThread
   selected: boolean
-  isStarred: boolean
-  isRecentlyUpdated?: boolean
+  queuePreset: QueuePreset
   onSelect: (id: string) => void
-  onAction?: (id: string, action: 'star' | 'unstar' | 'pin' | 'unpin' | 'archive' | 'hide') => void
-  searchQuery?: string
 }
 
-export const ConversationRow = memo(({ 
-  thread, 
-  selected, 
-  isStarred, 
-  isRecentlyUpdated,
-  onSelect, 
-  onAction,
-  searchQuery = '',
-}: ConversationRowProps) => {
-  const ownerName = resolveThreadPrimaryName(thread)
-  const propertyAddress = resolveThreadAddressLine(thread)
-  const contextStatus = propertyAddress.toLowerCase().includes('no address') ? 'Context loading' : ''
-  const latestMessageBody = fallback(thread.lastMessageBody || thread.preview, '')
-  const phone = fallback(thread.phoneNumber || thread.canonicalE164 || (thread as any).sellerPhone, 'Phone unavailable')
-  const latestDirection = fallback((thread as any).latestDirection || thread.lastDirection || (thread as any).directionUsed, 'unknown')
-  const compactBadges = compactBadgesForThread(thread)
-  const matchedKeywords = getThreadMatchedKeywords(thread, searchQuery)
-  const { uiIntent } = readClassifier(thread)
-  const visual = getStatusVisual(thread.inboxStatus)
-  const stageVisual = getSellerStageVisual(thread.conversationStage)
+const ConversationRow = memo(({ thread, selected, queuePreset, onSelect }: ConversationRowProps) => {
+  const name = resolveThreadPrimaryName(thread) || thread.phoneNumber || thread.canonicalE164 || 'Unknown contact'
+  const address = resolveThreadAddressLine(thread) || 'No linked property'
+  const preview = readString(thread, 'latestMessageBody', 'lastMessageBody', 'preview') || 'No recent message'
   const market = resolveThreadMarketBadge(thread)
-
-  const handleAction = (e: React.MouseEvent, action: string) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (onAction) {
-      console.log(`[NexusInboxActionNoRefresh]`, {
-        action,
-        thread_id: thread.id.slice(-8),
-        optimistic: true,
-        preventedDefault: true,
-        stoppedPropagation: true
-      })
-      onAction(thread.id, action as any)
-    }
-  }
+  const propertyType = resolvePropertyTypeBadge(thread)
+  const score = readNumber(thread, 'finalAcquisitionScore', 'final_score', 'priorityScore', 'aiScore', 'motivationScore')
+  const stage = resolveStageBadge(thread)
+  const time = thread.lastMessageAt || thread.lastMessageIso || thread.updatedAt
+  const avatarToneClass = queuePreset === 'suppressed' ? 'is-dnc' : queuePreset === 'positive_hot' ? 'is-hot' : 'is-default'
 
   return (
-    <div
-      role="button"
-      tabIndex={0}
+    <button
+      type="button"
       className={cls(
-        'nx-conversation-row',
+        'nx-thread-card',
+        `queue-${queuePreset}`,
+        avatarToneClass,
         selected && 'is-selected',
-        isRecentlyUpdated && 'is-updated',
-        `intent-${uiIntent || 'default'}`,
       )}
       onClick={() => onSelect(thread.id)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault()
-          onSelect(thread.id)
-        }
-      }}
-      style={statusStyleVars(visual)}
     >
-      <div className="nx-conversation-row__content">
-        {/* Row 1: Name & Time */}
-        <div className="nx-conversation-row__top">
-          <strong className="nx-conversation-row__name">{ownerName}</strong><span className="nx-conversation-row__phone">{phone}</span>
-          <div className="nx-row-end-actions">
-            {thread.isPinned && <Icon name="pin" className="nx-pinned-icon" />}
-            {thread.isStarred && <Icon name="star" className="nx-starred-icon" />}
-            <time className="nx-conversation-row__time">{formatRelativeTime(thread.lastMessageAt || thread.lastMessageIso)}</time>
-            <i className="nx-priority-dot" style={{ background: visual.dot, boxShadow: `0 0 10px ${visual.pulse}` }} />
+      <div className="nx-thread-card__avatar">{getInitials(name)}</div>
+      <div className="nx-thread-card__body">
+        <div className="nx-thread-card__topline">
+          <strong className="nx-thread-card__name">{name}</strong>
+          <div className="nx-thread-card__score-time">
+            {score !== null && <span className="nx-thread-card__score">{score}</span>}
+            <time className="nx-thread-card__time">{time ? formatRelativeTime(time) : '—'}</time>
           </div>
         </div>
-
-        {/* Row 2: Address */}
-        <div className="nx-conversation-row__sub-row">
-          <span className="nx-conversation-row__address">{propertyAddress}</span>{contextStatus && <span className="nx-keyword-badge">{contextStatus}</span>}
-        </div>
-
-        {/* Row 3: Preview */}
-        <div className="nx-conversation-row__preview"><span className="nx-direction-chip">{latestDirection}</span>{highlightText(latestMessageBody, matchedKeywords.length ? matchedKeywords : [searchQuery])}</div>
-
-        {/* Row 4: Footer (Badges + Hover Actions) */}
-        <div className="nx-conversation-row__footer">
-          <div className="nx-conversation-row__meta">
-            {compactBadges.map((badge) => <span key={badge} className="nx-stage-pill nx-status-pill">{badge}</span>)}
-            {matchedKeywords.slice(0, 3).map((keyword) => <span key={keyword} className="nx-keyword-badge">{keyword}</span>)}
-            <span className="nx-stage-pill nx-status-pill" style={{ color: visual.color, background: visual.bg, borderColor: visual.border }}>
-              <i className="nx-status-dot" style={{ background: visual.dot }} />
-              {visual.label}
-            </span>
-            <span className="nx-stage-pill nx-conv-stage-pill" style={{ color: stageVisual.color, background: stageVisual.bg, borderColor: stageVisual.border }}>
-              {stageVisual.label}
-            </span>
-            <span className="nx-market-tag">{market}</span>
-          </div>
-          
-          <div className="nx-conversation-row__hover-actions">
-             <button 
-               type="button" 
-               title={isStarred ? "Unstar" : "Star"} 
-               className={cls("nx-hover-action-btn", isStarred && "is-active")}
-               onClick={(e) => handleAction(e, isStarred ? 'unstar' : 'star')}
-             >
-               <Icon name="star" />
-             </button>
-             <button 
-               type="button" 
-               title={thread.isPinned ? "Unpin" : "Pin"} 
-               className={cls("nx-hover-action-btn", thread.isPinned && "is-active")}
-               onClick={(e) => handleAction(e, thread.isPinned ? 'unpin' : 'pin')}
-             >
-               <Icon name="pin" />
-             </button>
-             <button 
-               type="button" 
-               title="Archive" 
-               className="nx-hover-action-btn"
-               onClick={(e) => handleAction(e, 'archive')}
-             >
-               <Icon name="archive" />
-             </button>
-          </div>
+        <div className="nx-thread-card__address">{address || 'No linked property'}</div>
+        <div className="nx-thread-card__preview">{preview}</div>
+        <div className="nx-thread-card__chips">
+          <span className="nx-thread-chip is-stage">{stage}</span>
+          {market && <span className="nx-thread-chip">{market}</span>}
+          {propertyType && <span className="nx-thread-chip">{propertyType}</span>}
         </div>
       </div>
-    </div>
+    </button>
   )
 })
 
 ConversationRow.displayName = 'ConversationRow'
 
-export const ConversationList = ({
-  threads,
-  activeViewFilter,
-  selectedId,
-  onSelect,
-  onAction,
-  recentlyUpdatedThreadIds = new Set(),
-  searchQuery = '',
-}: {
-  threads: InboxWorkflowThread[]
-  activeViewFilter: InboxViewSelectValue
-  selectedId: string | null
-  onSelect: (id: string) => void
-  onAction?: (id: string, action: 'star' | 'unstar' | 'pin' | 'unpin' | 'archive' | 'hide') => void
-  recentlyUpdatedThreadIds?: Set<string>
-  searchQuery?: string
-}) => (
-  <div className="nx-conversation-list">
-    {threads.length > 0 ? (
-      threads.map((thread) => (
-        <ConversationRow
-          key={thread.threadKey || thread.id}
-          thread={thread}
-          selected={selectedId === thread.id}
-          isStarred={thread.isStarred}
-          isRecentlyUpdated={recentlyUpdatedThreadIds.has(thread.id) || recentlyUpdatedThreadIds.has(thread.threadKey || '')}
-          onSelect={onSelect}
-          onAction={onAction}
-          searchQuery={searchQuery}
-        />
-      ))
-    ) : (
-      <div className="nx-sidebar-empty">
-        {activeViewFilter === 'priority'
-          ? 'No priority replies right now.'
-          : 'No conversations match these filters.'}
-      </div>
-    )}
-  </div>
-)
-
 export const InboxSidebar = ({
   threads,
-  activeViewFilter,
   selectedId,
   onSelect,
   savedPreset,
@@ -285,138 +212,150 @@ export const InboxSidebar = ({
   visibleThreadCount,
   canLoadMore,
   onLoadMore,
-  onThreadAction,
   recentlyUpdatedThreadIds = new Set(),
   searchQuery = '',
+  onSearchQueryChange,
 }: InboxSidebarProps) => {
-  const activePresetConfig = savedFilterOptions.find(o => o.value === savedPreset)
-  const activeLabel = activePresetConfig?.label || 'Smart'
-  const rawActiveCount = viewCounts[activeViewFilter]
-  const activeCount = rawActiveCount === null || rawActiveCount === undefined ? null : rawActiveCount
-  const formatCount = (value: number | null | undefined) => {
-    if (value === null || value === undefined) return '—'
-    return String(value)
-  }
+  const [modePreset, setModePreset] = useState<InboxSavedFilterPreset>(
+    MODE_PRESETS.includes(savedPreset) ? savedPreset : 'my_priority',
+  )
+
+  useEffect(() => {
+    if (MODE_PRESETS.includes(savedPreset)) setModePreset(savedPreset)
+  }, [savedPreset])
+
+  const expandedQueue = QUEUE_PRESETS.includes(savedPreset as QueuePreset) ? savedPreset as QueuePreset : null
+  const visibleThreads = useMemo(
+    () => threads
+      .slice(0, visibleThreadCount)
+      .filter((thread) => !recentlyUpdatedThreadIds.has(`hidden:${thread.id}`)),
+    [threads, visibleThreadCount, recentlyUpdatedThreadIds],
+  )
+
+  const modeOptions = savedFilterOptions.filter((option) => MODE_PRESETS.includes(option.value))
+  const totalCount = viewCounts.review_required ?? viewCounts.all ?? threads.length
+  const commandCountKey = MODE_COUNT_KEYS[modePreset] ?? 'my_priority'
+  const commandCount = viewCounts[commandCountKey] ?? viewCounts.my_priority ?? 0
 
   return (
-    <aside className="nx-sidebar">
+    <aside className="nx-sidebar nx-sidebar--premium">
       <div className="nx-sidebar__top">
         <div className="nx-sidebar__label-row">
-          <span className="nx-section-label">{activeLabel.toUpperCase()} INBOX</span>
-          <button 
-            type="button" 
-            className="nx-sidebar__icon-button" 
-            title="Inbox settings"
-            onClick={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-            }}
-          >
-            <Icon name="settings" />
-          </button>
+          <span className="nx-section-label">ACQUISITIONS INBOX</span>
+          <div className="nx-sidebar__header-actions">
+            <button type="button" className="nx-sidebar__icon-button" title="Advanced filters" onClick={onOpenAdvancedFilters}>
+              <Icon name="filter" />
+            </button>
+            <button type="button" className="nx-sidebar__icon-button" title="Clear filters" onClick={() => onClearFilters?.()}>
+              <Icon name="close" />
+            </button>
+          </div>
         </div>
 
-        <section className={cls('nx-priority-command-card', `is-mode-${activeViewFilter}`)}>
-          <div className="nx-priority-command-card__liquid-bg" />
-          <div className="nx-priority-command-card__left">
-            <span className="nx-priority-command-card__title">
-              {activeLabel} Inbox
-            </span>
-            <p className="nx-priority-command-card__sub">
-              {savedPreset === 'my_priority' 
-                ? 'Actionable signals & urgent replies' 
-                : `Viewing ${activeLabel.toLowerCase()} threads and signals`}
-            </p>
-          </div>
-          <strong className="nx-priority-command-card__count">{formatCount(activeCount)}</strong>
-        </section>
+        <div className="nx-sidebar__badge-row">
+          <span className="nx-inbox-badge is-hot">🔥 {formatCount(numberOrNull(viewCounts.positive_hot) ?? 0)}</span>
+          <span className="nx-inbox-badge is-review">⚠️ {formatCount(numberOrNull(viewCounts.manual_review) ?? 0)}</span>
+          <span className="nx-inbox-badge is-new">📨 {formatCount(numberOrNull(viewCounts.needs_reply) ?? 0)}</span>
+          <span className="nx-sidebar__total-count">{formatCount(numberOrNull(totalCount) ?? 0)}</span>
+        </div>
 
-        <div className="nx-sidebar__saved-filters">
-          <span className="nx-sidebar__saved-label">Mode</span>
-          <div className="nx-sidebar__saved-scroll">
-            <div className="nx-mode-tabs">
-              {primaryPresetOptions.map((option) => (
+        <label className="nx-sidebar-search">
+          <Icon name="search" />
+          <input
+            value={searchQuery}
+            onChange={(event) => onSearchQueryChange?.(event.target.value)}
+            placeholder="Owner, address, phone, APN..."
+            aria-label="Search inbox threads"
+          />
+        </label>
+
+        <section className="nx-priority-inbox-block">
+          <div className="nx-priority-inbox-block__eyebrow">PRIORITY INBOX</div>
+          <div className={cls('nx-priority-command-card', 'is-mode-priority')}>
+            <div className="nx-priority-command-card__liquid-bg" />
+            <div className="nx-priority-command-card__left">
+              <span className="nx-priority-command-card__title">PRIORITY INBOX</span>
+              <p className="nx-priority-command-card__sub">Actionable signals &amp; urgent replies</p>
+            </div>
+            <strong className="nx-priority-command-card__count">{formatCount(numberOrNull(commandCount) ?? 0)}</strong>
+          </div>
+          <div className="nx-priority-modes">
+            {modeOptions.map((option) => {
+              const countKey = MODE_COUNT_KEYS[option.value] ?? option.value
+              const count = viewCounts[countKey] ?? 0
+              return (
                 <button
                   key={option.value}
                   type="button"
-                  className={cls('nx-mode-tab', savedPreset === option.value && 'is-active')}
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    onApplySavedPreset(option.value as InboxSavedFilterPreset)
+                  className={cls('nx-priority-mode-card', modePreset === option.value && 'is-active')}
+                  onClick={() => {
+                    setModePreset(option.value)
+                    onApplySavedPreset(option.value)
                   }}
                 >
-                  <span className="nx-mode-tab__label">{option.label}</span>
-                  <span className="nx-mode-tab__count">{formatCount(viewCounts[option.value])}</span>
+                  <span>{option.label.toUpperCase()}</span>
+                  <strong>{formatCount(numberOrNull(count) ?? 0)}</strong>
                 </button>
-              ))}
-            </div>
+              )
+            })}
           </div>
-          <select
-              className="nx-filter-more-select"
-              value={secondaryPresetOptions.some((option) => option.value === savedPreset) ? savedPreset : ''}
-              onChange={(event) => event.target.value && onApplySavedPreset(event.target.value as InboxSavedFilterPreset)}
-              aria-label="More inbox modes"
-            >
-              <option value="">More</option>
-              {secondaryPresetOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-        </div>
-      </div>
+        </section>
 
-      <div className="nx-sidebar__advanced-wrap">
-        <button
-          type="button"
-          className="nx-sidebar__filter-button"
-          onClick={onOpenAdvancedFilters}
-        >
-          <Icon name="filter" />
-          Advanced Filters
-          <Icon name="chevron-right" />
-        </button>
-        {onClearFilters && (
-          <button
-            type="button"
-            className="nx-sidebar__clear-btn"
-            onClick={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              onClearFilters()
-            }}
-            title="Clear all filters"
-          >
-            Clear
-          </button>
+        {loadingError && (
+          <div className="nx-sidebar-error">
+            <Icon name="alert" />
+            <span>{loadingError}</span>
+          </div>
         )}
       </div>
 
-      {loadingError && (
-        <div className="nx-sidebar-error">
-          <Icon name="alert" />
-          <span>{loadingError}</span>
-        </div>
-      )}
+      <div className="nx-queue-groups">
+        {QUEUE_CONFIG.map((group) => {
+          const expanded = expandedQueue === group.preset
+          const count = viewCounts[group.countKey] ?? 0
+          return (
+            <section key={group.preset} className={cls('nx-queue-group', group.accentClass, expanded && 'is-expanded')}>
+              <button
+                type="button"
+                className={cls('nx-queue-group__header', expanded && 'is-selected')}
+                onClick={() => onApplySavedPreset(group.preset)}
+              >
+                <span className="nx-queue-group__accent" />
+                <span className="nx-queue-group__icon">{group.icon}</span>
+                <span className="nx-queue-group__label">{group.label}</span>
+                <span className="nx-queue-group__count">{formatCount(numberOrNull(count) ?? 0)}</span>
+                <Icon name={expanded ? 'chevron-down' : 'chevron-right'} />
+              </button>
 
-      <ConversationList
-        threads={threads.slice(0, visibleThreadCount)}
-        activeViewFilter={activeViewFilter}
-        selectedId={selectedId}
-        onSelect={onSelect}
-        onAction={onThreadAction}
-        recentlyUpdatedThreadIds={recentlyUpdatedThreadIds}
-        searchQuery={searchQuery}
-      />
+              {expanded && (
+                <div className="nx-queue-group__threads">
+                  {visibleThreads.length > 0 ? (
+                    visibleThreads.map((thread) => (
+                      <ConversationRow
+                        key={thread.threadKey || thread.id}
+                        thread={thread}
+                        selected={selectedId === thread.id}
+                        queuePreset={group.preset}
+                        onSelect={onSelect}
+                      />
+                    ))
+                  ) : (
+                    <div className="nx-sidebar-empty">No conversations match this queue.</div>
+                  )}
+                </div>
+              )}
+            </section>
+          )
+        })}
+      </div>
 
       {canLoadMore && (
         <div className="nx-sidebar__load-more">
-          <button type="button" className="nx-filter-pill nx-load-more-btn" onClick={onLoadMore}>
-            Load More
+          <button type="button" className="nx-load-more-btn" onClick={onLoadMore}>
+            LOAD MORE
           </button>
         </div>
       )}
-
     </aside>
   )
 }

@@ -222,22 +222,18 @@ export const viewOptions: Array<{ value: InboxViewSelectValue; label: string }> 
 ]
 
 export const savedFilterOptions: Array<{ value: InboxSavedFilterPreset; label: string }> = [
-  { value: 'all_messages', label: 'All Messages' },
-  { value: 'inbound_only', label: 'Inbound Only' },
-  { value: 'outbound_only', label: 'Outbound Only' },
-  { value: 'needs_reply', label: 'Needs Reply' },
-  { value: 'positive_hot', label: 'Positive / Hot' },
-  { value: 'offer_needed', label: 'Offer Requested' },
   { value: 'my_priority', label: 'Priority' },
   { value: 'new_inbounds', label: 'Active' },
+  { value: 'offer_needed', label: 'Waiting' },
   { value: 'review_required', label: 'All' },
-  { value: 'wrong_numbers', label: 'Wrong Number' },
-  { value: 'suppressed', label: 'Suppressed' },
-  { value: 'language_focus', label: 'Language Focus' },
-  { value: 'high_motivation', label: 'Active + Motivation' },
-  { value: 'starred', label: 'Starred' },
-  { value: 'pinned', label: 'Pinned' },
-  { value: 'unassigned', label: 'Unassigned' },
+
+  { value: 'positive_hot', label: 'Hot Leads' },
+  { value: 'manual_review', label: 'Needs Review' },
+  { value: 'needs_reply', label: 'New Inbound' },
+  { value: 'auto_replied', label: 'Automated' },
+  { value: 'outbound_only', label: 'Outbound Active' },
+  { value: 'missing_context', label: 'Cold / No Response' },
+  { value: 'suppressed', label: 'DNC / Opt Out' },
 ]
 
 const toText = (value: unknown): string => String(value ?? '').trim()
@@ -556,10 +552,13 @@ export const getSavedPresetConfig = (preset: InboxSavedFilterPreset): Partial<In
   if (preset === 'outbound_only') return { view: 'outbound' }
   if (preset === 'needs_reply') return { view: 'needs_reply' }
   if (preset === 'positive_hot') return { view: 'positive_hot' }
+  if (preset === 'manual_review') return { view: 'manual_review' }
+  if (preset === 'auto_replied') return { view: 'auto_replied' }
+  if (preset === 'missing_context') return { view: 'missing_context' }
   if (preset === 'my_priority') return { view: 'priority' }
   if (preset === 'new_inbounds') return { view: 'active', stage: 'all_stages' }
   if (preset === 'high_motivation') return { view: 'active', advanced: { motivationMin: 70 } }
-  if (preset === 'offer_needed') return { view: 'offer_requested', stage: 'all_stages' }
+  if (preset === 'offer_needed') return { view: 'waiting', stage: 'all_stages' }
   if (preset === 'review_required') return { view: 'all', stage: 'all_stages' }
   if (preset === 'suppressed') return { view: 'suppressed', stage: 'suppressed' }
   if (preset === 'language_focus') return { view: 'all', advanced: { language: 'non_english' } }

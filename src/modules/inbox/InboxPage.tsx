@@ -1053,6 +1053,7 @@ export default function InboxPage() {
             onLoadMore={handleLoadMore}
             recentlyUpdatedThreadIds={recentlyUpdatedThreadIds}
             searchQuery={searchQuery}
+            onSearchQueryChange={setSearchQuery}
           />
         )}
 
@@ -1074,6 +1075,7 @@ export default function InboxPage() {
             onLoadMore={handleLoadMore}
             recentlyUpdatedThreadIds={recentlyUpdatedThreadIds}
             searchQuery={searchQuery}
+            onSearchQueryChange={setSearchQuery}
           />
         )}
 
