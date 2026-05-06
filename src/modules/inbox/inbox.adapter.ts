@@ -516,6 +516,7 @@ export const useInboxData = () => {
         .channel('nexus-inbox-realtime')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'message_events' }, triggerRefresh)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'send_queue' }, triggerRefresh)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'inbox_map_pins' }, triggerRefresh)
         .subscribe((status) => {
           setData((prev) => ({ ...prev, realtimeConnected: status === 'SUBSCRIBED' }))
         })

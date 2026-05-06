@@ -1594,6 +1594,48 @@ export const getInboxThreads = async (
   return { threads, totalAvailable: totalAvailable ?? rows.length }
 }
 
+export const fetchInboxMapPins = async (
+  filters: InboxThreadFilters = {},
+): Promise<LiveInboxMapPin[]> => {
+  const supabase = getSupabaseClient()
+  let query = supabase
+    .from('inbox_map_pins')
+    .select('*')
+    .not('lat', 'is', null)
+    .not('lng', 'is', null)
+
+  const filterState = filters
+  query = applyInboxSearchServerFilter(query, filterState.query)
+  query = applyInboxAdvancedServerFilters(query, filterState.advanced)
+
+  const viewCategories = getHydratedCategoriesForView(filterState.view)
+  if (filterState.stage && filterState.stage !== 'all_stages' && SERVER_INBOX_THREAD_STAGE_VALUES.has(filterState.stage)) {
+    query = query.eq('thread_stage', filterState.stage)
+  }
+  if (viewCategories.length === 1) query = query.eq('inbox_category', viewCategories[0])
+  if (viewCategories.length > 1) query = query.in('inbox_category', viewCategories)
+
+  const { data, error } = await query
+
+  if (error) {
+    if (DEV) console.warn('[fetchInboxMapPins] failed', mapErrorMessage(error))
+    return []
+  }
+
+  const rows = safeArray(data as AnyRecord[])
+  return rows.map((row, index) => ({
+    id: asString(row.thread_key ?? row.threadKey ?? row.id, `pin:${index}`),
+    threadKey: asString(row.thread_key ?? row.threadKey, ''),
+    lat: asNumber(row.lat ?? row.latitude, 0),
+    lng: asNumber(row.lng ?? row.longitude, 0),
+    status: asString(row.status ?? row.thread_stage, ''),
+    stage: asString(row.stage ?? row.thread_stage, ''),
+    ownerName: asString(row.owner_name ?? row.ownerName ?? row.prospect_name, ''),
+    propertyAddress: asString(row.property_address ?? row.propertyAddress ?? row.property_address_full, ''),
+    latestMessageBody: asString(row.latest_message_body ?? row.latestMessageBody, ''),
+  })).filter((pin) => pin.lat !== 0 && pin.lng !== 0)
+}
+
 export const fetchInboxModel = async (options: InboxFetchOptions = {}): Promise<InboxModel> => {
   const lastLiveFetchAt = new Date().toISOString()
   const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
@@ -1607,9 +1649,13 @@ export const fetchInboxModel = async (options: InboxFetchOptions = {}): Promise<
     })
   }
 
-  const { threads, totalAvailable } = await getInboxThreads(options.filters || {}, options)
-  const supabase = getSupabaseClient()
   const filterState = options.filters || {}
+  const [threadsResult, mapPins] = await Promise.all([
+    getInboxThreads(filterState, options),
+    fetchInboxMapPins(filterState),
+  ])
+  const { threads, totalAvailable } = threadsResult
+  const supabase = getSupabaseClient()
   const hasScopedFilters = Boolean(filterState.query?.trim()) || Object.keys(filterState.advanced || {}).length > 0 || (filterState.stage && filterState.stage !== 'all_stages')
   let countsRows: AnyRecord[] = []
 
@@ -1704,6 +1750,7 @@ export const fetchInboxModel = async (options: InboxFetchOptions = {}): Promise<
     partiallyHydratedCount,
     orphanCount,
     latestFetchMs,
+    mapPins,
   }
 }
 
