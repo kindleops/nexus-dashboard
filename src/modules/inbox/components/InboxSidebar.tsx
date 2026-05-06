@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react'
+import { memo, useEffect, useMemo } from 'react'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
 import { formatRelativeTime } from '../../../shared/formatters'
@@ -71,6 +71,16 @@ const QUEUE_CONFIG: Array<{
   { preset: 'suppressed', icon: '🚫', label: 'DNC / OPT OUT', accentClass: 'is-dnc', countKey: 'suppressed' },
 ]
 
+const VIEW_TO_QUEUE_PRESET: Partial<Record<InboxViewSelectValue, QueuePreset>> = {
+  positive_hot: 'positive_hot',
+  manual_review: 'manual_review',
+  needs_reply: 'needs_reply',
+  auto_replied: 'auto_replied',
+  outbound: 'outbound_only',
+  missing_context: 'missing_context',
+  suppressed: 'suppressed',
+}
+
 const numberOrNull = (value: unknown): number | null => {
   const num = Number(value)
   return Number.isFinite(num) ? num : null
@@ -98,6 +108,30 @@ const readNumber = (thread: InboxWorkflowThread, ...keys: string[]) => {
     if (Number.isFinite(num) && num > 0) return Math.round(num)
   }
   return null
+}
+
+const readCategory = (thread: InboxWorkflowThread) =>
+  readString(thread, 'inboxCategory', 'inbox_category', 'priorityBucket', 'priority_bucket').toLowerCase()
+
+const mapThreadToQueuePreset = (thread: InboxWorkflowThread): QueuePreset => {
+  const category = readCategory(thread)
+  if (category === 'hot_leads') return 'positive_hot'
+  if (category === 'needs_review') return 'manual_review'
+  if (category === 'new_inbound') return 'needs_reply'
+  if (category === 'automated') return 'auto_replied'
+  if (category === 'outbound_active') return 'outbound_only'
+  if (category === 'dnc_opt_out') return 'suppressed'
+  if (category === 'cold_no_response' || category === 'all') return 'missing_context'
+
+  const stage = readString(thread, 'threadWorkflowStage', 'workflowStage', 'conversationStage').toLowerCase()
+  const automation = readString(thread, 'autoReplyStatus', 'automationState', 'queueStatus').toLowerCase()
+  const preview = readString(thread, 'latest_message_body', 'latestMessageBody', 'lastMessageBody', 'preview').toLowerCase()
+
+  if (automation.includes('auto') || automation.includes('queued') || automation.includes('sent')) return 'auto_replied'
+  if (stage.includes('dnc') || stage.includes('wrong') || preview.includes('stop')) return 'suppressed'
+  if (stage.includes('offer') || stage.includes('sent_waiting') || automation.includes('waiting')) return 'outbound_only'
+  if (preview.includes('yes') || preview.includes('interested')) return 'positive_hot'
+  return 'missing_context'
 }
 
 const getInitials = (value: string) =>
@@ -134,16 +168,17 @@ const ConversationRow = memo(({ thread, selected, queuePreset, onSelect }: Conve
   const market = resolveThreadMarketBadge(thread)
   const propertyType = resolvePropertyTypeBadge(thread)
   const ownerType = readString(thread, 'ownerType', 'owner_type')
+  const language = readString(thread, 'contactLanguage', 'language')
   const score = readNumber(thread, 'finalAcquisitionScore', 'final_score', 'priorityScore', 'aiScore', 'motivationScore')
   const stage = resolveStageBadge(thread)
   const time = thread.lastMessageAt || thread.lastMessageIso || thread.updatedAt
   const avatarToneClass = queuePreset === 'suppressed' ? 'is-dnc' : queuePreset === 'positive_hot' ? 'is-hot' : 'is-default'
   const previewText = preview.replace(/\s+/g, ' ').trim()
   const badges = [
-    queuePreset === 'positive_hot' ? 'HI EQUITY' : null,
+    market?.toUpperCase(),
     propertyType?.toUpperCase(),
     ownerType && /(llc|corp|corporate|company)/i.test(ownerType) ? 'CORPORATE' : null,
-    market?.toUpperCase(),
+    language && !/english|en\b/i.test(language) ? language.toUpperCase() : null,
   ].filter(Boolean) as string[]
 
   return (
@@ -177,7 +212,6 @@ const ConversationRow = memo(({ thread, selected, queuePreset, onSelect }: Conve
               key={badge}
               className={cls(
                 'nx-thread-chip',
-                badge === 'HI EQUITY' && 'is-equity',
                 badge === 'CORPORATE' && 'is-corporate',
               )}
             >
@@ -195,6 +229,7 @@ ConversationRow.displayName = 'ConversationRow'
 export const InboxSidebar = ({
   threads,
   selectedId,
+  activeViewFilter,
   onSelect,
   savedPreset,
   onApplySavedPreset,
@@ -209,15 +244,41 @@ export const InboxSidebar = ({
   searchQuery = '',
   onSearchQueryChange,
 }: InboxSidebarProps) => {
-  const expandedQueue = QUEUE_PRESETS.includes(savedPreset as QueuePreset) ? savedPreset as QueuePreset : null
   const visibleThreads = useMemo(
     () => threads
       .slice(0, visibleThreadCount)
       .filter((thread) => !recentlyUpdatedThreadIds.has(`hidden:${thread.id}`)),
     [threads, visibleThreadCount, recentlyUpdatedThreadIds],
   )
+  const groupedThreads = useMemo(() => {
+    const initial = Object.fromEntries(QUEUE_PRESETS.map((preset) => [preset, [] as InboxWorkflowThread[]])) as Record<QueuePreset, InboxWorkflowThread[]>
+    visibleThreads.forEach((thread) => {
+      initial[mapThreadToQueuePreset(thread)].push(thread)
+    })
+    return initial
+  }, [visibleThreads])
+  const firstPopulatedQueue = useMemo(
+    () => QUEUE_PRESETS.find((preset) => groupedThreads[preset].length > 0) ?? 'missing_context',
+    [groupedThreads],
+  )
+  const expandedQueue = useMemo(() => {
+    if (QUEUE_PRESETS.includes(savedPreset as QueuePreset)) return savedPreset as QueuePreset
+    return VIEW_TO_QUEUE_PRESET[activeViewFilter as InboxViewSelectValue] ?? firstPopulatedQueue
+  }, [savedPreset, activeViewFilter, firstPopulatedQueue])
 
   const totalCount = viewCounts.review_required ?? viewCounts.all ?? threads.length
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    const categoryCounts = Object.fromEntries(QUEUE_PRESETS.map((preset) => [preset, groupedThreads[preset].length]))
+    console.log('[NEXUS Left Inbox Diagnostics]', {
+      rawHydratedRows: threads.length,
+      normalizedThreads: visibleThreads.length,
+      categoryCounts,
+      activeCategory: expandedQueue,
+      visibleThreads: groupedThreads[expandedQueue]?.length ?? 0,
+    })
+  }, [threads.length, visibleThreads.length, groupedThreads, expandedQueue])
 
   return (
     <aside className="nx-sidebar nx-sidebar--premium">
@@ -266,6 +327,7 @@ export const InboxSidebar = ({
         {QUEUE_CONFIG.map((group) => {
           const expanded = expandedQueue === group.preset
           const count = viewCounts[group.countKey] ?? 0
+          const groupThreads = groupedThreads[group.preset]
           return (
             <section key={group.preset} className={cls('nx-queue-group', group.accentClass, expanded && 'is-expanded')}>
               <button
@@ -282,8 +344,8 @@ export const InboxSidebar = ({
 
               {expanded && (
                 <div className="nx-queue-group__threads">
-                  {visibleThreads.length > 0 ? (
-                    visibleThreads.map((thread) => (
+                  {groupThreads.length > 0 ? (
+                    groupThreads.map((thread) => (
                       <ConversationRow
                         key={thread.threadKey || thread.id}
                         thread={thread}

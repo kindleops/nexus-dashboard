@@ -1,9 +1,6 @@
 import { hasSupabaseEnv } from '../supabaseClient'
 
-export const useSupabaseData =
-  String(import.meta.env.VITE_USE_SUPABASE_DATA ?? 'false').toLowerCase() === 'true'
-
-export const shouldUseSupabase = () => useSupabaseData && hasSupabaseEnv
+export const shouldUseSupabase = () => hasSupabaseEnv
 
 export const isDev = Boolean(import.meta.env.DEV)
 

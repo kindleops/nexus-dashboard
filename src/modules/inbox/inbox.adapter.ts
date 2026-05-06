@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import type { CommandCenterStore } from '../../domain/types'
 import { formatRelativeTime } from '../../shared/formatters'
 import { fetchInboxModel, type InboxFetchOptions, type LiveInboxMapPin, type LiveInboxPagination } from '../../lib/data/inboxData'
-import { isDev, shouldUseSupabase, useSupabaseData } from '../../lib/data/shared'
+import { isDev, shouldUseSupabase } from '../../lib/data/shared'
 import type { InboxWorkflowThread, InboxStatus, SellerStage, AutomationState } from '../../lib/data/inboxWorkflowData'
 import { hasSupabaseEnv, supabaseAnonKeyPresent, supabaseUrlPresent } from '../../lib/supabaseClient'
 import { getSupabaseClient } from '../../lib/supabaseClient'
@@ -275,14 +275,13 @@ export const loadInbox = async (options: InboxFetchOptions = {}): Promise<InboxM
   if (isDev) {
     console.log('[Inbox Live Data Gate]', {
       hasSupabaseEnv,
-      useSupabaseData,
       shouldUseSupabase: shouldUseSupabase(),
       supabaseUrlPresent,
       anonKeyPresent: supabaseAnonKeyPresent,
     })
   }
 
-  if (useSupabaseData && !hasSupabaseEnv) {
+  if (!hasSupabaseEnv) {
     const liveFetchError = 'Live mode enabled but Supabase env vars are missing.'
     if (isDev) {
       console.error('[NEXUS] Inbox live mode misconfigured.', liveFetchError)

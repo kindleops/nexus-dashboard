@@ -1769,6 +1769,15 @@ export const fetchInboxModel = async (options: InboxFetchOptions = {}): Promise<
   const nextOffset = resolvedOffset + threads.length
   const hasMore = nextOffset < allInboxCount
 
+  if (DEV) {
+    console.log('[NexusInboxHydratedCounts]', {
+      categoryCounts,
+      activeCategory: filterState.view || 'all',
+      loadedCount,
+      totalCount: allInboxCount,
+    })
+  }
+
   return {
     threads,
     unreadCount: unreadThreadsCount,

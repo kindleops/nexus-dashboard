@@ -10158,9 +10158,12 @@
 }
 
 .nx-sidebar--premium .nx-sidebar__top {
-  gap: 10px;
-  padding: 18px 16px 10px;
+  gap: 8px;
+  padding: 16px 14px 10px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background:
+    linear-gradient(180deg, rgba(11, 18, 31, 0.92), rgba(11, 16, 26, 0.68)),
+    radial-gradient(circle at top right, rgba(10, 132, 255, 0.14), transparent 42%);
 }
 
 .nx-sidebar__header-actions {
@@ -10173,16 +10176,16 @@
   display: grid;
   grid-template-columns: repeat(3, max-content) 1fr;
   align-items: center;
-  gap: 10px;
-  margin-top: 6px;
+  gap: 8px;
+  margin-top: 4px;
 }
 
 .nx-inbox-badge {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 34px;
-  padding: 0 14px;
+  min-height: 32px;
+  padding: 0 13px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.035);
@@ -10213,7 +10216,7 @@
 .nx-sidebar__total-count {
   justify-self: end;
   color: rgba(214, 221, 233, 0.72);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 800;
   letter-spacing: 0.08em;
 }
@@ -10221,14 +10224,14 @@
 .nx-queue-groups {
   flex: 1;
   overflow-y: auto;
-  padding: 10px 14px 18px;
+  padding: 8px 12px 16px;
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .nx-queue-group {
   display: grid;
-  gap: 10px;
+  gap: 6px;
 }
 
 .nx-queue-group__header {
@@ -10236,10 +10239,10 @@
   display: grid;
   grid-template-columns: auto auto 1fr auto auto;
   align-items: center;
-  gap: 10px;
-  min-height: 58px;
-  padding: 0 14px 0 10px;
-  border-radius: 18px;
+  gap: 9px;
+  min-height: 50px;
+  padding: 0 12px 0 9px;
+  border-radius: 16px;
   border: 1px solid rgba(255, 255, 255, 0.06);
   background: rgba(15, 20, 31, 0.64);
   color: rgba(219, 227, 238, 0.86);
@@ -10252,7 +10255,7 @@
 
 .nx-queue-group__accent {
   width: 3px;
-  height: 28px;
+  height: 24px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.16);
 }
@@ -10299,28 +10302,29 @@
 
 .nx-queue-group__label {
   text-align: left;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.18em;
 }
 
 .nx-queue-group__count {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 900;
 }
 
 .nx-queue-group__threads {
   display: grid;
-  gap: 12px;
+  gap: 8px;
+  padding: 0 2px 2px;
 }
 
 .nx-thread-card {
   position: relative;
   display: grid;
   grid-template-columns: 56px 1fr;
-  gap: 12px;
-  padding: 12px 14px 12px 12px;
-  border-radius: 18px;
+  gap: 10px;
+  padding: 10px 12px 10px 10px;
+  border-radius: 16px;
   border: 1px solid color-mix(in srgb, var(--queue-accent, #0a84ff) 30%, rgba(255, 255, 255, 0.06));
   background:
     linear-gradient(180deg, rgba(18, 23, 36, 0.94), rgba(13, 18, 28, 0.96)),
@@ -10346,15 +10350,15 @@
 
 .nx-thread-card__avatar {
   position: relative;
-  width: 56px;
-  height: 56px;
-  border-radius: 18px;
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
   display: grid;
   place-items: center;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid color-mix(in srgb, var(--queue-accent, #0a84ff) 48%, rgba(255, 255, 255, 0.08));
   color: color-mix(in srgb, var(--queue-accent, #0a84ff) 82%, #f6f9ff);
-  font-size: 24px;
+  font-size: 21px;
   font-weight: 800;
 }
 
@@ -10374,7 +10378,7 @@
 .nx-thread-card__body {
   min-width: 0;
   display: grid;
-  gap: 6px;
+  gap: 5px;
 }
 
 .nx-thread-card__topline,
@@ -10387,7 +10391,7 @@
 }
 
 .nx-thread-card__name {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 800;
   white-space: nowrap;
   overflow: hidden;
@@ -10395,9 +10399,9 @@
 }
 
 .nx-thread-card__score {
-  min-width: 42px;
-  height: 32px;
-  padding: 0 10px;
+  min-width: 38px;
+  height: 28px;
+  padding: 0 9px;
   border-radius: 10px;
   border: 1px solid rgba(255, 193, 76, 0.26);
   background: rgba(255, 180, 66, 0.08);
@@ -10409,7 +10413,7 @@
 
 .nx-thread-card__time {
   color: rgba(183, 193, 210, 0.72);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.06em;
   white-space: nowrap;
@@ -10424,15 +10428,15 @@
 
 .nx-thread-card__address {
   color: rgba(203, 213, 230, 0.86);
-  font-size: 13px;
+  font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .nx-thread-card__action {
-  min-height: 32px;
-  padding: 0 14px;
+  min-height: 28px;
+  padding: 0 11px;
   border-radius: 10px;
   border: 1px solid rgba(142, 150, 167, 0.22);
   background: rgba(82, 90, 107, 0.16);
@@ -10440,7 +10444,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 800;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -10449,10 +10453,10 @@
 
 .nx-thread-card__preview {
   color: rgba(159, 171, 191, 0.86);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.4;
   display: -webkit-box;
-  -webkit-line-clamp: 1;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -10464,15 +10468,15 @@
 }
 
 .nx-thread-chip {
-  min-height: 24px;
-  padding: 0 9px;
+  min-height: 22px;
+  padding: 0 8px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   display: inline-flex;
   align-items: center;
   color: rgba(201, 212, 230, 0.86);
   background: rgba(255, 255, 255, 0.035);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 800;
   letter-spacing: 0.11em;
 }
@@ -10494,17 +10498,17 @@
 }
 
 .nx-sidebar__load-more {
-  padding: 0 14px 16px;
+  padding: 4px 12px 14px;
 }
 
 .nx-load-more-btn {
   width: 100%;
-  min-height: 56px;
+  min-height: 52px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.025);
   color: rgba(188, 198, 214, 0.78);
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 500;
   letter-spacing: 0.12em;
 }
