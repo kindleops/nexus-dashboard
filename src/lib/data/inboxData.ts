@@ -1601,8 +1601,8 @@ export const fetchInboxMapPins = async (
   let query = supabase
     .from('inbox_map_pins')
     .select('*')
-    .not('lat', 'is', null)
-    .not('lng', 'is', null)
+    .not('latitude', 'is', null)
+    .not('longitude', 'is', null)
 
   const filterState = filters
   query = applyInboxSearchServerFilter(query, filterState.query)
@@ -1626,14 +1626,18 @@ export const fetchInboxMapPins = async (
   return rows.map((row, index) => ({
     id: asString(row.thread_key ?? row.threadKey ?? row.id, `pin:${index}`),
     threadKey: asString(row.thread_key ?? row.threadKey, ''),
-    lat: asNumber(row.lat ?? row.latitude, 0),
-    lng: asNumber(row.lng ?? row.longitude, 0),
+    lat: asNumber(row.latitude, 0),
+    lng: asNumber(row.longitude, 0),
     status: asString(row.status ?? row.thread_stage, ''),
     stage: asString(row.stage ?? row.thread_stage, ''),
     ownerName: asString(row.owner_name ?? row.ownerName ?? row.prospect_name, ''),
     propertyAddress: asString(row.property_address ?? row.propertyAddress ?? row.property_address_full, ''),
     latestMessageBody: asString(row.latest_message_body ?? row.latestMessageBody, ''),
-  })).filter((pin) => pin.lat !== 0 && pin.lng !== 0)
+  })).filter((pin) => {
+    const lat = pin.lat
+    const lng = pin.lng
+    return Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0
+  })
 }
 
 export const fetchInboxModel = async (options: InboxFetchOptions = {}): Promise<InboxModel> => {
