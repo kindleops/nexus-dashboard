@@ -12,12 +12,23 @@ export type InboxStageSelectValue =
   | string
 
 export type InboxViewSelectValue =
+  | 'all'
+  | 'inbound'
+  | 'outbound'
+  | 'needs_reply'
+  | 'auto_replied'
+  | 'auto_reply_failed'
+  | 'positive_hot'
+  | 'offer_requested'
+  | 'wrong_number'
+  | 'opt_out'
+  | 'missing_context'
+  | 'manual_review'
   | 'priority'
   | 'active'
   | 'waiting'
   | 'hidden'
   | 'suppressed'
-  | 'all'
   | 'starred'
   | 'pinned'
   | 'unassigned'
@@ -26,6 +37,7 @@ export type InboxViewSelectValue =
   | 'sent'
   | 'queued'
   | 'failed'
+
 
 export type InboxSavedFilterPreset =
   | 'my_priority'
@@ -39,6 +51,17 @@ export type InboxSavedFilterPreset =
   | 'starred'
   | 'pinned'
   | 'unassigned'
+  | 'all_messages'
+  | 'inbound_only'
+  | 'outbound_only'
+  | 'needs_reply'
+  | 'auto_replied'
+  | 'auto_reply_failed'
+  | 'positive_hot'
+  | 'offer_requested'
+  | 'opt_out'
+  | 'manual_review'
+  | 'missing_context'
 
 export interface InboxAdvancedFilters {
   market?: string
@@ -178,6 +201,18 @@ export interface RightPanelSection {
 }
 
 export const viewOptions: Array<{ value: InboxViewSelectValue; label: string }> = [
+  { value: 'all', label: 'All Messages' },
+  { value: 'inbound', label: 'Inbound Only' },
+  { value: 'outbound', label: 'Outbound Only' },
+  { value: 'needs_reply', label: 'Needs Reply' },
+  { value: 'auto_replied', label: 'Auto-Replied' },
+  { value: 'auto_reply_failed', label: 'Auto Reply Failed' },
+  { value: 'positive_hot', label: 'Positive / Hot' },
+  { value: 'offer_requested', label: 'Offer Requested' },
+  { value: 'wrong_number', label: 'Wrong Number' },
+  { value: 'opt_out', label: 'Opt-Out' },
+  { value: 'missing_context', label: 'Missing Context' },
+  { value: 'manual_review', label: 'Manual Review' },
   { value: 'priority', label: 'Priority' },
   { value: 'active', label: 'Active' },
   { value: 'waiting', label: 'Waiting' },
@@ -187,11 +222,16 @@ export const viewOptions: Array<{ value: InboxViewSelectValue; label: string }> 
 ]
 
 export const savedFilterOptions: Array<{ value: InboxSavedFilterPreset; label: string }> = [
+  { value: 'all_messages', label: 'All Messages' },
+  { value: 'inbound_only', label: 'Inbound Only' },
+  { value: 'outbound_only', label: 'Outbound Only' },
+  { value: 'needs_reply', label: 'Needs Reply' },
+  { value: 'positive_hot', label: 'Positive / Hot' },
+  { value: 'offer_needed', label: 'Offer Requested' },
   { value: 'my_priority', label: 'Priority' },
   { value: 'new_inbounds', label: 'Active' },
-  { value: 'offer_needed', label: 'Waiting' },
   { value: 'review_required', label: 'All' },
-  { value: 'wrong_numbers', label: 'Hidden' },
+  { value: 'wrong_numbers', label: 'Wrong Number' },
   { value: 'suppressed', label: 'Suppressed' },
   { value: 'language_focus', label: 'Language Focus' },
   { value: 'high_motivation', label: 'Active + Motivation' },
@@ -235,6 +275,36 @@ const numberOrNull = (value: unknown): number | null => {
 }
 
 const containsAny = (haystack: string, terms: string[]): boolean => terms.some((term) => haystack.includes(term))
+
+export const KEYWORD_GROUPS = {
+  positive_hot: ['yes', 'interested', 'maybe', 'depends', 'i own it', 'make offer', 'call me'],
+  offer_requested: ['how much', 'offer', 'price', 'what price'],
+  opt_out: ['stop', 'remove', 'unsubscribe'],
+  wrong_number: ['wrong number', 'not me', 'no soy', 'no es mio'],
+  manual_review: ['attorney', 'lawyer', 'lawsuit', 'legal', 'harassment', 'angry', 'hostile'],
+  tenant_rented: ['tenant', 'rented'],
+  realtor_agent: ['realtor', 'agent'],
+} as const
+
+const searchableThreadText = (thread: InboxWorkflowThread): string => [
+  thread.lastMessageBody, thread.preview, thread.latestMessageBody, thread.ownerName, thread.sellerName,
+  thread.ownerDisplayName, thread.phoneNumber, thread.canonicalE164, thread.sellerPhone, thread.propertyAddress,
+  thread.propertyAddressFull, thread.subject, thread.market, thread.marketId, thread.marketName,
+  ...(((thread as unknown as Record<string, unknown>).matched_keywords as string[] | undefined) ?? []),
+].filter(Boolean).join(' ').toLowerCase()
+
+export const getThreadMatchedKeywords = (thread: InboxWorkflowThread, query?: string): string[] => {
+  const backend = ((thread as unknown as Record<string, unknown>).matched_keywords as string[] | undefined)
+    ?? ((thread as unknown as Record<string, unknown>).matchedKeywords as string[] | undefined)
+    ?? []
+  const words = new Set(backend.map(String).filter(Boolean))
+  const q = String(query ?? '').trim().toLowerCase()
+  if (q && searchableThreadText(thread).includes(q)) words.add(q)
+  for (const group of Object.values(KEYWORD_GROUPS)) {
+    for (const word of group) if (searchableThreadText(thread).includes(word)) words.add(word)
+  }
+  return Array.from(words).slice(0, 6)
+}
 
 export const isSuppressedThread = (thread: InboxWorkflowThread): boolean => {
   const priorityBucket = toLower(getField(thread, 'priorityBucket') || getField(thread, 'priority_bucket'))
@@ -283,6 +353,23 @@ const matchesViewSelection = (thread: InboxWorkflowThread, view: InboxViewSelect
   const isArchived = Boolean(thread.isArchived || thread.inboxStatus === 'closed')
   const isSuppressed = isSuppressedThread(thread)
 
+  const latestDirection = toLower(getField(thread, 'latestDirection') || getField(thread, 'lastDirection') || getField(thread, 'directionUsed'))
+  const text = searchableThreadText(thread)
+  const needsReply = Boolean(thread.needsResponse || getField(thread, 'needs_reply') || getField(thread, 'needsReply')) || ((latestDirection === 'inbound') && !String(getField(thread, 'autoReplyStatus') || '').toLowerCase().includes('sent'))
+  const autoStatus = toLower(getField(thread, 'autoReplyStatus') || getField(thread, 'auto_reply_status') || thread.queueStatus || getField(thread, 'deliveryStatus'))
+  const contextMissing = !thread.propertyId || !thread.ownerId || resolveThreadPrimaryName(thread).toLowerCase().includes('unknown') || resolveThreadAddressLine(thread).toLowerCase().includes('no address')
+
+  if (view === 'inbound') return latestDirection === 'inbound' && !isArchived
+  if (view === 'outbound') return latestDirection === 'outbound' && !isArchived
+  if (view === 'needs_reply') return needsReply && !isArchived
+  if (view === 'auto_replied') return ['queued', 'sent', 'delivered'].some((status) => autoStatus.includes(status)) && !isArchived
+  if (view === 'auto_reply_failed') return ['failed', 'blocked', 'error', 'undeliver'].some((status) => autoStatus.includes(status)) && !isArchived
+  if (view === 'positive_hot') return (thread.sentiment === 'hot' || containsAny(text, KEYWORD_GROUPS.positive_hot as unknown as string[])) && !isArchived
+  if (view === 'offer_requested') return containsAny(text, KEYWORD_GROUPS.offer_requested as unknown as string[]) && !isArchived
+  if (view === 'wrong_number') return containsAny(text, KEYWORD_GROUPS.wrong_number as unknown as string[]) || uiIntent === 'wrong_person'
+  if (view === 'opt_out') return isSuppressed || containsAny(text, KEYWORD_GROUPS.opt_out as unknown as string[])
+  if (view === 'manual_review') return containsAny(text, KEYWORD_GROUPS.manual_review as unknown as string[]) || uiIntent === 'hostile_or_legal'
+  if (view === 'missing_context') return contextMissing && !isArchived
   if (view === 'priority') return showInPriority && !isArchived
   if (view === 'active') return !isArchived && !isSuppressed && uiIntent !== 'outbound_waiting'
   if (view === 'waiting') return uiIntent === 'outbound_waiting' && !isArchived
@@ -432,7 +519,21 @@ export const applyInboxFilters = (
 export const getPriorityInboxThreads = (threads: InboxWorkflowThread[]): InboxWorkflowThread[] =>
   threads.filter(isPriorityCandidate)
 
-export const getInboxViewCounts = (threads: InboxWorkflowThread[]): Record<InboxViewSelectValue, number> => ({
+export const getInboxViewCounts = (threads: InboxWorkflowThread[]): Record<string, number> => ({
+  all_messages: threads.length,
+  inbound_only: threads.filter((thread) => matchesViewSelection(thread, 'inbound')).length,
+  outbound_only: threads.filter((thread) => matchesViewSelection(thread, 'outbound')).length,
+  needs_reply: threads.filter((thread) => matchesViewSelection(thread, 'needs_reply')).length,
+  auto_replied: threads.filter((thread) => matchesViewSelection(thread, 'auto_replied')).length,
+  auto_reply_failed: threads.filter((thread) => matchesViewSelection(thread, 'auto_reply_failed')).length,
+  positive_hot: threads.filter((thread) => matchesViewSelection(thread, 'positive_hot')).length,
+  offer_requested: threads.filter((thread) => matchesViewSelection(thread, 'offer_requested')).length,
+  wrong_number: threads.filter((thread) => matchesViewSelection(thread, 'wrong_number')).length,
+  opt_out: threads.filter((thread) => matchesViewSelection(thread, 'opt_out')).length,
+  missing_context: threads.filter((thread) => matchesViewSelection(thread, 'missing_context')).length,
+  manual_review: threads.filter((thread) => matchesViewSelection(thread, 'manual_review')).length,
+  inbound: threads.filter((thread) => matchesViewSelection(thread, 'inbound')).length,
+  outbound: threads.filter((thread) => matchesViewSelection(thread, 'outbound')).length,
   priority: threads.filter((thread) => matchesViewSelection(thread, 'priority')).length,
   active: threads.filter((thread) => matchesViewSelection(thread, 'active')).length,
   waiting: threads.filter((thread) => matchesViewSelection(thread, 'waiting')).length,
@@ -450,14 +551,19 @@ export const getInboxViewCounts = (threads: InboxWorkflowThread[]): Record<Inbox
 })
 
 export const getSavedPresetConfig = (preset: InboxSavedFilterPreset): Partial<InboxFilterState> => {
+  if (preset === 'all_messages') return { view: 'all' }
+  if (preset === 'inbound_only') return { view: 'inbound' }
+  if (preset === 'outbound_only') return { view: 'outbound' }
+  if (preset === 'needs_reply') return { view: 'needs_reply' }
+  if (preset === 'positive_hot') return { view: 'positive_hot' }
   if (preset === 'my_priority') return { view: 'priority' }
   if (preset === 'new_inbounds') return { view: 'active', stage: 'all_stages' }
   if (preset === 'high_motivation') return { view: 'active', advanced: { motivationMin: 70 } }
-  if (preset === 'offer_needed') return { view: 'waiting', stage: 'all_stages' }
+  if (preset === 'offer_needed') return { view: 'offer_requested', stage: 'all_stages' }
   if (preset === 'review_required') return { view: 'all', stage: 'all_stages' }
   if (preset === 'suppressed') return { view: 'suppressed', stage: 'suppressed' }
   if (preset === 'language_focus') return { view: 'all', advanced: { language: 'non_english' } }
-  if (preset === 'wrong_numbers') return { view: 'hidden' }
+  if (preset === 'wrong_numbers') return { view: 'wrong_number' }
   if (preset === 'starred') return { view: 'starred', stage: 'all_stages' }
   if (preset === 'pinned') return { view: 'pinned', stage: 'all_stages' }
   if (preset === 'unassigned') return { view: 'unassigned', stage: 'all_stages' }

@@ -3,15 +3,38 @@ import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import type { ThreadContext, ThreadIntelligenceRecord } from '../../../lib/data/inboxData'
 import { Icon } from '../../../shared/icons'
 import { COPILOT_AGENTS, DEFAULT_AGENT_ID, getAgentById, type CopilotAgent } from './agents'
-import { extractCopilotContext, type BigPickleDraft, type CopilotThreadContext } from './copilot-context'
-import { logInboxActivity } from '../../../lib/data/inboxActivityData'
-import { getSuggestedDraft } from '../../../lib/data/inboxData'
+import { extractCopilotContext, type BigPickleDraft } from './copilot-context'
 import { CopilotOrb } from '../../../shared/copilot/CopilotOrb'
-import type { CopilotState } from '../../../shared/copilot/copilot-state'
 import * as BigPickle from '../../copilot/providers/bigPickleProvider'
 
-const DEV = Boolean(import.meta.env.DEV)
 const cls = (...t: Array<string | false | null | undefined>) => t.filter(Boolean).join(' ')
+
+
+export const CopilotOrbTrigger = ({
+  onClick,
+  active = false,
+  isReady = true,
+  size = 'md',
+}: {
+  onClick?: any
+  active?: boolean
+  isReady?: boolean
+  size?: string
+}) => (
+  <button
+    type="button"
+    className={cls('nx-copilot-orb-trigger', active && 'is-active', !isReady && 'is-disabled', `is-${size}`)}
+    onClick={(event) => onClick?.(event)}
+  >
+    <CopilotOrb
+      state={active ? 'listening' : 'idle'}
+      amplitude={active ? 0.4 : 0}
+      onClick={() => onClick?.()}
+      onPushToTalk={() => {}}
+      onPushToTalkRelease={() => {}}
+    />
+  </button>
+)
 
 /* ── Types ─────────────────────────────────────────────────────── */
 
@@ -88,7 +111,7 @@ const MessageCard = ({ msg, onAction }: { msg: CopilotMessage; onAction: (action
                   className="nx-copilot-voice-item"
                   onClick={() => onAction(`select_voice:${v.voiceURI}`)}
                 >
-                  <Icon name="volume-2" />
+                  <Icon name="volume" />
                   <div className="nx-copilot-voice-info">
                     <strong>{v.name}</strong>
                     <small>{v.lang}</small>
@@ -372,7 +395,7 @@ export const AICopilotPanel = ({
             className={cls('nx-copilot-header__badge nx-voice-mode-toggle', isVoiceMode && 'is-active')}
             onClick={() => setIsVoiceMode(!isVoiceMode)}
           >
-            <Icon name={isVoiceMode ? 'mic' : 'mic-off'} />
+            <Icon name={isVoiceMode ? 'mic' : 'volume'} />
             <span>VOICE</span>
           </button>
           <button type="button" onClick={onClose} className="nx-copilot-close-btn">

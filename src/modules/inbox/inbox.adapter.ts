@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { CommandCenterStore } from '../../domain/types'
 import { formatRelativeTime } from '../../shared/formatters'
-import { fetchInboxModel, type InboxFetchOptions } from '../../lib/data/inboxData'
+import { fetchInboxModel, fetchLiveInbox, type InboxFetchOptions, type LiveInboxMapPin, type LiveInboxPagination } from '../../lib/data/inboxData'
 import { isDev, shouldUseSupabase, useSupabaseData } from '../../lib/data/shared'
 import type { InboxWorkflowThread, InboxStatus, SellerStage, AutomationState } from '../../lib/data/inboxWorkflowData'
 import { hasSupabaseEnv, supabaseAnonKeyPresent, supabaseUrlPresent } from '../../lib/supabaseClient'
@@ -168,6 +168,10 @@ export interface InboxThread {
   motivationSummary?: string
   lat?: number
   lng?: number
+  latestDirection?: string
+  autoReplyStatus?: string
+  needsReply?: boolean
+  matchedKeywords?: string[]
 }
 
 export interface InboxModel {
@@ -193,6 +197,9 @@ export interface InboxModel {
   hiddenThreadsCount: number | null
   suppressedThreadsCount: number | null
   lastLiveFetchAt: string | null
+  counts?: Record<string, number | null | undefined>
+  mapPins?: LiveInboxMapPin[]
+  pagination?: LiveInboxPagination | null
 }
 
 export const adaptInboxModel = (store: CommandCenterStore): InboxModel => {
@@ -319,9 +326,12 @@ export const toWorkflowThread = (t: InboxThread): InboxWorkflowThread => {
     lastOutboundAt: t.lastOutboundAt ?? null,
     lastMessageAt: lastAt,
     lastMessageBody: t.latestMessageBody || t.preview,
-    lastDirection: (t.directionUsed === 'inbound' || t.directionUsed === 'outbound' ? t.directionUsed : 'unknown'),
+    lastDirection: (t.latestDirection === 'inbound' || t.latestDirection === 'outbound' ? t.latestDirection : (t.directionUsed === 'inbound' || t.directionUsed === 'outbound' ? t.directionUsed : 'unknown')),
+    latestDirection: t.latestDirection ?? t.directionUsed,
+    autoReplyStatus: t.autoReplyStatus,
+    matchedKeywords: t.matchedKeywords,
     updatedAt: lastAt,
-    queueStatus: t.queueId ? 'queued' : null,
+    queueStatus: t.autoReplyStatus || (t.queueId ? 'queued' : null),
   } as InboxWorkflowThread
 }
 
@@ -349,165 +359,201 @@ const EMPTY_MODEL: InboxModel = {
   lastLiveFetchAt: null,
 }
 
+
+// selectedThreadPreserved: merge refreshes into existing rows instead of replacing the list.
+const mergeInboxModels = (prev: InboxModel, next: InboxModel, mode: 'refresh' | 'append'): InboxModel => {
+  const mergedById = new Map<string, InboxThread>()
+  const nextIds = new Set(next.threads.map((thread) => thread.id))
+  const ordered = mode === 'append'
+    ? [...prev.threads, ...next.threads]
+    : [...next.threads, ...prev.threads.filter((thread) => !nextIds.has(thread.id))]
+  for (const thread of ordered) {
+    const existing = mergedById.get(thread.id)
+    mergedById.set(thread.id, existing ? { ...existing, ...thread } : thread)
+  }
+  return {
+    ...prev,
+    ...next,
+    threads: Array.from(mergedById.values()),
+    mapPins: next.mapPins && next.mapPins.length > 0 ? next.mapPins : prev.mapPins,
+    pagination: next.pagination ?? prev.pagination ?? null,
+  }
+}
+
+const modelFromLiveResponse = (live: Awaited<ReturnType<typeof fetchLiveInbox>>): InboxModel => ({
+  ...EMPTY_MODEL,
+  threads: live.threads,
+  unreadCount: live.counts.needsReply ?? live.counts.needs_reply ?? live.threads.filter((thread) => thread.needsReply || thread.needsResponse).length,
+  urgentCount: live.counts.positive ?? live.threads.filter((thread) => thread.priority === 'urgent').length,
+  totalCount: live.pagination.total ?? live.counts.total ?? live.counts.all ?? live.threads.length,
+  aiDraftCount: live.counts.autoRepliesQueued ?? live.counts.auto_replies_queued ?? live.threads.filter((thread) => Boolean(thread.aiDraft)).length,
+  dataMode: 'live',
+  liveFetchStatus: 'active',
+  liveFetchError: null,
+  messageEventsCount: live.counts.active ?? null,
+  messageEventsRawCount: live.counts.messages ?? null,
+  groupedThreadCount: live.counts.total ?? live.pagination.total ?? null,
+  priorityInboxCount: live.counts.priority ?? live.counts.needsReply ?? null,
+  activeInboxCount: live.counts.active ?? null,
+  waitingInboxCount: live.counts.waiting ?? null,
+  allInboxCount: live.counts.all ?? live.counts.total ?? live.pagination.total ?? null,
+  unreadThreadsCount: live.counts.unread ?? live.counts.needsReply ?? null,
+  sendQueueCount: live.counts.autoRepliesQueued ?? live.counts.auto_replies_queued ?? null,
+  archivedThreadsCount: live.counts.archived ?? null,
+  hiddenThreadsCount: live.counts.hidden ?? null,
+  suppressedThreadsCount: live.counts.suppressed ?? live.counts.optOut ?? live.counts.opt_out ?? null,
+  lastLiveFetchAt: new Date().toISOString(),
+  counts: live.counts,
+  mapPins: live.mapPins,
+  pagination: live.pagination,
+})
+
+const loadLiveOrFallback = async (options: InboxFetchOptions): Promise<InboxModel> => {
+  const view = options.filters?.view ?? 'all'
+  const direction = view === 'inbound' ? 'inbound' : view === 'outbound' ? 'outbound' : 'all'
+  const live = await fetchLiveInbox({
+    filter: view,
+    direction,
+    q: options.filters?.query ?? '',
+    keywordGroup: ['positive_hot', 'offer_requested', 'wrong_number', 'opt_out', 'manual_review'].includes(view) ? view : '',
+    cursor: options.cursor ?? null,
+    limit: options.limit ?? options.maxRows ?? 200,
+    map: options.map ?? true,
+    signal: options.signal,
+  })
+  return modelFromLiveResponse(live)
+}
+
 export const useInboxData = () => {
   const [data, setData] = useState<InboxModel>(EMPTY_MODEL)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<unknown>(null)
   const [recentlyUpdatedThreadIds, setRecentlyUpdatedThreadIds] = useState<Set<string>>(new Set())
   const lastFetchRef = useRef<InboxFetchOptions>({})
+  const dataRef = useRef<InboxModel>(EMPTY_MODEL)
+  const abortRef = useRef<AbortController | null>(null)
+  const requestSeqRef = useRef(0)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const threadsCountRef = useRef(0)
-  threadsCountRef.current = data.threads.length
+  useEffect(() => {
+    dataRef.current = data
+  }, [data])
 
-  const refresh = useCallback(async (options: InboxFetchOptions = {}) => {
-    if (threadsCountRef.current === 0) {
-      setLoading(true)
-    }
+  const runLoad = useCallback(async (options: InboxFetchOptions, mode: 'refresh' | 'append') => {
+    const requestSeq = ++requestSeqRef.current
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    if (dataRef.current.threads.length === 0) setLoading(true)
+
+    const runOptions = { ...options, signal: controller.signal }
     try {
-      lastFetchRef.current = {
-        ...lastFetchRef.current,
-        ...options,
-        filters: options.filters !== undefined ? options.filters : lastFetchRef.current.filters,
+      let model: InboxModel
+      try {
+        model = await loadLiveOrFallback(runOptions)
+      } catch (liveError) {
+        if (isDev) console.warn('[NEXUS] Live inbox API unavailable; falling back to configured data source.', liveError)
+        model = await loadInbox(runOptions)
       }
-      const model = await loadInbox(lastFetchRef.current)
-      setData(model ?? EMPTY_MODEL)
+      if (requestSeq !== requestSeqRef.current) return dataRef.current
+      setData((prev) => mergeInboxModels(prev, model ?? EMPTY_MODEL, mode))
       setError(null)
       return model
     } catch (err) {
+      if (controller.signal.aborted) return dataRef.current
       setError(err)
-      if (isDev) {
-        console.error('[NEXUS] useInboxData refresh failed', err)
-      }
-      return EMPTY_MODEL
+      if (isDev) console.error('[NEXUS] useInboxData load failed', err)
+      return dataRef.current
     } finally {
-      setLoading(false)
+      if (requestSeq === requestSeqRef.current) setLoading(false)
     }
   }, [])
 
-  const loadMore = useCallback(async (options: InboxFetchOptions = {}) => {
-    if (loading) return
-    setLoading(true)
-    try {
-      const model = await loadInbox({ 
-        ...lastFetchRef.current,
-        ...options,
-        filters: lastFetchRef.current.filters,
-        offset: data.threads.length, 
-        maxRows: 200 
-      })
-      if (model && model.threads.length > 0) {
-        setData((prev) => {
-          const existingIds = new Set(prev.threads.map(t => t.id))
-          const newThreads = model.threads.filter(t => !existingIds.has(t.id))
-          if (newThreads.length === 0) return prev
-          return {
-            ...prev,
-            threads: [...prev.threads, ...newThreads],
-          }
-        })
-      }
-    } catch (err) {
-      if (isDev) console.error('[NEXUS] useInboxData loadMore failed', err)
-    } finally {
-      setLoading(false)
+  const refresh = useCallback(async (options: InboxFetchOptions = {}) => {
+    lastFetchRef.current = {
+      ...lastFetchRef.current,
+      ...options,
+      filters: options.filters !== undefined ? options.filters : lastFetchRef.current.filters,
+      cursor: options.cursor ?? null,
+      maxRows: options.maxRows ?? lastFetchRef.current.maxRows ?? 200,
     }
-  }, [data.threads.length, loading])
+
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    const query = lastFetchRef.current.filters?.query ?? ''
+    const delay = query.trim() ? 250 : 0
+    if (delay === 0) return runLoad(lastFetchRef.current, 'refresh')
+    return await new Promise<InboxModel>((resolve) => {
+      debounceRef.current = setTimeout(() => {
+        void runLoad(lastFetchRef.current, 'refresh').then(resolve)
+      }, delay)
+    })
+  }, [runLoad])
+
+  const loadMore = useCallback(async (options: InboxFetchOptions = {}) => {
+    if (loading) return dataRef.current
+    const cursor = options.cursor ?? dataRef.current.pagination?.nextCursor ?? null
+    const moreOptions = {
+      ...lastFetchRef.current,
+      ...options,
+      filters: lastFetchRef.current.filters,
+      cursor,
+      offset: cursor ? undefined : dataRef.current.threads.length,
+      maxRows: options.maxRows ?? 200,
+      limit: options.limit ?? options.maxRows ?? 200,
+    }
+    return runLoad(moreOptions, 'append')
+  }, [loading, runLoad])
 
   useEffect(() => {
     let cancelled = false
-    if (isDev) console.log('[useInboxData] Hook mounted, calling loadInbox()')
-    loadInbox()
-      .then((model) => {
-        if (isDev) console.log('[useInboxData] loadInbox returned', {
-          threadCount: model?.threads?.length,
-          dataMode: model?.dataMode,
-          liveFetchStatus: model?.liveFetchStatus,
-          liveFetchError: model?.liveFetchError,
+    void refresh()
+
+    let channel: ReturnType<ReturnType<typeof getSupabaseClient>['channel']> | null = null
+    let pollInterval: ReturnType<typeof setInterval> | null = null
+    let refreshTimeout: ReturnType<typeof setTimeout> | null = null
+
+    const markRecentlyUpdated = (threadId: string) => {
+      setRecentlyUpdatedThreadIds((prev) => new Set([...prev, threadId]))
+      setTimeout(() => {
+        setRecentlyUpdatedThreadIds((prev) => {
+          const next = new Set(prev)
+          next.delete(threadId)
+          return next
         })
-        if (!cancelled) {
-          setData(model ?? EMPTY_MODEL)
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(err)
-          setData(EMPTY_MODEL)
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false)
-        }
-      })
+      }, 5000)
+    }
 
     if (shouldUseSupabase()) {
       const supabase = getSupabaseClient()
-      let refreshTimeout: ReturnType<typeof setTimeout> | null = null
-      
       const triggerRefresh = (payload: any) => {
-        const table = payload.table
-        const eventType = payload.eventType
-        const threadId = payload.new?.thread_key || payload.new?.threadKey || payload.old?.thread_key || payload.old?.threadKey
-        
-        if (isDev) {
-          console.log('[NexusInboxLiveFeed]', {
-            source: 'realtime',
-            eventType,
-            table,
-            thread_id: threadId || 'unknown',
-            action: 'refresh_triggered'
-          })
-        }
-
-        if (threadId) {
-          setRecentlyUpdatedThreadIds(prev => new Set([...prev, threadId]))
-          setTimeout(() => {
-            setRecentlyUpdatedThreadIds(prev => {
-              const next = new Set(prev)
-              next.delete(threadId)
-              return next
-            })
-          }, 3000)
-        }
-
+        const threadId = payload?.new?.thread_key || payload?.new?.threadKey || payload?.old?.thread_key || payload?.old?.threadKey
+        if (threadId) markRecentlyUpdated(threadId)
         if (refreshTimeout) clearTimeout(refreshTimeout)
         refreshTimeout = setTimeout(() => {
-          if (!cancelled) {
-            void refresh().then((model) => {
-               if (isDev) {
-                 console.log('[NexusInboxLiveFeed]', {
-                    action: 'refresh_complete',
-                    refreshedCounts: !!model,
-                    refreshedList: !!model?.threads,
-                    selectedThreadPreserved: true
-                 })
-               }
-            })
-          }
-        }, 250)
+          if (!cancelled) void refresh()
+        }, 500)
       }
 
-      const channel = supabase
+      channel = supabase
         .channel('nexus-inbox-realtime')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'inbox_thread_state' }, triggerRefresh)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'message_events' }, triggerRefresh)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'send_queue' }, triggerRefresh)
         .subscribe()
-
-      const pollInterval = setInterval(() => {
-        if (isDev) console.log('[NexusInboxLiveFeed] source: polling, action: refresh_triggered')
-        void refresh()
-      }, 30000)
-
-      return () => {
-        cancelled = true
-        if (refreshTimeout) clearTimeout(refreshTimeout)
-        clearInterval(pollInterval)
-        void supabase.removeChannel(channel)
-      }
     }
 
-    return () => { cancelled = true }
+    pollInterval = setInterval(() => {
+      if (!cancelled) void refresh()
+    }, 7500)
+
+    return () => {
+      cancelled = true
+      abortRef.current?.abort()
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+      if (refreshTimeout) clearTimeout(refreshTimeout)
+      if (pollInterval) clearInterval(pollInterval)
+      if (channel) void getSupabaseClient().removeChannel(channel)
+    }
   }, [refresh])
 
   return { data, loading, error, refresh, loadMore, recentlyUpdatedThreadIds }

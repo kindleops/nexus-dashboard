@@ -1,8 +1,9 @@
+import { useState } from 'react'
 import type { ThreadMessage } from '../../../lib/data/inboxData'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
 import { formatRelativeTime } from '../../../shared/formatters'
-import { resolveThreadAddressLine, resolveThreadMarketBadge, resolveThreadPrimaryName } from '../inbox-ui-helpers'
+import { getThreadMatchedKeywords, resolveThreadAddressLine, resolveThreadMarketBadge, resolveThreadPrimaryName } from '../inbox-ui-helpers'
 import { getStatusVisual, getSellerStageVisual } from '../status-visuals'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
@@ -17,6 +18,7 @@ interface ChatThreadProps {
   onTogglePin?: () => void
   onToggleStar?: () => void
   onToggleArchive?: () => void
+  searchQuery?: string
 }
 
 const fallback = (value: unknown, placeholder = '') => {
@@ -27,6 +29,19 @@ const fallback = (value: unknown, placeholder = '') => {
 const titleCase = (value: string) =>
   value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
 
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+const highlightText = (text: string, terms: string[]) => {
+  const cleanTerms = terms.map((term) => term.trim()).filter((term) => term.length > 1).slice(0, 8)
+  if (cleanTerms.length === 0) return text
+  const re = new RegExp(`(${cleanTerms.map(escapeRegExp).join('|')})`, 'ig')
+  return text.split(re).map((part, index) => (
+    cleanTerms.some((term) => term.toLowerCase() === part.toLowerCase())
+      ? <mark key={`${part}-${index}`} className="nx-keyword-highlight">{part}</mark>
+      : part
+  ))
+}
 const normalizeDeliveryBadge = (message: ThreadMessage): 'failed' | 'pending' | 'delivered' | 'unknown' => {
   const status = String(message.deliveryStatus || message.rawStatus || '').toLowerCase()
   if (status.includes('fail') || status.includes('error') || status.includes('undeliver')) return 'failed'
@@ -44,7 +59,26 @@ export const ChatThread = ({
   onTogglePin,
   onToggleStar,
   onToggleArchive,
+  searchQuery = '',
 }: ChatThreadProps) => {
+  const [pendingAction, setPendingAction] = useState<string | null>(null)
+
+  const runTriageAction = async (action: string) => {
+    if (!thread) return
+    setPendingAction(action)
+    try {
+      await fetch(`/api/internal/dashboard/inbox/thread/${encodeURIComponent(thread.threadKey || thread.id)}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      })
+    } catch (error) {
+      console.warn('[NexusInboxActionFailed]', { action, error })
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
   if (!thread) return (
     <div className="nx-chat-container is-empty">
       <div className="nx-inbox__workspace-empty">
@@ -68,6 +102,7 @@ export const ChatThread = ({
   const market = resolveThreadMarketBadge(thread)
   const statusVisual = getStatusVisual(thread.inboxStatus)
   const stageVisual = getSellerStageVisual(thread.conversationStage)
+  const matchedKeywords = getThreadMatchedKeywords(thread, searchQuery)
 
   return (
     <div className="nx-chat-container">
@@ -94,6 +129,25 @@ export const ChatThread = ({
           </div>
         </div>
         <div className="nx-chat-header__actions">
+
+          {['Reply Manually', 'Queue Auto Reply', 'Mark Reviewed', 'Mark Manual Review', 'Suppress Thread', 'Run Offer AI', 'Copy Seller Reply', 'Open Property', 'Open Owner'].map((action) => (
+            <button
+              key={action}
+              type="button"
+              className="nx-chat-action nx-triage-action"
+              disabled={pendingAction === action}
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                if (action === 'Copy Seller Reply') void navigator.clipboard?.writeText(thread.lastMessageBody || thread.preview || '')
+                void runTriageAction(action)
+              }}
+              title={action}
+            >
+              {pendingAction === action ? '…' : action}
+            </button>
+          ))}
+
           <button
             type="button"
             className={cls('nx-chat-action', isStarred && 'is-active')}
@@ -158,7 +212,7 @@ export const ChatThread = ({
         {messages.map(msg => (
           <div key={msg.id} className={cls('nx-bubble-wrap', msg.direction === 'inbound' ? 'is-inbound' : 'is-outbound')}>
             <div className="nx-chat-bubble">
-              {msg.body}
+              {highlightText(msg.body, matchedKeywords.length ? matchedKeywords : [searchQuery])}
             </div>
 
             <div className="nx-bubble-footer">

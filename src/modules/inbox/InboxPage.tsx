@@ -132,7 +132,7 @@ export default function InboxPage() {
   const [selectedMessages, setSelectedMessages] = useState<ThreadMessage[]>([])
   const [pendingMessagesByThread, setPendingMessagesByThread] = useState<Record<string, ThreadMessage[]>>({})
   const [visibleThreadCount, setVisibleThreadCount] = useState(1000)
-  const [mapSourceMode, _setMapSourceMode] = useState<MapSourceMode>(defaultMapSourceMode)
+  const [mapSourceMode, setMapSourceMode] = useState<MapSourceMode>(defaultMapSourceMode)
 
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [threadContext, setThreadContext] = useState<ThreadContext | null>(null)
@@ -155,6 +155,7 @@ export default function InboxPage() {
   const [layoutState, setLayoutState] = useState(defaultInboxLayoutState)
   const [dossierFull, setDossierFull] = useState(false)
   const [optimisticPatches, setOptimisticPatches] = useState<Record<string, Partial<InboxWorkflowThread>>>({})
+  const [isAiListening, setIsAiListening] = useState(false)
 
   const rawThreads = useMemo(() => (data.threads ?? []).map(toWorkflowThread), [data.threads])
   const threads = useMemo(() => {
@@ -175,6 +176,46 @@ export default function InboxPage() {
       sampleLng: withCoords[0] ? ((withCoords[0] as any).lng ?? (withCoords[0] as any).longitude) : null,
     })
   }
+
+  const mapThreads = useMemo(() => {
+    const pins = data.mapPins ?? []
+    if (pins.length === 0) return threads
+    const pinByKey = new Map(pins.map((pin) => [pin.threadKey || pin.id, pin]))
+    const seen = new Set<string>()
+    const hydrated = threads.map((thread) => {
+      const pin = pinByKey.get(thread.threadKey || thread.id)
+      if (!pin) return thread
+      seen.add(pin.threadKey || pin.id)
+      return {
+        ...thread,
+        lat: pin.lat,
+        lng: pin.lng,
+        propertyAddress: thread.propertyAddress || pin.propertyAddress,
+        latestMessageBody: thread.latestMessageBody || pin.latestMessageBody,
+      }
+    })
+    const synthetic = pins
+      .filter((pin) => !seen.has(pin.threadKey || pin.id))
+      .map((pin) => ({
+        id: pin.threadKey || pin.id,
+        threadKey: pin.threadKey || pin.id,
+        ownerName: pin.ownerName || 'Unknown Seller',
+        subject: pin.propertyAddress || 'Property pin',
+        preview: pin.latestMessageBody || 'Map pin',
+        propertyAddress: pin.propertyAddress,
+        marketId: 'unknown',
+        priority: 'normal',
+        inboxStatus: 'waiting',
+        conversationStage: pin.stage || 'needs_review',
+        lat: pin.lat,
+        lng: pin.lng,
+        lastMessageAt: new Date().toISOString(),
+        lastMessageIso: new Date().toISOString(),
+        lastMessageBody: pin.latestMessageBody || '',
+        isRead: true,
+      } as InboxWorkflowThread))
+    return [...hydrated, ...synthetic]
+  }, [data.mapPins, threads])
 
   const advancedFilterOptions = useMemo(() => getAdvancedFilterOptions(threads), [threads])
   
@@ -199,6 +240,15 @@ export default function InboxPage() {
       waiting,
       all,
       unread,
+      needs_reply: local.needs_reply,
+      positive_hot: local.positive_hot,
+      missing_context: local.missing_context,
+      auto_replied: local.auto_replied,
+      auto_reply_failed: local.auto_reply_failed,
+      offer_requested: local.offer_requested,
+      wrong_number: local.wrong_number,
+      opt_out: local.opt_out,
+      manual_review: local.manual_review,
       my_priority: priority,
       new_inbounds: active,
       offer_needed: waiting,
@@ -265,8 +315,12 @@ export default function InboxPage() {
   ), [threads, searchQuery])
 
   const selected = useMemo(() => (
-    threads.find((thread) => thread.id === selectedId) ?? filtered[0] ?? null
+    threads.find((thread) => thread.id === selectedId) ?? (selectedId ? null : filtered[0] ?? null)
   ), [filtered, threads, selectedId])
+
+  const selectedFilteredOut = useMemo(() => (
+    Boolean(selected && !filtered.some((thread) => thread.id === selected.id))
+  ), [filtered, selected])
 
   useEffect(() => {
     if (!DEV) return
@@ -843,7 +897,6 @@ export default function InboxPage() {
 
   const handleSelect = useCallback((id: string) => {
     setSelectedId(id)
-    setSearchQuery('')
     setLayoutState((current) => ({ ...current, selectedThreadId: id }))
   }, [])
 
@@ -926,7 +979,6 @@ export default function InboxPage() {
   const mapOpen = mapMode !== 'off'
   const dossierOpen = activeOverlay === 'dossier'
   const aiOpen = activeOverlay === 'ai'
-  const [isAiListening, setIsAiListening] = useState(false)
   const keysOpen = activeOverlay === 'keys'
   const showLeftPanel = leftPanelMode !== 'hidden'
   const showRightPanel = rightPanelMode !== 'hidden'
@@ -961,6 +1013,27 @@ export default function InboxPage() {
         onResetLayout={() => setLayoutState(resetLayoutMode)}
       />
 
+      <section className="nx-emergency-ops" aria-label="Emergency operations inbox stats">
+        {[
+          ['New Inbounds 15m', data.counts?.newInbounds15m ?? data.counts?.new_inbounds_15m],
+          ['New Inbounds 60m', data.counts?.newInbounds60m ?? data.counts?.new_inbounds_60m],
+          ['Needs Reply', data.counts?.needsReply ?? data.unreadThreadsCount ?? viewCounts.needs_reply],
+          ['Auto-Replies Queued', data.counts?.autoRepliesQueued ?? data.sendQueueCount],
+          ['Auto-Replies Sent', data.counts?.autoRepliesSent ?? data.counts?.auto_replies_sent],
+          ['Auto-Replies Failed', data.counts?.autoRepliesFailed ?? data.counts?.auto_reply_failed],
+          ['Positive Replies', data.counts?.positiveReplies ?? viewCounts.positive_hot],
+          ['Missing Context', data.counts?.missingContext ?? viewCounts.missing_context],
+          ['Cold Outbound', data.counts?.coldOutboundStatus ?? 'partial'],
+          ['Queue Lock', data.counts?.queueLockActive ?? 'partial'],
+          ['Podio Cooldown', data.counts?.podioCooldown ?? 'partial'],
+        ].map(([label, value]) => (
+          <div key={String(label)} className="nx-emergency-ops__stat">
+            <span>{label}</span>
+            <strong>{value === null || value === undefined ? 'partial' : String(value)}</strong>
+          </div>
+        ))}
+      </section>
+
       <div className="nx-inbox-shell">
         {showLeftPanel && (
           <InboxSidebar
@@ -979,6 +1052,7 @@ export default function InboxPage() {
             canLoadMore={true}
             onLoadMore={handleLoadMore}
             recentlyUpdatedThreadIds={recentlyUpdatedThreadIds}
+            searchQuery={searchQuery}
           />
         )}
 
@@ -999,6 +1073,7 @@ export default function InboxPage() {
             canLoadMore={true}
             onLoadMore={handleLoadMore}
             recentlyUpdatedThreadIds={recentlyUpdatedThreadIds}
+            searchQuery={searchQuery}
           />
         )}
 
@@ -1014,6 +1089,10 @@ export default function InboxPage() {
             />
           )}
 
+          {selectedFilteredOut && selected && (
+            <div className="nx-filtered-out-notice">Selected thread is not in the current filter; detail remains open.</div>
+          )}
+
           <ChatThread
             thread={selected}
             messages={displayedMessagesWithTranslation}
@@ -1023,6 +1102,7 @@ export default function InboxPage() {
             onTogglePin={handleTogglePin}
             onToggleStar={handleToggleStar}
             onToggleArchive={handleToggleArchive}
+            searchQuery={searchQuery}
           />
 
           {showTranslation && (
@@ -1079,6 +1159,13 @@ export default function InboxPage() {
               <div className="nx-map-right-header__actions">
                 <button
                   type="button"
+                  title={mapSourceMode === 'visible_threads' ? 'Show all pins' : 'Show filtered pins only'}
+                  onClick={() => setMapSourceMode((mode) => mode === 'visible_threads' ? 'all_active_coordinate_threads' : 'visible_threads')}
+                >
+                  {mapSourceMode === 'visible_threads' ? 'Show All Pins' : 'Filtered Pins'}
+                </button>
+                <button
+                  type="button"
                   title="Expand map (\\)"
                   onClick={() => setLayoutState(cycleMapMode)}
                 >
@@ -1095,7 +1182,7 @@ export default function InboxPage() {
             </div>
             <div className="nx-map-right-body">
               <InboxCommandMap
-                threads={threads}
+                threads={mapThreads}
                 visibleThreads={filtered}
                 selectedThread={selected}
                 zoomedIn={mapMode !== 'side'}

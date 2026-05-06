@@ -50,7 +50,49 @@ export interface InboxFetchOptions {
   signal?: AbortSignal
   maxRows?: number
   offset?: number
+  cursor?: string | null
+  limit?: number
+  map?: boolean
   filters?: InboxThreadFilters
+}
+
+export interface LiveInboxFetchParams {
+  filter?: string
+  direction?: 'inbound' | 'outbound' | 'all' | string
+  q?: string
+  keywordGroup?: string
+  cursor?: string | null
+  limit?: number
+  map?: boolean
+  signal?: AbortSignal
+}
+
+export interface LiveInboxPagination {
+  cursor: string | null
+  nextCursor: string | null
+  hasMore: boolean
+  limit: number
+  total?: number | null
+}
+
+export interface LiveInboxMapPin {
+  id: string
+  threadKey: string
+  lat: number
+  lng: number
+  status?: string
+  stage?: string
+  ownerName?: string
+  propertyAddress?: string
+  latestMessageBody?: string
+}
+
+export interface LiveInboxResponse {
+  threads: InboxThread[]
+  messages: ThreadMessage[]
+  counts: Record<string, number | null | undefined>
+  mapPins: LiveInboxMapPin[]
+  pagination: LiveInboxPagination
 }
 
 export interface ThreadMessage {
@@ -1116,6 +1158,133 @@ export const doesMessageBelongToThread = (
   }
 
   return false
+}
+
+
+const toQueryParam = (value: unknown): string | null => {
+  const text = String(value ?? '').trim()
+  return text.length > 0 ? text : null
+}
+
+const normalizeLiveThread = (row: AnyRecord, index: number): InboxThread => {
+  const threadKey = asString(row['thread_key'] ?? row['threadKey'] ?? row['id'], '') || `live:${index}`
+  const latestMessageIso = asIso(row['latest_message_at'] ?? row['latestMessageAt'] ?? row['lastMessageIso']) ?? new Date().toISOString()
+  const latestDirection = normalizeMessageDirection({ direction: row['latest_direction'] ?? row['latestDirection'] ?? row['direction'] })
+  const sellerPhone = normalizePhone(row['seller_phone'] ?? row['sellerPhone'] ?? row['phoneNumber'] ?? row['canonicalE164'])
+  const ownerDisplayName = resolveInboxSellerName(row)
+  const propertyAddressFull = resolveInboxPropertyAddress(row)
+  const latestMessageBody = asString(row['latest_message_body'] ?? row['latestMessageBody'] ?? row['preview'], '')
+  const uiIntent = normalizeStatus(row['ui_intent'] ?? row['uiIntent'] ?? 'needs_review')
+  const autoReplyStatus = asString(row['auto_reply_status'] ?? row['autoReplyStatus'] ?? row['queue_status'] ?? row['queueStatus'], '')
+  const needsReply = asBoolean(row['needs_reply'] ?? row['needsReply'] ?? row['show_in_priority_inbox'] ?? row['showInPriorityInbox'], latestDirection === 'inbound' && !autoReplyStatus)
+  return {
+    id: threadKey,
+    leadId: asString(row['property_id'] ?? row['propertyId'] ?? row['master_owner_id'] ?? row['ownerId'], threadKey),
+    marketId: asString(row['market'] ?? row['marketId'] ?? row['market_name'], 'unknown') || 'unknown',
+    ownerName: ownerDisplayName,
+    subject: propertyAddressFull,
+    preview: latestMessageBody || 'No message preview',
+    status: asBoolean(row['is_archived'] ?? row['isArchived'], false) ? 'archived' : (needsReply ? 'unread' : 'read'),
+    priority: needsReply ? 'urgent' : 'normal',
+    sentiment: uiIntent === 'potential_interest' || uiIntent === 'price_anchor' ? 'hot' : 'neutral',
+    messageCount: asNumber(row['message_count'] ?? row['messageCount'], 0),
+    lastMessageLabel: formatRelativeTime(latestMessageIso),
+    lastMessageIso: latestMessageIso,
+    unreadCount: needsReply ? 1 : 0,
+    aiDraft: autoReplyStatus ? 'Auto-reply decision available.' : null,
+    labels: [uiIntent].filter(Boolean),
+    threadKey,
+    ownerId: asString(row['master_owner_id'] ?? row['ownerId'], '') || undefined,
+    prospectId: asString(row['prospect_id'] ?? row['prospectId'], '') || undefined,
+    propertyId: asString(row['property_id'] ?? row['propertyId'], '') || undefined,
+    phoneNumber: sellerPhone || undefined,
+    canonicalE164: sellerPhone || undefined,
+    sellerPhone: sellerPhone || undefined,
+    ourNumber: normalizePhone(row['our_number'] ?? row['ourNumber']) || undefined,
+    directionUsed: latestDirection,
+    latestDirection,
+    autoReplyStatus,
+    needsReply,
+    needsResponse: needsReply,
+    deliveryStatus: asString(row['delivery_status'] ?? row['deliveryStatus'], ''),
+    failureReason: asString(row['failure_reason'] ?? row['failureReason'], ''),
+    isOptOut: asBoolean(row['is_opt_out'] ?? row['isOptOut'], false),
+    propertyAddress: propertyAddressFull !== 'No Address' ? propertyAddressFull : undefined,
+    propertyAddressFull,
+    market: asString(row['market'] ?? row['marketName'] ?? row['market_id'], 'unknown'),
+    marketName: asString(row['market_name'] ?? row['marketName'] ?? row['market'], ''),
+    lastInboundAt: latestDirection === 'inbound' ? latestMessageIso : asIso(row['last_inbound_at'] ?? row['lastInboundAt']),
+    lastOutboundAt: latestDirection === 'outbound' ? latestMessageIso : asIso(row['last_outbound_at'] ?? row['lastOutboundAt']),
+    unread: needsReply,
+    uiIntent,
+    priorityBucket: normalizeStatus(row['priority_bucket'] ?? row['priorityBucket'] ?? (needsReply ? 'priority' : 'active')),
+    workflowStatus: normalizeStatus(row['workflow_status'] ?? row['workflowStatus'] ?? row['status'] ?? 'open'),
+    workflowStage: normalizeStatus(row['workflow_stage'] ?? row['workflowStage'] ?? row['stage'] ?? 'needs_response'),
+    ownerDisplayName,
+    latestMessageBody,
+    latestMessageAt: latestMessageIso,
+    matchedKeywords: safeArray((row['matched_keywords'] ?? row['matchedKeywords']) as string[]),
+    lat: asNumber(row['lat'] ?? row['latitude'], 0),
+    lng: asNumber(row['lng'] ?? row['longitude'], 0),
+    ownerType: asString(row['owner_type'] ?? row['ownerType'], ''),
+    propertyType: asString(row['property_type'] ?? row['propertyType'], ''),
+  } as InboxThread
+}
+
+const normalizeLiveInboxResponse = (payload: AnyRecord, fallbackLimit: number): LiveInboxResponse => {
+  const rawThreads = safeArray(payload['threads'] as AnyRecord[])
+  const rawMessages = safeArray(payload['messages'] as AnyRecord[])
+  const rawPins = safeArray((payload['mapPins'] ?? payload['map_pins']) as AnyRecord[])
+  const pagination = (payload['pagination'] ?? {}) as AnyRecord
+  return {
+    threads: rawThreads.map(normalizeLiveThread),
+    messages: rawMessages.map(toThreadMessage),
+    counts: (payload['counts'] ?? {}) as Record<string, number | null | undefined>,
+    mapPins: rawPins.map((pin, index) => ({
+      id: asString(pin['id'], `pin:${index}`),
+      threadKey: asString(pin['thread_key'] ?? pin['threadKey'], ''),
+      lat: asNumber(pin['lat'] ?? pin['latitude'], 0),
+      lng: asNumber(pin['lng'] ?? pin['longitude'], 0),
+      status: asString(pin['status'], ''),
+      stage: asString(pin['stage'], ''),
+      ownerName: asString(pin['owner_name'] ?? pin['ownerName'], ''),
+      propertyAddress: asString(pin['property_address'] ?? pin['propertyAddress'], ''),
+      latestMessageBody: asString(pin['latest_message_body'] ?? pin['latestMessageBody'], ''),
+    })),
+    pagination: {
+      cursor: asString(pagination['cursor'], '') || null,
+      nextCursor: asString(pagination['nextCursor'] ?? pagination['next_cursor'], '') || null,
+      hasMore: asBoolean(pagination['hasMore'] ?? pagination['has_more'], rawThreads.length >= fallbackLimit),
+      limit: asNumber(pagination['limit'], fallbackLimit),
+      total: Number.isFinite(Number(pagination['total'])) ? Number(pagination['total']) : null,
+    },
+  }
+}
+
+export const fetchLiveInbox = async ({
+  filter = 'all',
+  direction = 'all',
+  q = '',
+  keywordGroup = '',
+  cursor = null,
+  limit = 200,
+  map = true,
+  signal,
+}: LiveInboxFetchParams = {}): Promise<LiveInboxResponse> => {
+  const params = new URLSearchParams()
+  const entries: Record<string, unknown> = { filter, direction, q, keywordGroup, cursor, limit, map: map ? '1' : '0' }
+  Object.entries(entries).forEach(([key, value]) => {
+    const param = toQueryParam(value)
+    if (param) params.set(key, param)
+  })
+  const res = await fetch(`/api/internal/dashboard/inbox/live?${params.toString()}`, {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+    signal,
+  })
+  if (!res.ok) throw new Error(`Live inbox API failed (${res.status})`)
+  const payload = await res.json() as AnyRecord
+  return normalizeLiveInboxResponse(payload, limit)
 }
 
 const runFilteredQuery = async (
@@ -2848,3 +3017,37 @@ export const scheduleReplyFromInbox = async (
 
   return { ok: true, queueId, status: 'scheduled', errorMessage: null, insertPayloadKeys }
 }
+
+export interface LiveDashboardPrepMetrics {
+  inboundVolume: number | null
+  outboundSent: number | null
+  delivered: number | null
+  failed: number | null
+  responseRate: number | null
+  positiveReplies: number | null
+  needsReply: number | null
+  autoRepliesQueued: number | null
+  autoRepliesSent: number | null
+  autoRepliesFailed: number | null
+  marketPerformance: Record<string, number | null>
+  queueHealth: Record<string, unknown>
+  textGridNumberHealth: Record<string, unknown>
+  podioCooldownStatus: string | null
+}
+
+export const buildLiveDashboardPrepMetrics = (counts: Record<string, number | null | undefined> = {}): LiveDashboardPrepMetrics => ({
+  inboundVolume: counts.inboundVolume ?? counts.inbound_volume ?? null,
+  outboundSent: counts.outboundSent ?? counts.outbound_sent ?? null,
+  delivered: counts.delivered ?? null,
+  failed: counts.failed ?? null,
+  responseRate: counts.responseRate ?? counts.response_rate ?? null,
+  positiveReplies: counts.positiveReplies ?? counts.positive_replies ?? null,
+  needsReply: counts.needsReply ?? counts.needs_reply ?? null,
+  autoRepliesQueued: counts.autoRepliesQueued ?? counts.auto_replies_queued ?? null,
+  autoRepliesSent: counts.autoRepliesSent ?? counts.auto_replies_sent ?? null,
+  autoRepliesFailed: counts.autoRepliesFailed ?? counts.auto_replies_failed ?? null,
+  marketPerformance: {},
+  queueHealth: {},
+  textGridNumberHealth: {},
+  podioCooldownStatus: counts.podioCooldown === null || counts.podioCooldown === undefined ? null : String(counts.podioCooldown),
+})
