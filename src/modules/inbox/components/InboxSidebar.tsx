@@ -277,11 +277,12 @@ export const InboxSidebar = ({
     const firstThread = visibleThreads[0]
     console.log('[NEXUS Left Inbox Diagnostics]', {
       rawHydratedRows: threads.length,
-      normalizedRows: threads.length,
+      normalizedThreads: threads.length,
       visibleRows: visibleThreads.length,
-      groupedCategoryRows: categoryCounts,
+      categoryCounts,
       activeCategory: expandedQueue,
-      firstThreadKey: firstThread?.threadKey ?? firstThread?.id ?? null,
+      firstNormalizedThread: threads[0] ?? null,
+      firstVisibleThread: firstThread ?? null,
     })
   }, [threads, visibleThreads, groupedThreads, expandedQueue])
 
@@ -309,16 +310,6 @@ export const InboxSidebar = ({
           <span className="nx-inbox-badge is-new">📨 {formatCount(numberOrNull(viewCounts.needs_reply) ?? groupedThreads.needs_reply.length)}</span>
           <span className="nx-sidebar__total-count">{formatCount(numberOrNull(totalCount) ?? 0)}</span>
         </div>
-
-        {import.meta.env.DEV && (
-          <div className="nx-sidebar__dev-banner">
-            <span>HYDRATED {threads.length}</span>
-            <span>NORMALIZED {threads.length}</span>
-            <span>VISIBLE {visibleThreads.length}</span>
-            <span>{expandedQueue.replace(/_/g, ' ').toUpperCase()}</span>
-            <span>{visibleThreads[0]?.threadKey ?? visibleThreads[0]?.id ?? 'NO THREADS'}</span>
-          </div>
-        )}
 
         <label className="nx-sidebar-search">
           <Icon name="search" />

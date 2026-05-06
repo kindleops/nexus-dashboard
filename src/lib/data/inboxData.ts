@@ -1472,9 +1472,10 @@ export const getInboxThreads = async (
   const rows = safeArray(data as AnyRecord[])
 
   if (DEV) {
-    console.log('[getInboxThreads] rawHydratedRows=', rows.length, {
+    console.log('[getInboxThreads] rawHydratedRows', {
+      count: rows.length,
       totalAvailable,
-      firstHydratedRow: rows[0] ? Object.keys(rows[0]) : null,
+      firstHydratedRow: rows[0] ?? null,
       view: filterState.view,
       stage: filterState.stage,
       query: filterState.query,
@@ -1515,23 +1516,24 @@ export const getInboxThreads = async (
     const bestPhone = asString(row.best_phone, '')
     const canonicalE164 = asString(row.canonical_e164, '')
     const phone = asString(row.phone, '')
-    const ownerDisplayName = prospectName || ownerName || firstName || bestPhone || canonicalE164 || phone || 'Unknown Seller'
+    const ownerDisplayName = prospectName || ownerName || firstName || bestPhone || canonicalE164 || phone || 'Unknown Owner'
     
     // Normalize phone: best_phone || canonical_e164 || phone
     const displayPhone = bestPhone || canonicalE164 || phone || ''
     
     // Normalize address: property_address_full
-    const address = asString(row.property_address_full, '') || 'No linked property'
+    const address = asString(row.property_address_full, '') || 'No Address'
     
     const market = asString(row.market, '')
     const marketLabel = market || 'Unknown Market'
     
-    const latestBody = asString(row.latest_message_body, '') || 'No message yet'
+    const latestBody = asString(row.latest_message_body, '') || 'No recent message'
     const propertyType = asString(row.property_type, '')
+    const propertyClass = asString(row.property_class, '')
     const queueStatus = normalizeStatus(row.queue_status ?? '')
     const automationState = normalizeStatus(row.queue_status ?? '')
     // Stage: queue_stage || detected_intent || inbox_category
-    const threadStage = normalizeStatus(row.queue_stage ?? row.detected_intent ?? row.inbox_category ?? 'needs_response')
+    const threadStage = normalizeStatus(row.queue_stage ?? row.detected_intent ?? row.inbox_category ?? 'ownership_check')
     const detectedIntent = normalizeStatus(row.detected_intent ?? '')
     const isDnc = asBoolean(row.is_dnc, false) || category === 'dnc_opt_out'
     const isAutomated = category === 'automated' || automationState.includes('auto')
@@ -1567,6 +1569,7 @@ export const getInboxThreads = async (
       preview: latestBody,
       latest_message_body: latestBody,
       latestMessageBody: latestBody,
+      latestMessage: latestBody,
       latestMessageAt: latestMessageIso,
       latest_activity_at: latestMessageIso,
       latest_message_direction: latestDirection,
@@ -1587,14 +1590,16 @@ export const getInboxThreads = async (
       prospectId: asString(row.prospect_id, '') || undefined,
       propertyId: asString(row.property_id, '') || undefined,
       phoneNumber: displayPhone || undefined,
+      display_phone: displayPhone || undefined,
       sellerPhone: displayPhone || undefined,
       canonicalE164: canonicalE164 || undefined,
       bestPhone: bestPhone || undefined,
       market: marketLabel,
       marketName: marketLabel,
-      propertyAddress: address === 'No linked property' ? undefined : address,
+      propertyAddress: address,
       propertyAddressFull: address,
       propertyType: propertyType || undefined,
+      propertyClass: propertyClass || undefined,
       beds: row.beds as string | number,
       baths: row.baths as string | number,
       sqft: row.sqft as string | number,
@@ -1633,6 +1638,7 @@ export const getInboxThreads = async (
         id: normalized.id,
         ownerName: normalized.ownerName,
         subject: normalized.subject,
+        latestMessage: normalized.latestMessageBody,
         status: normalized.status,
         priority: normalized.priority,
         category,
@@ -1653,6 +1659,10 @@ export const getInboxThreads = async (
       limit: maxRows,
       returned: rows.length,
       totalAvailable: totalAvailable ?? rows.length,
+    })
+    console.log('[getInboxThreads] normalizedThreads', {
+      count: threads.length,
+      firstNormalizedThread: threads[0] ?? null,
     })
   }
 

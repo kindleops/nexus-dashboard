@@ -451,11 +451,12 @@ export default function InboxPage() {
   }, [])
 
   const liveThreadQuery = useMemo(() => ({
-    view: layoutState.inboxMode === 'full_double' ? 'all' : viewFilter,
+    // Keep the live payload broad so the premium left inbox can group every hydrated thread locally.
+    view: 'all' as const,
     stage: stageFilter,
     query: searchQuery,
     advanced: advancedFilters,
-  }), [layoutState.inboxMode, viewFilter, stageFilter, searchQuery, advancedFilters])
+  }), [stageFilter, searchQuery, advancedFilters])
 
   useEffect(() => {
     setVisibleThreadCount(200)
