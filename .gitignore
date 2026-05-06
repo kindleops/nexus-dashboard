@@ -69,3 +69,15 @@ reivesti-platform-design/
 scripts-podio/
 scripts.local-backup
 Google\ Drive
+
+# macOS user directories
+Desktop/
+Documents/
+Downloads/
+Library/
+Movies/
+Music/
+Pictures/
+Projects/
+Public/
+Applications/
