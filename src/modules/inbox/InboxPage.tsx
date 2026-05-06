@@ -123,10 +123,8 @@ export default function InboxPage() {
   const [viewFilter, setViewFilter] = useState<InboxViewSelectValue>('priority')
   const [savedPreset, setSavedPreset] = useState<InboxSavedFilterPreset>('my_priority')
   const [advancedFilters, setAdvancedFilters] = useState<InboxAdvancedFilters>({ outOfStateOwner: 'all' })
-  const [rightStageFilter, setRightStageFilter] = useState<InboxStageSelectValue>('all_stages')
   const [rightViewFilter, setRightViewFilter] = useState<InboxViewSelectValue>('active')
   const [rightSavedPreset, setRightSavedPreset] = useState<InboxSavedFilterPreset>('new_inbounds')
-  const [rightAdvancedFilters, setRightAdvancedFilters] = useState<InboxAdvancedFilters>({ outOfStateOwner: 'all' })
   const [searchQuery, setSearchQuery] = useState('')
   const [draftText, setDraftText] = useState('')
   const [selectedMessages, setSelectedMessages] = useState<ThreadMessage[]>([])
@@ -285,24 +283,6 @@ export default function InboxPage() {
     setVisibleThreadCount(prev => prev + 200)
   }, [loadMore])
 
-  const rightServerFilterOptions: ApplyInboxFiltersOptions = useMemo(() => {
-    const live = data.dataMode === 'live'
-    const double = layoutState.inboxMode === 'full_double'
-    return {
-      skipViewFilter: live && !double,
-      skipStageFilter: live && !double && rightStageFilter !== 'all_stages' && SERVER_INBOX_THREAD_STAGE_VALUES.has(rightStageFilter),
-    }
-  }, [data.dataMode, layoutState.inboxMode, rightStageFilter])
-
-  const rightFiltered = useMemo(() => (
-    applyInboxFilters(threads, {
-      search: '',
-      stage: rightStageFilter,
-      view: rightViewFilter,
-      advanced: rightAdvancedFilters,
-    }, rightServerFilterOptions)
-  ), [threads, rightStageFilter, rightViewFilter, rightAdvancedFilters, rightServerFilterOptions])
-
   const searchResults = useMemo(() => (
     searchQuery.trim()
       ? applyInboxFilters(threads, {
@@ -429,9 +409,7 @@ export default function InboxPage() {
     }
     setRightSavedPreset(preset)
     const config = getSavedPresetConfig(preset)
-    if (config.stage) setRightStageFilter(config.stage)
     if (config.view) setRightViewFilter(config.view)
-    if (config.advanced) setRightAdvancedFilters((current) => ({ ...current, ...config.advanced }))
   }, [DEV])
 
   const setActiveOverlay = useCallback((activeOverlay: ActiveOverlay) => {
@@ -1028,7 +1006,7 @@ export default function InboxPage() {
       <div className="nx-inbox-shell">
         {showLeftPanel && (
           <InboxSidebar
-            threads={filtered}
+            threads={threads}
             selectedId={selected?.id ?? null}
             activeViewFilter={viewFilter}
             onSelect={handleSelect}
@@ -1049,7 +1027,7 @@ export default function InboxPage() {
 
         {isDoubleSided && (
           <InboxSidebar
-            threads={rightFiltered}
+            threads={threads}
             selectedId={selected?.id ?? null}
             activeViewFilter={rightViewFilter}
             onSelect={handleSelect}

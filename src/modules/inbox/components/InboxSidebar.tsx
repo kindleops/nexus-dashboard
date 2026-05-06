@@ -120,6 +120,21 @@ const readNumber = (thread: InboxWorkflowThread, ...keys: string[]) => {
   return null
 }
 
+const matchesSearch = (thread: InboxWorkflowThread, query: string) => {
+  const search = query.trim().toLowerCase()
+  if (!search) return true
+  const values = [
+    resolveThreadPrimaryName(thread),
+    resolveThreadAddressLine(thread),
+    resolveThreadMarketBadge(thread),
+    readString(thread, 'latest_message_body', 'latestMessageBody', 'lastMessageBody', 'preview'),
+    readString(thread, 'best_phone', 'canonical_e164', 'phone'),
+    readString(thread, 'propertyType', 'property_type'),
+    readString(thread, 'threadWorkflowStage', 'workflowStage', 'queue_stage', 'detected_intent', 'conversationStage', 'inbox_category'),
+  ]
+  return values.some((value) => value.toLowerCase().includes(search))
+}
+
 const getInitials = (value: string) =>
   value
     .split(/\s+/)
@@ -148,7 +163,7 @@ const resolvePropertyTypeBadge = (thread: InboxWorkflowThread) => {
 
 const resolveStageBadge = (thread: InboxWorkflowThread) => {
   const raw = readString(thread, 'threadWorkflowStage', 'workflowStage', 'queue_stage', 'detected_intent', 'conversationStage', 'inbox_category')
-  if (!raw) return 'Unknown Stage'
+  if (!raw) return 'Ownership Check'
   return raw.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())
 }
 
@@ -172,6 +187,7 @@ const ConversationRow = memo(({ thread, selected, queuePreset, onSelect }: Conve
   const time = thread.lastMessageAt || thread.lastMessageIso || thread.updatedAt
   const avatarToneClass = queuePreset === 'suppressed' ? 'is-dnc' : queuePreset === 'positive_hot' ? 'is-hot' : 'is-default'
   const previewText = preview.replace(/\s+/g, ' ').trim() || 'No recent message'
+  const actionLabel = stage.toLowerCase().includes('ownership') ? 'OWNERSHIP CHECK' : stage.toUpperCase()
   const badges = [
     market ? market.toUpperCase() : null,
     propertyType?.toUpperCase(),
@@ -201,22 +217,24 @@ const ConversationRow = memo(({ thread, selected, queuePreset, onSelect }: Conve
         </div>
         <div className="nx-thread-card__middle">
           <div className="nx-thread-card__address">{address}</div>
-          <span className="nx-thread-card__action">{stage}</span>
+          <span className="nx-thread-card__action">{actionLabel}</span>
         </div>
         <div className="nx-thread-card__preview">{previewText}</div>
-        <div className="nx-thread-card__chips">
-          {badges.map((badge) => (
-            <span
-              key={badge}
-              className={cls(
-                'nx-thread-chip',
-                badge === 'CORPORATE' && 'is-corporate',
-              )}
-            >
-              {badge}
-            </span>
-          ))}
-        </div>
+        {badges.length > 0 && (
+          <div className="nx-thread-card__chips">
+            {badges.map((badge) => (
+              <span
+                key={badge}
+                className={cls(
+                  'nx-thread-chip',
+                  badge === 'CORPORATE' && 'is-corporate',
+                )}
+              >
+                {badge}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </button>
   )
@@ -242,11 +260,14 @@ export const InboxSidebar = ({
   searchQuery = '',
   onSearchQueryChange,
 }: InboxSidebarProps) => {
+  const searchableThreads = useMemo(
+    () => threads.filter((thread) => !recentlyUpdatedThreadIds.has(`hidden:${thread.id}`) && matchesSearch(thread, searchQuery)),
+    [threads, recentlyUpdatedThreadIds, searchQuery],
+  )
+
   const visibleThreads = useMemo(
-    () => threads
-      .slice(0, visibleThreadCount)
-      .filter((thread) => !recentlyUpdatedThreadIds.has(`hidden:${thread.id}`)),
-    [threads, visibleThreadCount, recentlyUpdatedThreadIds],
+    () => searchableThreads.slice(0, visibleThreadCount),
+    [searchableThreads, visibleThreadCount],
   )
 
   const groupedThreads = useMemo(() => {
