@@ -269,7 +269,6 @@ export const COPILOT_AGENTS: CopilotAgent[] = [
     mode: 'advisory',
     voiceProfile: { pitch: 1.25, rate: 1.15, preferred: 'Rishi' }
   },
-,
 ]
 
 export const DEFAULT_AGENT_ID = 'ceo'

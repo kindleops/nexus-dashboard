@@ -60,7 +60,8 @@ export async function draftSellerReply(context: CopilotThreadContext): Promise<B
     tone: 'Professional/Direct',
     intent: 'Schedule Call',
     confidence: 0.92,
-    internalNotes: 'Mock provider fallback active.'
+    internalNotes: 'Mock provider fallback active.',
+    suggestedNextStage: 'schedule_call'
   }
 
   return { data: mockDraft, state: 'mock_mode', latencyMs: Date.now() - start }
@@ -82,7 +83,7 @@ export async function summarizeThread(context: CopilotThreadContext): Promise<Bi
 /**
  * Classifies the seller's intent from the last message
  */
-export async function classifyIntent(context: CopilotThreadContext): Promise<BigPickleResponse<string>> {
+export async function classifyIntent(_context: CopilotThreadContext): Promise<BigPickleResponse<string>> {
   const state = getProviderState()
   return { data: 'Inquiry / Interest', state: state === 'connected' ? 'connected' : 'mock_mode', latencyMs: 0 }
 }
@@ -90,7 +91,7 @@ export async function classifyIntent(context: CopilotThreadContext): Promise<Big
 /**
  * Recommends the next best action to take
  */
-export async function recommendNextAction(context: CopilotThreadContext): Promise<BigPickleResponse<string[]>> {
+export async function recommendNextAction(_context: CopilotThreadContext): Promise<BigPickleResponse<string[]>> {
   return { data: ['Schedule Call', 'Verify ARV', 'Send Offer'], state: 'mock_mode', latencyMs: 0 }
 }
 

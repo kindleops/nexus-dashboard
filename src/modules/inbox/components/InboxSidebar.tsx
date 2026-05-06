@@ -6,6 +6,7 @@ import {
   resolveThreadAddressLine,
   resolveThreadMarketBadge,
   resolveThreadPrimaryName,
+  getThreadMatchedKeywords,
   type InboxSavedFilterPreset,
   type InboxViewSelectValue,
   savedFilterOptions,
@@ -43,6 +44,7 @@ interface InboxSidebarProps {
   onLoadMore: () => void
   onThreadAction?: (id: string, action: 'star' | 'unstar' | 'pin' | 'unpin' | 'archive' | 'hide') => void
   recentlyUpdatedThreadIds?: Set<string>
+  searchQuery?: string
 }
 
 const fallback = (value: unknown, placeholder = '') => {
@@ -68,6 +70,31 @@ const secondaryPresetOptions = savedFilterOptions.filter((option) => (
   !primaryPresetOptions.some((primary) => primary.value === option.value)
 ))
 
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+const highlightText = (text: string, terms: string[]) => {
+  const cleanTerms = terms.map((term) => term.trim()).filter((term) => term.length > 1).slice(0, 8)
+  if (cleanTerms.length === 0) return text
+  const re = new RegExp(`(${cleanTerms.map(escapeRegExp).join('|')})`, 'ig')
+  return text.split(re).map((part, index) => (
+    cleanTerms.some((term) => term.toLowerCase() === part.toLowerCase())
+      ? <mark key={`${part}-${index}`} className="nx-keyword-highlight">{part}</mark>
+      : part
+  ))
+}
+const compactBadgesForThread = (thread: InboxWorkflowThread): string[] => {
+  const row = thread as unknown as Record<string, unknown>
+  const latestDirection = String(row.latestDirection ?? row.lastDirection ?? row.directionUsed ?? '').toLowerCase()
+  const autoStatus = String(row.autoReplyStatus ?? row.auto_reply_status ?? row.queueStatus ?? '').toLowerCase()
+  const badges: string[] = []
+  if (thread.needsResponse || row.needsReply || latestDirection === 'inbound') badges.push('Needs Reply')
+  if (thread.sentiment === 'hot') badges.push('Positive')
+  if (['queued', 'sent', 'delivered'].some((status) => autoStatus.includes(status))) badges.push('Auto-Replied')
+  if (['failed', 'blocked', 'error'].some((status) => autoStatus.includes(status))) badges.push('Failed/Blocked')
+  return Array.from(new Set(badges)).slice(0, 4)
+}
+
 interface ConversationRowProps {
   thread: InboxWorkflowThread
   selected: boolean
@@ -75,6 +102,7 @@ interface ConversationRowProps {
   isRecentlyUpdated?: boolean
   onSelect: (id: string) => void
   onAction?: (id: string, action: 'star' | 'unstar' | 'pin' | 'unpin' | 'archive' | 'hide') => void
+  searchQuery?: string
 }
 
 export const ConversationRow = memo(({ 
@@ -83,11 +111,17 @@ export const ConversationRow = memo(({
   isStarred, 
   isRecentlyUpdated,
   onSelect, 
-  onAction 
+  onAction,
+  searchQuery = '',
 }: ConversationRowProps) => {
   const ownerName = resolveThreadPrimaryName(thread)
   const propertyAddress = resolveThreadAddressLine(thread)
+  const contextStatus = propertyAddress.toLowerCase().includes('no address') ? 'Context loading' : ''
   const latestMessageBody = fallback(thread.lastMessageBody || thread.preview, '')
+  const phone = fallback(thread.phoneNumber || thread.canonicalE164 || (thread as any).sellerPhone, 'Phone unavailable')
+  const latestDirection = fallback((thread as any).latestDirection || thread.lastDirection || (thread as any).directionUsed, 'unknown')
+  const compactBadges = compactBadgesForThread(thread)
+  const matchedKeywords = getThreadMatchedKeywords(thread, searchQuery)
   const { uiIntent } = readClassifier(thread)
   const visual = getStatusVisual(thread.inboxStatus)
   const stageVisual = getSellerStageVisual(thread.conversationStage)
@@ -130,7 +164,7 @@ export const ConversationRow = memo(({
       <div className="nx-conversation-row__content">
         {/* Row 1: Name & Time */}
         <div className="nx-conversation-row__top">
-          <strong className="nx-conversation-row__name">{ownerName}</strong>
+          <strong className="nx-conversation-row__name">{ownerName}</strong><span className="nx-conversation-row__phone">{phone}</span>
           <div className="nx-row-end-actions">
             {thread.isPinned && <Icon name="pin" className="nx-pinned-icon" />}
             {thread.isStarred && <Icon name="star" className="nx-starred-icon" />}
@@ -141,15 +175,17 @@ export const ConversationRow = memo(({
 
         {/* Row 2: Address */}
         <div className="nx-conversation-row__sub-row">
-          <span className="nx-conversation-row__address">{propertyAddress}</span>
+          <span className="nx-conversation-row__address">{propertyAddress}</span>{contextStatus && <span className="nx-keyword-badge">{contextStatus}</span>}
         </div>
 
         {/* Row 3: Preview */}
-        <div className="nx-conversation-row__preview">{latestMessageBody}</div>
+        <div className="nx-conversation-row__preview"><span className="nx-direction-chip">{latestDirection}</span>{highlightText(latestMessageBody, matchedKeywords.length ? matchedKeywords : [searchQuery])}</div>
 
         {/* Row 4: Footer (Badges + Hover Actions) */}
         <div className="nx-conversation-row__footer">
           <div className="nx-conversation-row__meta">
+            {compactBadges.map((badge) => <span key={badge} className="nx-stage-pill nx-status-pill">{badge}</span>)}
+            {matchedKeywords.slice(0, 3).map((keyword) => <span key={keyword} className="nx-keyword-badge">{keyword}</span>)}
             <span className="nx-stage-pill nx-status-pill" style={{ color: visual.color, background: visual.bg, borderColor: visual.border }}>
               <i className="nx-status-dot" style={{ background: visual.dot }} />
               {visual.label}
@@ -201,6 +237,7 @@ export const ConversationList = ({
   onSelect,
   onAction,
   recentlyUpdatedThreadIds = new Set(),
+  searchQuery = '',
 }: {
   threads: InboxWorkflowThread[]
   activeViewFilter: InboxViewSelectValue
@@ -208,6 +245,7 @@ export const ConversationList = ({
   onSelect: (id: string) => void
   onAction?: (id: string, action: 'star' | 'unstar' | 'pin' | 'unpin' | 'archive' | 'hide') => void
   recentlyUpdatedThreadIds?: Set<string>
+  searchQuery?: string
 }) => (
   <div className="nx-conversation-list">
     {threads.length > 0 ? (
@@ -220,6 +258,7 @@ export const ConversationList = ({
           isRecentlyUpdated={recentlyUpdatedThreadIds.has(thread.id) || recentlyUpdatedThreadIds.has(thread.threadKey || '')}
           onSelect={onSelect}
           onAction={onAction}
+          searchQuery={searchQuery}
         />
       ))
     ) : (
@@ -248,6 +287,7 @@ export const InboxSidebar = ({
   onLoadMore,
   onThreadAction,
   recentlyUpdatedThreadIds = new Set(),
+  searchQuery = '',
 }: InboxSidebarProps) => {
   const activePresetConfig = savedFilterOptions.find(o => o.value === savedPreset)
   const activeLabel = activePresetConfig?.label || 'Smart'
@@ -366,6 +406,7 @@ export const InboxSidebar = ({
         onSelect={onSelect}
         onAction={onThreadAction}
         recentlyUpdatedThreadIds={recentlyUpdatedThreadIds}
+        searchQuery={searchQuery}
       />
 
       {canLoadMore && (
