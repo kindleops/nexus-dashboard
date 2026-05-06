@@ -1449,7 +1449,8 @@ export const getInboxThreads = async (
   let query: any = supabase
     .from(HYDRATED_INBOX_THREADS_VIEW)
     .select('*')
-    .order('priority_sort_score', { ascending: false, nullsFirst: false })
+    .order('final_acquisition_score', { ascending: false, nullsFirst: false })
+    .order('priority_score', { ascending: false, nullsFirst: false })
     .order('latest_message_at', { ascending: false, nullsFirst: false })
     .range(startOffset, startOffset + maxRows - 1)
 

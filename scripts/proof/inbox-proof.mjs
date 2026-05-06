@@ -96,7 +96,8 @@ const runStaticInboxProof = () => {
     'HYDRATED_INBOX_THREADS_VIEW = \'inbox_threads_hydrated\'',
     'HYDRATED_INBOX_COUNTS_VIEW = \'inbox_category_counts\'',
     'HYDRATED_INBOX_PAGE_SIZE = 200',
-    '.order(\'priority_sort_score\'',
+    '.order(\'final_acquisition_score\'',
+    '.order(\'priority_score\'',
     '.eq(\'inbox_category\'',
     '.in(\'inbox_category\'',
   ])
