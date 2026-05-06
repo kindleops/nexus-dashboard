@@ -10099,11 +10099,11 @@
 }
 
 .nx-intel-field {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
-  padding-bottom: 8px;
+  display: grid;
+  grid-template-columns: minmax(150px, 0.92fr) minmax(0, 1.4fr);
+  align-items: start;
+  gap: 14px;
+  padding: 12px 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 }
 
@@ -10113,19 +10113,32 @@
 }
 
 .nx-intel-field__label {
+  min-width: 0;
   font-size: 10px;
   font-weight: 800;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.14em;
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: anywhere;
 }
 
 .nx-intel-field__value {
-  font-size: 12px;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
-  text-align: right;
-  word-break: break-all;
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: anywhere;
+  writing-mode: horizontal-tb;
+  text-orientation: mixed;
 }
 
 .nx-intel-field.is-empty .nx-intel-field__value {
@@ -10663,51 +10676,161 @@
   gap: 8px;
 }
 
-.nx-intel-internal-tabs,
-.nx-intel-subtabs {
-  margin-bottom: 14px;
+.nx-intelligence-panel .nx-contact-intel-card {
+  overflow: hidden;
+  padding: 28px !important;
 }
 
-.nx-intel-internal-tab {
-  min-height: 40px;
-  padding: 0 16px;
+.nx-intelligence-panel .nx-contact-intel-card .nx-dossier-section__title {
+  margin-bottom: 18px;
+}
+
+.nx-intelligence-panel .nx-contact-intel-card .nx-intel-internal-tabs,
+.nx-intelligence-panel .nx-contact-intel-card .nx-intel-subtabs {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+}
+
+.nx-intelligence-panel .nx-contact-intel-card .nx-intel-internal-tabs::-webkit-scrollbar,
+.nx-intelligence-panel .nx-contact-intel-card .nx-intel-subtabs::-webkit-scrollbar {
+  display: none;
+}
+
+.nx-intelligence-panel .nx-contact-intel-card .nx-intel-internal-tabs,
+.nx-intelligence-panel .nx-contact-intel-card .nx-intel-subtabs {
+  margin-bottom: 18px;
+}
+
+.nx-intelligence-panel .nx-contact-intel-card .nx-intel-internal-tab {
+  flex: 0 0 auto;
+  min-height: 48px;
+  min-width: fit-content;
+  padding: 0 20px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.035);
   color: rgba(193, 203, 220, 0.74);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.14em;
+  line-height: 1;
+  white-space: nowrap;
 }
 
-.nx-intel-internal-tab.is-active {
+.nx-intelligence-panel .nx-contact-intel-card .nx-intel-internal-tab.is-active {
   color: #f7faff;
   border-color: rgba(10, 132, 255, 0.64);
   box-shadow: 0 0 0 2px rgba(10, 132, 255, 0.12);
 }
 
-.nx-intel-grid {
-  display: grid;
-  gap: 10px;
-}
-
-.nx-intel-field {
-  display: grid;
-  grid-template-columns: minmax(160px, 1fr) minmax(0, 1.4fr);
-  align-items: start;
+.nx-intelligence-panel .nx-contact-intel-card__identity {
+  margin: 6px 0 18px;
+  align-items: center;
   gap: 14px;
-  padding: 12px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  justify-content: flex-start;
 }
 
-.nx-intel-field__label {
-  text-align: left;
-  word-break: break-word;
+.nx-intelligence-panel .nx-contact-intel-card__identity-copy {
+  min-width: 0;
+  gap: 8px;
 }
 
-.nx-intel-field__value {
-  text-align: left;
-  word-break: break-word;
+.nx-intelligence-panel .nx-contact-intel-card__identity-copy strong {
+  display: block;
+  font-size: 18px;
+  line-height: 1.3;
+}
+
+.nx-intelligence-panel .nx-contact-intel-card__identity-chips {
+  row-gap: 10px;
+}
+
+.nx-intelligence-panel .nx-contact-intel-card__match-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.nx-intelligence-panel .nx-match-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.035);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.nx-intelligence-panel .nx-match-badge.is-green {
+  color: #bfd9bc;
+  border-color: rgba(123, 182, 119, 0.2);
+  background: rgba(96, 160, 92, 0.11);
+}
+
+.nx-intelligence-panel .nx-match-badge.is-yellow {
+  color: #ddce9d;
+  border-color: rgba(204, 175, 93, 0.22);
+  background: rgba(184, 152, 76, 0.12);
+}
+
+.nx-intelligence-panel .nx-match-badge.is-red {
+  color: #dbb0ab;
+  border-color: rgba(190, 108, 96, 0.22);
+  background: rgba(150, 73, 64, 0.12);
+}
+
+.nx-intelligence-panel .nx-contact-intel-card .nx-intel-grid {
+  min-width: 0;
+  padding: 0 !important;
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  gap: 0 !important;
+}
+
+.nx-intelligence-panel .nx-contact-intel-card .nx-intel-field {
+  display: grid !important;
+  grid-template-columns: minmax(150px, 0.9fr) minmax(0, 1.25fr) !important;
+  align-items: start !important;
+  gap: 22px !important;
+  padding: 16px 0 !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
+}
+
+.nx-intelligence-panel .nx-contact-intel-card .nx-intel-field__label {
+  min-width: 0;
+  text-align: left !important;
+  white-space: normal !important;
+  word-break: normal !important;
+  overflow-wrap: anywhere !important;
+}
+
+.nx-intelligence-panel .nx-contact-intel-card .nx-intel-field__value {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  text-align: left !important;
+  white-space: normal !important;
+  word-break: normal !important;
+  overflow-wrap: anywhere !important;
+  writing-mode: horizontal-tb !important;
+  text-orientation: mixed !important;
+}
+
+.nx-intelligence-panel .nx-contact-intel-card .nx-intel-field.is-empty .nx-intel-field__value {
+  font-style: normal;
+  opacity: 0.72;
 }
 
 .nx-property-hero__media {
@@ -10831,5 +10954,16 @@
 
   .nx-intel-field {
     grid-template-columns: 1fr;
+  }
+
+  .nx-intelligence-panel .nx-contact-intel-card .nx-intel-internal-tab {
+    min-height: 44px;
+    padding: 0 16px;
+    font-size: 11px;
+  }
+
+  .nx-intelligence-panel .nx-contact-intel-card .nx-intel-field {
+    grid-template-columns: 1fr !important;
+    gap: 8px !important;
   }
 }

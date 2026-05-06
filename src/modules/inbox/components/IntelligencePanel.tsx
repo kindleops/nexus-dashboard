@@ -1135,11 +1135,10 @@ const buildMatchBadges = (thread: InboxWorkflowThread, intelligence: ThreadIntel
   if (confidence >= 80 || thread.ownerId) out.set('Likely Owner', 'green')
   else if (confidence >= 45 || thread.prospectId) out.set('Potential Owner', 'yellow')
   if (ownerType.includes('llc') || ownerType.includes('corpor') || ownerType.includes('company')) out.set('Linked To Company', 'green')
-  if (tags.some((tag) => /company|business|entity/i.test(tag))) out.set('Potential Company Link', 'yellow')
-  if (tags.some((tag) => /family|relative/i.test(tag))) out.set('Family Match', 'yellow')
-  if (tags.some((tag) => /resident|occupant/i.test(tag))) out.set('Resident Match', 'yellow')
-  if (tags.some((tag) => /renter|tenant/i.test(tag))) out.set('Likely Renter', 'red')
-  if (thread.isOptOut || confidence < 30) out.set('Wrong Contact Risk', 'red')
+  if (tags.some((tag) => /company|business|entity/i.test(tag))) out.set('Potentially Linked To Company', 'yellow')
+  if (tags.some((tag) => /family|relative/i.test(tag))) out.set('Family', 'yellow')
+  if (tags.some((tag) => /resident|occupant/i.test(tag))) out.set('Resident', 'yellow')
+  if (tags.some((tag) => /renter|tenant/i.test(tag))) out.set('Likely Renting', 'red')
   if (!out.size) out.set('Potential Owner', 'yellow')
   return Array.from(out.entries()).map(([label, tone]) => ({ label, tone }))
 }
@@ -1817,6 +1816,8 @@ const ContactIntelligenceCard = ({
   const initials = sellerName.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()
   const headlineAddress = normalizePropertySnapshot(intelligence, thread).fullAddress || thread.propertyAddress || thread.subject
   const propertyType = normalizePropertySnapshot(intelligence, thread).propertyType || getAny(thread, intelligence, ['propertyType', 'property_type'])
+  const prospectMatchBadges = useMemo(() => buildMatchBadges(thread, intelligence), [thread, intelligence])
+  const ownerIdentityBadge = [asStr(get(thread, 'ownerType') || get(thread, 'owner_type') || 'Individual').toUpperCase(), thread.isAbsentee ? 'ABSENTEE' : null].filter(Boolean).join(' | ')
 
   const topTabs = [
     ['prospect', 'PROSPECT'],
@@ -1827,8 +1828,6 @@ const ContactIntelligenceCard = ({
   ] as const
 
   const prospectRows: Array<[string, unknown]> = [
-    ['PROSPECT NAME', sellerName],
-    ['CONTACT MATCHING BADGES', thread.phoneNumber ? 'Phone linked' : null],
     ['AGE', getAny(thread, intelligence, ['sellerAge', 'age'])],
     ['MARITAL STATUS', getAny(thread, intelligence, ['maritalStatus', 'marital_status'])],
     ['GENDER', getAny(thread, intelligence, ['gender'])],
@@ -1898,12 +1897,17 @@ const ContactIntelligenceCard = ({
         <div className="nx-dossier-header__avatar">{activeTab === 'property' ? '8M' : initials}</div>
         <div className="nx-contact-intel-card__identity-copy">
           <strong>{activeTab === 'property' ? headlineAddress || 'No linked property' : sellerName}</strong>
-          <div className="nx-contact-intel-card__identity-chips">
-            {activeTab === 'property'
-              ? <QuietBadge label={formatDisplayValue(propertyType).toUpperCase()} />
-              : <QuietBadge label={asStr(get(thread, 'ownerType') || get(thread, 'owner_type') || 'Individual').toUpperCase()} />}
-            {thread.isAbsentee && activeTab !== 'property' && <QuietBadge label="ABSENTEE" />}
-          </div>
+          {activeTab === 'prospect' ? (
+            <div className="nx-contact-intel-card__match-badges">
+              {prospectMatchBadges.map((badge) => <MatchBadge key={badge.label} label={badge.label} tone={badge.tone} />)}
+            </div>
+          ) : (
+            <div className="nx-contact-intel-card__identity-chips">
+              {activeTab === 'property'
+                ? <QuietBadge label={formatDisplayValue(propertyType).toUpperCase()} />
+                : <QuietBadge label={ownerIdentityBadge} />}
+            </div>
+          )}
         </div>
       </div>
 
