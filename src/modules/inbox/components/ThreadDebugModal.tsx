@@ -31,12 +31,13 @@ export function ThreadDebugModal({ isOpen, onClose, thread, messages, intelligen
       <div className="nx-modal-content debug-modal__content" onClick={e => e.stopPropagation()}>
         <header className="nx-modal-header">
           <div className="nx-modal-title">
-            <Icon name="Cpu" />
+            <Icon name="cpu" />
             <span>Thread Debugger</span>
           </div>
           <button className="nx-modal-close" onClick={onClose}>
-            <Icon name="X" />
+            <Icon name="x" />
           </button>
+
         </header>
 
         <div className="nx-modal-body">

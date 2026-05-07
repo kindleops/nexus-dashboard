@@ -56,6 +56,22 @@ export type IconName =
   | 'volume'
   | 'moon'
   | 'globe'
+  | 'bookmark'
+  | 'slash'
+  | 'arrow-down-left'
+  | 'alert-circle'
+  | 'refresh-cw'
+  | 'cpu'
+  | 'external-link'
+  | 'home'
+  | 'link'
+  | 'briefcase'
+  | 'dollar-sign'
+  | 'heart'
+  | 'database'
+  | 'x'
+
+
 
 interface IconProps extends SVGProps<SVGSVGElement> {
   name: IconName
@@ -454,5 +470,99 @@ export const Icon = ({ name, ...props }: IconProps) => {
           <path d="M12 3a17 17 0 0 0 0 18M12 3a17 17 0 0 1 0 18" {...commonProps} />
         </svg>
       )
+    case 'bookmark':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" {...commonProps} />
+        </svg>
+      )
+    case 'slash':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <circle cx="12" cy="12" r="9" {...commonProps} />
+          <path d="m4.9 4.9 14.2 14.2" {...commonProps} />
+        </svg>
+      )
+    case 'arrow-down-left':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M17 7 7 17M17 17H7V7" {...commonProps} />
+        </svg>
+      )
+    case 'alert-circle':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <circle cx="12" cy="12" r="9" {...commonProps} />
+          <path d="M12 8v4M12 16h.01" {...commonProps} />
+        </svg>
+      )
+    case 'refresh-cw':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M3 21v-5h5" {...commonProps} />
+        </svg>
+      )
+    case 'cpu':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <rect x="4" y="4" width="16" height="16" rx="2" {...commonProps} />
+          <path d="M9 9h6v6H9zM9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 15h3M1 9h3M1 15h3" {...commonProps} />
+        </svg>
+      )
+    case 'external-link':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3" {...commonProps} />
+        </svg>
+      )
+    case 'home':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" {...commonProps} />
+          <path d="M9 22V12h6v10" {...commonProps} />
+        </svg>
+      )
+    case 'link':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" {...commonProps} />
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" {...commonProps} />
+        </svg>
+      )
+    case 'briefcase':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <rect x="2" y="7" width="20" height="14" rx="2" {...commonProps} />
+          <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" {...commonProps} />
+        </svg>
+      )
+    case 'dollar-sign':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" {...commonProps} />
+        </svg>
+      )
+    case 'heart':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" {...commonProps} />
+        </svg>
+      )
+    case 'database':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <ellipse cx="12" cy="5" rx="9" ry="3" {...commonProps} />
+          <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" {...commonProps} />
+          <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" {...commonProps} />
+        </svg>
+      )
+    case 'x':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="M18 6 6 18M6 6l12 12" {...commonProps} />
+        </svg>
+      )
+
+
   }
 }

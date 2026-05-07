@@ -146,8 +146,9 @@ export const ChatThread = ({
             )}
             {import.meta.env.DEV && (
               <button className="nx-debug-btn-mini" onClick={onOpenDebug} title="Debug Thread">
-                <Icon name="Cpu" />
+                <Icon name="cpu" />
               </button>
+
             )}
           </div>
           {propertyAddress && (
@@ -169,7 +170,7 @@ export const ChatThread = ({
             title={isStarred ? 'Unstar thread' : 'Star thread'}
             onClick={() => onToggleStar?.()}
           >
-            <Icon name="Star" />
+            <Icon name="star" />
           </button>
           <button
             type="button"
@@ -177,7 +178,7 @@ export const ChatThread = ({
             title={thread.isPinned ? 'Unpin thread' : 'Pin thread'}
             onClick={() => onTogglePin?.()}
           >
-            <Icon name="Bookmark" />
+            <Icon name="bookmark" />
           </button>
           <button
             type="button"
@@ -185,8 +186,9 @@ export const ChatThread = ({
             title={thread.isArchived ? 'Unarchive thread' : 'Archive thread'}
             onClick={() => onToggleArchive?.()}
           >
-            <Icon name="Archive" />
+            <Icon name="archive" />
           </button>
+
         </div>
       </header>
 
@@ -194,28 +196,29 @@ export const ChatThread = ({
       <div className="nx-operator-rail">
         <div className="nx-rail-group">
           <button className="nx-rail-btn is-hot" onClick={() => onThreadAction?.(thread.id, 'mark_hot')}>
-            <Icon name="Zap" /> HOT
+            <Icon name="zap" /> HOT
           </button>
           <button className="nx-rail-btn" onClick={() => onThreadAction?.(thread.id, 'snooze')}>
-            <Icon name="Clock" /> SNOOZE
+            <Icon name="clock" /> SNOOZE
           </button>
         </div>
         <div className="nx-rail-divider" />
         <div className="nx-rail-group">
           {isAutoPaused ? (
             <button className="nx-rail-btn is-resume" onClick={() => onThreadAction?.(thread.id, 'resume_automation')}>
-              <Icon name="Play" /> RESUME AUTO
+              <Icon name="play" /> RESUME AUTO
             </button>
           ) : (
             <button className="nx-rail-btn is-pause" onClick={() => onThreadAction?.(thread.id, 'pause_automation')}>
-              <Icon name="Pause" /> PAUSE AUTO
+              <Icon name="pause" /> PAUSE AUTO
             </button>
           )}
           <button className="nx-rail-btn is-dnc" onClick={() => onThreadAction?.(thread.id, 'suppress')}>
-            <Icon name="Slash" /> DNC
+            <Icon name="slash" /> DNC
           </button>
         </div>
       </div>
+
 
       <div className="nx-message-list" ref={listRef} onScroll={handleScroll}>
         {messages.map(msg => {
@@ -247,9 +250,10 @@ export const ChatThread = ({
                     </span>
                     {deliveryBadge === 'failed' && (
                       <button className="nx-retry-btn" onClick={() => onThreadAction?.(thread.id, 'retry_send')} title="Retry sending">
-                        <Icon name="RefreshCw" />
+                        <Icon name="refresh-cw" />
                       </button>
                     )}
+
                   </div>
                 )}
               </div>

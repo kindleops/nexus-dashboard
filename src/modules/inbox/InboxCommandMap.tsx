@@ -529,7 +529,8 @@ export function InboxCommandMap({ threads, visibleThreads, selectedThread, zoome
           <>
             <div className="nx-icm__card-row">
               <span className="nx-icm__card-label">Seller</span>
-              <span className="nx-icm__card-value">{selectedThread.ownerName || selectedThread.sellerName || 'Unknown'}</span>
+              <span className="nx-icm__card-value">{selectedThread.ownerName || 'Unknown'}</span>
+
             </div>
             <div className="nx-icm__card-row">
               <span className="nx-icm__card-label">Market</span>

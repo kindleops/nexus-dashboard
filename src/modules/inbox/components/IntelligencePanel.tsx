@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import type { ThreadContext, ThreadIntelligenceRecord } from '../../../lib/data/inboxData'
-import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
+import type { InboxWorkflowThread, SellerStage, InboxStatus } from '../../../lib/data/inboxWorkflowData'
+
 import type { PanelMode } from '../inbox-layout-state'
 import {
   normalizePropertySnapshot,
@@ -100,10 +101,16 @@ const SectionTitle = ({ children, icon }: { children: React.ReactNode; icon?: st
 
 interface IntelligencePanelProps {
   thread: InboxWorkflowThread | null
-  threadContext: ThreadContext | null
+  threadContext?: ThreadContext | null
   intelligence: ThreadIntelligenceRecord | null
   mode?: PanelMode
+  onStageChange?: (stage: SellerStage) => void
+  onStatusChange?: (status: InboxStatus) => void
+  full?: boolean
+  onToggleFull?: () => void
+  onClose?: () => void
 }
+
 
 export function IntelligencePanel({
   thread,
@@ -128,27 +135,29 @@ export function IntelligencePanel({
     <div className="nx-intelligence-panel">
       <header className="nx-intel-header">
         <div className="nx-section-label">
-          <Icon name="Database" />
+          <Icon name="database" />
           <span>OPERATOR DOSSIER</span>
         </div>
       </header>
 
+
       <div className="nx-intel-scroll-body">
         {/* Section 1: Seller Snapshot */}
-        <DossierCard title="Seller Snapshot" icon="User">
+        <DossierCard title="Seller Snapshot" icon="user">
           <MetricGrid>
-            <DossierMetric label="Full Name" value={prop.ownerType === 'Individual' ? thread.ownerName : (intel.owner_name as string)} icon="User" />
-            <DossierMetric label="Identity" value={intel.owner_type as string} icon="Shield" />
-            <DossierMetric label="Language" value={intel.seller_language as string || intel.detected_language as string} icon="Globe" />
-            <DossierMetric label="Marital" value={intel.marital_status as string} icon="Heart" />
-            <DossierMetric label="Occupation" value={intel.occupation as string} icon="Briefcase" />
-            <DossierMetric label="Net Worth" value={intel.net_worth_bracket as string} icon="TrendingUp" />
-            <DossierMetric label="Income" value={intel.estimated_income_bracket as string} icon="DollarSign" />
+            <DossierMetric label="Full Name" value={prop.ownerType === 'Individual' ? thread.ownerName : (intel.owner_name as string)} icon="user" />
+            <DossierMetric label="Identity" value={intel.owner_type as string} icon="shield" />
+            <DossierMetric label="Language" value={intel.seller_language as string || intel.detected_language as string} icon="globe" />
+            <DossierMetric label="Marital" value={intel.marital_status as string} icon="heart" />
+            <DossierMetric label="Occupation" value={intel.occupation as string} icon="briefcase" />
+            <DossierMetric label="Net Worth" value={intel.net_worth_bracket as string} icon="trending-up" />
+            <DossierMetric label="Income" value={intel.estimated_income_bracket as string} icon="dollar-sign" />
           </MetricGrid>
         </DossierCard>
 
+
         {/* Section 2: Property Snapshot */}
-        <DossierCard title="Property Snapshot" icon="Home">
+        <DossierCard title="Property Snapshot" icon="home">
           <div className="nx-dossier-aerial-view">
             {prop.aerialViewUrl && <img src={prop.aerialViewUrl} alt="Aerial View" />}
           </div>
@@ -170,8 +179,9 @@ export function IntelligencePanel({
           </MetricGrid>
         </DossierCard>
 
+
         {/* Section 3: Deal Snapshot */}
-        <DossierCard title="Deal Snapshot" icon="Target">
+        <DossierCard title="Deal Snapshot" icon="target">
           <MetricGrid>
             <DossierMetric label="Acq Score" value={roundVal(thread.finalAcquisitionScore)} accent="blue" />
             <DossierMetric label="Equity %" value={formatPercent(prop.equityPercent)} accent="green" />
@@ -184,48 +194,51 @@ export function IntelligencePanel({
           </MetricGrid>
         </DossierCard>
 
+
         {/* Section 4: Automation / Timeline */}
-        <DossierCard title="Automation / Timeline" icon="Activity">
+        <DossierCard title="Automation / Timeline" icon="activity">
           <MetricGrid>
             <DossierMetric label="Status" value={thread.status} accent="purple" />
             <DossierMetric label="Workflow" value={thread.workflowStage} />
             <DossierMetric label="Intent" value={thread.uiIntent} />
-            <DossierMetric label="Inbound" value={thread.messageCount} icon="ArrowDownLeft" />
-            <DossierMetric label="Outbound" value={intel.outbound_count as number} icon="ArrowUpRight" />
-            <DossierMetric label="Delivered" value={intel.delivered_count as number} icon="Check" accent="green" />
-            <DossierMetric label="Failed" value={intel.failed_count as number} icon="AlertCircle" accent="red" />
+            <DossierMetric label="Inbound" value={thread.messageCount} icon="arrow-down-left" />
+            <DossierMetric label="Outbound" value={intel.outbound_count as number} icon="arrow-up-right" />
+            <DossierMetric label="Delivered" value={intel.delivered_count as number} icon="check" accent="green" />
+            <DossierMetric label="Failed" value={intel.failed_count as number} icon="alert-circle" accent="red" />
           </MetricGrid>
           <div className="nx-dossier-next-action">
-            <SectionTitle icon="Play">System Status</SectionTitle>
+            <SectionTitle icon="play">System Status</SectionTitle>
             <p>{(intel.next_suggested_action as string) || (intel.needs_human_review ? 'Needs Operator Review' : 'System idling.')}</p>
           </div>
         </DossierCard>
 
+
         {/* Section 5: Linked Apps */}
-        <DossierCard title="Linked Apps" icon="Link">
+        <DossierCard title="Linked Apps" icon="link">
           <div className="nx-dossier-links">
             {links.zillow && (
               <a href={links.zillow} target="_blank" rel="noopener noreferrer" className="nx-app-link">
-                <Icon name="ExternalLink" /> Zillow
+                <Icon name="external-link" /> Zillow
               </a>
             )}
             {links.realtor && (
               <a href={links.realtor} target="_blank" rel="noopener noreferrer" className="nx-app-link">
-                <Icon name="ExternalLink" /> Realtor.com
+                <Icon name="external-link" /> Realtor.com
               </a>
             )}
             {links.googleSearch && (
               <a href={links.googleSearch} target="_blank" rel="noopener noreferrer" className="nx-app-link">
-                <Icon name="Search" /> Google Search
+                <Icon name="search" /> Google Search
               </a>
             )}
             {intel.podio_item_id && (
               <a href={`https://podio.com/x/y/item/${intel.podio_item_id}`} target="_blank" rel="noopener noreferrer" className="nx-app-link podio">
-                <Icon name="Database" /> Podio Lead
+                <Icon name="database" /> Podio Lead
               </a>
             )}
           </div>
         </DossierCard>
+
       </div>
     </div>
   )

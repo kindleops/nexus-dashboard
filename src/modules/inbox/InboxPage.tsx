@@ -18,10 +18,12 @@ import {
   pauseAutomation,
   resumeAutomation,
   retryFailedSend,
+  suppressThread,
   type InboxStatus,
   type SellerStage,
   type InboxWorkflowThread,
 } from '../../lib/data/inboxWorkflowData'
+
 
 import {
   getQueueProcessorHealth,
@@ -1732,18 +1734,12 @@ export default function InboxPage() {
         ) : showRightPanel && !isDoubleSided ? (
           <IntelligencePanel
             thread={selected}
-            context={threadContext}
+            threadContext={threadContext}
             intelligence={threadIntelligence}
-            messages={displayedMessages}
-            isSuppressed={selectedSuppressed}
-            panelMode={rightPanelMode}
-            onCollapse={() => setLayoutState((current) => ({ ...current, rightPanelMode: 'hidden' }))}
-            onOpenMap={() => setLayoutState(openMapMode)}
-            onOpenDossier={() => setActiveOverlay('dossier')}
-            onOpenAi={() => setActiveOverlay('ai')}
             onStatusChange={handleStatusChange}
             onStageChange={handleStageChange}
           />
+
         ) : null}
       </div>
 

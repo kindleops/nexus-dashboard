@@ -110,6 +110,35 @@ export interface InboxThread {
   priorityScore?: number
   inboxCategory?: string
   matchedKeywords?: string[]
+  groupingMethod?: string
+  hydrationSource?: string
+  queueId?: string
+  needsReply?: boolean
+  inbound_count?: number
+  outbound_count?: number
+  hydrationConfidence?: string
+  groupingConfidence?: string
+  latest_message_body?: string
+  latest_message_direction?: string
+  latest_activity_at?: string
+  isStarred?: boolean
+  isPinned?: boolean
+  isHidden?: boolean
+  isArchived?: boolean
+  isSuppressed?: boolean
+  threadIsPinned?: boolean
+  threadIsStarred?: boolean
+  threadIsHidden?: boolean
+  threadIsSuppressed?: boolean
+  isOptOut?: boolean
+  thread_id?: string
+  threadIsArchived?: boolean
+  threadIsRead?: boolean
+
+
+
+
+
 }
 
 
