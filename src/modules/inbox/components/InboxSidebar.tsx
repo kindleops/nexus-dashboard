@@ -9,7 +9,7 @@ import {
   type InboxSavedFilterPreset,
   type InboxViewSelectValue,
 } from '../inbox-ui-helpers'
-import { getStatusVisual, getSellerStageVisual } from '../status-visuals'
+import { getSellerStageVisual } from '../status-visuals'
 
 const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
 
@@ -101,6 +101,23 @@ const VIEW_TO_QUEUE_PRESET: Partial<Record<InboxViewSelectValue, QueuePreset>> =
   outbound: 'outbound_only',
   missing_context: 'missing_context',
   suppressed: 'suppressed',
+}
+
+const HERO_MODE_META: Record<'priority' | 'active' | 'waiting' | 'all', { label: string; tone: string; description: string }> = {
+  priority: { label: 'PRIORITY INBOX', tone: 'priority', description: 'Actionable signals & urgent replies' },
+  active: { label: 'ACTIVE INBOX', tone: 'active', description: 'Recently engaged seller conversations' },
+  waiting: { label: 'WAITING INBOX', tone: 'waiting', description: 'Outbound threads awaiting a response' },
+  all: { label: 'ALL MESSAGES', tone: 'all', description: 'Full conversation flow for this inbox' },
+}
+
+const QUEUE_HERO_META: Record<QueuePreset, { tone: string; description: string }> = {
+  positive_hot: { tone: 'hot', description: 'Motivated sellers and high-intent deal flow' },
+  manual_review: { tone: 'review', description: 'Operator review required before the next move' },
+  needs_reply: { tone: 'inbound', description: 'Fresh inbound replies ready for action' },
+  auto_replied: { tone: 'automated', description: 'Automation-managed threads in motion' },
+  outbound_only: { tone: 'outbound', description: 'Live outbound follow-up and outreach' },
+  missing_context: { tone: 'cold', description: 'Cooling threads with no recent seller movement' },
+  suppressed: { tone: 'suppressed', description: 'Suppressed and do-not-contact conversations' },
 }
 
 const numberOrNull = (value: unknown): number | null => {
@@ -210,19 +227,10 @@ const resolveStageBadge = (thread: InboxWorkflowThread) => {
   return getSellerStageVisual(raw || null).label
 }
 
-const resolveStatusBadge = (thread: InboxWorkflowThread): string | null => {
-  const visual = getStatusVisual(thread.inboxStatus, {
-    latestDirection: thread.lastDirection || (thread as any).latestDirection || (thread as any).directionUsed || null,
-    lastOutboundAt: thread.lastOutboundAt ?? null,
-    lastInboundAt: thread.lastInboundAt ?? null,
-  })
-  return visual.label || null
-}
-
 const resolveCardBadges = (thread: InboxWorkflowThread) => {
   const market = resolveThreadMarketBadge(thread)
   const stage = resolveStageBadge(thread)
-  const status = resolveStatusBadge(thread)
+  const propertyType = resolvePropertyTypeBadge(thread)
 
   const stageShortMap: Record<string, string> = {
     'Ownership Check': 'OWNERSHIP',
@@ -241,7 +249,7 @@ const resolveCardBadges = (thread: InboxWorkflowThread) => {
   return [
     market ? market.toUpperCase() : null,
     stageShort || null,
-    status ? status.toUpperCase() : null,
+    propertyType || null,
   ].filter(Boolean) as string[]
 }
 
@@ -263,7 +271,6 @@ const ConversationRow = memo(({ thread, selected, queuePreset, onSelect, onThrea
   const badges = resolveCardBadges(thread)
   const isStarred = Boolean(thread.isStarred)
   const isPinned = Boolean(thread.isPinned)
-  const lastDir = thread.lastDirection || (thread as any).latestDirection || (thread as any).directionUsed || 'unknown'
 
   const handleAction = (action: string) => (e: React.MouseEvent) => {
     e.preventDefault()
@@ -294,11 +301,6 @@ const ConversationRow = memo(({ thread, selected, queuePreset, onSelect, onThrea
           <div className="nx-thread-card__meta">
             {isPinned && <span className="nx-thread-card__pin-icon" title="Pinned">📌</span>}
             {isStarred && <span className="nx-thread-card__star-icon" title="Starred">⭐</span>}
-            {lastDir !== 'unknown' && (
-              <span className={cls('nx-dir-badge', lastDir === 'inbound' ? 'is-in' : 'is-out')}>
-                {lastDir === 'inbound' ? 'IN' : 'OUT'}
-              </span>
-            )}
             <time className="nx-thread-card__time">{time ? formatCompactTime(time) : '—'}</time>
           </div>
         </div>
@@ -314,7 +316,7 @@ const ConversationRow = memo(({ thread, selected, queuePreset, onSelect, onThrea
                     'nx-thread-chip',
                     i === 0 && 'is-market',
                     i === 1 && 'is-stage',
-                    i === 2 && 'is-status',
+                    i === 2 && 'is-type',
                   )}
                 >
                   {badge}
@@ -462,6 +464,26 @@ export const InboxSidebar = ({
     }
   }, [groupedThreads, activeQueueConfig, visibleThreads])
 
+  const heroMeta = modePerspective === 'all' && activeQueueConfig
+    ? {
+        label: activeQueueConfig.label,
+        tone: QUEUE_HERO_META[activeQueueConfig.preset]?.tone ?? 'default',
+        description: QUEUE_HERO_META[activeQueueConfig.preset]?.description ?? QUEUE_DESCRIPTIONS[activeQueueConfig.preset],
+        count: activeCount,
+      }
+    : {
+        label: HERO_MODE_META[modePerspective].label,
+        tone: HERO_MODE_META[modePerspective].tone,
+        description: HERO_MODE_META[modePerspective].description,
+        count: modeCounts[modePerspective],
+      }
+
+  const topBadges = [
+    { preset: 'positive_hot' as const, icon: '🔥', label: 'HOT LEADS' },
+    { preset: 'manual_review' as const, icon: '⚠', label: 'NEEDS REVIEW' },
+    { preset: 'needs_reply' as const, icon: '📨', label: 'NEW INBOUND' },
+  ]
+
   const handleQueueClick = (preset: QueuePreset) => {
     if (expandedQueue === preset) {
       setManuallyClosed((prev) => {
@@ -476,14 +498,14 @@ export const InboxSidebar = ({
   }
 
   return (
-    <aside className={cls('nx-sidebar nx-sidebar--premium', activeQueueConfig && `nx-sidebar--active-${activeQueueConfig.accentClass}`)}>
+    <aside className={cls('nx-sidebar nx-sidebar--premium', `nx-sidebar--active-${heroMeta.tone}`)}>
       <div className="nx-sidebar__top">
 
         {/* ── Top bar: label + icon actions ── */}
         <div className="nx-sidebar__label-row">
           <span className="nx-section-label">
-            ACQUISITIONS INBOX
-            <b className="nx-sidebar__label-count">{formatCount(numberOrNull(activeCount) ?? 0)}</b>
+            {heroMeta.label}
+            <b className="nx-sidebar__label-count">{formatCount(numberOrNull(heroMeta.count) ?? 0)}</b>
           </span>
           <div className="nx-sidebar__header-actions">
             <button type="button" className="nx-sidebar__icon-button" title="Notifications">
@@ -498,16 +520,39 @@ export const InboxSidebar = ({
           </div>
         </div>
 
+        <div className="nx-sidebar__badge-row">
+          {topBadges.map((badge) => {
+            const badgeGroup = QUEUE_CONFIG.find((group) => group.preset === badge.preset)
+            const count = badgeGroup ? getQueueCount(badgeGroup.preset, viewCounts[badgeGroup.countKey], groupedThreads[badgeGroup.preset].length) : 0
+            const selected = expandedQueue === badge.preset
+            return (
+              <button
+                key={badge.preset}
+                type="button"
+                className={cls('nx-inbox-badge', badgeGroup?.accentClass, selected && 'is-selected')}
+                onClick={() => {
+                  setModePerspective('all')
+                  setManuallyClosed((prev) => { const next = new Set(prev); next.delete(badge.preset); return next })
+                  onApplySavedPreset(badge.preset)
+                }}
+              >
+                <span>{badge.icon}</span>
+                <strong>{formatCount(numberOrNull(count) ?? 0)}</strong>
+              </button>
+            )
+          })}
+          <span className="nx-sidebar__total-count">{formatCount(numberOrNull(totalCount) ?? threads.length)}</span>
+        </div>
+
         {/* ── Hero card: active queue name + count ── */}
-        <div className={cls('nx-sidebar__hero', activeQueueConfig ? `is-${activeQueueConfig.accentClass}` : 'is-default')}>
+        <div className={cls('nx-sidebar__hero', `is-${heroMeta.tone}`)}>
           <div className="nx-sidebar__hero__glow" aria-hidden="true" />
           <div className="nx-sidebar__hero__inner">
             <div className="nx-sidebar__hero__text">
-              <span className="nx-sidebar__hero__icon">{activeQueueConfig?.icon ?? '📬'}</span>
-              <span className="nx-sidebar__hero__label">{activeQueueConfig?.label ?? 'ALL THREADS'}</span>
-              <span className="nx-sidebar__hero__desc">{activeQueueConfig ? QUEUE_DESCRIPTIONS[activeQueueConfig.preset] : 'Full inbox view'}</span>
+              <span className="nx-sidebar__hero__label">{heroMeta.label}</span>
+              <span className="nx-sidebar__hero__desc">{heroMeta.description}</span>
             </div>
-            <span className="nx-sidebar__hero__count">{formatCount(numberOrNull(activeCount) ?? 0)}</span>
+            <span className="nx-sidebar__hero__count">{formatCount(numberOrNull(heroMeta.count) ?? 0)}</span>
           </div>
           <div className="nx-sidebar__hero__modes">
             {(['priority', 'active', 'waiting', 'all'] as const).map((mode) => (
@@ -517,8 +562,8 @@ export const InboxSidebar = ({
                 className={cls('nx-hero-mode-tab', modePerspective === mode && 'is-active')}
                 onClick={(e) => { e.stopPropagation(); setModePerspective(mode) }}
               >
-                <span className="nx-hero-mode-tab__count">{modeCounts[mode]}</span>
                 <span className="nx-hero-mode-tab__label">{mode.toUpperCase()}</span>
+                <span className="nx-hero-mode-tab__count">{modeCounts[mode]}</span>
               </button>
             ))}
           </div>

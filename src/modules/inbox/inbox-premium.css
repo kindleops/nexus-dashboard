@@ -10302,13 +10302,17 @@
 }
 
 /* Per-category sidebar ambient vars */
-.nx-sidebar--active-is-hot       { --sidebar-rgb: 255, 69, 58;    --sidebar-accent: #ff453a; }
-.nx-sidebar--active-is-review    { --sidebar-rgb: 255, 214, 10;   --sidebar-accent: #ffd60a; }
-.nx-sidebar--active-is-inbound   { --sidebar-rgb: 100, 210, 255;  --sidebar-accent: #64d2ff; }
-.nx-sidebar--active-is-automated { --sidebar-rgb: 191, 90, 242;   --sidebar-accent: #bf5af2; }
-.nx-sidebar--active-is-outbound  { --sidebar-rgb: 255, 159, 10;   --sidebar-accent: #ff9f0a; }
-.nx-sidebar--active-is-cold      { --sidebar-rgb: 91, 182, 255;   --sidebar-accent: #5bb6ff; }
-.nx-sidebar--active-is-dnc       { --sidebar-rgb: 138, 150, 168;  --sidebar-accent: #8a96a8; }
+.nx-sidebar--active-hot       { --sidebar-rgb: 255, 69, 58;    --sidebar-accent: #ff453a; }
+.nx-sidebar--active-review    { --sidebar-rgb: 255, 214, 10;   --sidebar-accent: #ffd60a; }
+.nx-sidebar--active-inbound   { --sidebar-rgb: 100, 210, 255;  --sidebar-accent: #64d2ff; }
+.nx-sidebar--active-automated { --sidebar-rgb: 191, 90, 242;   --sidebar-accent: #bf5af2; }
+.nx-sidebar--active-outbound  { --sidebar-rgb: 255, 159, 10;   --sidebar-accent: #ff9f0a; }
+.nx-sidebar--active-cold      { --sidebar-rgb: 91, 182, 255;   --sidebar-accent: #5bb6ff; }
+.nx-sidebar--active-suppressed { --sidebar-rgb: 138, 150, 168;  --sidebar-accent: #8a96a8; }
+.nx-sidebar--active-priority  { --sidebar-rgb: 48, 209, 88;    --sidebar-accent: #30d158; }
+.nx-sidebar--active-active    { --sidebar-rgb: 10, 132, 255;   --sidebar-accent: #0a84ff; }
+.nx-sidebar--active-waiting   { --sidebar-rgb: 255, 214, 10;   --sidebar-accent: #ffd60a; }
+.nx-sidebar--active-all       { --sidebar-rgb: 10, 132, 255;   --sidebar-accent: #0a84ff; }
 
 /* Animated ambient glow that bleeds across the whole sidebar top */
 .nx-sidebar--premium::before {
@@ -10390,6 +10394,22 @@
   color: #55a7ff;
   border-color: rgba(10, 132, 255, 0.26);
   background: rgba(10, 132, 255, 0.08);
+}
+
+.nx-inbox-badge strong {
+  font-size: 17px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+
+.nx-inbox-badge.is-selected {
+  border-color: rgba(10, 132, 255, 0.64);
+  background: rgba(10, 132, 255, 0.14);
+  color: #8cc5ff;
+  box-shadow:
+    0 0 0 1px rgba(10, 132, 255, 0.24),
+    0 0 24px rgba(10, 132, 255, 0.22),
+    inset 0 1px 0 rgba(124, 190, 255, 0.12);
 }
 
 .nx-sidebar__total-count {
@@ -10750,7 +10770,8 @@
 }
 
 .nx-thread-card:hover .nx-thread-card__quick-actions,
-.nx-thread-card:focus-within .nx-thread-card__quick-actions {
+.nx-thread-card:focus-within .nx-thread-card__quick-actions,
+.nx-thread-card.is-selected .nx-thread-card__quick-actions {
   opacity: 1;
 }
 
@@ -10832,23 +10853,26 @@
    ══════════════════════════════════════════════════════════════════ */
 
 /* Per-category accent vars */
-.nx-sidebar__hero.is-hot       { --hero-accent: #ff453a; --hero-rgb: 255,69,58;    }
-.nx-sidebar__hero.is-review    { --hero-accent: #ffd60a; --hero-rgb: 255,214,10;   }
-.nx-sidebar__hero.is-inbound   { --hero-accent: #64d2ff; --hero-rgb: 100,210,255;  }
-.nx-sidebar__hero.is-automated { --hero-accent: #bf5af2; --hero-rgb: 191,90,242;   }
-.nx-sidebar__hero.is-outbound  { --hero-accent: #ff9f0a; --hero-rgb: 255,159,10;   }
-.nx-sidebar__hero.is-cold      { --hero-accent: #5bb6ff; --hero-rgb: 91,182,255;   }
-.nx-sidebar__hero.is-dnc       { --hero-accent: #8a96a8; --hero-rgb: 138,150,168;  }
-.nx-sidebar__hero.is-default   { --hero-accent: #30d158; --hero-rgb: 48,209,88;    }
+.nx-sidebar__hero.is-hot        { --hero-accent: #ff453a; --hero-rgb: 255,69,58;    }
+.nx-sidebar__hero.is-review     { --hero-accent: #ffd60a; --hero-rgb: 255,214,10;   }
+.nx-sidebar__hero.is-inbound    { --hero-accent: #64d2ff; --hero-rgb: 100,210,255;  }
+.nx-sidebar__hero.is-automated  { --hero-accent: #bf5af2; --hero-rgb: 191,90,242;   }
+.nx-sidebar__hero.is-outbound   { --hero-accent: #ff9f0a; --hero-rgb: 255,159,10;   }
+.nx-sidebar__hero.is-cold       { --hero-accent: #5bb6ff; --hero-rgb: 91,182,255;   }
+.nx-sidebar__hero.is-suppressed { --hero-accent: #8a96a8; --hero-rgb: 138,150,168;  }
+.nx-sidebar__hero.is-priority   { --hero-accent: #30d158; --hero-rgb: 48,209,88;    }
+.nx-sidebar__hero.is-active     { --hero-accent: #0a84ff; --hero-rgb: 10,132,255;   }
+.nx-sidebar__hero.is-waiting    { --hero-accent: #ffd60a; --hero-rgb: 255,214,10;   }
+.nx-sidebar__hero.is-all        { --hero-accent: #0a84ff; --hero-rgb: 10,132,255;   }
 
 /* Card shell */
 .nx-sidebar__hero {
   position: relative;
-  margin: 10px 10px 0;
-  border-radius: 18px;
+  margin: 8px 10px 0;
+  border-radius: 22px;
   border: 1px solid rgba(var(--hero-rgb, 255,255,255), 0.34);
   background:
-    linear-gradient(135deg, rgba(var(--hero-rgb, 255,255,255), 0.18) 0%, rgba(8,11,18,0.92) 56%),
+    linear-gradient(135deg, rgba(var(--hero-rgb, 255,255,255), 0.2) 0%, rgba(8,11,18,0.95) 58%),
     rgba(10, 14, 22, 0.97);
   overflow: hidden;
   animation: nx-hero-card-glow 3.5s ease-in-out infinite;
@@ -10893,7 +10917,7 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
-  padding: 14px 14px 8px;
+  padding: 18px 18px 12px;
 }
 
 .nx-sidebar__hero__text {
@@ -10903,23 +10927,17 @@
   min-width: 0;
 }
 
-.nx-sidebar__hero__icon {
-  font-size: 18px;
-  line-height: 1;
-  margin-bottom: 2px;
-}
-
 .nx-sidebar__hero__label {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 900;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.18em;
   color: #fff;
   text-transform: uppercase;
 }
 
 .nx-sidebar__hero__desc {
-  font-size: 10px;
-  font-weight: 500;
+  font-size: 11px;
+  font-weight: 520;
   color: rgba(var(--hero-rgb, 255,255,255), 0.72);
   letter-spacing: 0.01em;
   line-height: 1.3;
@@ -10927,7 +10945,7 @@
 
 /* Large count */
 .nx-sidebar__hero__count {
-  font-size: 44px;
+  font-size: 66px;
   font-weight: 900;
   line-height: 1;
   color: var(--hero-accent, #fff);
@@ -10975,25 +10993,26 @@
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   border-top: 1px solid rgba(var(--hero-rgb, 255,255,255), 0.1);
+  padding: 10px 12px 12px;
+  gap: 10px;
 }
 
 .nx-hero-mode-tab {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1px;
-  padding: 8px 4px 9px;
-  border: 0;
-  border-right: 1px solid rgba(var(--hero-rgb, 255,255,255), 0.07);
-  border-radius: 0;
-  background: transparent;
-  color: rgba(255,255,255,0.38);
+  gap: 6px;
+  padding: 14px 6px 12px;
+  border: 1px solid rgba(var(--hero-rgb, 255,255,255), 0.08);
+  border-radius: 16px;
+  background: rgba(5, 9, 15, 0.44);
+  color: rgba(255,255,255,0.46);
   cursor: pointer;
-  transition: background 160ms ease, color 160ms ease;
+  transition: background 160ms ease, color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
 }
 
 .nx-hero-mode-tab:last-child {
-  border-right: 0;
+  border-right: 1px solid rgba(var(--hero-rgb, 255,255,255), 0.08);
 }
 
 .nx-hero-mode-tab:hover {
@@ -11003,7 +11022,11 @@
 
 .nx-hero-mode-tab.is-active {
   color: var(--hero-accent, #fff);
-  background: rgba(var(--hero-rgb, 255,255,255), 0.11);
+  background: rgba(var(--hero-rgb, 255,255,255), 0.13);
+  border-color: rgba(10, 132, 255, 0.52);
+  box-shadow:
+    0 0 0 1px rgba(10, 132, 255, 0.16),
+    0 0 28px rgba(10, 132, 255, 0.18);
   animation: nx-mode-tab-active 3s ease-in-out infinite;
 }
 
@@ -11013,7 +11036,7 @@
 }
 
 .nx-hero-mode-tab__count {
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 900;
   line-height: 1;
   letter-spacing: -0.02em;
@@ -11027,9 +11050,9 @@
 }
 
 .nx-hero-mode-tab__label {
-  font-size: 7.5px;
+  font-size: 10px;
   font-weight: 900;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   opacity: 0.7;
 }
@@ -11068,8 +11091,9 @@
 .nx-queue-group.is-dnc       { --qg-rgb: 138,150,168;  --qg-accent: #8a96a8; }
 
 .nx-queue-group__header {
-  min-height: 40px !important;
-  border-radius: 12px !important;
+  min-height: 36px !important;
+  padding: 0 10px 0 8px !important;
+  border-radius: 10px !important;
   transition: border-color 250ms ease, box-shadow 250ms ease, background 250ms ease !important;
 }
 
@@ -11111,11 +11135,20 @@
 /* Queue groups list: tighter spacing */
 .nx-queue-groups {
   gap: 4px !important;
-  padding: 6px 10px 20px !important;
+  padding: 4px 10px 20px !important;
 }
 
 .nx-queue-group__threads {
   gap: 5px !important;
+}
+
+.nx-queue-group__label {
+  font-size: 10.5px !important;
+  letter-spacing: 0.17em !important;
+}
+
+.nx-queue-group__count {
+  font-size: 11px !important;
 }
 
 /* Workflow chips — compact, value-only */
@@ -11220,10 +11253,10 @@
 }
 
 .nx-seller-command-card .nx-workflow-btn {
-  min-height: 56px;
-  padding: 0 18px !important;
-  border-radius: 18px !important;
-  font-size: 15px;
+  min-height: 46px;
+  padding: 0 15px !important;
+  border-radius: 14px !important;
+  font-size: 14px;
   letter-spacing: 0.01em;
   justify-content: space-between;
   gap: 10px;
@@ -12860,4 +12893,3 @@
   border-color: rgba(167, 139, 250, 0.28) !important;
   color: #7c3aed !important;
 }
-
