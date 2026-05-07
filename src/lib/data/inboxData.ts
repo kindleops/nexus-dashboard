@@ -198,7 +198,7 @@ const QUEUE_PROCESSOR_LAG_MINUTES = 10
 const DEV = Boolean(import.meta.env.DEV)
 const MESSAGE_EVENTS_THREAD_PAGE_SIZE = 1000
 export const HYDRATED_INBOX_PAGE_SIZE = 200
-const HYDRATED_INBOX_THREADS_VIEW = 'inbox_threads_hydrated'
+const HYDRATED_INBOX_THREADS_VIEW = 'nexus_inbox_threads_v'
 const HYDRATED_INBOX_COUNTS_VIEW = 'inbox_category_counts'
 
 const HYDRATED_INBOX_CATEGORIES = [
@@ -1475,12 +1475,12 @@ export const getInboxThreads = async (
     .select('thread_key', { count: 'exact', head: true })
   countQuery = applyInboxSearchServerFilter(countQuery, filterState.query)
   countQuery = applyInboxAdvancedServerFilters(countQuery, filterState.advanced)
-  // Use queue_stage (actual column) not thread_stage
+  // nexus_inbox_threads_v uses 'stage' not 'queue_stage'
   if (filterState.stage && filterState.stage !== 'all_stages') {
-    countQuery = countQuery.eq('queue_stage', filterState.stage)
+    countQuery = countQuery.eq('stage', filterState.stage)
   }
-  if (viewCategories.length === 1) countQuery = countQuery.eq('inbox_category', viewCategories[0])
-  if (viewCategories.length > 1) countQuery = countQuery.in('inbox_category', viewCategories)
+  // nexus_inbox_threads_v uses priority_bucket not inbox_category — skip category server-filter,
+  // client-side resolveQueuePreset handles grouping
   if (options.signal) countQuery = countQuery.abortSignal(options.signal)
 
   const { count: totalAvailable, error: countError } = await countQuery
@@ -1491,19 +1491,14 @@ export const getInboxThreads = async (
   let query: any = supabase
     .from(HYDRATED_INBOX_THREADS_VIEW)
     .select('*')
-    .order('final_acquisition_score', { ascending: false, nullsFirst: false })
-    .order('priority_score', { ascending: false, nullsFirst: false })
     .order('latest_message_at', { ascending: false, nullsFirst: false })
     .range(startOffset, startOffset + maxRows - 1)
 
   query = applyInboxSearchServerFilter(query, filterState.query)
   query = applyInboxAdvancedServerFilters(query, filterState.advanced)
-  // Use queue_stage (actual column) not thread_stage
   if (filterState.stage && filterState.stage !== 'all_stages') {
-    query = query.eq('queue_stage', filterState.stage)
+    query = query.eq('stage', filterState.stage)
   }
-  if (viewCategories.length === 1) query = query.eq('inbox_category', viewCategories[0])
-  if (viewCategories.length > 1) query = query.in('inbox_category', viewCategories)
   if (options.signal) query = query.abortSignal(options.signal)
 
   const { data, error } = await query
@@ -1555,22 +1550,46 @@ export const getInboxThreads = async (
     }
 
     const latestMessageIso = asIso(row.latest_message_at) ?? new Date().toISOString()
-    const category = asString(row.inbox_category, '').toLowerCase() as HydratedInboxCategory
+    // nexus_inbox_threads_v uses priority_bucket; inbox_threads_hydrated uses inbox_category
+    const rawCategory = asString(row.inbox_category || row.priority_bucket, '').toLowerCase()
+    // Map nexus_inbox_threads_v priority_bucket values to internal HydratedInboxCategory names
+    const PRIORITY_BUCKET_MAP: Record<string, HydratedInboxCategory> = {
+      hot: 'hot_leads',
+      priority: 'hot_leads',
+      hot_leads: 'hot_leads',
+      needs_review: 'needs_review',
+      review: 'needs_review',
+      new_inbound: 'new_inbound',
+      unread: 'new_inbound',
+      automated: 'automated',
+      auto: 'automated',
+      outbound_active: 'outbound_active',
+      outbound: 'outbound_active',
+      cold_no_response: 'cold_no_response',
+      cold: 'cold_no_response',
+      normal: 'cold_no_response',
+      dnc_opt_out: 'dnc_opt_out',
+      suppressed: 'dnc_opt_out',
+      dnc: 'dnc_opt_out',
+      hidden: 'dnc_opt_out',
+    }
+    const category = (PRIORITY_BUCKET_MAP[rawCategory] ?? 'cold_no_response') as HydratedInboxCategory
     const finalAcquisitionScore = asNumber(row.final_acquisition_score, 0)
     const latestDirection = normalizeMessageDirection({ direction: row.latest_direction })
-    const unreadCount = Math.max(0, asNumber(row.unread_count, latestDirection === 'inbound' ? 1 : 0))
-    
-    // Normalize name: prospect_name || owner_name || first_name || best_phone || canonical_e164 || phone
-    const prospectName = asString(row.prospect_name, '')
-    const ownerName = asString(row.owner_name, '')
-    const firstName = asString(row.first_name, '')
-    const bestPhone = asString(row.best_phone, '')
-    const canonicalE164 = asString(row.canonical_e164, '')
-    const phone = asString(row.phone, '')
+    const unreadCount = Math.max(0, asNumber(row.unread_count, latestDirection === 'inbound' && !asBoolean(row.is_read, false) ? 1 : 0))
+
+    // Normalize name — nexus_inbox_threads_v uses owner_display_name / prospect_full_name
+    const prospectName = asString(row.prospect_name || row.prospect_full_name, '')
+    const ownerName = asString(row.owner_name || row.owner_display_name, '')
+    const firstName = asString(row.first_name || row.prospect_first_name, '')
+    // nexus_inbox_threads_v uses seller_phone; fallback to best_phone / canonical_e164 / phone
+    const bestPhone = asString(row.best_phone || row.seller_phone, '')
+    const canonicalE164 = asString(row.canonical_e164 || row.seller_phone, '')
+    const phone = asString(row.phone || row.seller_phone, '')
     const ownerDisplayName = prospectName || ownerName || firstName || bestPhone || canonicalE164 || phone || 'Unknown Owner'
-    
-    // Normalize phone: best_phone || canonical_e164 || phone
-    const displayPhone = bestPhone || canonicalE164 || phone || ''
+
+    // Normalize phone: seller_phone (nexus view) || best_phone || canonical_e164 || phone
+    const displayPhone = asString(row.seller_phone || row.best_phone || row.canonical_e164 || row.phone, '')
     
     // Normalize address: property_address_full
     const address = asString(row.property_address_full, '') || 'No Address'
@@ -1582,11 +1601,12 @@ export const getInboxThreads = async (
     const propertyType = asString(row.property_type, '')
     const propertyClass = asString(row.property_class, '')
     const queueStatus = normalizeStatus(row.queue_status ?? '')
-    const automationState = normalizeStatus(row.queue_status ?? '')
-    // Stage: queue_stage || detected_intent || inbox_category
-    const threadStage = normalizeStatus(row.queue_stage ?? row.detected_intent ?? row.inbox_category ?? 'ownership_check')
-    const detectedIntent = normalizeStatus(row.detected_intent ?? '')
-    const isDnc = asBoolean(row.is_dnc, false) || category === 'dnc_opt_out'
+    const automationState = normalizeStatus(row.automation_state ?? row.queue_status ?? '')
+    // nexus_inbox_threads_v uses ui_intent; older views use detected_intent
+    const detectedIntent = normalizeStatus(row.ui_intent ?? row.detected_intent ?? '')
+    // Stage: stage (nexus view) || queue_stage || detected_intent
+    const threadStage = normalizeStatus(row.stage ?? row.queue_stage ?? row.detected_intent ?? row.inbox_category ?? 'ownership_check')
+    const isDnc = asBoolean(row.is_dnc || row.has_opt_out, false) || asBoolean(row.is_suppressed, false) || category === 'dnc_opt_out'
     const isAutomated = category === 'automated' || automationState.includes('auto')
     
     const status: InboxThread['status'] = unreadCount > 0 ? 'unread' : 'read'
@@ -1679,7 +1699,7 @@ export const getInboxThreads = async (
       threadIsStarred: false,
       threadIsHidden: false,
       threadIsSuppressed: isDnc,
-      showInPriorityInbox: HYDRATED_PRIORITY_CATEGORIES.has(category) || asBoolean(row.is_hot_lead, false) || asBoolean(row.is_new_inbound, false),
+      showInPriorityInbox: asBoolean(row.show_in_priority_inbox, false) || HYDRATED_PRIORITY_CATEGORIES.has(category) || asBoolean(row.is_hot_lead, false) || asBoolean(row.is_new_inbound, false),
       needsResponse: HYDRATED_PRIORITY_CATEGORIES.has(category),
       autoReplyStatus: automationState || queueStatus || undefined,
     }
@@ -1729,22 +1749,15 @@ export const fetchInboxMapPins = async (
   filters: InboxThreadFilters = {},
 ): Promise<LiveInboxMapPin[]> => {
   const supabase = getSupabaseClient()
+  // Use nexus_map_points_v which has lat/lng data
   let query = supabase
-    .from('inbox_map_pins')
+    .from('nexus_map_points_v')
     .select('*')
     .not('latitude', 'is', null)
     .not('longitude', 'is', null)
 
   const filterState = filters
   query = applyInboxSearchServerFilter(query, filterState.query)
-  query = applyInboxAdvancedServerFilters(query, filterState.advanced)
-
-  const viewCategories = getHydratedCategoriesForView(filterState.view)
-  if (filterState.stage && filterState.stage !== 'all_stages' && SERVER_INBOX_THREAD_STAGE_VALUES.has(filterState.stage)) {
-    query = query.eq('thread_stage', filterState.stage)
-  }
-  if (viewCategories.length === 1) query = query.eq('inbox_category', viewCategories[0])
-  if (viewCategories.length > 1) query = query.in('inbox_category', viewCategories)
 
   const { data, error } = await query
 
@@ -1805,30 +1818,9 @@ export const fetchInboxModel = async (options: InboxFetchOptions = {}): Promise<
   let countsRows: AnyRecord[] = []
 
   try {
-    if (hasScopedFilters) {
-      const countQueries = HYDRATED_INBOX_CATEGORIES.map(async (category) => {
-        let categoryQuery: any = supabase
-          .from(HYDRATED_INBOX_THREADS_VIEW)
-          .select('thread_key', { count: 'exact', head: true })
-          .eq('inbox_category', category)
-        categoryQuery = applyInboxSearchServerFilter(categoryQuery, filterState.query)
-        categoryQuery = applyInboxAdvancedServerFilters(categoryQuery, filterState.advanced)
-        if (filterState.stage && filterState.stage !== 'all_stages' && SERVER_INBOX_THREAD_STAGE_VALUES.has(filterState.stage)) {
-          categoryQuery = categoryQuery.eq('queue_stage', filterState.stage)
-        }
-        if (options.signal) categoryQuery = categoryQuery.abortSignal(options.signal)
-        const result = await categoryQuery
-        if (result.error) throw new Error(mapErrorMessage(result.error))
-        return { inbox_category: category, count: result.count ?? 0 }
-      })
-      countsRows = await Promise.all(countQueries)
-    } else {
-      let countsQuery: any = supabase.from(HYDRATED_INBOX_COUNTS_VIEW).select('*')
-      if (options.signal) countsQuery = countsQuery.abortSignal(options.signal)
-      const { data: rawCountRows, error: countsError } = await countsQuery
-      if (countsError) throw new Error(mapErrorMessage(countsError))
-      countsRows = safeArray(rawCountRows as AnyRecord[])
-    }
+    // nexus_inbox_threads_v uses priority_bucket not inbox_category — skip per-category server counts;
+    // the fallback below derives counts from the already-loaded threads instead.
+    void hasScopedFilters
   } catch (error) {
     if (DEV) {
       console.warn('[fetchInboxModel] counts fallback activated', {
@@ -2199,10 +2191,10 @@ export const getThreadMessagesForThread = async (
   try {
     for (let page = 0; page < maxPages; page += 1) {
       const { data, error } = await supabase
-        .from('inbox_messages_hydrated')
+        .from('nexus_thread_messages_v')
         .select('*')
         .eq('thread_key', threadKey)
-        .order('message_created_at', { ascending: true })
+        .order('timeline_at', { ascending: true })
         .range(page * pageSize, page * pageSize + pageSize - 1)
 
       if (error) throw new Error(mapErrorMessage(error))
@@ -2215,7 +2207,7 @@ export const getThreadMessagesForThread = async (
   } catch (error) {
     viewErrorMessage = mapErrorMessage(error)
     if (DEV) {
-      console.warn('[ThreadMessageHydration] inbox_messages_hydrated failed, falling back to message_events', {
+      console.warn('[ThreadMessageHydration] nexus_thread_messages_v failed, falling back to message_events', {
         threadKey,
         error: viewErrorMessage,
       })
