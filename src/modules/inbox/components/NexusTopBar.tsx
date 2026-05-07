@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import type { QueueProcessorHealth } from '../../../lib/data/inboxData'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
@@ -6,6 +6,7 @@ import { formatRelativeTime } from '../../../shared/formatters'
 import type { ActiveOverlay, NexusTheme } from '../inbox-layout-state'
 import { getStatusVisual, getSellerStageVisual, automationStateVisuals } from '../status-visuals'
 import { buildInboxNotifications, NexusNotificationCenter, type NexusNotification } from './NexusNotificationCenter'
+import type { AutonomousEngineModel } from '../autonomy-engine'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
@@ -20,6 +21,7 @@ interface NexusTopBarProps {
   notificationCount: number
   queueProcessorHealth: QueueProcessorHealth | null
   queueProcessorHealthLoading: boolean
+  autonomyModel: AutonomousEngineModel
   theme: NexusTheme
   onToggleTheme: () => void
   activeOverlay: ActiveOverlay
@@ -74,9 +76,8 @@ export const KpiEntryButton = ({ onClick }: { onClick: () => void }) => (
   </button>
 )
 
-const WorkflowChip = ({ label, value, color }: { label: string; value: string; color?: string }) => (
+const WorkflowChip = ({ value, color }: { value: string; color?: string }) => (
   <div className="nx-workflow-chip">
-    <small>{label}</small>
     <strong style={color ? { color } : undefined}>{value}</strong>
   </div>
 )
@@ -90,6 +91,7 @@ export const NexusTopBar = ({
   notificationCount,
   queueProcessorHealth,
   queueProcessorHealthLoading,
+  autonomyModel,
   theme,
   onToggleTheme,
   activeOverlay,
@@ -104,6 +106,7 @@ export const NexusTopBar = ({
   onResetLayout,
 }: NexusTopBarProps) => {
   const DEV = Boolean(import.meta.env.DEV)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
   
   useEffect(() => {
     if (DEV && activeOverlay) {
@@ -111,11 +114,20 @@ export const NexusTopBar = ({
     }
   }, [activeOverlay, DEV])
 
+  useEffect(() => {
+    const focusSearch = () => {
+      searchInputRef.current?.focus()
+      searchInputRef.current?.select()
+    }
+    window.addEventListener('nexus:focus-search', focusSearch as EventListener)
+    return () => window.removeEventListener('nexus:focus-search', focusSearch as EventListener)
+  }, [])
+
   const showSearchResults = searchQuery.trim().length > 0
   const processorStatus = queueProcessorHealth?.status ?? 'unknown'
   const processorLabel = processorStatus === 'healthy' ? 'Healthy' : processorStatus === 'lagging' ? 'Delayed' : 'Unknown'
   
-  const notifications = buildInboxNotifications({ unreadCount: notificationCount, selectedThread, queueProcessorHealth })
+  const notifications = buildInboxNotifications({ unreadCount: notificationCount, selectedThread, queueProcessorHealth, autonomyModel })
   const unreadNotifications = notifications.filter((item) => item.status !== 'read').length
   
   const handleNotificationAction = (notification: NexusNotification) => {
@@ -123,7 +135,11 @@ export const NexusTopBar = ({
     onCloseOverlay()
   }
 
-  const inboxStatus = getStatusVisual(selectedThread?.inboxStatus).label
+  const inboxStatus = getStatusVisual(selectedThread?.inboxStatus, {
+    latestDirection: selectedThread?.latestDirection || selectedThread?.directionUsed || null,
+    lastOutboundAt: selectedThread?.lastOutboundAt ?? null,
+    lastInboundAt: selectedThread?.lastInboundAt ?? null,
+  }).label
   const sellerStage = getSellerStageVisual(selectedThread?.conversationStage).label
   const autoState = selectedThread ? automationStateVisuals[selectedThread.automationState] : null
 
@@ -142,9 +158,9 @@ export const NexusTopBar = ({
 
         {selectedThread && (
           <div className="nx-topbar-workflow-chips">
-            <WorkflowChip label="Inbox" value={inboxStatus} />
-            <WorkflowChip label="Stage" value={sellerStage} />
-            {autoState && <WorkflowChip label="Automation" value={autoState.label} color={autoState.color} />}
+            <WorkflowChip value={fallback(selectedThread.market || selectedThread.marketId, 'Unknown Market')} />
+            <WorkflowChip value={sellerStage} />
+            <WorkflowChip value={inboxStatus} color={autoState?.color} />
           </div>
         )}
       </div>
@@ -152,6 +168,7 @@ export const NexusTopBar = ({
       <div className="nx-global-search">
         <Icon name="search" />
         <input
+          ref={searchInputRef}
           aria-label="Search threads, sellers, addresses, or commands"
           value={searchQuery}
           onChange={(event) => onSearchQueryChange(event.target.value)}

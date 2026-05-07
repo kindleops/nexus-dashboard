@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from 'react'
 import type { ThreadMessage } from '../../../lib/data/inboxData'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
@@ -27,7 +28,6 @@ const fallback = (value: unknown, placeholder = '') => {
 
 const titleCase = (value: string) =>
   value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
-
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
@@ -60,6 +60,44 @@ export const ChatThread = ({
   onToggleArchive,
   searchQuery = '',
 }: ChatThreadProps) => {
+  const listRef = useRef<HTMLDivElement | null>(null)
+  const scrollSnapshotRef = useRef<{ height: number; top: number; nearBottom: boolean }>({
+    height: 0,
+    top: 0,
+    nearBottom: true,
+  })
+
+  useLayoutEffect(() => {
+    const node = listRef.current
+    if (!node) return
+    const previous = scrollSnapshotRef.current
+    const nextHeight = node.scrollHeight
+    if (previous.height > 0) {
+      if (previous.nearBottom) {
+        node.scrollTop = Math.max(0, nextHeight - node.clientHeight)
+      } else {
+        node.scrollTop = previous.top + (nextHeight - previous.height)
+      }
+    }
+    const distanceFromBottom = node.scrollHeight - node.clientHeight - node.scrollTop
+    scrollSnapshotRef.current = {
+      height: node.scrollHeight,
+      top: node.scrollTop,
+      nearBottom: distanceFromBottom < 48,
+    }
+  }, [messages, loading, thread?.id])
+
+  const handleScroll = () => {
+    const node = listRef.current
+    if (!node) return
+    const distanceFromBottom = node.scrollHeight - node.clientHeight - node.scrollTop
+    scrollSnapshotRef.current = {
+      height: node.scrollHeight,
+      top: node.scrollTop,
+      nearBottom: distanceFromBottom < 48,
+    }
+  }
+
   if (!thread) return (
     <div className="nx-chat-container is-empty">
       <div className="nx-inbox__workspace-empty">
@@ -81,7 +119,11 @@ export const ChatThread = ({
   const phoneNumber = fallback(thread.phoneNumber || thread.canonicalE164, '')
   const propertyAddress = resolveThreadAddressLine(thread)
   const market = resolveThreadMarketBadge(thread)
-  const statusVisual = getStatusVisual(thread.inboxStatus)
+  const statusVisual = getStatusVisual(thread.inboxStatus, {
+    latestDirection: thread.latestDirection || thread.directionUsed || null,
+    lastOutboundAt: thread.lastOutboundAt ?? null,
+    lastInboundAt: thread.lastInboundAt ?? null,
+  })
   const stageVisual = getSellerStageVisual(thread.conversationStage)
   const matchedKeywords = getThreadMatchedKeywords(thread, searchQuery)
 
@@ -99,12 +141,12 @@ export const ChatThread = ({
             <span className="nx-chat-header__address">{propertyAddress}</span>
           )}
           <div className="nx-thread-meta-line">
-            {market && <span className="nx-market-tag">{market}</span>}
-            <span className="nx-stage-pill" style={{ '--pill-color': statusVisual.color, '--pill-bg': statusVisual.bg, '--pill-border': statusVisual.border } as any}>
-              {statusVisual.label}
-            </span>
+            {market && <span className="nx-market-tag">Market · {market}</span>}
             <span className="nx-stage-pill nx-conv-stage-pill">
-              {stageVisual.label}
+              Stage · {stageVisual.label}
+            </span>
+            <span className="nx-stage-pill" style={{ '--pill-color': statusVisual.color, '--pill-bg': statusVisual.bg, '--pill-border': statusVisual.border } as any}>
+              Status · {statusVisual.label}
             </span>
             {isSuppressed && <span className="nx-suppression-badge">Opted Out</span>}
           </div>
@@ -170,7 +212,7 @@ export const ChatThread = ({
         </div>
       </header>
 
-      <div className="nx-message-list">
+      <div className="nx-message-list" ref={listRef} onScroll={handleScroll}>
         {messages.map(msg => (
           <div key={msg.id} className={cls('nx-bubble-wrap', msg.direction === 'inbound' ? 'is-inbound' : 'is-outbound')}>
             <div className="nx-chat-bubble">
@@ -196,7 +238,7 @@ export const ChatThread = ({
 
               {msg.direction === 'outbound' && (
                 <span className={cls('nx-delivery-pill', `is-${normalizeDeliveryBadge(msg)}`)}>
-                  {normalizeDeliveryBadge(msg)}
+                  {titleCase(normalizeDeliveryBadge(msg))}
                 </span>
               )}
             </div>

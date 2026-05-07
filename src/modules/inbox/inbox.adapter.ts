@@ -382,17 +382,22 @@ const EMPTY_MODEL: InboxModel = {
   realtimeConnected: false,
 }
 
+const threadIdentity = (thread: Pick<InboxThread, 'id' | 'threadKey'>): string =>
+  thread.threadKey || thread.id
+
 
 // selectedThreadPreserved: merge refreshes into existing rows instead of replacing the list.
 const mergeInboxModels = (prev: InboxModel, next: InboxModel, mode: 'refresh' | 'append'): InboxModel => {
+  const prevByKey = new Map(prev.threads.map((thread) => [threadIdentity(thread), thread]))
   const mergedById = new Map<string, InboxThread>()
-  const nextIds = new Set(next.threads.map((thread) => thread.id))
   const ordered = mode === 'append'
     ? [...prev.threads, ...next.threads]
-    : [...next.threads, ...prev.threads.filter((thread) => !nextIds.has(thread.id))]
+    : next.threads
   for (const thread of ordered) {
-    const existing = mergedById.get(thread.id)
-    mergedById.set(thread.id, existing ? { ...existing, ...thread } : thread)
+    const key = threadIdentity(thread)
+    const base = prevByKey.get(key)
+    const existing = mergedById.get(key)
+    mergedById.set(key, existing ? { ...existing, ...thread } : { ...base, ...thread })
   }
   return {
     ...prev,
@@ -413,10 +418,15 @@ export const useInboxData = () => {
   const abortRef = useRef<AbortController | null>(null)
   const requestSeqRef = useRef(0)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const realtimeBatchRef = useRef<{ tables: Set<string>; threadKeys: Set<string>; eventCount: number }>({
+    tables: new Set(),
+    threadKeys: new Set(),
+    eventCount: 0,
+  })
 
   // Realtime config
   const realtimeEnabled = String(import.meta.env.VITE_INBOX_REALTIME_ENABLED ?? 'false').toLowerCase() === 'true'
-  const minRefreshMs = 15000 // 15 seconds minimum between automatic refreshes
+  const minRefreshMs = 5000
   const lastRefreshAtRef = useRef<string | null>(null)
   const loadingRef = useRef(false)
 
@@ -546,16 +556,29 @@ export const useInboxData = () => {
 
     if (shouldUseSupabase() && realtimeEnabled) {
       const supabase = getSupabaseClient()
-      const triggerRefresh = (payload: any) => {
-        const threadId = payload?.new?.thread_key || payload?.new?.threadKey || payload?.old?.thread_key || payload?.old?.threadKey
+      const triggerRefresh = (payload: { table?: string; new?: Record<string, unknown>; old?: Record<string, unknown> }) => {
+        const table = payload?.table ?? 'unknown'
+        const rawThreadId = payload?.new?.thread_key || payload?.new?.threadKey || payload?.old?.thread_key || payload?.old?.threadKey
+        const threadId = typeof rawThreadId === 'string' ? rawThreadId : ''
         if (threadId) markRecentlyUpdated(threadId)
+        realtimeBatchRef.current.tables.add(table)
+        if (threadId) realtimeBatchRef.current.threadKeys.add(threadId)
+        realtimeBatchRef.current.eventCount += 1
         if (refreshTimeout) clearTimeout(refreshTimeout)
         refreshTimeout = setTimeout(() => {
           if (!cancelled) {
-            if (isDev) console.log('[useInboxData] realtime refresh triggered', { threadId, refreshReason: 'realtime' })
+            if (isDev) {
+              console.log('[useInboxData] realtime refresh triggered', {
+                refreshReason: 'realtime',
+                tables: Array.from(realtimeBatchRef.current.tables),
+                threadKeys: Array.from(realtimeBatchRef.current.threadKeys),
+                eventCount: realtimeBatchRef.current.eventCount,
+              })
+            }
+            realtimeBatchRef.current = { tables: new Set(), threadKeys: new Set(), eventCount: 0 }
             void refresh({ _automatic: true })
           }
-        }, 2000) // Debounce realtime events
+        }, 1200)
       }
 
       channel = supabase
@@ -563,6 +586,7 @@ export const useInboxData = () => {
         .on('postgres_changes', { event: '*', schema: 'public', table: 'message_events' }, triggerRefresh)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'send_queue' }, triggerRefresh)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'inbox_map_pins' }, triggerRefresh)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'inbox_thread_state' }, triggerRefresh)
         .subscribe((status) => {
           setData((prev) => ({ ...prev, realtimeConnected: status === 'SUBSCRIBED' }))
         })

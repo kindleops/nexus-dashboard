@@ -4,6 +4,7 @@ import type { QueueProcessorHealth } from '../../../lib/data/inboxData'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
 import { formatRelativeTime } from '../../../shared/formatters'
+import type { AutonomousEngineModel } from '../autonomy-engine'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
@@ -46,10 +47,12 @@ export const buildInboxNotifications = ({
   unreadCount,
   selectedThread,
   queueProcessorHealth,
+  autonomyModel,
 }: {
   unreadCount: number
   selectedThread: InboxWorkflowThread | null
   queueProcessorHealth: QueueProcessorHealth | null
+  autonomyModel: AutonomousEngineModel
 }): NexusNotification[] => {
   const notifications: NexusNotification[] = []
   const selectedCreatedAt = selectedThread?.lastMessageAt || selectedThread?.lastMessageIso || queueProcessorHealth?.checkedAt || ''
@@ -143,6 +146,74 @@ export const buildInboxNotifications = ({
       source: 'Queue Processor',
       action_label: 'Open Queue',
       action_href: '/queue',
+    })
+  }
+
+  if (autonomyModel.emergencyState) {
+    notifications.push({
+      id: 'autonomy-emergency',
+      command_space: 'AI',
+      type: 'autonomy_emergency_stop',
+      title: 'Autonomous engine in protective posture',
+      body: autonomyModel.topDirective,
+      severity: 'critical',
+      status: 'unread',
+      created_at: queueProcessorHealth?.checkedAt || selectedCreatedAt,
+      read_at: null,
+      related_thread_id: selectedThread?.id ?? null,
+      related_property_id: selectedThread?.propertyId ?? null,
+      related_owner_id: selectedThread?.ownerId ?? null,
+      related_queue_id: null,
+      related_offer_id: null,
+      related_contract_id: null,
+      source: 'Autonomy Engine',
+      action_label: 'Review Controls',
+      action_href: '/inbox',
+    })
+  } else if (autonomyModel.complianceRiskScore >= 65) {
+    notifications.push({
+      id: 'autonomy-compliance-watch',
+      command_space: 'AI',
+      type: 'compliance_pressure_rising',
+      title: 'Compliance pressure rising',
+      body: `Compliance risk ${Math.round(autonomyModel.complianceRiskScore)}/100. Shift more threads into review-safe paths.`,
+      severity: 'warning',
+      status: 'unread',
+      created_at: queueProcessorHealth?.checkedAt || selectedCreatedAt,
+      read_at: null,
+      related_thread_id: selectedThread?.id ?? null,
+      related_property_id: selectedThread?.propertyId ?? null,
+      related_owner_id: selectedThread?.ownerId ?? null,
+      related_queue_id: null,
+      related_offer_id: null,
+      related_contract_id: null,
+      source: 'Compliance Engine',
+      action_label: 'Review Threads',
+      action_href: '/inbox',
+    })
+  }
+
+  if (autonomyModel.marketSnapshots[0]) {
+    const leadMarket = autonomyModel.marketSnapshots[0]
+    notifications.push({
+      id: 'market-leader',
+      command_space: 'Properties',
+      type: 'market_intelligence_update',
+      title: `${leadMarket.market} is leading network momentum`,
+      body: `${leadMarket.hotLeadCount} hot leads · ${Math.round(leadMarket.closeMomentum)}/100 close momentum · ${Math.round(leadMarket.responseRate)}% response rate.`,
+      severity: 'success',
+      status: 'read',
+      created_at: queueProcessorHealth?.checkedAt || selectedCreatedAt,
+      read_at: queueProcessorHealth?.checkedAt || selectedCreatedAt,
+      related_thread_id: null,
+      related_property_id: null,
+      related_owner_id: null,
+      related_queue_id: null,
+      related_offer_id: null,
+      related_contract_id: null,
+      source: 'Market Intelligence',
+      action_label: 'Open Inbox',
+      action_href: '/inbox',
     })
   }
 

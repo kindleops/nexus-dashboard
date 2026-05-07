@@ -10,6 +10,18 @@ export interface StatusVisual {
   description: string
 }
 
+export type WorkflowStatusOptionValue = InboxStatus | 'sent_message'
+
+const sentMessageVisual: StatusVisual = {
+  label: 'Sent Message',
+  color: '#7bc6ff',
+  bg: 'rgba(123,198,255,0.14)',
+  border: 'rgba(123,198,255,0.38)',
+  dot: '#7bc6ff',
+  pulse: 'rgba(123,198,255,0.34)',
+  description: 'Initial outreach sent and awaiting the first seller response.',
+}
+
 export const inboxStatusVisuals: Record<InboxStatus, StatusVisual> = {
   new_reply: {
     label: 'New Reply',
@@ -30,7 +42,7 @@ export const inboxStatusVisuals: Record<InboxStatus, StatusVisual> = {
     description: 'Complexity requires operator review.',
   },
   ai_draft_ready: {
-    label: 'Auto Reply Ready',
+    label: 'Autopilot',
     color: '#a78bfa',
     bg: 'rgba(167,139,250,0.15)',
     border: 'rgba(167,139,250,0.42)',
@@ -66,7 +78,7 @@ export const inboxStatusVisuals: Record<InboxStatus, StatusVisual> = {
     description: 'Compliance suppression active.',
   },
   closed: {
-    label: 'Closed',
+    label: 'Dead',
     color: '#7d8797',
     bg: 'rgba(125,135,151,0.1)',
     border: 'rgba(125,135,151,0.24)',
@@ -96,7 +108,7 @@ export const sellerStageVisuals: Record<SellerStage, StatusVisual> = {
     description: 'Gauging interest in selling.',
   },
   seller_response: {
-    label: 'Seller Response',
+    label: 'Active Communication',
     color: '#0a84ff',
     bg: 'rgba(10,132,255,0.12)',
     border: 'rgba(10,132,255,0.35)',
@@ -123,7 +135,7 @@ export const sellerStageVisuals: Record<SellerStage, StatusVisual> = {
     description: 'Gathering property details.',
   },
   offer_reveal: {
-    label: 'Offer Reveal',
+    label: 'Offer Stage',
     color: '#ff453a',
     bg: 'rgba(255,69,58,0.12)',
     border: 'rgba(255,69,58,0.35)',
@@ -141,7 +153,7 @@ export const sellerStageVisuals: Record<SellerStage, StatusVisual> = {
     description: 'Terms negotiation in progress.',
   },
   contract_path: {
-    label: 'Contract Path',
+    label: 'Contract Sent',
     color: '#30d158',
     bg: 'rgba(48,209,88,0.12)',
     border: 'rgba(48,209,88,0.35)',
@@ -150,7 +162,7 @@ export const sellerStageVisuals: Record<SellerStage, StatusVisual> = {
     description: 'Moving toward executed contract.',
   },
   dead_suppressed: {
-    label: 'Dead / Suppressed',
+    label: 'Dead',
     color: '#7d8797',
     bg: 'rgba(125,135,151,0.12)',
     border: 'rgba(125,135,151,0.3)',
@@ -172,14 +184,35 @@ export const inboxStatusOptions = Object.entries(inboxStatusVisuals).map(([value
   ...visual,
 }))
 
+export const inboxStatusWorkflowOptions = [
+  { value: 'sent_message' as const, ...sentMessageVisual },
+  ...inboxStatusOptions,
+]
+
 export const sellerStageOptions = Object.entries(sellerStageVisuals).map(([value, visual]) => ({
   value: value as SellerStage,
   ...visual,
 }))
 
-export const getStatusVisual = (status?: string | null): StatusVisual => {
+const isSentMessageState = (
+  status?: string | null,
+  options?: { latestDirection?: string | null; lastOutboundAt?: string | null; lastInboundAt?: string | null },
+): boolean => {
   const key = (status || 'new_reply') as InboxStatus
-  return inboxStatusVisuals[key] ?? {
+  return Boolean(
+    key === 'waiting' &&
+    options?.latestDirection === 'outbound' &&
+    options?.lastOutboundAt &&
+    (!options.lastInboundAt || new Date(options.lastOutboundAt).getTime() >= new Date(options.lastInboundAt).getTime()),
+  )
+}
+
+export const getStatusVisual = (
+  status?: string | null,
+  options?: { latestDirection?: string | null; lastOutboundAt?: string | null; lastInboundAt?: string | null },
+): StatusVisual => {
+  const key = (status || 'new_reply') as InboxStatus
+  const base = inboxStatusVisuals[key] ?? {
     label: String(status || 'Unknown').replaceAll('_', ' '),
     color: '#94a3b8',
     bg: 'rgba(148,163,184,0.12)',
@@ -188,9 +221,27 @@ export const getStatusVisual = (status?: string | null): StatusVisual => {
     pulse: 'rgba(148,163,184,0.22)',
     description: 'Unknown status.',
   }
+  if (isSentMessageState(key, options)) return sentMessageVisual
+  return base
 }
 
+export const getWorkflowStatusOptionValue = (
+  status?: string | null,
+  options?: { latestDirection?: string | null; lastOutboundAt?: string | null; lastInboundAt?: string | null },
+): WorkflowStatusOptionValue => (isSentMessageState(status, options) ? 'sent_message' : ((status || 'new_reply') as InboxStatus))
+
 export const getSellerStageVisual = (stage?: string | null): StatusVisual => {
+  if (String(stage || '').toLowerCase() === 'closed') {
+    return {
+      label: 'Closed',
+      color: '#7d8797',
+      bg: 'rgba(125,135,151,0.12)',
+      border: 'rgba(125,135,151,0.3)',
+      dot: '#7d8797',
+      pulse: 'rgba(125,135,151,0.3)',
+      description: 'Conversation workflow completed.',
+    }
+  }
   const key = (stage || 'ownership_check') as SellerStage
   return sellerStageVisuals[key] ?? {
     label: String(stage || 'Unknown').replaceAll('_', ' '),

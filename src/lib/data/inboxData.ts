@@ -1242,6 +1242,8 @@ export const doesMessageBelongToThread = (
   const selectedProspectId = asString(selectedThread.prospectId, '')
   const selectedPhone = normalizePhone(selectedThread.phoneNumber)
   const selectedCanonical = normalizePhone(selectedThread.canonicalE164)
+  const fromPhone = normalizePhone(messageRow['from_phone_number'] ?? getFirst(messageRow, ['from_number']))
+  const toPhone = normalizePhone(messageRow['to_phone_number'] ?? getFirst(messageRow, ['to_number']))
 
   const keys = new Set<string>(
     [
@@ -1261,6 +1263,8 @@ export const doesMessageBelongToThread = (
   if (prospectId && keys.has(prospectId)) return true
   if (sellerPhone && keys.has(sellerPhone)) return true
   if (msgCanonical && keys.has(msgCanonical)) return true
+  if (fromPhone && (fromPhone === selectedPhone || fromPhone === selectedCanonical)) return true
+  if (toPhone && (toPhone === selectedPhone || toPhone === selectedCanonical)) return true
 
   if (selectedThread.threadKey) {
     const derived = getThreadKeyParts(messageRow, 0)
@@ -1501,8 +1505,16 @@ export const getInboxThreads = async (
     })
   }
 
-  const threads: InboxThread[] = rows.map((row, index) => {
-    const threadKey = asString(row.thread_key, '') || `hydrated-thread:${startOffset + index}`
+  const threads = rows.map((row, index) => {
+    const derivedThreadKey = [
+      asString(row.thread_key, ''),
+      asString(row.canonical_e164, ''),
+      asString(row.best_phone, ''),
+      asString(row.phone, ''),
+      [asString(row.master_owner_id, ''), asString(row.property_id, '')].filter(Boolean).join(':'),
+      asString(row.prospect_id, ''),
+    ].find((value) => Boolean(value && String(value).trim()))
+    const threadKey = derivedThreadKey || `hydrated-thread:${startOffset + index}`
     
     if (DEV && index === 0) {
       console.log('[getInboxThreads] normalizing row[0]:', {
@@ -1665,8 +1677,11 @@ export const getInboxThreads = async (
       })
     }
 
-    return normalized
+    return normalized as InboxThread
   })
+  const missingThreadKeys = rows.filter((row) => !asString(row.thread_key, '')).length
+  const dedupedThreads = dedupeThreadsByKey(threads)
+  const duplicateCount = threads.length - dedupedThreads.length
 
   if (DEV) {
     console.log('[NexusInboxFilterQuery]', {
@@ -1680,12 +1695,14 @@ export const getInboxThreads = async (
       totalAvailable: countError ? rows.length : (totalAvailable ?? rows.length),
     })
     console.log('[getInboxThreads] normalizedThreads', {
-      count: threads.length,
-      firstNormalizedThread: threads[0] ?? null,
+      count: dedupedThreads.length,
+      firstNormalizedThread: dedupedThreads[0] ?? null,
+      duplicateCount,
+      missingThreadKeys,
     })
   }
 
-  return { threads, totalAvailable: countError ? rows.length : (totalAvailable ?? rows.length) }
+  return { threads: dedupedThreads, totalAvailable: countError ? dedupedThreads.length : (totalAvailable ?? dedupedThreads.length) }
 }
 
 export const fetchInboxMapPins = async (
@@ -1717,7 +1734,7 @@ export const fetchInboxMapPins = async (
   }
 
   const rows = safeArray(data as AnyRecord[])
-  return rows.map((row, index) => ({
+  const pins = rows.map((row, index) => ({
     id: asString(row.thread_key ?? row.threadKey ?? row.id, `pin:${index}`),
     threadKey: asString(row.thread_key ?? row.threadKey, ''),
     lat: asNumber(row.latitude, 0),
@@ -1727,11 +1744,18 @@ export const fetchInboxMapPins = async (
     ownerName: asString(row.owner_name ?? row.ownerName ?? row.prospect_name, ''),
     propertyAddress: asString(row.property_address ?? row.propertyAddress ?? row.property_address_full, ''),
     latestMessageBody: asString(row.latest_message_body ?? row.latestMessageBody, ''),
-  })).filter((pin) => {
-    const lat = pin.lat
-    const lng = pin.lng
-    return Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0
-  })
+  }))
+  const deduped = dedupeMapPinsByThreadKey(pins)
+  if (DEV) {
+    console.log('[NexusInboxMapHydration]', {
+      sourceRows: rows.length,
+      dedupedPins: deduped.length,
+      duplicatePinsRemoved: rows.length - deduped.length,
+      missingThreadKeys: pins.filter((pin) => !pin.threadKey).length,
+      invalidCoordinates: pins.filter((pin) => !Number.isFinite(pin.lat) || !Number.isFinite(pin.lng) || pin.lat === 0 || pin.lng === 0).length,
+    })
+  }
+  return deduped
 }
 
 export const fetchInboxModel = async (options: InboxFetchOptions = {}): Promise<InboxModel> => {
@@ -1891,7 +1915,7 @@ export const fetchInboxModel = async (options: InboxFetchOptions = {}): Promise<
   }
 }
 
-const toThreadMessage = (row: AnyRecord): ThreadMessage => {
+export const toThreadMessage = (row: AnyRecord): ThreadMessage => {
   const timelineAt =
     asIso(row['timeline_at'] ?? row['created_at'] ?? row['event_timestamp'] ?? row['sent_at'] ?? row['received_at']) ??
     new Date().toISOString()
@@ -1955,9 +1979,181 @@ const toThreadMessage = (row: AnyRecord): ThreadMessage => {
   }
 }
 
+const buildMessageEventThreadCandidates = (thread: InboxThread): Array<{ key: string; value: string }> => {
+  const phoneVariants = Array.from(new Set([
+    ...buildPhoneVariants(normalizePhone(thread.phoneNumber)),
+    ...buildPhoneVariants(normalizePhone(thread.canonicalE164)),
+    ...buildPhoneVariants(normalizePhone(thread.sellerPhone)),
+  ]))
+  const filters: Array<{ key: string; value: string }> = []
+  phoneVariants.forEach((value) => {
+    filters.push({ key: 'from_phone_number', value })
+    filters.push({ key: 'to_phone_number', value })
+  })
+  ;[
+    ['master_owner_id', asString(thread.ownerId, '')],
+    ['prospect_id', asString(thread.prospectId, '')],
+    ['property_id', asString(thread.propertyId, '')],
+    ['queue_id', asString(thread.queueId, '')],
+    ['message_event_key', asString(thread.threadKey, '')],
+  ].forEach(([key, value]) => {
+    if (value) filters.push({ key, value })
+  })
+  return filters
+}
+
+const getThreadMessagesFromMessageEvents = async (
+  thread: InboxThread,
+  options: ThreadMessageFetchOptions = {},
+): Promise<ThreadMessage[]> => {
+  const supabase = getSupabaseClient()
+  const pageSize = MESSAGE_EVENTS_THREAD_PAGE_SIZE
+  const maxPages = Math.max(1, options.maxPages ?? 20)
+  const maxMessages = options.maxMessages && options.maxMessages > 0 ? options.maxMessages : null
+  const candidateFilters = buildMessageEventThreadCandidates(thread)
+  if (candidateFilters.length === 0) {
+    if (DEV) console.warn('[ThreadMessageHydration] no candidate filters for fallback', { threadKey: getCanonicalThreadKey(thread) })
+    return []
+  }
+
+  const orClause = candidateFilters
+    .map(({ key, value }) => `${key}.eq.${safeFilterValue(value)}`)
+    .join(',')
+
+  const rows: AnyRecord[] = []
+  for (let page = 0; page < maxPages; page += 1) {
+    const { data, error } = await supabase
+      .from('message_events')
+      .select('*')
+      .or(orClause)
+      .order('event_timestamp', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: true })
+      .range(page * pageSize, page * pageSize + pageSize - 1)
+
+    if (error) throw new Error(mapErrorMessage(error))
+
+    const sourceRows = safeArray(data as AnyRecord[])
+    rows.push(...sourceRows.filter((row) => doesMessageBelongToThread(row, thread)))
+    if (maxMessages !== null && rows.length >= maxMessages) break
+    if (sourceRows.length < pageSize) break
+  }
+
+  const bounded = maxMessages !== null ? rows.slice(0, maxMessages) : rows
+  return dedupeMessages(bounded.map(toThreadMessage))
+}
+
 export interface ThreadMessageFetchOptions {
   maxPages?: number
   maxMessages?: number
+}
+
+const getCanonicalThreadKey = (thread: Pick<InboxThread, 'threadKey' | 'id'>): string =>
+  asString(thread.threadKey, '') || asString(thread.id, '')
+
+const dedupeThreadsByKey = (threads: InboxThread[]): InboxThread[] => {
+  const byKey = new Map<string, InboxThread>()
+  for (const thread of threads) {
+    const key = getCanonicalThreadKey(thread)
+    if (!key) continue
+    const existing = byKey.get(key)
+    if (!existing) {
+      byKey.set(key, thread)
+      continue
+    }
+    const existingTs = new Date(existing.latestMessageAt ?? existing.lastMessageIso ?? 0).getTime()
+    const incomingTs = new Date(thread.latestMessageAt ?? thread.lastMessageIso ?? 0).getTime()
+    byKey.set(key, incomingTs >= existingTs ? { ...existing, ...thread } : { ...thread, ...existing })
+  }
+  return Array.from(byKey.values()).sort((a, b) => (
+    new Date(b.latestMessageAt ?? b.lastMessageIso ?? 0).getTime() -
+    new Date(a.latestMessageAt ?? a.lastMessageIso ?? 0).getTime()
+  ))
+}
+
+const dedupeMapPinsByThreadKey = (pins: LiveInboxMapPin[]): LiveInboxMapPin[] => {
+  const byKey = new Map<string, LiveInboxMapPin>()
+  for (const pin of pins) {
+    const key = pin.threadKey || pin.id
+    if (!key) continue
+    if (!Number.isFinite(pin.lat) || !Number.isFinite(pin.lng) || pin.lat === 0 || pin.lng === 0) continue
+    const existing = byKey.get(key)
+    byKey.set(key, existing ? { ...existing, ...pin } : pin)
+  }
+  return Array.from(byKey.values())
+}
+
+const getMessageMergeKey = (message: ThreadMessage): string => {
+  const providerId = asString(message.developerMeta?.provider_message_sid, '')
+  if (providerId) return `provider:${providerId}`
+
+  const queueId = asString(message.developerMeta?.queue_id, '')
+  if (queueId) return `queue:${queueId}`
+
+  const body = message.body.trim().toLowerCase()
+  const counterparty = normalizePhone(message.direction === 'inbound' ? message.fromNumber : message.toNumber)
+  const bucket = Math.floor(new Date(message.timelineAt || message.createdAt).getTime() / (3 * 60 * 1000))
+  return `body:${message.direction}:${counterparty}:${bucket}:${body}`
+}
+
+const getDeliveryStatusRank = (status: string): number => {
+  switch (normalizeStatus(status)) {
+    case 'failed':
+      return 5
+    case 'delivered':
+      return 4
+    case 'sent':
+      return 3
+    case 'queued':
+      return 2
+    case 'pending':
+      return 1
+    default:
+      return 0
+  }
+}
+
+const mergeThreadMessages = (existing: ThreadMessage, incoming: ThreadMessage): ThreadMessage => {
+  const preferredStatus = getDeliveryStatusRank(incoming.deliveryStatus) >= getDeliveryStatusRank(existing.deliveryStatus)
+    ? incoming
+    : existing
+  const earliestCreatedAt = new Date(existing.createdAt).getTime() <= new Date(incoming.createdAt).getTime()
+    ? existing.createdAt
+    : incoming.createdAt
+  const earliestTimelineAt = new Date(existing.timelineAt).getTime() <= new Date(incoming.timelineAt).getTime()
+    ? existing.timelineAt
+    : incoming.timelineAt
+
+  return {
+    ...existing,
+    ...incoming,
+    id: existing.id.startsWith('pending-') && !incoming.id.startsWith('pending-') ? incoming.id : existing.id,
+    body: incoming.body || existing.body,
+    createdAt: earliestCreatedAt,
+    timelineAt: earliestTimelineAt,
+    deliveredAt: incoming.deliveredAt || existing.deliveredAt,
+    deliveryStatus: preferredStatus.deliveryStatus,
+    rawStatus: preferredStatus.rawStatus || incoming.rawStatus || existing.rawStatus,
+    error: incoming.error || existing.error,
+    developerMeta: { ...(existing.developerMeta ?? {}), ...(incoming.developerMeta ?? {}) },
+  }
+}
+
+export const dedupeMessages = (messages: ThreadMessage[]): ThreadMessage[] => {
+  const byKey = new Map<string, ThreadMessage>()
+  for (const message of messages) {
+    const key = getMessageMergeKey(message)
+    const existing = byKey.get(key)
+    if (!existing) {
+      byKey.set(key, message)
+      continue
+    }
+    byKey.set(key, mergeThreadMessages(existing, message))
+  }
+  return Array.from(byKey.values()).sort((a, b) => {
+    const aTs = new Date(a.timelineAt || a.createdAt).getTime()
+    const bTs = new Date(b.timelineAt || b.createdAt).getTime()
+    return aTs - bTs
+  })
 }
 
 export const getThreadMessagesForThread = async (
@@ -1965,7 +2161,7 @@ export const getThreadMessagesForThread = async (
   options: ThreadMessageFetchOptions = {},
 ): Promise<ThreadMessage[]> => {
   const supabase = getSupabaseClient()
-  const threadKey = asString(thread.threadKey, '') || asString(thread.id, '')
+  const threadKey = getCanonicalThreadKey(thread)
   if (!threadKey) return []
 
   const pageSize = MESSAGE_EVENTS_THREAD_PAGE_SIZE
@@ -1973,35 +2169,51 @@ export const getThreadMessagesForThread = async (
   const maxMessages = options.maxMessages && options.maxMessages > 0 ? options.maxMessages : null
 
   const rows: AnyRecord[] = []
-  for (let page = 0; page < maxPages; page += 1) {
-    const { data, error } = await supabase
-      .from('nexus_thread_messages_v')
-      .select('*')
-      .eq('thread_key', threadKey)
-      .order('timeline_at', { ascending: true })
-      .order('created_at', { ascending: true })
-      .range(page * pageSize, page * pageSize + pageSize - 1)
+  let viewErrorMessage: string | null = null
+  try {
+    for (let page = 0; page < maxPages; page += 1) {
+      const { data, error } = await supabase
+        .from('nexus_thread_messages_v')
+        .select('*')
+        .eq('thread_key', threadKey)
+        .order('timeline_at', { ascending: true })
+        .order('created_at', { ascending: true })
+        .range(page * pageSize, page * pageSize + pageSize - 1)
 
-    if (error) throw new Error(mapErrorMessage(error))
+      if (error) throw new Error(mapErrorMessage(error))
 
-    const batch = safeArray(data as AnyRecord[])
-    rows.push(...batch)
-    if (maxMessages !== null && rows.length >= maxMessages) break
-    if (batch.length < pageSize) break
+      const batch = safeArray(data as AnyRecord[])
+      rows.push(...batch)
+      if (maxMessages !== null && rows.length >= maxMessages) break
+      if (batch.length < pageSize) break
+    }
+  } catch (error) {
+    viewErrorMessage = mapErrorMessage(error)
+    if (DEV) {
+      console.warn('[ThreadMessageHydration] nexus_thread_messages_v failed, falling back to message_events', {
+        threadKey,
+        error: viewErrorMessage,
+      })
+    }
   }
 
   const bounded = maxMessages !== null ? rows.slice(0, maxMessages) : rows
-  const mapped = bounded.map(toThreadMessage)
+  const viewMessages = bounded.map(toThreadMessage)
+  const fallbackMessages = await getThreadMessagesFromMessageEvents(thread, options)
+  const mapped = dedupeMessages([...viewMessages, ...fallbackMessages])
 
   if (DEV) {
-    console.log(`[getThreadMessagesForThread] thread_key=${threadKey} → ${mapped.length} rows from nexus_thread_messages_v`)
+    console.log('[ThreadMessageHydration]', {
+      threadKey,
+      viewRows: viewMessages.length,
+      fallbackRows: fallbackMessages.length,
+      mergedRows: mapped.length,
+      usedFallback: fallbackMessages.length > 0 || viewMessages.length === 0 || Boolean(viewErrorMessage),
+      viewErrorMessage,
+    })
   }
 
-  return mapped.sort((a, b) => {
-    const aTs = new Date(a.timelineAt || a.createdAt).getTime()
-    const bTs = new Date(b.timelineAt || b.createdAt).getTime()
-    return aTs - bTs
-  })
+  return mapped
 }
 
 export const getThreadMessages = async (threadIdOrKey: string): Promise<ThreadMessage[]> => {

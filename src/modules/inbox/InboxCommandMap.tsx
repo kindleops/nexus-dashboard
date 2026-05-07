@@ -231,6 +231,9 @@ export function InboxCommandMap({ threads, visibleThreads, selectedThread, zoome
   const mapRef = useRef<maplibregl.Map | null>(null)
   const mapReadyRef = useRef(false)
   const selectedIdRef = useRef<string | undefined>(selectedThread?.id)
+  const lastFocusedThreadRef = useRef<string | null>(selectedThread?.id ?? null)
+  const lastZoomModeRef = useRef<boolean>(zoomedIn)
+  const cameraMemoryRef = useRef<{ center: [number, number]; zoom: number } | null>(null)
   const pFrame = useRef(0)
   const pAnim = useRef(0)
   const [hasRenderedPins, setHasRenderedPins] = useState(false)
@@ -251,6 +254,8 @@ export function InboxCommandMap({ threads, visibleThreads, selectedThread, zoome
     () => buildPinsGeoJSON(mapThreads, selectedThread?.id),
     [mapThreads, selectedThread?.id],
   )
+  const threadCount = pinsGeoJSON.features.length
+  const isEmpty = !hasRenderedPins && threads.length > 0
 
   useEffect(() => {
     selectedIdRef.current = selectedThread?.id
@@ -276,17 +281,6 @@ export function InboxCommandMap({ threads, visibleThreads, selectedThread, zoome
     }
   }, [sourceMode, threads, visibleThreads, mapThreads, pinsGeoJSON.features.length, selectedThread])
 
-  if (threads.length === 0) {
-    return (
-      <div className="nx-icm">
-        <div className="nx-icm__empty">
-          <div className="nx-icm__empty-title">Loading threads...</div>
-          <div className="nx-icm__empty-sub">Waiting for inbox data to load</div>
-        </div>
-      </div>
-    )
-  }
-
   useEffect(() => {
     if (!containerRef.current) return
 
@@ -306,8 +300,8 @@ export function InboxCommandMap({ threads, visibleThreads, selectedThread, zoome
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: resolveStyle(),
-      center,
-      zoom: baseZoom,
+      center: cameraMemoryRef.current?.center ?? center,
+      zoom: cameraMemoryRef.current?.zoom ?? baseZoom,
       minZoom: 2,
       maxZoom: 17,
       interactive: true,
@@ -318,6 +312,13 @@ export function InboxCommandMap({ threads, visibleThreads, selectedThread, zoome
 
     mapRef.current = map
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right')
+    map.on('moveend', () => {
+      const currentCenter = map.getCenter()
+      cameraMemoryRef.current = {
+        center: [currentCenter.lng, currentCenter.lat],
+        zoom: map.getZoom(),
+      }
+    })
 
     map.on('load', () => {
       mapReadyRef.current = true
@@ -473,9 +474,14 @@ export function InboxCommandMap({ threads, visibleThreads, selectedThread, zoome
     if (!mapReadyRef.current || !mapRef.current) return
     const target = zoomedIn ? 12 : 6
     const coord = getSelectedCoord(selectedThread)
-    if (coord) {
-      mapRef.current.flyTo({ center: coord, zoom: Math.max(mapRef.current.getZoom(), target), duration: 600 })
+    const selectedChanged = lastFocusedThreadRef.current !== (selectedThread?.id ?? null)
+    const zoomChanged = lastZoomModeRef.current !== zoomedIn
+    lastFocusedThreadRef.current = selectedThread?.id ?? null
+    lastZoomModeRef.current = zoomedIn
+    if (coord && (selectedChanged || zoomChanged)) {
+      mapRef.current.flyTo({ center: coord, zoom: Math.max(mapRef.current.getZoom(), target), duration: 600, essential: true })
     } else {
+      if (!zoomChanged) return
       const bounds = getBoundsForPins(mapThreads)
       if (bounds && bounds.length > 1) {
         const padding = 80
@@ -492,11 +498,14 @@ export function InboxCommandMap({ threads, visibleThreads, selectedThread, zoome
     }
   }, [zoomedIn, selectedThread, mapThreads])
 
-  const threadCount = pinsGeoJSON.features.length
-  const isEmpty = !hasRenderedPins && threads.length > 0
-
   return (
     <div className="nx-icm">
+      {threads.length === 0 ? (
+        <div className="nx-icm__empty">
+          <div className="nx-icm__empty-title">Loading threads...</div>
+          <div className="nx-icm__empty-sub">Waiting for inbox data to load</div>
+        </div>
+      ) : null}
       <div ref={containerRef} className="nx-icm__canvas" />
       {isEmpty && (
         <div className="nx-icm__empty">

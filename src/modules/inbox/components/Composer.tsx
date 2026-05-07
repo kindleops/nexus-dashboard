@@ -5,6 +5,7 @@ import { CopilotOrbTrigger } from '../copilot/AICopilotPanel'
 import { TemplatePopover } from './TemplatePopover'
 import type { InboxThread } from '../inbox.adapter'
 import type { ThreadContext } from '../../../lib/data/inboxData'
+import type { CommandSuggestion } from '../ai-command-center'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
@@ -35,8 +36,11 @@ interface ComposerProps {
   onScheduleTemplate: () => void
   onTranslate?: () => void
   isTranslating?: boolean
+  isSending?: boolean
   disabled?: boolean
   disabledReason?: string
+  aiHint?: string | null
+  aiSuggestions?: CommandSuggestion[]
 }
 
 type SpeechRecognitionResultLike = {
@@ -86,8 +90,11 @@ export const Composer = ({
   onScheduleTemplate,
   onTranslate,
   isTranslating = false,
+  isSending = false,
   disabled = false,
   disabledReason,
+  aiHint = null,
+  aiSuggestions = [],
 }: ComposerProps) => {
   const [micState, setMicState] = useState<MicState>('idle')
   const [voiceUnsupported, setVoiceUnsupported] = useState(false)
@@ -100,19 +107,21 @@ export const Composer = ({
   const [isFocused, setIsFocused] = useState(false)
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
   const baseDraftRef = useRef('')
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const animationFrameRef = useRef<number | undefined>(undefined)
 
   const isListening = micState === 'recording'
   const isProcessing = micState === 'processing'
   const hasDraft = draftText.trim().length > 0
+  const composerDisabled = disabled || isSending
 
   const tools: ComposerTool[] = [
     { id: 'templates', label: 'Templates', icon: 'file-text', action: () => setTemplatePopoverOpen(true), disabled: false },
     { id: 'ai-assist', label: 'AI Assist', icon: 'spark', action: onAI, disabled: false },
     { id: 'translate', label: isTranslating ? 'Original' : 'Translate', icon: 'globe', action: () => onTranslate?.(), disabled: false },
-    { id: 'offer', label: 'Offer', icon: 'zap', action: () => setOfferGlassOpen(true), disabled },
-    { id: 'schedule', label: 'Schedule', icon: 'calendar', action: onOpenSchedule, disabled },
+    { id: 'offer', label: 'Offer', icon: 'zap', action: () => setOfferGlassOpen(true), disabled: composerDisabled },
+    { id: 'schedule', label: 'Schedule', icon: 'calendar', action: onOpenSchedule, disabled: composerDisabled },
     { id: 'notes', label: 'Notes', icon: 'file-text', action: () => setNotesGlassOpen(true), disabled: false },
   ]
 
@@ -249,6 +258,25 @@ export const Composer = ({
     }
   }, [DEV, showUtilities, isHovered, isFocused, templatePopoverOpen, offerGlassOpen, notesGlassOpen])
 
+  useEffect(() => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+    textarea.style.height = 'auto'
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`
+  }, [draftText])
+
+  useEffect(() => {
+    const textarea = textareaRef.current
+    if (!textarea || composerDisabled) return
+    textarea.focus({ preventScroll: true })
+  }, [thread?.id, composerDisabled])
+
+  const submitDraft = () => {
+    if (composerDisabled || !hasDraft) return
+    onSend(draftText)
+    setDraftText('')
+  }
+
   return (
     <div 
       className={cls('nx-sticky-composer', showUtilities && 'show-utilities')}
@@ -297,19 +325,44 @@ export const Composer = ({
       </div>
 
       {/* Main input area */}
+      {aiHint && (
+        <div className="nx-composer-ai-hint">
+          <Icon name="brain" />
+          <span>{aiHint}</span>
+        </div>
+      )}
+
+      {aiSuggestions.length > 0 && (
+        <div className="nx-composer-ai-suggestions">
+          {aiSuggestions.slice(0, 3).map((suggestion) => (
+            <button
+              key={suggestion.id}
+              type="button"
+              className={cls('nx-composer-ai-chip', suggestion.tone && `is-${suggestion.tone}`)}
+              onClick={() => setDraftText(suggestion.text)}
+              disabled={composerDisabled}
+              title={suggestion.label}
+            >
+              <span>{suggestion.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       <div
         className={`nx-composer-input-area${isListening ? ' is-listening' : ''}`}
-        aria-disabled={disabled}
+        aria-disabled={composerDisabled}
       >
-        <button type="button" className="nx-composer-icon-btn" title="Attach file" disabled={disabled}>
+        <button type="button" className="nx-composer-icon-btn" title="Attach file" disabled={composerDisabled}>
           <Icon name="paperclip" />
         </button>
         <textarea
+          ref={textareaRef}
           placeholder={disabled ? disabledReason ?? 'Messaging disabled for this thread' : 'Type a message…'}
           value={draftText}
           onChange={e => setDraftText(e.target.value)}
           rows={1}
-          disabled={disabled}
+          disabled={composerDisabled}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
           onInput={(e) => {
@@ -318,9 +371,15 @@ export const Composer = ({
             target.style.height = `${Math.min(target.scrollHeight, 200)}px`
           }}
           onKeyDown={e => {
-            if (!disabled && (e.metaKey || e.ctrlKey) && e.key === 'Enter' && draftText.trim()) {
-              onSend(draftText)
-              setDraftText('')
+            if (composerDisabled) return
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              submitDraft()
+              return
+            }
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && draftText.trim()) {
+              e.preventDefault()
+              submitDraft()
             }
           }}
         />
@@ -330,7 +389,7 @@ export const Composer = ({
           type="button"
           className={`nx-composer-icon-btn nx-voice-button${isListening ? ' is-listening' : ''}${isProcessing ? ' is-processing' : ''}`}
           title={micTitle}
-          disabled={disabled}
+          disabled={composerDisabled}
           onClick={toggleVoice}
           aria-pressed={isListening}
           aria-label={micTitle}
@@ -365,17 +424,13 @@ export const Composer = ({
         {/* Send button — glows when text is ready */}
         <button
           type="button"
-          className={`nx-send-button${hasDraft && !disabled ? ' is-ready' : ''}`}
-          disabled={disabled || !hasDraft}
-          onClick={() => {
-            if (disabled || !hasDraft) return
-            onSend(draftText)
-            setDraftText('')
-          }}
+          className={`nx-send-button${hasDraft && !composerDisabled ? ' is-ready' : ''}${isSending ? ' is-sending' : ''}`}
+          disabled={composerDisabled || !hasDraft}
+          onClick={submitDraft}
           aria-label="Send message"
-          title="Send (⌘ Enter)"
+          title="Send (Enter)"
         >
-          <Icon name="send" style={{ width: 18 }} />
+          {isSending ? <Icon name="activity" style={{ width: 18 }} /> : <Icon name="send" style={{ width: 18 }} />}
         </button>
       </div>
 

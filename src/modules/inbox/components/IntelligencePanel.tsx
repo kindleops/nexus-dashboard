@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useLayoutEffect, useRef } from 'react'
 import type { ThreadContext, ThreadIntelligenceRecord, ThreadMessage } from '../../../lib/data/inboxData'
 import type { InboxStatus, SellerStage, InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import type { PanelMode } from '../inbox-layout-state'
@@ -13,7 +13,8 @@ import {
   automationStateVisuals,
   getSellerStageVisual,
   getStatusVisual,
-  inboxStatusOptions,
+  getWorkflowStatusOptionValue,
+  inboxStatusWorkflowOptions,
   sellerStageOptions,
   statusStyleVars,
 } from '../status-visuals'
@@ -421,16 +422,22 @@ export const WorkflowControl = ({
   onStageChange,
 }: {
   thread: InboxWorkflowThread
-  onStatusChange: (status: InboxStatus) => void
+  onStatusChange: (status: InboxStatus | 'sent_message') => void
   onStageChange: (stage: SellerStage) => void
 }) => {
   const [statusOpen, setStatusOpen] = useState(false)
   const [stageOpen, setStageOpen] = useState(false)
-  const statusVisual = getStatusVisual(thread.inboxStatus)
   const stageVisual = getSellerStageVisual(thread.conversationStage)
   const autoVisual = automationStateVisuals[thread.automationState]
+  const statusOptions = {
+    latestDirection: thread.latestDirection || thread.directionUsed || null,
+    lastOutboundAt: thread.lastOutboundAt ?? null,
+    lastInboundAt: thread.lastInboundAt ?? null,
+  }
+  const statusVisual = getStatusVisual(thread.inboxStatus, statusOptions)
+  const currentStatusValue = getWorkflowStatusOptionValue(thread.inboxStatus, statusOptions)
 
-  const handleStatusChange = (status: InboxStatus) => { onStatusChange(status); setStatusOpen(false) }
+  const handleStatusChange = (status: InboxStatus | 'sent_message') => { onStatusChange(status); setStatusOpen(false) }
   const handleStageChange = (stage: SellerStage) => { onStageChange(stage); setStageOpen(false) }
 
   return (
@@ -445,8 +452,8 @@ export const WorkflowControl = ({
           </button>
           {statusOpen && (
             <div className="nx-workflow-menu nx-liquid-panel">
-              {inboxStatusOptions.map((opt) => (
-                <button key={opt.value} type="button" className={cls('nx-workflow-menu-item', opt.value === thread.inboxStatus && 'is-selected')} style={statusStyleVars(opt)} onClick={() => handleStatusChange(opt.value as InboxStatus)}>
+              {inboxStatusWorkflowOptions.map((opt) => (
+                <button key={opt.value} type="button" className={cls('nx-workflow-menu-item', opt.value === currentStatusValue && 'is-selected')} style={statusStyleVars(opt)} onClick={() => handleStatusChange(opt.value as InboxStatus | 'sent_message')}>
                   <i className="nx-workflow-dot" style={{ background: opt.color }} />
                   <div><strong>{opt.label}</strong><small>{opt.description}</small></div>
                 </button>
@@ -1476,20 +1483,29 @@ const SellerCommandCard = ({
   onStageChange,
 }: {
   thread: InboxWorkflowThread
-  onStatusChange: (status: InboxStatus) => void
+  onStatusChange: (status: InboxStatus | 'sent_message') => void
   onStageChange: (stage: SellerStage) => void
 }) => {
   const [statusOpen, setStatusOpen] = useState(false)
   const [stageOpen, setStageOpen] = useState(false)
   const sellerName = thread.ownerDisplayName || thread.ownerName || asStr(get(thread, 'sellerName')) || 'Unknown seller'
   const initials = sellerName.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()
-  const ownerType = asStr(get(thread, 'ownerType') || get(thread, 'owner_type')) || 'Individual'
-  const market = thread.market || thread.marketId || 'Unknown market'
-  const finalScore = formatScore(get(thread, 'finalAcquisitionScore') || get(thread, 'final_score') || get(thread, 'priorityScore'))
+  const market = thread.marketName || thread.market || thread.marketId || 'Unknown market'
   const lastContact = thread.lastInboundAt || thread.lastOutboundAt || thread.lastMessageAt
-  const statusVisual = getStatusVisual(thread.inboxStatus)
+  const ownerType = asStr(get(thread, 'ownerType') || get(thread, 'owner_type') || 'Individual').toUpperCase()
+  const ownerOccupancy = thread.isAbsentee ? 'ABSENTEE' : thread.isOwnerOccupied ? 'OWNER OCCUPIED' : null
+  const location = [asStr(get(thread, 'propertyCity')).toUpperCase(), asStr(get(thread, 'propertyState')).toUpperCase()].filter(Boolean).join(', ') || String(market).toUpperCase()
+  const statusOptions = {
+    latestDirection: thread.latestDirection || thread.directionUsed || null,
+    lastOutboundAt: thread.lastOutboundAt ?? null,
+    lastInboundAt: thread.lastInboundAt ?? null,
+  }
+  const statusVisual = getStatusVisual(thread.inboxStatus, statusOptions)
   const stageVisual = getSellerStageVisual(thread.conversationStage)
-  const automationLabel = thread.automationState === 'active' ? 'AUTOMATION ACTIVE' : 'AUTOMATION READY'
+  const currentStatusValue = getWorkflowStatusOptionValue(thread.inboxStatus, statusOptions)
+  const autoVisual = automationStateVisuals[thread.automationState]
+  const priorityScore = formatScore(get(thread, 'priorityScore') || get(thread, 'finalAcquisitionScore') || get(thread, 'final_score') || get(thread, 'motivationScore'))
+  const sellerMetaLine = [ownerType, ownerOccupancy, location].filter(Boolean).join('  •  ')
 
   return (
     <DossierCard className="nx-seller-command-card">
@@ -1497,7 +1513,7 @@ const SellerCommandCard = ({
         <div className="nx-dossier-header__avatar">{initials}</div>
         <div className="nx-seller-command-card__info">
           <strong>{sellerName}</strong>
-          <span>{[ownerType, thread.isAbsentee ? 'ABSENTEE' : null, market].filter(Boolean).join(' • ')}</span>
+          <span className="nx-seller-command-card__eyebrow">{sellerMetaLine}</span>
         </div>
       </div>
 
@@ -1510,9 +1526,9 @@ const SellerCommandCard = ({
           </button>
           {statusOpen && (
             <div className="nx-workflow-menu nx-liquid-panel">
-              {inboxStatusOptions.map((opt) => (
-                <button key={opt.value} type="button" className={cls('nx-workflow-menu-item', opt.value === thread.inboxStatus && 'is-selected')} style={statusStyleVars(opt)} onClick={() => {
-                  onStatusChange(opt.value as InboxStatus)
+              {inboxStatusWorkflowOptions.map((opt) => (
+                <button key={opt.value} type="button" className={cls('nx-workflow-menu-item', opt.value === currentStatusValue && 'is-selected')} style={statusStyleVars(opt)} onClick={() => {
+                  onStatusChange(opt.value as InboxStatus | 'sent_message')
                   setStatusOpen(false)
                 }}>
                   <i className="nx-workflow-dot" style={{ background: opt.color }} />
@@ -1546,9 +1562,9 @@ const SellerCommandCard = ({
       </div>
 
       <div className="nx-seller-command-card__chips">
-        <QuietBadge label={automationLabel} tone="accent" />
-        <QuietBadge label={`SCORE ${finalScore || 'Not enriched'}`} />
-        <QuietBadge label={`LAST CONTACT ${lastContact ? formatRelativeTime(lastContact).toUpperCase() : 'NOT ENRICHED'}`} />
+        <QuietBadge label={autoVisual.label.toUpperCase()} tone={thread.automationState === 'active' ? 'success' : thread.automationState === 'paused' ? 'warning' : 'default'} />
+        {priorityScore ? <QuietBadge label={`SCORE ${priorityScore}`} tone="accent" /> : null}
+        {lastContact ? <QuietBadge label={`LAST CONTACT ${formatRelativeTime(lastContact).toUpperCase()}`} /> : null}
       </div>
     </DossierCard>
   )
@@ -1948,7 +1964,7 @@ export interface IntelligencePanelProps {
   onOpenMap: () => void
   onOpenDossier: () => void
   onOpenAi: () => void
-  onStatusChange: (status: InboxStatus) => void
+  onStatusChange: (status: InboxStatus | 'sent_message') => void
   onStageChange: (stage: SellerStage) => void
 }
 
@@ -1969,10 +1985,34 @@ export const IntelligencePanel = ({
   void context
   void messages
   void isSuppressed
+  const scrollBodyRef = useRef<HTMLDivElement | null>(null)
+  const scrollMemoryRef = useRef<Record<string, number>>({})
+  const threadKey = thread?.threadKey || thread?.id || null
 
   useEffect(() => {
     if (thread) logIntelligencePanelData(thread)
-  }, [thread?.id])
+  }, [thread, thread?.id])
+
+  useLayoutEffect(() => {
+    if (!thread || !threadKey) return
+    const node = scrollBodyRef.current
+    if (!node) return
+    node.scrollTop = scrollMemoryRef.current[threadKey] ?? 0
+  }, [thread, threadKey])
+
+  useEffect(() => {
+    const node = scrollBodyRef.current
+    if (!node || !threadKey) return
+    const memory = scrollMemoryRef.current
+    const handleScroll = () => {
+      memory[threadKey] = node.scrollTop
+    }
+    node.addEventListener('scroll', handleScroll, { passive: true })
+    return () => {
+      memory[threadKey] = node.scrollTop
+      node.removeEventListener('scroll', handleScroll)
+    }
+  }, [threadKey])
 
   if (!thread) {
     return (
@@ -1994,7 +2034,7 @@ export const IntelligencePanel = ({
         </button>
       </header>
 
-      <div className="nx-intel-scroll-body">
+      <div className="nx-intel-scroll-body" ref={scrollBodyRef}>
         <SellerCommandCard thread={thread} onStatusChange={onStatusChange} onStageChange={onStageChange} />
         <PremiumPropertySnapshotCard thread={thread} intelligence={intelligence} />
         <PremiumOfferMemoCard thread={thread} />
