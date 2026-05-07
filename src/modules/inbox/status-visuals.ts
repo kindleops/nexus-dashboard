@@ -230,6 +230,11 @@ export const getWorkflowStatusOptionValue = (
   options?: { latestDirection?: string | null; lastOutboundAt?: string | null; lastInboundAt?: string | null },
 ): WorkflowStatusOptionValue => (isSentMessageState(status, options) ? 'sent_message' : ((status || 'new_reply') as InboxStatus))
 
+const VALID_SELLER_STAGES = new Set<string>([
+  'ownership_check', 'interest_probe', 'seller_response', 'price_discovery',
+  'condition_details', 'offer_reveal', 'negotiation', 'contract_path',
+])
+
 export const getSellerStageVisual = (stage?: string | null): StatusVisual => {
   if (String(stage || '').toLowerCase() === 'closed') {
     return {
@@ -242,16 +247,8 @@ export const getSellerStageVisual = (stage?: string | null): StatusVisual => {
       description: 'Conversation workflow completed.',
     }
   }
-  const key = (stage || 'ownership_check') as SellerStage
-  return sellerStageVisuals[key] ?? {
-    label: String(stage || 'Unknown').replaceAll('_', ' '),
-    color: '#94a3b8',
-    bg: 'rgba(148,163,184,0.12)',
-    border: 'rgba(148,163,184,0.24)',
-    dot: '#94a3b8',
-    pulse: 'rgba(148,163,184,0.22)',
-    description: 'Unknown stage.',
-  }
+  const safeKey = VALID_SELLER_STAGES.has(stage ?? '') ? (stage as SellerStage) : 'ownership_check'
+  return sellerStageVisuals[safeKey]
 }
 
 export const statusStyleVars = (visual: StatusVisual) => ({

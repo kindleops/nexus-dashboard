@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
-import { formatRelativeTime } from '../../../shared/formatters'
+import { formatCompactTime } from '../../../shared/formatters'
 import {
   resolveThreadAddressLine,
   resolveThreadMarketBadge,
@@ -9,6 +9,7 @@ import {
   type InboxSavedFilterPreset,
   type InboxViewSelectValue,
 } from '../inbox-ui-helpers'
+import { getStatusVisual, getSellerStageVisual } from '../status-visuals'
 
 const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
 
@@ -205,31 +206,42 @@ const resolvePropertyTypeBadge = (thread: InboxWorkflowThread) => {
 }
 
 const resolveStageBadge = (thread: InboxWorkflowThread) => {
-  const raw = readString(thread, 'threadWorkflowStage', 'workflowStage', 'queue_stage', 'detected_intent', 'conversationStage', 'inbox_category')
-  if (!raw) return 'Ownership Check'
-  return raw.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())
+  const raw = thread.conversationStage || readString(thread, 'threadWorkflowStage', 'workflowStage', 'queue_stage')
+  return getSellerStageVisual(raw || null).label
+}
+
+const resolveStatusBadge = (thread: InboxWorkflowThread): string | null => {
+  const visual = getStatusVisual(thread.inboxStatus, {
+    latestDirection: thread.lastDirection || (thread as any).latestDirection || (thread as any).directionUsed || null,
+    lastOutboundAt: thread.lastOutboundAt ?? null,
+    lastInboundAt: thread.lastInboundAt ?? null,
+  })
+  return visual.label || null
 }
 
 const resolveCardBadges = (thread: InboxWorkflowThread) => {
   const market = resolveThreadMarketBadge(thread)
   const stage = resolveStageBadge(thread)
-  const propertyType = resolvePropertyTypeBadge(thread)
+  const status = resolveStatusBadge(thread)
 
-  const stageShort = stage
-    .replace('Ownership Check', 'OWNERSHIP')
-    .replace('Interest Probe', 'INTEREST')
-    .replace('Active Communication', 'ACTIVE')
-    .replace('Price Discovery', 'PRICE')
-    .replace('Condition / Details', 'DETAILS')
-    .replace('Offer Stage', 'OFFER')
-    .replace('Contract Sent', 'CONTRACT')
-    .replace('Negotiation', 'NEGOTIATION')
-    .toUpperCase()
+  const stageShortMap: Record<string, string> = {
+    'Ownership Check': 'OWNERSHIP',
+    'Interest Probe': 'INTEREST',
+    'Active Communication': 'ACTIVE',
+    'Price Discovery': 'PRICE',
+    'Condition / Details': 'DETAILS',
+    'Offer Stage': 'OFFER',
+    'Contract Sent': 'CONTRACT',
+    'Negotiation': 'NEGOTIATION',
+    'Dead': 'DEAD',
+    'Closed': 'CLOSED',
+  }
+  const stageShort = stageShortMap[stage] ?? stage.toUpperCase().slice(0, 10)
 
   return [
     market ? market.toUpperCase() : null,
     stageShort || null,
-    propertyType || null,
+    status ? status.toUpperCase() : null,
   ].filter(Boolean) as string[]
 }
 
@@ -245,12 +257,13 @@ const ConversationRow = memo(({ thread, selected, queuePreset, onSelect, onThrea
   const name = resolveThreadPrimaryName(thread) || readString(thread, 'best_phone', 'canonical_e164', 'phone') || 'Unknown Owner'
   const address = resolveThreadAddressLine(thread) || readString(thread, 'property_address_full', 'propertyAddressFull') || 'No Address'
   const preview = readString(thread, 'latest_message_body', 'latestMessageBody', 'lastMessageBody', 'preview') || ''
-  const time = thread.lastMessageAt || thread.lastMessageIso || thread.updatedAt
+  const time = thread.lastMessageAt || (thread as any).lastMessageIso || thread.updatedAt
   const avatarToneClass = queuePreset === 'suppressed' ? 'is-dnc' : queuePreset === 'positive_hot' ? 'is-hot' : 'is-default'
   const previewText = preview.replace(/\s+/g, ' ').trim()
   const badges = resolveCardBadges(thread)
   const isStarred = Boolean(thread.isStarred)
   const isPinned = Boolean(thread.isPinned)
+  const lastDir = thread.lastDirection || (thread as any).latestDirection || (thread as any).directionUsed || 'unknown'
 
   const handleAction = (action: string) => (e: React.MouseEvent) => {
     e.preventDefault()
@@ -281,7 +294,12 @@ const ConversationRow = memo(({ thread, selected, queuePreset, onSelect, onThrea
           <div className="nx-thread-card__meta">
             {isPinned && <span className="nx-thread-card__pin-icon" title="Pinned">📌</span>}
             {isStarred && <span className="nx-thread-card__star-icon" title="Starred">⭐</span>}
-            <time className="nx-thread-card__time">{time ? formatRelativeTime(time).toUpperCase() : '—'}</time>
+            {lastDir !== 'unknown' && (
+              <span className={cls('nx-dir-badge', lastDir === 'inbound' ? 'is-in' : 'is-out')}>
+                {lastDir === 'inbound' ? 'IN' : 'OUT'}
+              </span>
+            )}
+            <time className="nx-thread-card__time">{time ? formatCompactTime(time) : '—'}</time>
           </div>
         </div>
         <div className="nx-thread-card__address">{address}</div>
@@ -296,7 +314,7 @@ const ConversationRow = memo(({ thread, selected, queuePreset, onSelect, onThrea
                     'nx-thread-chip',
                     i === 0 && 'is-market',
                     i === 1 && 'is-stage',
-                    i === 2 && 'is-type',
+                    i === 2 && 'is-status',
                   )}
                 >
                   {badge}
@@ -418,6 +436,32 @@ export const InboxSidebar = ({
 
   const [manuallyClosed, setManuallyClosed] = useState<Set<QueuePreset>>(new Set())
 
+  type ModePerspective = 'priority' | 'active' | 'waiting' | 'all'
+  const [modePerspective, setModePerspective] = useState<ModePerspective>('all')
+
+  const filterByMode = (threadList: InboxWorkflowThread[], mode: ModePerspective): InboxWorkflowThread[] => {
+    if (mode === 'all') return threadList
+    const now = Date.now()
+    if (mode === 'priority') return threadList.filter((t) => (readNumber(t, 'finalAcquisitionScore', 'final_acquisition_score', 'priorityScore', 'priority_score') ?? 0) >= 55)
+    if (mode === 'active') return threadList.filter((t) => { const ts = getActivityTime(t); return ts > 0 && (now - ts) < 48 * 36e5 })
+    if (mode === 'waiting') return threadList.filter((t) => t.lastDirection === 'outbound' || readString(t, 'latest_message_direction', 'latestDirection').toLowerCase() === 'outbound')
+    return threadList
+  }
+
+  const modeCounts = useMemo(() => {
+    const queueThreads = activeQueueConfig ? groupedThreads[activeQueueConfig.preset] : visibleThreads
+    const now = Date.now()
+    return {
+      priority: queueThreads.filter((t) => (readNumber(t, 'finalAcquisitionScore', 'final_acquisition_score', 'priorityScore', 'priority_score') ?? 0) >= 55).length,
+      active: queueThreads.filter((t) => {
+        const ts = getActivityTime(t)
+        return ts > 0 && (now - ts) < 48 * 36e5
+      }).length,
+      waiting: queueThreads.filter((t) => readString(t, 'latest_message_direction', 'latestDirection').toLowerCase() === 'outbound').length,
+      all: queueThreads.length,
+    }
+  }, [groupedThreads, activeQueueConfig, visibleThreads])
+
   const handleQueueClick = (preset: QueuePreset) => {
     if (expandedQueue === preset) {
       setManuallyClosed((prev) => {
@@ -437,7 +481,10 @@ export const InboxSidebar = ({
 
         {/* ── Top bar: label + icon actions ── */}
         <div className="nx-sidebar__label-row">
-          <span className="nx-section-label">ACQUISITIONS INBOX</span>
+          <span className="nx-section-label">
+            ACQUISITIONS INBOX
+            <b className="nx-sidebar__label-count">{formatCount(numberOrNull(activeCount) ?? 0)}</b>
+          </span>
           <div className="nx-sidebar__header-actions">
             <button type="button" className="nx-sidebar__icon-button" title="Notifications">
               <Icon name="alert" />
@@ -462,9 +509,18 @@ export const InboxSidebar = ({
             </div>
             <span className="nx-sidebar__hero__count">{formatCount(numberOrNull(activeCount) ?? 0)}</span>
           </div>
-          <div className="nx-sidebar__hero__total">
-            <span>Total</span>
-            <strong>{formatCount(numberOrNull(totalCount) ?? 0)}</strong>
+          <div className="nx-sidebar__hero__modes">
+            {(['priority', 'active', 'waiting', 'all'] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                className={cls('nx-hero-mode-tab', modePerspective === mode && 'is-active')}
+                onClick={(e) => { e.stopPropagation(); setModePerspective(mode) }}
+              >
+                <span className="nx-hero-mode-tab__count">{modeCounts[mode]}</span>
+                <span className="nx-hero-mode-tab__label">{mode.toUpperCase()}</span>
+              </button>
+            ))}
           </div>
         </div>
 
@@ -492,6 +548,7 @@ export const InboxSidebar = ({
           const isActive = expandedQueue === group.preset
           const expanded = isActive && !manuallyClosed.has(group.preset)
           const groupThreads = groupedThreads[group.preset]
+          const displayThreads = isActive ? filterByMode(groupThreads, modePerspective) : groupThreads
           const count = getQueueCount(group.preset, viewCounts[group.countKey], groupThreads.length)
           return (
             <section key={group.preset} className={cls('nx-queue-group', group.accentClass, expanded && 'is-expanded')}>
@@ -509,8 +566,8 @@ export const InboxSidebar = ({
 
               {expanded && (
                 <div className="nx-queue-group__threads">
-                  {groupThreads.length > 0 ? (
-                    groupThreads.map((thread) => (
+                  {displayThreads.length > 0 ? (
+                    displayThreads.map((thread) => (
                       <ConversationRow
                         key={thread.threadKey || thread.id}
                         thread={thread}
@@ -521,7 +578,9 @@ export const InboxSidebar = ({
                       />
                     ))
                   ) : (
-                    <div className="nx-sidebar-empty">No conversations match this queue.</div>
+                    <div className="nx-sidebar-empty">
+                      {modePerspective !== 'all' ? `No ${modePerspective} threads in this queue.` : 'No conversations match this queue.'}
+                    </div>
                   )}
                 </div>
               )}

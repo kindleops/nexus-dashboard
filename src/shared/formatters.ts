@@ -53,6 +53,30 @@ export const formatRelativeTime = (iso: string) => {
   return `${deltaDays}d ago`
 }
 
+export const formatCompactTime = (iso: string): string => {
+  const delta = Math.max(1, Math.round((Date.now() - new Date(iso).getTime()) / 60_000))
+  if (delta < 60) return `${delta}M`
+  const hours = Math.round(delta / 60)
+  if (hours < 24) return `${hours}H`
+  const days = Math.round(hours / 24)
+  if (days < 30) return `${days}D`
+  const months = Math.round(days / 30)
+  return `${months}MO`
+}
+
+export const formatMessageTime = (iso: string): string => {
+  const d = new Date(iso)
+  const month = d.getMonth() + 1
+  const day = d.getDate()
+  const year = String(d.getFullYear()).slice(2)
+  const hours = d.getHours()
+  const minutes = d.getMinutes()
+  const ampm = hours >= 12 ? 'pm' : 'am'
+  const hour12 = hours % 12 || 12
+  const minuteStr = minutes.toString().padStart(2, '0')
+  return `${month}/${day}/${year} • ${hour12}:${minuteStr}${ampm}`
+}
+
 export const formatStageLabel = (value: string) =>
   value
     .split('-')

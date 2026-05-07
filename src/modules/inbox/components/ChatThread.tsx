@@ -2,7 +2,7 @@ import { useLayoutEffect, useRef } from 'react'
 import type { ThreadMessage } from '../../../lib/data/inboxData'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
-import { formatRelativeTime } from '../../../shared/formatters'
+import { formatMessageTime } from '../../../shared/formatters'
 import { getThreadMatchedKeywords, resolveThreadAddressLine, resolveThreadMarketBadge, resolveThreadPrimaryName } from '../inbox-ui-helpers'
 import { getStatusVisual, getSellerStageVisual } from '../status-visuals'
 
@@ -141,12 +141,10 @@ export const ChatThread = ({
             <span className="nx-chat-header__address">{propertyAddress}</span>
           )}
           <div className="nx-thread-meta-line">
-            {market && <span className="nx-market-tag">Market · {market}</span>}
-            <span className="nx-stage-pill nx-conv-stage-pill">
-              Stage · {stageVisual.label}
-            </span>
+            {market && <span className="nx-market-tag">{market}</span>}
+            <span className="nx-stage-pill nx-conv-stage-pill">{stageVisual.label}</span>
             <span className="nx-stage-pill" style={{ '--pill-color': statusVisual.color, '--pill-bg': statusVisual.bg, '--pill-border': statusVisual.border } as any}>
-              Status · {statusVisual.label}
+              {statusVisual.label}
             </span>
             {isSuppressed && <span className="nx-suppression-badge">Opted Out</span>}
           </div>
@@ -221,7 +219,7 @@ export const ChatThread = ({
 
             <div className="nx-bubble-footer">
               <div className="nx-bubble-meta-badge">
-                <time>{formatRelativeTime(msg.createdAt)}</time>
+                <time>{formatMessageTime(msg.createdAt)}</time>
                 
                 {/* Dev Tooltip */}
                 <div className="nx-dev-tooltip">

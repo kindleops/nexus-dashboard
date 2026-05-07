@@ -398,7 +398,7 @@ export const DealCommandHeader = ({ thread }: { thread: InboxWorkflowThread }) =
           </div>
           <div className="nx-dossier-header__status-row">
             <span className="nx-dossier-header__status-label">Seller Stage</span>
-            <StatusPill label={stageVisual.label} color={stageVisual.color} />
+            <StatusPill label={stageVisual.label} color="#c084fc" />
           </div>
           <div className="nx-dossier-header__status-row">
             <span className="nx-dossier-header__status-label">Priority Score</span>

@@ -1070,7 +1070,7 @@ export default function InboxPage() {
     if (!selected) return
     const actualStatus: InboxStatus = status === 'sent_message' ? 'waiting' : status
     const extraPatch = status === 'sent_message'
-      ? { latestDirection: 'outbound' as const, lastOutboundAt: new Date().toISOString() }
+      ? { latestDirection: 'outbound' as const, lastDirection: 'outbound' as const, lastOutboundAt: new Date().toISOString() }
       : {}
     setOptimisticPatches(prev => ({ ...prev, [selected.id]: { ...prev[selected.id], inboxStatus: actualStatus, ...extraPatch } }))
     
