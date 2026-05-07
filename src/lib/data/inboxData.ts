@@ -1998,11 +1998,11 @@ export const toThreadMessage = (row: AnyRecord): ThreadMessage => {
     rawStatus: normalizeStatus(row['delivery_status'] ?? row['raw_carrier_status']),
     error: asString(row['error_message'] ?? row['failure_reason'] ?? row['failure_code'], '') || null,
     eventType: asString(row['event_type'], ''),
-    providerSid: asString(row['provider_message_sid'], ''),
-    metadata: row['metadata'] as Record<string, any>,
+    metadata: row['metadata'] || {},
     developerMeta,
   }
 }
+
 
 
 const buildMessageEventThreadCandidates = (thread: InboxThread): Array<{ key: string; value: string }> => {

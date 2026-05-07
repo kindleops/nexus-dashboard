@@ -18,6 +18,8 @@ interface ChatThreadProps {
   onTogglePin?: () => void
   onToggleStar?: () => void
   onToggleArchive?: () => void
+  onThreadAction?: (id: string, action: string) => void
+  onOpenDebug?: () => void
   searchQuery?: string
 }
 
@@ -41,10 +43,11 @@ const highlightText = (text: string, terms: string[]) => {
       : part
   ))
 }
+
 const normalizeDeliveryBadge = (message: ThreadMessage): 'failed' | 'pending' | 'delivered' | 'unknown' => {
   const status = String(message.deliveryStatus || message.rawStatus || '').toLowerCase()
   if (status.includes('fail') || status.includes('error') || status.includes('undeliver')) return 'failed'
-  if (status.includes('delivered') || status.includes('sent')) return 'delivered'
+  if (status.includes('delivered') || status.includes('sent') || status === 'success') return 'delivered'
   if (status.includes('queue') || status.includes('pending') || status.includes('schedule') || status.includes('approval')) return 'pending'
   return 'unknown'
 }
@@ -58,6 +61,8 @@ export const ChatThread = ({
   onTogglePin,
   onToggleStar,
   onToggleArchive,
+  onThreadAction,
+  onOpenDebug,
   searchQuery = '',
 }: ChatThreadProps) => {
   const listRef = useRef<HTMLDivElement | null>(null)
@@ -101,6 +106,7 @@ export const ChatThread = ({
   if (!thread) return (
     <div className="nx-chat-container is-empty">
       <div className="nx-inbox__workspace-empty">
+        <Icon name="Mail" style={{ width: 48, height: 48, opacity: 0.1, marginBottom: 16 }} />
         <p>Select a thread to view the conversation.</p>
       </div>
     </div>
@@ -109,8 +115,8 @@ export const ChatThread = ({
   if (loading && messages.length === 0) return (
     <div className="nx-chat-container">
       <div className="nx-inbox__messages-loading">
-        <Icon name="activity" className="nx-inbox__messages-loading-icon" />
-        <span>Loading messages…</span>
+        <Icon name="Activity" className="nx-inbox__messages-loading-icon" />
+        <span>Syncing timeline…</span>
       </div>
     </div>
   )
@@ -127,6 +133,8 @@ export const ChatThread = ({
   const stageVisual = getSellerStageVisual(thread.conversationStage)
   const matchedKeywords = getThreadMatchedKeywords(thread, searchQuery)
 
+  const isAutoPaused = thread.status?.toLowerCase().includes('pause') || (thread as any).automationStatus === 'paused'
+
   return (
     <div className="nx-chat-container">
       <header className="nx-chat-header">
@@ -135,6 +143,11 @@ export const ChatThread = ({
             <span className="nx-chat-header__name">{ownerName}</span>
             {phoneNumber && (
               <span className="nx-chat-header__phone">{phoneNumber}</span>
+            )}
+            {import.meta.env.DEV && (
+              <button className="nx-debug-btn-mini" onClick={onOpenDebug} title="Debug Thread">
+                <Icon name="Cpu" />
+              </button>
             )}
           </div>
           {propertyAddress && (
@@ -154,97 +167,100 @@ export const ChatThread = ({
             type="button"
             className={cls('nx-chat-action', isStarred && 'is-active')}
             title={isStarred ? 'Unstar thread' : 'Star thread'}
-            onClick={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              console.log(`[NexusInboxActionNoRefresh]`, {
-                action: isStarred ? 'unstar' : 'star',
-                thread_id: thread.id.slice(-8),
-                optimistic: true,
-                preventedDefault: true,
-                stoppedPropagation: true
-              })
-              onToggleStar?.()
-            }}
+            onClick={() => onToggleStar?.()}
           >
-            <Icon name="star" />
+            <Icon name="Star" />
           </button>
           <button
             type="button"
             className={cls('nx-chat-action', thread.isPinned && 'is-active')}
             title={thread.isPinned ? 'Unpin thread' : 'Pin thread'}
-            onClick={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              console.log(`[NexusInboxActionNoRefresh]`, {
-                action: thread.isPinned ? 'unpin' : 'pin',
-                thread_id: thread.id.slice(-8),
-                optimistic: true,
-                preventedDefault: true,
-                stoppedPropagation: true
-              })
-              onTogglePin?.()
-            }}
+            onClick={() => onTogglePin?.()}
           >
-            <Icon name="pin" />
+            <Icon name="Bookmark" />
           </button>
           <button
             type="button"
             className="nx-chat-action"
             title={thread.isArchived ? 'Unarchive thread' : 'Archive thread'}
-            onClick={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              console.log(`[NexusInboxActionNoRefresh]`, {
-                action: thread.isArchived ? 'unarchive' : 'archive',
-                thread_id: thread.id.slice(-8),
-                optimistic: true,
-                preventedDefault: true,
-                stoppedPropagation: true
-              })
-              onToggleArchive?.()
-            }}
+            onClick={() => onToggleArchive?.()}
           >
-            <Icon name="archive" />
+            <Icon name="Archive" />
           </button>
         </div>
       </header>
 
-      <div className="nx-message-list" ref={listRef} onScroll={handleScroll}>
-        {messages.map(msg => (
-          <div key={msg.id} className={cls('nx-bubble-wrap', msg.direction === 'inbound' ? 'is-inbound' : 'is-outbound')}>
-            <div className="nx-chat-bubble">
-              {highlightText(msg.body, matchedKeywords.length ? matchedKeywords : [searchQuery])}
-            </div>
+      {/* Operator Rail */}
+      <div className="nx-operator-rail">
+        <div className="nx-rail-group">
+          <button className="nx-rail-btn is-hot" onClick={() => onThreadAction?.(thread.id, 'mark_hot')}>
+            <Icon name="Zap" /> HOT
+          </button>
+          <button className="nx-rail-btn" onClick={() => onThreadAction?.(thread.id, 'snooze')}>
+            <Icon name="Clock" /> SNOOZE
+          </button>
+        </div>
+        <div className="nx-rail-divider" />
+        <div className="nx-rail-group">
+          {isAutoPaused ? (
+            <button className="nx-rail-btn is-resume" onClick={() => onThreadAction?.(thread.id, 'resume_automation')}>
+              <Icon name="Play" /> RESUME AUTO
+            </button>
+          ) : (
+            <button className="nx-rail-btn is-pause" onClick={() => onThreadAction?.(thread.id, 'pause_automation')}>
+              <Icon name="Pause" /> PAUSE AUTO
+            </button>
+          )}
+          <button className="nx-rail-btn is-dnc" onClick={() => onThreadAction?.(thread.id, 'suppress')}>
+            <Icon name="Slash" /> DNC
+          </button>
+        </div>
+      </div>
 
-            <div className="nx-bubble-footer">
-              <div className="nx-bubble-meta-badge">
-                <time>{formatMessageTime(msg.createdAt)}</time>
-                
-                {/* Dev Tooltip */}
-                <div className="nx-dev-tooltip">
-                  <span>Local Sent: <b>{new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</b></span>
-                  <span>System Time: <b>{msg.createdAt.split('T')[1].split('.')[0]}</b></span>
-                  {msg.deliveryStatus && (
-                    <span>Status: <b>{titleCase(msg.deliveryStatus)}</b></span>
-                  )}
-                  {msg.developerMeta?.provider_message_sid && (
-                    <span>Provider ID: <b>{msg.developerMeta.provider_message_sid.slice(0, 12)}…</b></span>
-                  )}
-                </div>
+      <div className="nx-message-list" ref={listRef} onScroll={handleScroll}>
+        {messages.map(msg => {
+          const isOutbound = msg.direction === 'outbound'
+          const deliveryBadge = normalizeDeliveryBadge(msg)
+          return (
+            <div key={msg.id} className={cls('nx-bubble-wrap', isOutbound ? 'is-outbound' : 'is-inbound')}>
+              <div className="nx-chat-bubble">
+                {highlightText(msg.body, matchedKeywords.length ? matchedKeywords : [searchQuery])}
               </div>
 
-              {msg.direction === 'outbound' && (
-                <span className={cls('nx-delivery-pill', `is-${normalizeDeliveryBadge(msg)}`)}>
-                  {titleCase(normalizeDeliveryBadge(msg))}
-                </span>
-              )}
+              <div className="nx-bubble-footer">
+                <div className="nx-bubble-meta-badge">
+                  <time>{formatMessageTime(msg.createdAt)}</time>
+                  
+                  <div className="nx-dev-tooltip">
+                    <span>Source: <b>{msg.source}</b></span>
+                    <span>Event: <b>{msg.eventType}</b></span>
+                    {msg.deliveryStatus && (
+                      <span>Status: <b>{titleCase(msg.deliveryStatus)}</b></span>
+                    )}
+                  </div>
+                </div>
+
+                {isOutbound && (
+                  <div className="nx-delivery-row">
+                    <span className={cls('nx-delivery-pill', `is-${deliveryBadge}`)}>
+                      {titleCase(deliveryBadge)}
+                    </span>
+                    {deliveryBadge === 'failed' && (
+                      <button className="nx-retry-btn" onClick={() => onThreadAction?.(thread.id, 'retry_send')} title="Retry sending">
+                        <Icon name="RefreshCw" />
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
         {messages.length === 0 && !loading && (
           <div className="nx-inbox__messages-empty">
-            <p>No messages loaded for this thread.</p>
+            <Icon name="MessageSquare" style={{ opacity: 0.1, width: 40, height: 40, marginBottom: 12 }} />
+            <p>No messages in timeline.</p>
+            {console.warn(`[Timeline] No messages for thread_key: ${thread.threadKey || thread.id}`)}
           </div>
         )}
       </div>

@@ -1,9 +1,10 @@
-import { useState, useMemo } from 'react'
+import { useMemo } from 'react'
 import type { ThreadContext, ThreadIntelligenceRecord } from '../../../lib/data/inboxData'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import type { PanelMode } from '../inbox-layout-state'
 import {
   normalizePropertySnapshot,
+  buildPropertyExternalLinks
 } from '../inbox-normalization'
 import { Icon } from '../../../shared/icons'
 
@@ -15,7 +16,7 @@ const normalizeText = (value: unknown): string => String(value ?? '').trim()
 
 const isPresent = (value: unknown): boolean => {
   const text = normalizeText(value).toLowerCase()
-  return Boolean(text) && text !== 'unknown' && text !== 'n/a' && text !== 'null' && text !== 'undefined' && text !== 'none' && text !== '-'
+  return Boolean(text) && text !== 'unknown' && text !== 'n/a' && text !== 'null' && text !== 'undefined' && text !== 'none' && text !== '-' && text !== '0'
 }
 
 const formatMoney = (value: unknown): string | null => {
@@ -34,13 +35,11 @@ const formatPercent = (value: unknown): string | null => {
   return `${Math.round(num)}%`
 }
 
-const fmtPhone = (value: unknown): string | null => {
-  const raw = normalizeText(value)
-  if (!raw) return null
-  const digits = raw.replace(/\D/g, '')
-  if (digits.length === 11 && digits.startsWith('1')) return `+1 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`
-  if (digits.length === 10) return `+1 (${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
-  return raw
+const roundVal = (value: unknown): string => {
+  if (!isPresent(value)) return ''
+  const num = Number(String(value).replace(/[^0-9.]/g, ''))
+  if (!Number.isFinite(num)) return String(value)
+  return String(Math.round(num))
 }
 
 // ── Reusable UI Components ────────────────────────────────────────────────
@@ -110,9 +109,8 @@ export function IntelligencePanel({
   thread,
   intelligence,
 }: IntelligencePanelProps) {
-  const [activeTab, setActiveTab] = useState<'snapshot' | 'portfolio' | 'automation'>('snapshot')
-
   const prop = useMemo(() => normalizePropertySnapshot(intelligence, thread), [intelligence, thread])
+  const links = useMemo(() => buildPropertyExternalLinks(prop.fullAddress), [prop.fullAddress])
   const intel = intelligence || {}
 
   if (!thread) {
@@ -131,115 +129,102 @@ export function IntelligencePanel({
       <header className="nx-intel-header">
         <div className="nx-section-label">
           <Icon name="Database" />
-          <span>DOSSIER</span>
-        </div>
-        <div className="nx-dossier-tabs-mini">
-          <button className={cls(activeTab === 'snapshot' && 'is-active')} onClick={() => setActiveTab('snapshot')}>SNAPSHOT</button>
-          <button className={cls(activeTab === 'portfolio' && 'is-active')} onClick={() => setActiveTab('portfolio')}>PORTFOLIO</button>
-          <button className={cls(activeTab === 'automation' && 'is-active')} onClick={() => setActiveTab('automation')}>AUTO</button>
+          <span>OPERATOR DOSSIER</span>
         </div>
       </header>
 
       <div className="nx-intel-scroll-body">
-        {activeTab === 'snapshot' && (
-          <>
-            <DossierCard title="Seller Identity" icon="User">
-              <MetricGrid>
-                <DossierMetric label="Full Name" value={prop.ownerType === 'Individual' ? thread.ownerName : (intel.owner_name as string)} icon="User" />
-                <DossierMetric label="Identity" value={intel.owner_type as string} icon="Shield" />
-                <DossierMetric label="Language" value={intel.seller_language as string || intel.detected_language as string} icon="Globe" />
-                <DossierMetric label="Marital" value={intel.marital_status as string} icon="Heart" />
-                <DossierMetric label="Gender" value={intel.gender as string} icon="Users" />
-                <DossierMetric label="Occupation" value={intel.occupation as string} icon="Briefcase" />
-                <DossierMetric label="Net Worth" value={intel.net_worth_bracket as string} icon="TrendingUp" />
-                <DossierMetric label="Income" value={intel.estimated_income_bracket as string} icon="DollarSign" />
-              </MetricGrid>
-            </DossierCard>
-
-            <DossierCard title="Property Assets" icon="Home">
-              <div className="nx-dossier-aerial-view">
-                {prop.aerialViewUrl && <img src={prop.aerialViewUrl} alt="Aerial View" />}
-              </div>
-              <div className="nx-dossier-address-block">
-                <strong>{prop.fullAddress}</strong>
-                <span>{prop.market || thread.marketName} • {prop.propertyType}</span>
-              </div>
-              <MetricGrid>
-                <DossierMetric label="Class" value={prop.propertyClass} />
-                <DossierMetric label="Style" value={prop.propertyStyle} />
-                <DossierMetric label="Beds" value={prop.beds} />
-                <DossierMetric label="Baths" value={prop.baths} />
-                <DossierMetric label="Sqft" value={prop.sqft} />
-                <DossierMetric label="Units" value={prop.unitCount} />
-                <DossierMetric label="Built" value={prop.yearBuilt} />
-                <DossierMetric label="Lot Size" value={prop.lotSizeAcres ? `${prop.lotSizeAcres} ac` : prop.lotSize} />
-                <DossierMetric label="Zoning" value={prop.zoning} />
-                <DossierMetric label="Flood" value={prop.floodZone} />
-              </MetricGrid>
-            </DossierCard>
-
-            <DossierCard title="Deal Snapshot" icon="Target">
-              <MetricGrid>
-                <DossierMetric label="Acq Score" value={thread.finalAcquisitionScore} accent="blue" />
-                <DossierMetric label="Equity %" value={formatPercent(prop.equityPercent)} accent="green" />
-                <DossierMetric label="Equity $" value={formatMoney(prop.equityAmount)} accent="green" />
-                <DossierMetric label="Est Value" value={formatMoney(prop.estimatedValue)} />
-                <DossierMetric label="Condition" value={intel.property_condition as string} />
-                <DossierMetric label="Ownership" value={prop.ownershipYears} suffix=" yrs" />
-              </MetricGrid>
-            </DossierCard>
-
-            <DossierCard title="Land & Tax" icon="FileText">
-              <MetricGrid>
-                <DossierMetric label="Total Assessed" value={formatMoney(intel.assessed_total_value)} />
-                <DossierMetric label="Land Value" value={formatMoney(intel.assessed_land_value)} />
-                <DossierMetric label="Improv Value" value={formatMoney(intel.assessed_improvement_value)} />
-                <DossierMetric label="Tax Amount" value={formatMoney(intel.tax_amount)} />
-                <DossierMetric label="Tax Delinq" value={intel.is_tax_delinquent ? 'YES' : 'NO'} accent={intel.is_tax_delinquent ? 'red' : undefined} />
-                <DossierMetric label="Sewer/Water" value={intel.sewer_type as string} />
-              </MetricGrid>
-            </DossierCard>
-          </>
-        )}
-
-        {activeTab === 'portfolio' && (
-          <DossierCard title="Portfolio Metrics" icon="Briefcase">
-            <MetricGrid>
-              <DossierMetric label="Prop Count" value={intel.portfolio_count as number} accent="blue" />
-              <DossierMetric label="Total Units" value={intel.portfolio_total_units as number} />
-              <DossierMetric label="Total Value" value={formatMoney(intel.portfolio_total_value)} />
-              <DossierMetric label="Total Equity" value={formatMoney(intel.portfolio_total_equity)} accent="green" />
-              <DossierMetric label="Total Debt" value={formatMoney(intel.portfolio_total_debt)} accent="red" />
-              <DossierMetric label="Pressure" value={intel.portfolio_pressure_score as number} accent="amber" />
-              <DossierMetric label="Urgency" value={intel.portfolio_urgency_count as number} accent="red" />
-            </MetricGrid>
-          </DossierCard>
-        )}
-
-        {activeTab === 'automation' && (
-          <DossierCard title="System Intelligence" icon="Cpu">
-            <MetricGrid>
-              <DossierMetric label="Intent" value={thread.uiIntent} accent="purple" />
-              <DossierMetric label="Confidence" value={formatPercent(intel.intent_confidence)} />
-              <DossierMetric label="Needs Review" value={intel.needs_human_review ? 'YES' : 'NO'} accent={intel.needs_human_review ? 'amber' : 'green'} />
-              <DossierMetric label="Template ID" value={intel.template_id as string} />
-              <DossierMetric label="Use Case" value={intel.template_use_case as string} />
-              <DossierMetric label="State" value={thread.status} />
-            </MetricGrid>
-            <div className="nx-dossier-next-action">
-              <SectionTitle icon="Play">Next Action</SectionTitle>
-              <p>{(intel.next_suggested_action as string) || 'No system action pending.'}</p>
-            </div>
-          </DossierCard>
-        )}
-
-        <DossierCard title="Timeline Stats" icon="Activity">
+        {/* Section 1: Seller Snapshot */}
+        <DossierCard title="Seller Snapshot" icon="User">
           <MetricGrid>
+            <DossierMetric label="Full Name" value={prop.ownerType === 'Individual' ? thread.ownerName : (intel.owner_name as string)} icon="User" />
+            <DossierMetric label="Identity" value={intel.owner_type as string} icon="Shield" />
+            <DossierMetric label="Language" value={intel.seller_language as string || intel.detected_language as string} icon="Globe" />
+            <DossierMetric label="Marital" value={intel.marital_status as string} icon="Heart" />
+            <DossierMetric label="Occupation" value={intel.occupation as string} icon="Briefcase" />
+            <DossierMetric label="Net Worth" value={intel.net_worth_bracket as string} icon="TrendingUp" />
+            <DossierMetric label="Income" value={intel.estimated_income_bracket as string} icon="DollarSign" />
+          </MetricGrid>
+        </DossierCard>
+
+        {/* Section 2: Property Snapshot */}
+        <DossierCard title="Property Snapshot" icon="Home">
+          <div className="nx-dossier-aerial-view">
+            {prop.aerialViewUrl && <img src={prop.aerialViewUrl} alt="Aerial View" />}
+          </div>
+          <div className="nx-dossier-address-block">
+            <strong>{prop.fullAddress}</strong>
+            <span>{prop.market || thread.marketName} • {prop.propertyType}</span>
+          </div>
+          <MetricGrid>
+            <DossierMetric label="Class" value={prop.propertyClass} />
+            <DossierMetric label="Style" value={prop.propertyStyle} />
+            <DossierMetric label="Beds" value={roundVal(prop.beds)} />
+            <DossierMetric label="Baths" value={roundVal(prop.baths)} />
+            <DossierMetric label="Sqft" value={roundVal(prop.sqft)} />
+            <DossierMetric label="Units" value={roundVal(prop.unitCount)} />
+            <DossierMetric label="Built" value={prop.yearBuilt} />
+            <DossierMetric label="Lot Size" value={prop.lotSizeAcres ? `${prop.lotSizeAcres} ac` : prop.lotSize} />
+            <DossierMetric label="Zoning" value={prop.zoning} />
+            <DossierMetric label="Flood" value={prop.floodZone} />
+          </MetricGrid>
+        </DossierCard>
+
+        {/* Section 3: Deal Snapshot */}
+        <DossierCard title="Deal Snapshot" icon="Target">
+          <MetricGrid>
+            <DossierMetric label="Acq Score" value={roundVal(thread.finalAcquisitionScore)} accent="blue" />
+            <DossierMetric label="Equity %" value={formatPercent(prop.equityPercent)} accent="green" />
+            <DossierMetric label="Equity $" value={formatMoney(prop.equityAmount)} accent="green" />
+            <DossierMetric label="Est Value" value={formatMoney(prop.estimatedValue)} />
+            <DossierMetric label="Condition" value={intel.property_condition as string} />
+            <DossierMetric label="Ownership" value={roundVal(prop.ownershipYears)} suffix=" yrs" />
+            <DossierMetric label="Total Assessed" value={formatMoney(intel.assessed_total_value)} />
+            <DossierMetric label="Tax Delinq" value={intel.is_tax_delinquent ? 'YES' : 'NO'} accent={intel.is_tax_delinquent ? 'red' : undefined} />
+          </MetricGrid>
+        </DossierCard>
+
+        {/* Section 4: Automation / Timeline */}
+        <DossierCard title="Automation / Timeline" icon="Activity">
+          <MetricGrid>
+            <DossierMetric label="Status" value={thread.status} accent="purple" />
+            <DossierMetric label="Workflow" value={thread.workflowStage} />
+            <DossierMetric label="Intent" value={thread.uiIntent} />
             <DossierMetric label="Inbound" value={thread.messageCount} icon="ArrowDownLeft" />
             <DossierMetric label="Outbound" value={intel.outbound_count as number} icon="ArrowUpRight" />
             <DossierMetric label="Delivered" value={intel.delivered_count as number} icon="Check" accent="green" />
             <DossierMetric label="Failed" value={intel.failed_count as number} icon="AlertCircle" accent="red" />
           </MetricGrid>
+          <div className="nx-dossier-next-action">
+            <SectionTitle icon="Play">System Status</SectionTitle>
+            <p>{(intel.next_suggested_action as string) || (intel.needs_human_review ? 'Needs Operator Review' : 'System idling.')}</p>
+          </div>
+        </DossierCard>
+
+        {/* Section 5: Linked Apps */}
+        <DossierCard title="Linked Apps" icon="Link">
+          <div className="nx-dossier-links">
+            {links.zillow && (
+              <a href={links.zillow} target="_blank" rel="noopener noreferrer" className="nx-app-link">
+                <Icon name="ExternalLink" /> Zillow
+              </a>
+            )}
+            {links.realtor && (
+              <a href={links.realtor} target="_blank" rel="noopener noreferrer" className="nx-app-link">
+                <Icon name="ExternalLink" /> Realtor.com
+              </a>
+            )}
+            {links.googleSearch && (
+              <a href={links.googleSearch} target="_blank" rel="noopener noreferrer" className="nx-app-link">
+                <Icon name="Search" /> Google Search
+              </a>
+            )}
+            {intel.podio_item_id && (
+              <a href={`https://podio.com/x/y/item/${intel.podio_item_id}`} target="_blank" rel="noopener noreferrer" className="nx-app-link podio">
+                <Icon name="Database" /> Podio Lead
+              </a>
+            )}
+          </div>
         </DossierCard>
       </div>
     </div>

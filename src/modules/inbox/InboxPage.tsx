@@ -13,10 +13,16 @@ import {
   unarchiveThread,
   markThreadRead,
   markThreadUnread,
+  markThreadHot,
+  snoozeThread,
+  pauseAutomation,
+  resumeAutomation,
+  retryFailedSend,
   type InboxStatus,
   type SellerStage,
   type InboxWorkflowThread,
 } from '../../lib/data/inboxWorkflowData'
+
 import {
   getQueueProcessorHealth,
   getThreadIntelligence,
@@ -51,6 +57,8 @@ import { CopilotOrb } from '../../shared/copilot/CopilotOrb'
 import { AdvancedFiltersPopover } from './components/AdvancedFiltersPopover'
 import { InboxCommandPalette, type InboxCmd } from './InboxCommandPalette'
 import { InboxSchedulePanel, type ScheduledTime } from './InboxSchedulePanel'
+import { ThreadDebugModal } from './components/ThreadDebugModal'
+
 import { translateText } from './translate.api'
 import { buildThreadCommandIntel, type ThreadCommandIntel } from './ai-command-center'
 import { buildAutonomousEngineModel, defaultAutonomyControlState, type AutonomyControlState } from './autonomy-engine'
@@ -164,6 +172,8 @@ export default function InboxPage() {
   const [optimisticPatches, setOptimisticPatches] = useState<Record<string, Partial<InboxWorkflowThread>>>({})
   const [isAiListening, setIsAiListening] = useState(false)
   const [isSending, setIsSending] = useState(false)
+  const [debugModalOpen, setDebugModalOpen] = useState(false)
+
   const [queueModel, setQueueModel] = useState<QueueModel | null>(null)
   const [templateInventory, setTemplateInventory] = useState<SmsTemplate[]>([])
   const [activityFeed, setActivityFeed] = useState<InboxActivityEvent[]>([])
@@ -1144,6 +1154,52 @@ export default function InboxPage() {
     setLayoutState((current) => ({ ...current, selectedThreadId: id }))
   }, [threads])
 
+  const handleOperatorAction = useCallback(async (id: string, action: string) => {
+    const thread = threads.find((t) => t.id === id)
+    if (!thread) return
+
+    if (DEV) console.log(`[OperatorAction] ${action} on ${id.slice(-8)}`)
+
+    switch (action) {
+      case 'mark_hot':
+        await handleWorkflowMutation('Lead: HOT', () => markThreadHot(thread), { skipRefresh: true })
+        break
+      case 'snooze':
+        await handleWorkflowMutation('Thread: Snoozed', () => snoozeThread(thread), { skipRefresh: true })
+        break
+      case 'pause_automation':
+        await handleWorkflowMutation('Automation: Paused', () => pauseAutomation(thread), { skipRefresh: true })
+        break
+      case 'resume_automation':
+        await handleWorkflowMutation('Automation: Resumed', () => resumeAutomation(thread), { skipRefresh: true })
+        break
+      case 'suppress':
+        await handleWorkflowMutation('Thread: Suppressed (DNC)', () => suppressThread(thread), { skipRefresh: true })
+        break
+      case 'retry_send':
+        await handleWorkflowMutation('Timeline: Retrying...', () => retryFailedSend(thread), { skipRefresh: true })
+        break
+      case 'archive':
+        handleToggleArchive()
+        break
+      case 'star':
+        handleToggleStar()
+        break
+      case 'unstar':
+        handleToggleStar()
+        break
+      case 'pin':
+        handleTogglePin()
+        break
+      case 'unpin':
+        handleTogglePin()
+        break
+      default:
+        console.warn('[OperatorAction] Unknown action', action)
+    }
+  }, [threads, handleWorkflowMutation, handleToggleArchive, handleToggleStar, handleTogglePin, DEV])
+
+
   const handleSend = useCallback(async (text: string) => {
     if (!selected || !text.trim() || isSending) return
     if (selectedSuppressed) {
@@ -1572,8 +1628,11 @@ export default function InboxPage() {
             onTogglePin={handleTogglePin}
             onToggleStar={handleToggleStar}
             onToggleArchive={handleToggleArchive}
+            onThreadAction={handleOperatorAction}
+            onOpenDebug={() => setDebugModalOpen(true)}
             searchQuery={searchQuery}
           />
+
 
           {showTranslation && (
             <ComposerTranslationBar
@@ -1772,6 +1831,16 @@ export default function InboxPage() {
       />
       {contextLoading && <div hidden>Loading context</div>}
       {scheduledTime && <div hidden>{scheduledTime.label}</div>}
+      {debugModalOpen && (
+        <ThreadDebugModal
+          isOpen={debugModalOpen}
+          onClose={() => setDebugModalOpen(false)}
+          thread={selected}
+          messages={selectedMessages}
+          intelligence={threadIntelligence}
+        />
+      )}
     </div>
+
   )
 }

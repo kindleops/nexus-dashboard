@@ -518,7 +518,8 @@ export const getThreadWorkflowState = async (thread: InboxThread): Promise<Inbox
 
 const persistWorkflowPatch = async (
   thread: InboxThread,
-  patch: Partial<Pick<InboxThreadWorkflow, 'inboxStatus' | 'conversationStage' | 'isArchived' | 'isRead' | 'isPinned' | 'isStarred' | 'isHidden' | 'isSuppressed' | 'priority'>>,
+  patch: Partial<Pick<InboxThreadWorkflow, 'inboxStatus' | 'conversationStage' | 'isArchived' | 'isRead' | 'isPinned' | 'isStarred' | 'isHidden' | 'isSuppressed' | 'priority'>> & { isHotLead?: boolean; automationState?: AutomationState },
+
 ): Promise<WorkflowMutationResult> => {
   const supabase = getSupabaseClient()
   const now = new Date().toISOString()
@@ -568,7 +569,10 @@ const persistWorkflowPatch = async (
       payload['suppressed_at'] = patch.isSuppressed ? now : null
     }
     if (patch.isArchived != null) payload['archived_at'] = patch.isArchived ? now : null
+    if (patch.isHotLead != null) payload['is_hot_lead'] = patch.isHotLead
+    if (patch.automationState) payload['automation_status'] = patch.automationState
     payload['is_urgent'] = (patch.priority ?? thread.priority) === 'urgent'
+
 
     const { error } = await supabase
       .from('inbox_thread_state')
@@ -837,4 +841,45 @@ export const suppressThread = async (thread: InboxThread): Promise<WorkflowMutat
 
 export const unsuppressThread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
   return persistWorkflowPatch(thread, { isSuppressed: false, inboxStatus: 'needs_review' })
+}
+export const markThreadHot = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
+  return persistWorkflowPatch(thread, { isHotLead: true, priority: 'high' } as any)
+}
+
+export const snoozeThread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
+  return persistWorkflowPatch(thread, { inboxStatus: 'waiting' })
+}
+
+export const pauseAutomation = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
+  return persistWorkflowPatch(thread, { automationState: 'paused' } as any)
+}
+
+export const resumeAutomation = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
+  return persistWorkflowPatch(thread, { automationState: 'active' } as any)
+}
+
+export const retryFailedSend = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
+  const supabase = getSupabaseClient()
+  const threadKey = toThreadKey(thread)
+  
+  // Find last failed queue item
+  const { data } = await supabase
+    .from('send_queue')
+    .select('id')
+    .eq('queue_key', threadKey)
+    .eq('queue_status', 'failed')
+    .order('created_at', { ascending: false })
+    .limit(1)
+
+  if (data && data.length > 0) {
+    const { error } = await supabase
+      .from('send_queue')
+      .update({ queue_status: 'queued', updated_at: new Date().toISOString(), error_message: null })
+      .eq('id', data[0].id)
+    
+    if (!error) return { ok: true, writeTarget: 'none', errorMessage: null, threadKey, mutationPayload: { action: 'retry_queued' } }
+    return { ok: false, writeTarget: 'none', errorMessage: mapErrorMessage(error), threadKey, mutationPayload: null }
+  }
+  
+  return { ok: false, writeTarget: 'none', errorMessage: 'No failed messages found to retry.', threadKey, mutationPayload: null }
 }

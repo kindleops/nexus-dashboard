@@ -1120,3 +1120,154 @@
   color: rgba(255, 255, 255, 0.9);
 }
 
+
+/* Operator Rail & Timeline Enhancements */
+.nx-operator-rail {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid var(--op-border);
+  backdrop-filter: blur(8px);
+}
+
+.nx-rail-group {
+  display: flex;
+  gap: 6px;
+}
+
+.nx-rail-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--op-border);
+}
+
+.nx-rail-btn {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--op-border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--op-muted);
+  font-size: 10px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.nx-rail-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.nx-rail-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+.nx-rail-btn.is-hot:hover {
+  color: #ff9f0a;
+  background: rgba(255, 159, 10, 0.1);
+  border-color: rgba(255, 159, 10, 0.3);
+}
+
+.nx-rail-btn.is-dnc:hover {
+  color: #ff453a;
+  background: rgba(255, 69, 58, 0.1);
+  border-color: rgba(255, 69, 58, 0.3);
+}
+
+.nx-rail-btn.is-resume {
+  color: #30d158;
+  background: rgba(48, 209, 88, 0.1);
+}
+
+.nx-debug-btn-mini {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  background: rgba(88, 166, 255, 0.1);
+  color: #58a6ff;
+  border: 0;
+  margin-left: 8px;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+
+.nx-debug-btn-mini:hover {
+  opacity: 1;
+}
+
+.nx-debug-btn-mini svg {
+  width: 12px;
+  height: 12px;
+}
+
+.nx-delivery-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nx-retry-btn {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  background: rgba(255, 69, 58, 0.15);
+  color: #ff453a;
+  border: 0;
+  padding: 0;
+  transition: transform 0.2s;
+}
+
+.nx-retry-btn:hover {
+  transform: rotate(180deg);
+  background: rgba(255, 69, 58, 0.25);
+}
+
+.nx-retry-btn svg {
+  width: 10px;
+  height: 10px;
+}
+
+.nx-app-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--op-border);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 12px;
+  text-decoration: none;
+  transition: all 0.2s;
+  margin-bottom: 6px;
+}
+
+.nx-app-link:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.nx-app-link.podio {
+  color: #0076b6;
+  border-color: rgba(0, 118, 182, 0.3);
+  background: rgba(0, 118, 182, 0.05);
+}
+
+.nx-dossier-links {
+  display: flex;
+  flex-direction: column;
+}
+
