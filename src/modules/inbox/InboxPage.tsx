@@ -679,7 +679,25 @@ export default function InboxPage() {
           return changed ? { ...current, [selected.id]: dedupeMessages(nextPending) } : current
         })
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'inbox_thread_state' }, (payload) => {
+        const row = (payload.new ?? payload.old ?? {}) as Record<string, unknown>
+        if (!belongsToSelection(row)) return
+        if (DEV) console.log('[InboxPage realtime dossier update]', { threadKey: selectedKey, eventType: payload.eventType })
+        
+        setThreadIntelligence((current) => {
+          if (!current) return current
+          return {
+            ...current,
+            ...row,
+            // Map common aliases
+            inboxCategory: row.inbox_category || current.inboxCategory,
+            uiIntent: row.detected_intent || row.ui_intent || current.uiIntent,
+            workflowStage: row.thread_stage || current.workflowStage,
+          }
+        })
+      })
       .subscribe()
+
 
     return () => {
       void supabase.removeChannel(channel)

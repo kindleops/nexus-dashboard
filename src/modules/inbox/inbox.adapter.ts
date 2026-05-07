@@ -75,112 +75,43 @@ export interface InboxThread {
   aiDraft: string | null
   labels: string[]
   threadKey?: string
-  groupingMethod?: string
-  groupingConfidence?: 'high' | 'medium' | 'low'
   ownerId?: string
   prospectId?: string
   propertyId?: string
   phoneNumber?: string
   canonicalE164?: string
-  sellerPhoneSourceField?: string
   ourNumber?: string
+  latestDirection?: string
   directionUsed?: string
-  messageEventKey?: string
-  providerMessageSid?: string
-  queueId?: string
-  phoneNumberId?: string
-  textgridNumberId?: string
-  isOptOut?: boolean
+  autoReplyStatus?: string
   deliveryStatus?: string
-  providerDeliveryStatus?: string
   failureReason?: string
   propertyAddress?: string
+  propertyAddressFull?: string
   market?: string
+  marketName?: string
   lastInboundAt?: string | null
   lastOutboundAt?: string | null
   needsResponse?: boolean
   unread?: boolean
-  stateRowFound?: boolean
-  threadWorkflowStage?: string
-  threadWorkflowStatus?: string
-  threadIsRead?: boolean
-  threadIsArchived?: boolean
-  threadIsPinned?: boolean
-  threadIsStarred?: boolean
-  threadIsHidden?: boolean
-  threadIsSuppressed?: boolean
-  threadLastReadAt?: string | null
-  threadArchivedAt?: string | null
-  ownerDisplayName?: string
-  propertyAddressFull?: string
-  latestMessageBody?: string
-  latestMessageAt?: string
   uiIntent?: string
   priorityBucket?: string
   workflowStatus?: string
   workflowStage?: string
-  showInPriorityInbox?: boolean
-  cashOffer?: unknown
-  estimatedValue?: unknown
-  finalAcquisitionScore?: unknown
-  streetviewImage?: string | null
-  zillowUrl?: string | null
-  realtorUrl?: string | null
-  sellerPhone?: string
-  thread_key?: string
-  seller_phone?: string
-  our_number?: string
-  master_owner_id?: string
-  prospect_id?: string
-  property_id?: string
-  // Seller details
-  sellerFirstName?: string
-  sellerLastName?: string
-  sellerName?: string
-  ownerType?: string
-  contactLanguage?: string
-  bestPhone?: string
-  phoneConfidence?: number
-  // Property details
-  propertyCity?: string
-  propertyState?: string
-  propertyZip?: string
-  marketName?: string
-  propertyType?: string
-  beds?: string | number
-  baths?: string | number
-  sqft?: string | number
-  yearBuilt?: string | number
-  effectiveYear?: string | number
-  equityAmount?: number
-  equityPercent?: number
-  estimatedRepairCost?: number
-  motivationScore?: number
-  podioTags?: string[]
-  isOwnerOccupied?: boolean
-  isAbsentee?: boolean
-  isVacant?: boolean
-  hasLien?: boolean
-  isProbate?: boolean
-  isTaxDelinquent?: boolean
-  // Deal
-  dealNextStep?: string
-  motivationSummary?: string
+  ownerDisplayName?: string
+  latestMessageBody?: string
+  latestMessageAt?: string
   lat?: number
   lng?: number
-  latestDirection?: string
-  autoReplyStatus?: string
-  needsReply?: boolean
+  ownerType?: string
+  propertyType?: string
+  propertyClass?: string
+  finalAcquisitionScore?: number
+  priorityScore?: number
+  inboxCategory?: string
   matchedKeywords?: string[]
-  thread_id?: string
-  latest_message_body?: string
-  latest_message_direction?: string
-  latest_activity_at?: string
-  inbound_count?: number
-  outbound_count?: number
-  hydrationConfidence?: 'high' | 'medium' | 'low'
-  hydrationSource?: string
 }
+
 
 export interface InboxModel {
   threads: InboxThread[]
@@ -225,12 +156,11 @@ export const adaptInboxModel = (store: CommandCenterStore): InboxModel => {
     }
   })
 
-  // Sort: unread first, then by timestamp desc
+  // Sort: by timestamp desc
   threads.sort((a, b) => {
-    if (a.status === 'unread' && b.status !== 'unread') return -1
-    if (b.status === 'unread' && a.status !== 'unread') return 1
     return new Date(b.lastMessageIso).getTime() - new Date(a.lastMessageIso).getTime()
   })
+
 
   const unreadThreads = threads.filter((t) => t.unreadCount > 0).length
   const priorityThreads = threads.filter((t) => Boolean(t.showInPriorityInbox)).length
@@ -558,17 +488,75 @@ export const useInboxData = () => {
       const supabase = getSupabaseClient()
       const triggerRefresh = (payload: { table?: string; new?: Record<string, unknown>; old?: Record<string, unknown> }) => {
         const table = payload?.table ?? 'unknown'
-        const rawThreadId = payload?.new?.thread_key || payload?.new?.threadKey || payload?.old?.thread_key || payload?.old?.threadKey
-        const threadId = typeof rawThreadId === 'string' ? rawThreadId : ''
-        if (threadId) markRecentlyUpdated(threadId)
+        const rawThreadKey = payload?.new?.thread_key || payload?.old?.thread_key
+        const threadKey = typeof rawThreadKey === 'string' ? rawThreadKey : ''
+        
+        if (threadKey) {
+          markRecentlyUpdated(threadKey)
+          
+          // Surgical update if it's a message event
+          if (table === 'message_events' && payload.new) {
+            setData(prev => {
+              const threads = [...prev.threads]
+              const idx = threads.findIndex(t => (t.threadKey || t.id) === threadKey)
+              if (idx !== -1) {
+                const row = payload.new as any
+                const direction = row.direction || 'inbound'
+                const body = row.message_body || row.rendered_message || ''
+                const at = row.message_created_at || row.event_timestamp || new Date().toISOString()
+                
+                threads[idx] = {
+                  ...threads[idx],
+                  preview: body,
+                  lastMessageIso: at,
+                  lastMessageLabel: formatRelativeTime(at),
+                  latestMessageBody: body,
+                  latestMessageAt: at,
+                  latestDirection: direction,
+                  messageCount: (threads[idx].messageCount || 0) + 1,
+                  status: direction === 'inbound' ? 'unread' : threads[idx].status,
+                  unreadCount: direction === 'inbound' ? (threads[idx].unreadCount || 0) + 1 : threads[idx].unreadCount,
+                  needsReply: direction === 'inbound' ? true : threads[idx].needsReply,
+                }
+                
+                // Sort after update
+                threads.sort((a, b) => new Date(b.lastMessageIso).getTime() - new Date(a.lastMessageIso).getTime())
+                return { ...prev, threads }
+              }
+              return prev
+            })
+          }
+          
+          // Surgical update if it's a thread state change
+          if (table === 'inbox_thread_state' && payload.new) {
+            setData(prev => {
+              const threads = [...prev.threads]
+              const idx = threads.findIndex(t => (t.threadKey || t.id) === threadKey)
+              if (idx !== -1) {
+                const row = payload.new as any
+                threads[idx] = {
+                  ...threads[idx],
+                  inboxCategory: row.inbox_category || threads[idx].inboxCategory,
+                  uiIntent: row.detected_intent || row.ui_intent || threads[idx].uiIntent,
+                  workflowStage: row.thread_stage || threads[idx].workflowStage,
+                  status: row.is_archived ? 'archived' : threads[idx].status,
+                }
+                return { ...prev, threads }
+              }
+              return prev
+            })
+          }
+        }
+
         realtimeBatchRef.current.tables.add(table)
-        if (threadId) realtimeBatchRef.current.threadKeys.add(threadId)
+        if (threadKey) realtimeBatchRef.current.threadKeys.add(threadKey)
         realtimeBatchRef.current.eventCount += 1
+        
         if (refreshTimeout) clearTimeout(refreshTimeout)
         refreshTimeout = setTimeout(() => {
           if (!cancelled) {
             if (isDev) {
-              console.log('[useInboxData] realtime refresh triggered', {
+              console.log('[useInboxData] background refresh sync', {
                 refreshReason: 'realtime',
                 tables: Array.from(realtimeBatchRef.current.tables),
                 threadKeys: Array.from(realtimeBatchRef.current.threadKeys),
@@ -578,8 +566,9 @@ export const useInboxData = () => {
             realtimeBatchRef.current = { tables: new Set(), threadKeys: new Set(), eventCount: 0 }
             void refresh({ _automatic: true })
           }
-        }, 1200)
+        }, 5000) // Longer debounce for full refresh, surgical updates handle immediate UX
       }
+
 
       channel = supabase
         .channel('nexus-inbox-realtime')

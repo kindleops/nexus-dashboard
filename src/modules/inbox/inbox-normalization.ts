@@ -11,6 +11,8 @@ export interface NormalizedPropertySnapshot {
   zip: string
   market: string
   propertyType: string
+  propertyClass: string
+  propertyStyle: string
   beds: string
   baths: string
   sqft: string
@@ -24,9 +26,16 @@ export interface NormalizedPropertySnapshot {
   aerialViewUrl: string | null
   unitCount: string
   lotSize: string
+  lotSizeAcres: string
   occupancy: string
   ownerType: string
+  zoning: string
+  floodZone: string
+  equityPercent: string
+  equityAmount: string
+  ownershipYears: string
 }
+
 
 export interface ExternalLinks {
   zillow: string | null
@@ -73,8 +82,8 @@ export const normalizePropertySnapshot = (
   intelligence: ThreadIntelligenceRecord | null,
   thread: InboxWorkflowThread | null
 ): NormalizedPropertySnapshot => {
-  const get = (key: string) => asString(intelligence?.[key], '').trim()
-  const threadAddress = thread?.propertyAddress || thread?.subject
+  const get = (key: string) => asString(intelligence?.[key] ?? (thread as any)?.[key], '').trim()
+  const threadAddress = thread?.propertyAddressFull || thread?.propertyAddress || thread?.subject
   const intelligenceAddress = get('property_address_full') || get('address')
   const ownerAddressFallback = get('owner_mailing_address') || get('mailing_address') || get('owner_address')
   
@@ -82,28 +91,37 @@ export const normalizePropertySnapshot = (
   
   return {
     fullAddress: address,
-    city: get('property_city'),
-    state: get('property_state'),
-    zip: get('property_zip'),
+    city: get('property_address_city') || get('property_city'),
+    state: get('property_address_state') || get('property_state'),
+    zip: get('property_address_zip') || get('property_zip'),
     market: get('market') || thread?.market || '',
     propertyType: get('property_type') || (thread as any)?.propertyType || '',
-    beds: (thread as any)?.beds || get('beds'),
-    baths: (thread as any)?.baths || get('baths'),
-    sqft: (thread as any)?.sqft || get('sqft'),
-    yearBuilt: (thread as any)?.yearBuilt || get('year_built'),
-    effectiveYear: get('effective_year_built'),
-    estimatedValue: (thread as any)?.estimatedValue || get('estimated_value'),
-    repairCost: (thread as any)?.estimatedRepairCost || get('estimated_repair_cost'),
-    cashOffer: (thread as any)?.cashOffer || get('cash_offer'),
-    finalScore: (thread as any)?.finalAcquisitionScore || get('final_acquisition_score'),
+    propertyClass: get('property_class') || (thread as any)?.propertyClass || '',
+    propertyStyle: get('property_style') || (thread as any)?.propertyStyle || '',
+    beds: get('beds') || (thread as any)?.beds || '',
+    baths: get('baths') || (thread as any)?.baths || '',
+    sqft: get('sqft') || (thread as any)?.sqft || '',
+    yearBuilt: get('year_built') || (thread as any)?.yearBuilt || '',
+    effectiveYear: get('effective_year_built') || (thread as any)?.effectiveYear || '',
+    estimatedValue: get('estimated_value') || (thread as any)?.estimatedValue || '',
+    repairCost: get('estimated_repair_cost') || (thread as any)?.estimatedRepairCost || '',
+    cashOffer: get('cash_offer') || (thread as any)?.cashOffer || '',
+    finalScore: get('final_acquisition_score') || (thread as any)?.finalAcquisitionScore || '',
     streetViewUrl: buildStreetViewUrl(address),
     aerialViewUrl: buildAerialViewUrl(address),
-    unitCount: (thread as any)?.unitCount || (thread as any)?.unit_count || (thread as any)?.units || get('unit_count'),
-    lotSize: (thread as any)?.lotSize || (thread as any)?.lot_size || (thread as any)?.lotSizeSqft || get('lot_size_sqft') || get('lot_size_acres'),
-    occupancy: (thread as any)?.occupancy || get('occupancy'),
-    ownerType: (thread as any)?.ownerType || (thread as any)?.owner_type || get('owner_type'),
+    unitCount: get('units') || get('number_of_units') || get('unit_count') || '',
+    lotSize: get('lot_size_square_feet') || get('lot_size_sqft') || '',
+    lotSizeAcres: get('lot_size_acres') || '',
+    occupancy: get('occupancy'),
+    ownerType: get('owner_type'),
+    zoning: get('zoning'),
+    floodZone: get('flood_zone'),
+    equityPercent: get('equity_percent') || (thread as any)?.equityPercent || '',
+    equityAmount: get('estimated_equity_amount') || (thread as any)?.equityAmount || '',
+    ownershipYears: get('ownership_years') || '',
   }
 }
+
 
 /**
  * Normalizes a thread message, ensuring delivery status and direction are canonical.
