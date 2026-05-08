@@ -63,6 +63,7 @@ export interface InboxThread {
   leadId: string
   marketId: string
   ownerName: string
+  sellerName?: string
   subject: string
   preview: string
   status: 'unread' | 'read' | 'replied' | 'archived'
@@ -82,6 +83,7 @@ export interface InboxThread {
   phoneNumberId?: string
   textgridNumberId?: string
   canonicalE164?: string
+  sellerPhone?: string
   ourNumber?: string
   latestDirection?: string
   directionUsed?: string
@@ -100,6 +102,8 @@ export interface InboxThread {
   priorityBucket?: string
   workflowStatus?: string
   workflowStage?: string
+  threadWorkflowStatus?: string
+  threadWorkflowStage?: string
   ownerDisplayName?: string
   latestMessageBody?: string
   latestMessageAt?: string
@@ -116,6 +120,7 @@ export interface InboxThread {
   hydrationSource?: string
   queueId?: string
   needsReply?: boolean
+  showInPriorityInbox?: boolean
   inbound_count?: number
   outbound_count?: number
   hydrationConfidence?: string

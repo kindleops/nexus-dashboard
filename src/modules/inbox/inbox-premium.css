@@ -8396,8 +8396,12 @@
   position: absolute;
   top: 100%;
   right: 0;
-  left: 0;
-  z-index: 100;
+  left: auto;
+  min-width: max(100%, 290px);
+  max-width: min(420px, 92vw);
+  max-height: 320px;
+  overflow-y: auto;
+  z-index: 12080;
   margin-top: 4px;
   padding: 4px;
   background: var(--bg-panel-elevated);
@@ -11200,6 +11204,7 @@
 .nx-seller-command-card {
   display: grid;
   gap: 16px;
+  overflow: visible !important;
 }
 
 .nx-seller-command-card__identity,
@@ -11250,6 +11255,8 @@
 
 .nx-seller-command-card__select {
   position: relative;
+  overflow: visible;
+  z-index: 8;
 }
 
 .nx-seller-command-card .nx-workflow-btn {

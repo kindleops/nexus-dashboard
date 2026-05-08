@@ -1,5 +1,6 @@
 import { formatRelativeTime } from '../../shared/formatters'
 import type { InboxModel, InboxThread } from '../../modules/inbox/inbox.adapter'
+import type { InboxWorkflowThread } from './inboxWorkflowData'
 import type { SmsTemplate } from './templateData'
 import { getSupabaseClient, hasSupabaseEnv } from '../supabaseClient'
 import {
@@ -100,6 +101,7 @@ export interface LiveInboxResponse {
 
 export interface ThreadMessage {
   id: string
+  threadKey?: string
   direction: 'inbound' | 'outbound' | 'unknown'
   body: string
   createdAt: string
@@ -119,6 +121,8 @@ export interface ThreadMessage {
   source: string
   rawStatus: string
   error: string | null
+  eventType?: string
+  metadata?: Record<string, unknown>
   developerMeta?: Record<string, string>
 }
 
@@ -207,7 +211,7 @@ const QUEUE_PROCESSOR_LAG_MINUTES = 10
 
 const DEV = Boolean(import.meta.env.DEV)
 const MESSAGE_EVENTS_THREAD_PAGE_SIZE = 1000
-export const HYDRATED_INBOX_PAGE_SIZE = 200
+export const HYDRATED_INBOX_PAGE_SIZE = 1000
 const HYDRATED_INBOX_THREADS_VIEW = 'inbox_threads_hydrated'
 const HYDRATED_INBOX_COUNTS_VIEW = 'inbox_category_counts'
 
@@ -1363,7 +1367,17 @@ const normalizeLiveThread = (row: AnyRecord, index: number): InboxThread => {
   const ownerDisplayName = prospectName || ownerName || firstName || (bestPhone ? formatDisplayPhone(bestPhone) : 'Unknown Owner')
   
   const propertyAddressFull = asString(row['property_address_full'] ?? row['address'] ?? row['propertyAddressFull'], 'No Address')
-  const latestMessageBody = asString(row['latest_message_body'] ?? row['latestMessageBody'] ?? row['preview'] ?? row['message_body'], 'No recent message')
+  const latestMessageBody = asString(
+    row['latest_message_body'] ??
+    row['latest_inbound_message_body'] ??
+    row['latest_inbound_body'] ??
+    row['latestMessageBody'] ??
+    row['preview'] ??
+    row['message_body'] ??
+    row['latest_outbound_message_body'] ??
+    row['latest_outbound_body'],
+    'No recent message',
+  )
   
   const uiIntent = normalizeStatus(row['detected_intent'] ?? row['ui_intent'] ?? row['uiIntent'] ?? 'needs_review')
   const inboxCategory = asString(row['inbox_category'] ?? row['category'], 'all')
@@ -1883,12 +1897,12 @@ export const fetchInboxModel = async (options: InboxFetchOptions = {}): Promise<
   }
 
   const filterState = options.filters || {}
+  const viewCategories = getHydratedCategoriesForView(filterState.view)
   const [threadsResult, mapPins] = await Promise.all([
     getInboxThreads(filterState, options),
     fetchInboxMapPins(filterState),
   ])
   const { threads, totalAvailable } = threadsResult
-  const supabase = getSupabaseClient()
   const hasScopedFilters =
     Boolean(filterState.query?.trim()) ||
     hasMeaningfulAdvancedFilters(filterState.advanced) ||
@@ -1896,9 +1910,22 @@ export const fetchInboxModel = async (options: InboxFetchOptions = {}): Promise<
   let countsRows: AnyRecord[] = []
 
   try {
-    // nexus_inbox_threads_v uses priority_bucket not inbox_category — skip per-category server counts;
-    // the fallback below derives counts from the already-loaded threads instead.
-    void hasScopedFilters
+    let countsQuery: any = getSupabaseClient()
+      .from(HYDRATED_INBOX_COUNTS_VIEW)
+      .select('*')
+
+    if (!hasScopedFilters) {
+      if (viewCategories.length === 1) {
+        countsQuery = countsQuery.eq('inbox_category', viewCategories[0])
+      } else if (viewCategories.length > 1) {
+        countsQuery = countsQuery.in('inbox_category', viewCategories)
+      }
+    }
+
+    if (options.signal) countsQuery = countsQuery.abortSignal(options.signal)
+    const { data, error } = await countsQuery
+    if (error) throw error
+    countsRows = safeArray(data as AnyRecord[])
   } catch (error) {
     if (DEV) {
       console.warn('[fetchInboxModel] counts fallback activated', {
@@ -1911,7 +1938,7 @@ export const fetchInboxModel = async (options: InboxFetchOptions = {}): Promise<
   }
 
   const categoryCounts = normalizeHydratedCategoryCounts(countsRows)
-  if (countsRows.length === 0) {
+  if (countsRows.length === 0 || hasScopedFilters) {
     threads.forEach((thread) => {
       const threadRecord = thread as unknown as AnyRecord
       const bucket = asString(
@@ -2068,7 +2095,7 @@ export const toThreadMessage = (row: AnyRecord): ThreadMessage => {
     rawStatus: normalizeStatus(row['delivery_status'] ?? row['raw_carrier_status']),
     error: asString(row['error_message'] ?? row['failure_reason'] ?? row['failure_code'], '') || null,
     eventType: asString(row['event_type'], ''),
-    metadata: row['metadata'] || {},
+    metadata: (row['metadata'] as Record<string, unknown> | null | undefined) ?? ({} as Record<string, unknown>),
     developerMeta,
   }
 }
@@ -2099,7 +2126,7 @@ const buildMessageEventThreadCandidates = (thread: InboxThread): Array<{ key: st
 }
 
 const getThreadMessagesFromMessageEvents = async (
-  thread: InboxThread,
+  thread: InboxThread | InboxWorkflowThread,
   options: ThreadMessageFetchOptions = {},
 ): Promise<ThreadMessage[]> => {
   const supabase = getSupabaseClient()
@@ -2253,7 +2280,7 @@ export const dedupeMessages = (messages: ThreadMessage[]): ThreadMessage[] => {
 }
 
 export const getThreadMessagesForThread = async (
-  thread: InboxWorkflowThread,
+  thread: InboxThread | InboxWorkflowThread,
   options: ThreadMessageFetchOptions = {},
 ): Promise<ThreadMessage[]> => {
   const supabase = getSupabaseClient()

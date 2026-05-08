@@ -151,7 +151,7 @@ export default function InboxPage() {
   const [draftText, setDraftText] = useState('')
   const [selectedMessages, setSelectedMessages] = useState<ThreadMessage[]>([])
   const [pendingMessagesByThread, setPendingMessagesByThread] = useState<Record<string, ThreadMessage[]>>({})
-  const [visibleThreadCount, setVisibleThreadCount] = useState(200)
+  const [visibleThreadCount, setVisibleThreadCount] = useState(1000)
   const [mapSourceMode, setMapSourceMode] = useState<MapSourceMode>(defaultMapSourceMode)
 
   const [messagesLoading, setMessagesLoading] = useState(false)

@@ -127,7 +127,7 @@ export const ChatThread = ({
   if (!thread) return (
     <div className="nx-chat-container is-empty">
       <div className="nx-inbox__workspace-empty">
-        <Icon name="Mail" style={{ width: 48, height: 48, opacity: 0.1, marginBottom: 16 }} />
+        <Icon name="mail" style={{ width: 48, height: 48, opacity: 0.1, marginBottom: 16 }} />
         <p>Select a thread to view the conversation.</p>
       </div>
     </div>
@@ -136,7 +136,7 @@ export const ChatThread = ({
   if (loading && messages.length === 0) return (
     <div className="nx-chat-container">
       <div className="nx-inbox__messages-loading">
-        <Icon name="Activity" className="nx-inbox__messages-loading-icon" />
+        <Icon name="activity" className="nx-inbox__messages-loading-icon" />
         <span>Syncing timeline…</span>
       </div>
     </div>
@@ -286,9 +286,8 @@ export const ChatThread = ({
         })}
         {messages.length === 0 && !loading && (
           <div className="nx-inbox__messages-empty">
-            <Icon name="MessageSquare" style={{ opacity: 0.1, width: 40, height: 40, marginBottom: 12 }} />
+            <Icon name="message" style={{ opacity: 0.1, width: 40, height: 40, marginBottom: 12 }} />
             <p>No messages loaded for this thread.</p>
-            {console.warn(`[Timeline] No messages for thread_key: ${thread.threadKey || thread.id}`)}
           </div>
         )}
       </div>

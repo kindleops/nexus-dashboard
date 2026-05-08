@@ -84,6 +84,19 @@ export interface InboxThreadWorkflow {
   lastDirection: 'inbound' | 'outbound' | 'unknown'
   updatedAt: string
   queueStatus: string | null
+  sellerName?: string
+  sellerFirstName?: string
+  sellerPhone?: string
+  showInPriorityInbox?: boolean
+  threadWorkflowStatus?: string
+  threadWorkflowStage?: string
+  isAbsentee?: boolean
+  isOwnerOccupied?: boolean
+  isVacant?: boolean
+  isTaxDelinquent?: boolean
+  isProbate?: boolean
+  hasLien?: boolean
+  motivationScore?: number | string
 }
 
 export type InboxWorkflowThread = InboxThread & InboxThreadWorkflow

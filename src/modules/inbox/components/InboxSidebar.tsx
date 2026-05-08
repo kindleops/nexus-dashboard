@@ -9,7 +9,7 @@ import {
   type InboxSavedFilterPreset,
   type InboxViewSelectValue,
 } from '../inbox-ui-helpers'
-import { getSellerStageVisual } from '../status-visuals'
+import { getSellerStageVisual, getStatusVisual } from '../status-visuals'
 
 const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
 
@@ -213,13 +213,13 @@ const getInitials = (value: string) =>
     .map((part) => part[0]?.toUpperCase() ?? '')
     .join('') || '+('
 
-const resolvePropertyTypeBadge = (thread: InboxWorkflowThread) => {
-  const propertyType = readString(thread, 'propertyType', 'property_type', 'assetType', 'asset_type')
-  if (!propertyType) return null
-  const normalized = propertyType.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())
-  if (/multi/i.test(normalized)) return 'MULTIFAMILY'
-  if (/single/i.test(normalized)) return 'SFR'
-  return normalized.toUpperCase()
+const resolveStatusBadge = (thread: InboxWorkflowThread) => {
+  const visual = getStatusVisual(thread.inboxStatus, {
+    latestDirection: thread.latestDirection || readString(thread, 'latest_message_direction', 'latestDirection') || null,
+    lastOutboundAt: thread.lastOutboundAt ?? null,
+    lastInboundAt: thread.lastInboundAt ?? null,
+  })
+  return visual.label.toUpperCase()
 }
 
 const resolveStageBadge = (thread: InboxWorkflowThread) => {
@@ -230,7 +230,7 @@ const resolveStageBadge = (thread: InboxWorkflowThread) => {
 const resolveCardBadges = (thread: InboxWorkflowThread) => {
   const market = resolveThreadMarketBadge(thread)
   const stage = resolveStageBadge(thread)
-  const propertyType = resolvePropertyTypeBadge(thread)
+  const status = resolveStatusBadge(thread)
 
   const stageShortMap: Record<string, string> = {
     'Ownership Check': 'OWNERSHIP',
@@ -249,7 +249,7 @@ const resolveCardBadges = (thread: InboxWorkflowThread) => {
   return [
     market ? market.toUpperCase() : null,
     stageShort || null,
-    propertyType || null,
+    status || null,
   ].filter(Boolean) as string[]
 }
 
