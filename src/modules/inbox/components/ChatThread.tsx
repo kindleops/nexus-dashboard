@@ -44,12 +44,33 @@ const highlightText = (text: string, terms: string[]) => {
   ))
 }
 
-const normalizeDeliveryBadge = (message: ThreadMessage): 'failed' | 'pending' | 'delivered' | 'unknown' => {
-  const status = String(message.deliveryStatus || message.rawStatus || '').toLowerCase()
-  if (status.includes('fail') || status.includes('error') || status.includes('undeliver')) return 'failed'
-  if (status.includes('delivered') || status.includes('sent') || status === 'success') return 'delivered'
-  if (status.includes('queue') || status.includes('pending') || status.includes('schedule') || status.includes('approval')) return 'pending'
+const normalizeDeliveryBadge = (message: ThreadMessage): 'failed' | 'queued' | 'pending' | 'sent' | 'delivered' | 'unknown' => {
+  const status = String(message.deliveryStatus || '').toLowerCase()
+  if (status === 'failed') return 'failed'
+  if (status === 'delivered') return 'delivered'
+  if (status === 'sent') return 'sent'
+  if (status === 'queued') return 'queued'
+  if (status === 'pending') return 'pending'
+  
+  const raw = String(message.rawStatus || '').toLowerCase()
+  if (raw.includes('fail') || raw.includes('error') || raw.includes('undeliver')) return 'failed'
+  if (raw.includes('delivered')) return 'delivered'
+  if (raw.includes('sent') || raw === 'success') return 'sent'
+  if (raw.includes('queue')) return 'queued'
+  if (raw.includes('pending') || raw.includes('schedule')) return 'pending'
+  
   return 'unknown'
+}
+
+const getDeliveryPillStyle = (badge: string) => {
+  switch (badge) {
+    case 'delivered': return { color: '#30d158', background: 'rgba(48, 209, 88, 0.15)', borderColor: 'rgba(48, 209, 88, 0.3)' }
+    case 'sent': return { color: '#64d2ff', background: 'rgba(100, 210, 255, 0.15)', borderColor: 'rgba(100, 210, 255, 0.3)' }
+    case 'failed': return { color: '#ff453a', background: 'rgba(255, 69, 58, 0.15)', borderColor: 'rgba(255, 69, 58, 0.3)' }
+    case 'queued': return { color: '#ffd60a', background: 'rgba(255, 214, 10, 0.15)', borderColor: 'rgba(255, 214, 10, 0.3)' }
+    case 'pending': return { color: '#9ba8c0', background: 'rgba(155, 168, 192, 0.15)', borderColor: 'rgba(155, 168, 192, 0.3)' }
+    default: return { color: 'rgba(155, 168, 192, 0.6)', background: 'rgba(155, 168, 192, 0.05)', borderColor: 'transparent' }
+  }
 }
 
 export const ChatThread = ({
@@ -245,7 +266,10 @@ export const ChatThread = ({
 
                 {isOutbound && (
                   <div className="nx-delivery-row">
-                    <span className={cls('nx-delivery-pill', `is-${deliveryBadge}`)}>
+                    <span 
+                      className={cls('nx-delivery-pill', `is-${deliveryBadge}`)}
+                      style={getDeliveryPillStyle(deliveryBadge)}
+                    >
                       {titleCase(deliveryBadge)}
                     </span>
                     {deliveryBadge === 'failed' && (
@@ -263,7 +287,7 @@ export const ChatThread = ({
         {messages.length === 0 && !loading && (
           <div className="nx-inbox__messages-empty">
             <Icon name="MessageSquare" style={{ opacity: 0.1, width: 40, height: 40, marginBottom: 12 }} />
-            <p>No messages in timeline.</p>
+            <p>No messages loaded for this thread.</p>
             {console.warn(`[Timeline] No messages for thread_key: ${thread.threadKey || thread.id}`)}
           </div>
         )}

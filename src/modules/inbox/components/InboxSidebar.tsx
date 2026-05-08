@@ -500,6 +500,9 @@ export const InboxSidebar = ({
   return (
     <aside className={cls('nx-sidebar nx-sidebar--premium', `nx-sidebar--active-${heroMeta.tone}`)}>
       <div className="nx-sidebar__top">
+        <div className="nx-sidebar__title-row">
+          <span className="nx-sidebar__app-title">ACQUISITIONS INBOX</span>
+        </div>
 
         {/* ── Top bar: label + icon actions ── */}
         <div className="nx-sidebar__label-row">

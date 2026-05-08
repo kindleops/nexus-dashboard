@@ -39,9 +39,9 @@ export const TemplatePicker = ({
   threadContext: ThreadContext | null
   onInsert: (text: string) => void
   onReplace: (text: string) => void
-  onSendNow: (text: string) => void
-  onQueue: (text: string) => void
-  onSchedule: (text: string) => void
+  onSendNow: (text: string, template: SmsTemplate | null) => void
+  onQueue: (text: string, template: SmsTemplate | null) => void
+  onSchedule: (text: string, template: SmsTemplate | null) => void
 }) => {
   const [templates, setTemplates] = useState<SmsTemplate[]>([])
   const [categories, setCategories] = useState<TemplateCategory[]>([])
@@ -159,9 +159,9 @@ export const TemplatePicker = ({
           onVariableChange={(key, value) => setVariableValues((current) => ({ ...current, [key]: value }))}
           onInsert={() => onInsert(textToApply)}
           onReplace={() => onReplace(textToApply)}
-          onSendNow={() => onSendNow(textToApply)}
-          onQueue={() => onQueue(textToApply)}
-          onSchedule={() => onSchedule(textToApply)}
+          onSendNow={(template) => onSendNow(textToApply, template)}
+          onQueue={(template) => onQueue(textToApply, template)}
+          onSchedule={(template) => onSchedule(textToApply, template)}
         />
       </div>
     </div>

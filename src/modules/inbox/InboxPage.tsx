@@ -30,6 +30,8 @@ import {
   getThreadIntelligence,
   getThreadMessagesForThread,
   getThreadContext,
+  queueReplyFromInbox,
+  scheduleReplyFromInbox,
   sendInboxMessageNow,
   SERVER_INBOX_THREAD_STAGE_VALUES,
   type QueueProcessorHealth,
@@ -51,6 +53,7 @@ import { ChatThread } from './components/ChatThread'
 import { Composer } from './components/Composer'
 import { ComposerTranslationBar } from './components/ComposerTranslationBar'
 import { IntelligencePanel } from './components/IntelligencePanel'
+import type { TemplateActionPayload } from './components/TemplatePopover'
 import { InboxActivityPanel } from './components/InboxActivityPanel'
 import { InboxCommandMap } from './InboxCommandMap'
 import { InboxUtilityDrawer, MapDossierDrawer } from './components/InboxUtilityDrawer'
@@ -168,6 +171,7 @@ export default function InboxPage() {
   const [commandOpen, setCommandOpen] = useState(false)
   const [schedulePanelOpen, setSchedulePanelOpen] = useState(false)
   const [scheduledTime, setScheduledTime] = useState<ScheduledTime | null>(null)
+  const [scheduledTemplatePayload, setScheduledTemplatePayload] = useState<TemplateActionPayload | null>(null)
   const [showTranslation, setShowTranslation] = useState(false)
   const [layoutState, setLayoutState] = useState(defaultInboxLayoutState)
   const [dossierFull, setDossierFull] = useState(false)
@@ -1202,7 +1206,7 @@ export default function InboxPage() {
   }, [threads, handleWorkflowMutation, handleToggleArchive, handleToggleStar, handleTogglePin, DEV])
 
 
-  const handleSend = useCallback(async (text: string) => {
+  const handleSend = useCallback(async (text: string, template?: SmsTemplate | null) => {
     if (!selected || !text.trim() || isSending) return
     if (selectedSuppressed) {
       emitNotification({
@@ -1229,8 +1233,8 @@ export default function InboxPage() {
       propertyId: selected.propertyId || '',
       phoneNumber: selected.phoneNumber || '',
       canonicalE164: selected.canonicalE164 || '',
-      templateId: null,
-      templateName: null,
+      templateId: template?.templateId ?? template?.id ?? null,
+      templateName: template?.useCase ?? null,
       agentId: null,
       source: 'operator',
       rawStatus: 'pending',
@@ -1244,7 +1248,10 @@ export default function InboxPage() {
 
     setIsSending(true)
     try {
-      const result = await sendInboxMessageNow(selected, text)
+      const result = await sendInboxMessageNow(selected, text, {
+        selectedTemplate: template ?? null,
+        threadContext,
+      })
       emitNotification({
         title: result.ok
           ? (result.queueProcessorEligible ? 'Queued For Immediate Send' : 'Queued (Processor Delayed)')
@@ -1288,7 +1295,35 @@ export default function InboxPage() {
     } finally {
       setIsSending(false)
     }
-  }, [isSending, selected, selectedSuppressed])
+  }, [isSending, selected, selectedSuppressed, threadContext])
+
+  const handleSendTemplate = useCallback(async (payload: TemplateActionPayload) => {
+    await handleSend(payload.text, payload.template)
+  }, [handleSend])
+
+  const handleQueueTemplate = useCallback(async (payload: TemplateActionPayload) => {
+    if (!selected || !payload.text.trim()) return
+    const result = await queueReplyFromInbox(selected, payload.text, {
+      selectedTemplate: payload.template,
+      threadContext,
+    })
+    emitNotification({
+      title: result.ok ? 'Reply Queued For Approval' : 'Queue Failed',
+      detail: result.ok
+        ? `Queue row ${result.queueId ?? 'created'} is waiting for approval`
+        : (result.errorMessage ?? 'Could not queue reply'),
+      severity: result.ok ? 'success' : 'critical',
+    })
+    if (result.ok) {
+      setDraftText('')
+    }
+  }, [selected, threadContext])
+
+  const handleScheduleTemplate = useCallback((payload: TemplateActionPayload) => {
+    setScheduledTemplatePayload(payload)
+    setDraftText(payload.text)
+    setSchedulePanelOpen(true)
+  }, [])
 
   const insertAiSuggestion = useCallback((suggestionText: string) => {
     setDraftText((prev) => (prev.trim() ? `${prev.trim()}\n\n${suggestionText}` : suggestionText))
@@ -1663,14 +1698,18 @@ export default function InboxPage() {
             setDraftText={setDraftText}
             onSend={handleSend}
             isSending={isSending}
-            onOpenSchedule={() => setSchedulePanelOpen(true)}
+            onOpenSchedule={() => {
+              setScheduledTemplatePayload({ text: draftText, template: null })
+              setSchedulePanelOpen(true)
+            }}
             onAI={() => setActiveOverlay('ai')}
             thread={selected}
             threadContext={threadContext}
             onInsertTemplate={(text) => setDraftText(prev => prev ? `${prev}\n\n${text}` : text)}
             onReplaceTemplate={(text) => setDraftText(text)}
-            onSendTemplate={handleSend}
-            onScheduleTemplate={() => setSchedulePanelOpen(true)}
+            onSendTemplate={handleSendTemplate}
+            onQueueTemplate={handleQueueTemplate}
+            onScheduleTemplate={handleScheduleTemplate}
             onTranslate={() => setShowTranslation(!showTranslation)}
             isTranslating={showTranslation}
             disabled={!selected || selectedSuppressed}
@@ -1817,12 +1856,34 @@ export default function InboxPage() {
 
       <InboxSchedulePanel
         open={schedulePanelOpen}
-        onClose={() => setSchedulePanelOpen(false)}
+        onClose={() => {
+          setSchedulePanelOpen(false)
+          setScheduledTemplatePayload(null)
+        }}
         thread={selected}
         onSchedule={(time) => {
           setScheduledTime(time)
           setSchedulePanelOpen(false)
-          emitNotification({ title: 'Scheduled', detail: `Sent set for ${time.label}`, severity: 'success' })
+          const payload = scheduledTemplatePayload ?? { text: draftText, template: null }
+          if (!selected || !payload.text.trim()) {
+            emitNotification({ title: 'Schedule Failed', detail: 'No message available to schedule.', severity: 'warning' })
+            return
+          }
+          void (async () => {
+            const result = await scheduleReplyFromInbox(selected, payload.text, time.iso, {
+              selectedTemplate: payload.template,
+              threadContext,
+            })
+            emitNotification({
+              title: result.ok ? 'Scheduled' : 'Schedule Failed',
+              detail: result.ok ? `Sent set for ${time.label}` : (result.errorMessage ?? 'Could not schedule message'),
+              severity: result.ok ? 'success' : 'critical',
+            })
+            if (result.ok) {
+              setDraftText('')
+              setScheduledTemplatePayload(null)
+            }
+          })()
         }}
       />
       {contextLoading && <div hidden>Loading context</div>}

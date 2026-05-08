@@ -79,6 +79,8 @@ export interface InboxThread {
   prospectId?: string
   propertyId?: string
   phoneNumber?: string
+  phoneNumberId?: string
+  textgridNumberId?: string
   canonicalE164?: string
   ourNumber?: string
   latestDirection?: string

@@ -2,7 +2,7 @@ import { useRef, useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from '../../../shared/icons'
 import { CopilotOrbTrigger } from '../copilot/AICopilotPanel'
-import { TemplatePopover } from './TemplatePopover'
+import { TemplatePopover, type TemplateActionPayload } from './TemplatePopover'
 import type { InboxThread } from '../inbox.adapter'
 import type { ThreadContext } from '../../../lib/data/inboxData'
 import type { CommandSuggestion } from '../ai-command-center'
@@ -32,8 +32,9 @@ interface ComposerProps {
   threadContext: ThreadContext | null
   onInsertTemplate: (text: string) => void
   onReplaceTemplate: (text: string) => void
-  onSendTemplate: (text: string) => void
-  onScheduleTemplate: () => void
+  onSendTemplate: (payload: TemplateActionPayload) => void
+  onQueueTemplate: (payload: TemplateActionPayload) => void
+  onScheduleTemplate: (payload: TemplateActionPayload) => void
   onTranslate?: () => void
   isTranslating?: boolean
   isSending?: boolean
@@ -87,6 +88,7 @@ export const Composer = ({
   onInsertTemplate,
   onReplaceTemplate,
   onSendTemplate,
+  onQueueTemplate,
   onScheduleTemplate,
   onTranslate,
   isTranslating = false,
@@ -126,10 +128,6 @@ export const Composer = ({
   ]
 
   // Expose unused params to avoid lint errors
-  void thread
-  void threadContext
-  void onScheduleTemplate
-
   const stopVoiceAnalysis = () => {
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current)
@@ -451,9 +449,13 @@ export const Composer = ({
       <TemplatePopover
         open={templatePopoverOpen}
         onClose={() => setTemplatePopoverOpen(false)}
+        thread={thread}
+        threadContext={threadContext}
         onInsert={onInsertTemplate}
         onReplace={onReplaceTemplate}
         onSendNow={onSendTemplate}
+        onQueue={onQueueTemplate}
+        onSchedule={onScheduleTemplate}
       />
 
       {typeof document !== 'undefined' && offerGlassOpen

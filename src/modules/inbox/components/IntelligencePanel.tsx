@@ -40,42 +40,73 @@ type WorkflowThread = InboxWorkflowThread & Partial<{
 const normalizeText = (value: unknown): string => String(value ?? '').trim()
 
 const isPresent = (value: unknown): boolean => {
+  if (value === null || value === undefined) return false
+  if (typeof value === 'number' && Number.isNaN(value)) return false
   const text = normalizeText(value).toLowerCase()
-  return Boolean(text) && text !== 'unknown' && text !== 'n/a' && text !== 'null' && text !== 'undefined' && text !== 'none' && text !== '-'
+  return Boolean(text) && 
+    text !== 'unknown' && 
+    text !== 'n/a' && 
+    text !== 'null' && 
+    text !== 'undefined' && 
+    text !== 'none' && 
+    text !== '-' &&
+    text !== 'not enriched' &&
+    text !== 'nan' &&
+    text !== 'no address'
 }
 
 const asStr = (value: unknown): string => normalizeText(value)
 
 const formatMoney = (value: unknown): string | null => {
+  if (!isPresent(value)) return null
   const raw = String(value ?? '').replace(/[,$\s]/g, '')
   const num = Number(raw)
   if (!Number.isFinite(num) || num === 0) return null
-  if (num >= 1_000_000) return `$${(num / 1_000_000).toFixed(1)}M`
+  if (num >= 1_000_000) return `$${(num / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
   if (num >= 1_000) return `$${Math.round(num / 1_000)}K`
   return `$${Math.round(num).toLocaleString()}`
 }
 
 const formatPercent = (value: unknown): string | null => {
+  if (!isPresent(value)) return null
   const raw = String(value ?? '').replace(/[%\s]/g, '')
   const num = Number(raw)
   if (!Number.isFinite(num)) return null
   return `${Math.round(num)}%`
 }
 
+const formatScore = (value: unknown): string | null => {
+  if (!isPresent(value)) return null
+  const num = Math.round(Number(String(value).replace(/[^0-9.]/g, '')))
+  if (!Number.isFinite(num)) return null
+  return `${num}/100`
+}
+
 const formatDate = (value: unknown): string | null => {
   if (!isPresent(value)) return null
   const date = new Date(String(value))
   if (Number.isNaN(date.getTime())) return null
-  return date.toLocaleString()
+  return date.toLocaleString('en-US', { 
+    month: 'short', 
+    day: 'numeric', 
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  })
 }
 
 const fmtPhone = (value: unknown): string | null => {
+  if (!isPresent(value)) return null
   const raw = normalizeText(value)
-  if (!raw) return null
   const digits = raw.replace(/\D/g, '')
-  if (digits.length === 11 && digits.startsWith('1')) return `+1 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`
-  if (digits.length === 10) return `+1 (${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
-  return raw
+  if (digits.length === 11 && digits.startsWith('1')) {
+    return `+1 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`
+  }
+  if (digits.length === 10) {
+    return `+1 (${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
+  }
+  return raw.startsWith('+') ? raw : `+${raw}`
 }
 
 const get = (thread: WorkflowThread, key: string): unknown => {
@@ -375,7 +406,7 @@ export const DealCommandHeader = ({ thread }: { thread: WorkflowThread }) => {
   const address = thread.propertyAddress || thread.subject || 'Property Unknown'
   const market = thread.market || thread.marketId || 'Market Unknown'
   const ownerType = asStr(get(thread, 'ownerType') || get(thread, 'owner_type'))
-  const priorityScore = isPresent(finalScore) ? `${Math.round(Number(String(finalScore).replace(/[^0-9.]/g, '')))}/100` : null
+  const priorityScore = formatScore(finalScore)
 
   return (
     <div className="nx-dossier-header">
@@ -728,12 +759,11 @@ const PremiumOfferMemoCard = ({ thread }: { thread: WorkflowThread }) => {
 // ── 6. Property Intelligence Tabs ─────────────────────────────────────────
 
 const PROPERTY_TABS = [
-  { id: 'overview', label: 'Overview', icon: 'layers' },
-  { id: 'valuation', label: 'Valuation', icon: 'trending-up' },
-  { id: 'condition', label: 'Condition', icon: 'alert' },
-  { id: 'tax', label: 'Tax', icon: 'briefing' },
-  { id: 'owner', label: 'Owner', icon: 'user' },
-  { id: 'links', label: 'Links', icon: 'arrow-up-right' },
+  { id: 'overview', label: 'OVERVIEW', icon: 'layers' },
+  { id: 'location', label: 'LOCATION', icon: 'map' },
+  { id: 'property', label: 'PROPERTY', icon: 'grid' },
+  { id: 'valuation', label: 'EQUITY / VALUATION', icon: 'trending-up' },
+  { id: 'tax', label: 'LAND / TAX', icon: 'briefing' },
 ]
 
 export const PropertyIntelligenceTabs = ({
@@ -749,27 +779,27 @@ export const PropertyIntelligenceTabs = ({
   const extLinks = buildPropertyExternalLinks(snapshot.fullAddress || thread.propertyAddress || thread.subject || null)
 
   const fields = useMemo(() => ({
-    unitCount: snapshot.unitCount || get(thread, 'unitCount') || get(thread, 'unit_count') || get(thread, 'units'),
-    yearBuilt: snapshot.yearBuilt || get(thread, 'yearBuilt') || get(thread, 'year_built'),
-    effectiveYear: snapshot.effectiveYear || get(thread, 'effectiveYear') || get(thread, 'effective_year_built'),
-    constructionType: get(thread, 'constructionType') || get(thread, 'construction_type'),
-    exteriorWalls: get(thread, 'exteriorWalls') || get(thread, 'exterior_walls'),
-    floorCover: get(thread, 'floorCover') || get(thread, 'floor_cover'),
-    basement: get(thread, 'basement') || get(thread, 'basement_type'),
-    hvacType: get(thread, 'hvacType') || get(thread, 'hvac_type') || get(thread, 'ac_heating'),
-    roofCover: get(thread, 'roofCover') || get(thread, 'roof_cover'),
-    beds: snapshot.beds || get(thread, 'beds') || get(thread, 'bedrooms'),
-    baths: snapshot.baths || get(thread, 'baths') || get(thread, 'bathrooms'),
-    sqft: snapshot.sqft || get(thread, 'sqft') || get(thread, 'livingAreaSqft'),
+    unitCount: snapshot.unitCount,
+    yearBuilt: snapshot.yearBuilt,
+    effectiveYear: snapshot.effectiveYear,
+    constructionType: get(thread, 'construction_type'),
+    exteriorWalls: get(thread, 'exterior_walls'),
+    floorCover: get(thread, 'floor_cover'),
+    basement: get(thread, 'basement_type'),
+    hvacType: get(thread, 'hvac_type') || get(thread, 'ac_heating'),
+    roofCover: get(thread, 'roof_cover'),
+    beds: snapshot.beds,
+    baths: snapshot.baths,
+    sqft: snapshot.sqft,
     stories: get(thread, 'stories') || get(thread, 'num_stories'),
-    garage: get(thread, 'garageOrParking') || get(thread, 'garage_or_parking'),
-    propertyType: snapshot.propertyType || get(thread, 'propertyType') || get(thread, 'property_type'),
-    occupancy: snapshot.occupancy || get(thread, 'occupancy'),
+    garage: get(thread, 'garage_or_parking'),
+    propertyType: snapshot.propertyType,
+    occupancy: snapshot.occupancy,
     county: get(thread, 'county') || get(thread, 'property_county'),
     apn: get(thread, 'apn') || get(thread, 'apn_parcel_id'),
-    zoning: get(thread, 'zoning') || get(thread, 'zoning_code'),
-    lotSize: snapshot.lotSize || get(thread, 'lotSize') || get(thread, 'lot_size_sqft'),
-  }), [thread, snapshot])
+    zoning: snapshot.zoning,
+    lotSize: snapshot.lotSize,
+  }), [snapshot, thread])
 
   const availableCount = getAvailableFields(fields).length
 
@@ -934,7 +964,7 @@ export const SellerOwnerCard = ({ thread }: { thread: WorkflowThread }) => {
     <DossierCard className="nx-force-card nx-seller-card nx-seller-owner-card">
       <div className="nx-dossier-section__title" style={{ marginBottom: 10 }}>
         <Icon name="user" />
-        <span>Seller / Owner Intelligence</span>
+        <span>Contact & Ownership Intelligence</span>
       </div>
       <div className="nx-seller-header">
         <div className="nx-seller-avatar">{initials}</div>
@@ -1065,15 +1095,15 @@ type IntelligenceTabId =
   | 'timeline'
 
 const INTELLIGENCE_TABS: Array<{ id: IntelligenceTabId; label: string }> = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'prospect', label: 'Prospect' },
-  { id: 'owner', label: 'Owner' },
-  { id: 'property', label: 'Property Intel' },
-  { id: 'portfolio', label: 'Portfolio' },
-  { id: 'financial', label: 'Financial' },
-  { id: 'conversation', label: 'Conversation' },
-  { id: 'automation', label: 'Automation' },
-  { id: 'timeline', label: 'Timeline' },
+  { id: 'overview', label: 'OVERVIEW' },
+  { id: 'prospect', label: 'PROSPECT' },
+  { id: 'owner', label: 'OWNER' },
+  { id: 'property', label: 'PROPERTY INTEL' },
+  { id: 'portfolio', label: 'PORTFOLIO' },
+  { id: 'financial', label: 'FINANCIAL' },
+  { id: 'conversation', label: 'CONVERSATION' },
+  { id: 'automation', label: 'AUTOMATION' },
+  { id: 'timeline', label: 'TIMELINE' },
 ]
 
 const getFromRecord = (record: Record<string, unknown> | null | undefined, key: string): unknown => {
@@ -1097,8 +1127,9 @@ const getAny = (
 
 const formatScore = (value: unknown): string | null => {
   if (!isPresent(value)) return null
-  const num = Number(String(value).replace(/[^0-9.]/g, ''))
-  return Number.isFinite(num) ? `${Math.round(num)}/100` : asStr(value)
+  const num = Math.round(Number(String(value).replace(/[^0-9.]/g, '')))
+  if (!Number.isFinite(num)) return null
+  return `${num}/100`
 }
 
 const formatCount = (value: unknown): string | null => isPresent(value) ? Number(String(value).replace(/,/g, '')).toLocaleString() : null
@@ -1109,12 +1140,15 @@ const formatYesNo = (value: unknown): 'Yes' | 'No' => {
   return value === true ? 'Yes' : 'No'
 }
 
-const FieldTile = ({ label, value, tone = 'default' }: { label: string; value: unknown; tone?: 'default' | 'good' | 'warn' | 'bad' | 'accent' }) => (
-  <div className={cls('nx-intel-field', tone !== 'default' && `is-${tone}`)}>
-    <span>{label}</span>
-    <strong>{isPresent(value) ? asStr(value) : 'Not enriched'}</strong>
-  </div>
-)
+const FieldTile = ({ label, value, tone = 'default' }: { label: string; value: unknown; tone?: 'default' | 'good' | 'warn' | 'bad' | 'accent' }) => {
+  if (!isPresent(value)) return null
+  return (
+    <div className={cls('nx-intel-field', tone !== 'default' && `is-${tone}`)}>
+      <span>{label}</span>
+      <strong>{asStr(value)}</strong>
+    </div>
+  )
+}
 
 const FieldGrid = ({ children, columns = 2 }: { children: React.ReactNode; columns?: 2 | 3 }) => (
   <div className={cls('nx-intel-field-grid', columns === 3 && 'is-3-col')}>{children}</div>
@@ -1180,9 +1214,9 @@ export const OverviewPanel = ({ thread, intelligence, messages }: { thread: Work
           <FieldTile label="Acquisition Score" value={formatScore(getAny(thread, intelligence, ['finalAcquisitionScore', 'final_acquisition_score', 'acquisition_score', 'motivationScore']))} tone="good" />
           <FieldTile label="Deal Strength" value={getAny(thread, intelligence, ['dealStrength', 'deal_strength', 'priorityBucket']) || thread.priority} tone="accent" />
           <FieldTile label="Close Probability" value={formatPercent(getAny(thread, intelligence, ['closeProbability', 'estimatedCloseProbability', 'close_probability'])) || formatPercent(thread.motivationScore)} />
-          <FieldTile label="Intent Classification" value={thread.uiIntent || getAny(thread, intelligence, ['intent_classification', 'seller_intent'])} />
+          <FieldTile label="Intent" value={thread.uiIntent || getAny(thread, intelligence, ['intent_classification', 'seller_intent'])} />
           <FieldTile label="Lead Status" value={getStatusVisual(thread.inboxStatus).label} />
-          <FieldTile label="Seller Responsiveness" value={getAny(thread, intelligence, ['sellerResponsiveness', 'seller_responsiveness']) || (thread.lastInboundAt ? 'Responsive' : 'Unproven')} />
+          <FieldTile label="Responsiveness" value={getAny(thread, intelligence, ['sellerResponsiveness', 'seller_responsiveness']) || (thread.lastInboundAt ? 'Responsive' : null)} />
         </FieldGrid>
       </PanelSection>
       <PanelSection title="AI Recommendation" icon="spark">
@@ -1473,11 +1507,11 @@ const formatDisplayValue = (value: unknown) => {
 }
 
 const IntelField = ({ label, value }: { label: string; value: unknown }) => {
-  const displayValue = formatDisplayValue(value)
+  if (!isPresent(value)) return null
   return (
-    <div className={cls('nx-intel-field', displayValue === 'Not enriched' && 'is-empty')}>
+    <div className="nx-intel-field">
       <span className="nx-intel-field__label">{label}</span>
-      <span className="nx-intel-field__value">{displayValue}</span>
+      <span className="nx-intel-field__value">{asStr(value)}</span>
     </div>
   )
 }
@@ -1559,8 +1593,8 @@ const SellerCommandCard = ({
 
       <div className="nx-seller-command-card__chips">
         <QuietBadge label={automationLabel} tone="accent" />
-        <QuietBadge label={`SCORE ${finalScore || 'Not enriched'}`} />
-        <QuietBadge label={`LAST CONTACT ${lastContact ? formatRelativeTime(lastContact).toUpperCase() : 'NOT ENRICHED'}`} />
+        {isPresent(finalScore) && <QuietBadge label={`SCORE ${finalScore}`} />}
+        {lastContact && <QuietBadge label={`LAST CONTACT ${formatRelativeTime(lastContact).toUpperCase()}`} />}
       </div>
     </DossierCard>
   )

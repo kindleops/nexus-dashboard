@@ -1,5 +1,6 @@
 import { formatRelativeTime } from '../../shared/formatters'
 import type { InboxModel, InboxThread } from '../../modules/inbox/inbox.adapter'
+import type { SmsTemplate } from './templateData'
 import { getSupabaseClient, hasSupabaseEnv } from '../supabaseClient'
 import {
   asBoolean,
@@ -182,6 +183,15 @@ export interface SendNowResult {
   queueProcessorEligible: boolean
 }
 
+interface InboxTemplateSendOptions {
+  selectedTemplate?: SmsTemplate | null
+  threadContext?: ThreadContext | null
+}
+
+interface InboxSendOptions extends InboxTemplateSendOptions {
+  fromPhoneNumber?: string
+}
+
 export interface QueueProcessorHealth {
   checkedAt: string
   queuedCount: number
@@ -198,7 +208,7 @@ const QUEUE_PROCESSOR_LAG_MINUTES = 10
 const DEV = Boolean(import.meta.env.DEV)
 const MESSAGE_EVENTS_THREAD_PAGE_SIZE = 1000
 export const HYDRATED_INBOX_PAGE_SIZE = 200
-const HYDRATED_INBOX_THREADS_VIEW = 'nexus_inbox_threads_v'
+const HYDRATED_INBOX_THREADS_VIEW = 'inbox_threads_hydrated'
 const HYDRATED_INBOX_COUNTS_VIEW = 'inbox_category_counts'
 
 const HYDRATED_INBOX_CATEGORIES = [
@@ -758,6 +768,64 @@ const buildQueuePersonalization = (thread: InboxThread, messageText: string) => 
     personalizationMeta,
   }
 }
+
+const buildSelectedTemplatePayload = (
+  selectedTemplate?: SmsTemplate | null,
+  threadContext?: ThreadContext | null,
+): {
+  templateId: string | null
+  useCaseTemplate: string
+  templateName: string | null
+  language: string | null
+  metadata: Record<string, unknown>
+} => {
+  if (!selectedTemplate) {
+    return {
+      templateId: null,
+      useCaseTemplate: 'manual_reply',
+      templateName: null,
+      language: null,
+      metadata: {
+        template_source: 'manual_composer',
+        thread_context_available: Boolean(threadContext),
+      },
+    }
+  }
+
+  return {
+    templateId: selectedTemplate.templateId ?? selectedTemplate.id ?? null,
+    useCaseTemplate: selectedTemplate.useCaseSlug || 'manual_reply',
+    templateName: selectedTemplate.useCase ?? null,
+    language: selectedTemplate.language ?? null,
+    metadata: {
+      template_source: 'sms_templates',
+      template_record_id: selectedTemplate.id,
+      template_id: selectedTemplate.templateId ?? selectedTemplate.id ?? null,
+      template_use_case: selectedTemplate.useCaseSlug,
+      template_label: selectedTemplate.useCase,
+      template_stage_code: selectedTemplate.stageCode,
+      template_stage_label: selectedTemplate.stageLabel,
+      template_language: selectedTemplate.language,
+      template_agent_style: selectedTemplate.agentStyle,
+      thread_context_available: Boolean(threadContext),
+      seller_context: threadContext?.seller ?? null,
+      property_context: threadContext?.property ?? null,
+    },
+  }
+}
+
+const SMS_ROUTE_METADATA = {
+  preferred_channel: 'sms',
+  channel: 'sms',
+  transport: 'sms',
+  message_channel: 'sms',
+  send_transport: 'sms',
+  force_sms: true,
+  sms_only: true,
+  skip_rcs: true,
+  disable_rcs: true,
+  provider_hint: 'textgrid_sms',
+} as const
 
 if (DEV) {
   const check1 = resolveSellerFirstName({ prospect_first_name: 'Jose' })
@@ -1326,6 +1394,8 @@ const normalizeLiveThread = (row: AnyRecord, index: number): InboxThread => {
     ownerId: asString(row['master_owner_id'] ?? row['ownerId'], '') || undefined,
     prospectId: asString(row['prospect_id'] ?? row['prospectId'], '') || undefined,
     propertyId: asString(row['property_id'] ?? row['propertyId'], '') || undefined,
+    phoneNumberId: asString(row['phone_number_id'] ?? row['phoneNumberId'] ?? row['best_phone_id'], '') || undefined,
+    textgridNumberId: asString(row['textgrid_number_id'] ?? row['textgridNumberId'], '') || undefined,
     phoneNumber: sellerPhone || undefined,
     canonicalE164: sellerPhone || undefined,
     sellerPhone: sellerPhone || undefined,
@@ -1475,12 +1545,12 @@ export const getInboxThreads = async (
     .select('thread_key', { count: 'exact', head: true })
   countQuery = applyInboxSearchServerFilter(countQuery, filterState.query)
   countQuery = applyInboxAdvancedServerFilters(countQuery, filterState.advanced)
-  // nexus_inbox_threads_v uses 'stage' not 'queue_stage'
-  if (filterState.stage && filterState.stage !== 'all_stages') {
-    countQuery = countQuery.eq('stage', filterState.stage)
+  if (viewCategories.length === 1) {
+    countQuery = countQuery.eq('inbox_category', viewCategories[0])
+  } else if (viewCategories.length > 1) {
+    countQuery = countQuery.in('inbox_category', viewCategories)
   }
-  // nexus_inbox_threads_v uses priority_bucket not inbox_category — skip category server-filter,
-  // client-side resolveQueuePreset handles grouping
+
   if (options.signal) countQuery = countQuery.abortSignal(options.signal)
 
   const { count: totalAvailable, error: countError } = await countQuery
@@ -1491,11 +1561,19 @@ export const getInboxThreads = async (
   let query: any = supabase
     .from(HYDRATED_INBOX_THREADS_VIEW)
     .select('*')
+    .order('final_acquisition_score', { ascending: false, nullsFirst: false })
+    .order('priority_score', { ascending: false, nullsFirst: false })
     .order('latest_message_at', { ascending: false, nullsFirst: false })
     .range(startOffset, startOffset + maxRows - 1)
 
   query = applyInboxSearchServerFilter(query, filterState.query)
   query = applyInboxAdvancedServerFilters(query, filterState.advanced)
+  if (viewCategories.length === 1) {
+    query = query.eq('inbox_category', viewCategories[0])
+  } else if (viewCategories.length > 1) {
+    query = query.in('inbox_category', viewCategories)
+  }
+
   if (filterState.stage && filterState.stage !== 'all_stages') {
     query = query.eq('stage', filterState.stage)
   }
@@ -2191,10 +2269,10 @@ export const getThreadMessagesForThread = async (
   try {
     for (let page = 0; page < maxPages; page += 1) {
       const { data, error } = await supabase
-        .from('nexus_thread_messages_v')
+        .from('inbox_messages_hydrated')
         .select('*')
         .eq('thread_key', threadKey)
-        .order('timeline_at', { ascending: true })
+        .order('message_created_at', { ascending: true })
         .range(page * pageSize, page * pageSize + pageSize - 1)
 
       if (error) throw new Error(mapErrorMessage(error))
@@ -2207,7 +2285,7 @@ export const getThreadMessagesForThread = async (
   } catch (error) {
     viewErrorMessage = mapErrorMessage(error)
     if (DEV) {
-      console.warn('[ThreadMessageHydration] nexus_thread_messages_v failed, falling back to message_events', {
+      console.warn('[ThreadMessageHydration] inbox_messages_hydrated failed, falling back to message_events', {
         threadKey,
         error: viewErrorMessage,
       })
@@ -2652,15 +2730,16 @@ export const getThreadContext = async (thread: InboxThread): Promise<ThreadConte
 export const queueReplyFromInbox = async (
   thread: InboxThread,
   messageText: string,
-  _options?: { scheduledAt?: string },
+  options?: ({ scheduledAt?: string } & InboxTemplateSendOptions),
 ): Promise<QueueReplyResult> => {
-  void _options
+  void options?.scheduledAt
   const trimmedText = messageText.trim()
   if (!trimmedText) {
     return { ok: false, queueId: null, status: null, errorMessage: 'Message text is required', insertPayloadKeys: [] }
   }
 
   const personalization = buildQueuePersonalization(thread, trimmedText)
+  const templateAttachment = buildSelectedTemplatePayload(options?.selectedTemplate, options?.threadContext)
 
   const toPhone = normalizePhone(thread.canonicalE164 || thread.phoneNumber)
   if (!toPhone) {
@@ -2697,7 +2776,7 @@ export const queueReplyFromInbox = async (
     touch_number: 1,
     current_stage: 'manual_reply',
     message_type: 'manual_reply',
-    use_case_template: 'inbox_manual_reply',
+    use_case_template: templateAttachment.useCaseTemplate,
     metadata: {
       source: 'inbox',
       action: 'queue_reply',
@@ -2709,12 +2788,19 @@ export const queueReplyFromInbox = async (
       template_variables: personalization.renderVariables,
       candidate_snapshot: personalization.candidateSnapshot,
       personalization: personalization.personalizationMeta,
+      ...SMS_ROUTE_METADATA,
+      ...templateAttachment.metadata,
     },
     created_at: now,
   }
 
   // ALWAYS include from_phone_number (even if null)
   payload.from_phone_number = fromPhone
+  if (templateAttachment.language) payload.language = templateAttachment.language
+  if (isValidUUID(asString(templateAttachment.templateId, ''))) {
+    payload.template_id = templateAttachment.templateId
+    payload.selected_template_id = templateAttachment.templateId
+  }
   if (isValidUUID(asString(thread.phoneNumberId, ''))) payload.phone_number_id = thread.phoneNumberId
   if (isValidUUID(asString(thread.textgridNumberId, ''))) payload.textgrid_number_id = thread.textgridNumberId
   if (thread.propertyAddress) payload.property_address = thread.propertyAddress
@@ -3017,7 +3103,7 @@ export const checkSuppressionStatus = async (phone: string): Promise<{ suppresse
 export const sendInboxMessageNow = async (
   thread: InboxThread,
   messageText: string,
-  options?: { fromPhoneNumber?: string },
+  options?: InboxSendOptions,
 ): Promise<SendNowResult> => {
   const trimmedText = messageText.trim()
   if (!trimmedText) {
@@ -3025,6 +3111,7 @@ export const sendInboxMessageNow = async (
   }
 
   const personalization = buildQueuePersonalization(thread, trimmedText)
+  const templateAttachment = buildSelectedTemplatePayload(options?.selectedTemplate, options?.threadContext)
 
   const toPhone = normalizePhone(thread.canonicalE164 || thread.phoneNumber)
   if (!toPhone) {
@@ -3094,7 +3181,7 @@ export const sendInboxMessageNow = async (
     touch_number: 1,
     current_stage: 'manual_reply',
     message_type: 'manual_reply',
-    use_case_template: 'inbox_manual_send_now',
+    use_case_template: templateAttachment.useCaseTemplate,
     // contact_window intentionally omitted — null means no window restriction
     // timezone not required but nice to have
     metadata: {
@@ -3109,12 +3196,19 @@ export const sendInboxMessageNow = async (
       template_variables: personalization.renderVariables,
       candidate_snapshot: personalization.candidateSnapshot,
       personalization: personalization.personalizationMeta,
+      ...SMS_ROUTE_METADATA,
+      ...templateAttachment.metadata,
     },
     created_at: now,
   }
 
   // ALWAYS include from_phone_number (even if null) — backend processor requires this field
   insertPayload.from_phone_number = fromPhone
+  if (templateAttachment.language) insertPayload.language = templateAttachment.language
+  if (isValidUUID(asString(templateAttachment.templateId, ''))) {
+    insertPayload.template_id = templateAttachment.templateId
+    insertPayload.selected_template_id = templateAttachment.templateId
+  }
   if (isValidUUID(asString(textgridNumberId, ''))) insertPayload.textgrid_number_id = textgridNumberId
   if (isValidUUID(asString(thread.phoneNumberId, ''))) insertPayload.phone_number_id = thread.phoneNumberId
   if (thread.propertyAddress) insertPayload.property_address = thread.propertyAddress
@@ -3188,10 +3282,16 @@ export const sendInboxMessageNow = async (
     is_final_failure: false,
     character_count: personalization.messageText.length,
     queue_id: queueId,
-    metadata: { source: 'inbox_send_now_optimistic', queue_key: queueKey },
+    metadata: {
+      source: 'inbox_send_now_optimistic',
+      queue_key: queueKey,
+      ...SMS_ROUTE_METADATA,
+      ...templateAttachment.metadata,
+    },
   }
   // ALWAYS include from_phone_number (even if null)
   eventPayload.from_phone_number = fromPhone
+  if (isValidUUID(asString(templateAttachment.templateId, ''))) eventPayload.template_id = templateAttachment.templateId
   if (isValidUUID(asString(textgridNumberId, ''))) eventPayload.textgrid_number_id = textgridNumberId
   if (isValidUUID(asString(thread.phoneNumberId, ''))) eventPayload.phone_number_id = thread.phoneNumberId
   if (thread.propertyAddress) eventPayload.property_address = thread.propertyAddress
@@ -3243,6 +3343,7 @@ export const scheduleReplyFromInbox = async (
   thread: InboxThread,
   messageText: string,
   scheduledAt: string,
+  options?: InboxTemplateSendOptions,
 ): Promise<QueueReplyResult> => {
   const trimmedText = messageText.trim()
   if (!trimmedText) {
@@ -3250,6 +3351,7 @@ export const scheduleReplyFromInbox = async (
   }
 
   const personalization = buildQueuePersonalization(thread, trimmedText)
+  const templateAttachment = buildSelectedTemplatePayload(options?.selectedTemplate, options?.threadContext)
 
   const toPhone = normalizePhone(thread.canonicalE164 || thread.phoneNumber)
   if (!toPhone) {
@@ -3287,7 +3389,7 @@ export const scheduleReplyFromInbox = async (
     touch_number: 1,
     current_stage: 'manual_reply',
     message_type: 'manual_scheduled_reply',
-    use_case_template: 'inbox_manual_scheduled_reply',
+    use_case_template: templateAttachment.useCaseTemplate,
     metadata: {
       source: 'inbox',
       action: 'schedule_reply',
@@ -3299,12 +3401,19 @@ export const scheduleReplyFromInbox = async (
       template_variables: personalization.renderVariables,
       candidate_snapshot: personalization.candidateSnapshot,
       personalization: personalization.personalizationMeta,
+      ...SMS_ROUTE_METADATA,
+      ...templateAttachment.metadata,
     },
     created_at: now,
   }
 
   // ALWAYS include from_phone_number (even if null)
   payload.from_phone_number = fromPhone
+  if (templateAttachment.language) payload.language = templateAttachment.language
+  if (isValidUUID(asString(templateAttachment.templateId, ''))) {
+    payload.template_id = templateAttachment.templateId
+    payload.selected_template_id = templateAttachment.templateId
+  }
   if (isValidUUID(asString(thread.phoneNumberId, ''))) payload.phone_number_id = thread.phoneNumberId
   if (isValidUUID(asString(thread.textgridNumberId, ''))) payload.textgrid_number_id = thread.textgridNumberId
   if (thread.propertyAddress) payload.property_address = thread.propertyAddress

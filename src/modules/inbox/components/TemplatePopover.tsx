@@ -1,146 +1,46 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from '../../../shared/icons'
+import type { ThreadContext } from '../../../lib/data/inboxData'
+import type { SmsTemplate } from '../../../lib/data/templateData'
+import type { InboxThread } from '../inbox.adapter'
+import { TemplatePicker } from '../templates/TemplatePicker'
 
-const TEMPLATE_STAGES = ['All', 'new_reply', 'needs_response', 'interested', 'needs_offer', 'nurture', 'sent_waiting', 'failed'] as const
-const TEMPLATE_USE_CASES = ['All', 'Initial Outreach', 'Follow-Up', 'Offer', 'Appointment', 'Objection Handle', 'Closing', 'Re-engagement'] as const
-
-interface TemplateDef {
-  id: string
-  title: string
-  content: string
-  stage: string
-  useCase: string
-  language: string
-  agent?: string
-  active: boolean
+export interface TemplateActionPayload {
+  text: string
+  template: SmsTemplate | null
 }
-
-// Built-in template library
-const BUILT_IN_TEMPLATES: TemplateDef[] = [
-  {
-    id: 'initial-en',
-    title: 'Professional Introduction',
-    content: 'Hi [FirstName], I came across your property at [Address] and wanted to reach out. We buy homes in your area and can close quickly, cash, any condition. Would you be open to hearing a number?',
-    stage: 'new_reply',
-    useCase: 'Initial Outreach',
-    language: 'English',
-    active: true,
-  },
-  {
-    id: 'initial-es',
-    title: 'Introducción (Español)',
-    content: 'Hola [FirstName], vi su propiedad en [Address]. Compramos casas en efectivo en cualquier condición. ¿Le interesaría escuchar una oferta?',
-    stage: 'new_reply',
-    useCase: 'Initial Outreach',
-    language: 'Spanish',
-    active: true,
-  },
-  {
-    id: 'followup-warm',
-    title: 'Warm Follow-Up',
-    content: "Hey [FirstName], just circling back on the property at [Address]. We're still interested and could move quickly. What's the best number to reach you?",
-    stage: 'sent_waiting',
-    useCase: 'Follow-Up',
-    language: 'English',
-    active: true,
-  },
-  {
-    id: 'offer-ready',
-    title: 'Offer Ready',
-    content: 'Hi [FirstName], based on what we know about [Address], we can offer around [OfferAmount] cash, close in as little as 14 days. Does that range work for you?',
-    stage: 'needs_offer',
-    useCase: 'Offer',
-    language: 'English',
-    active: true,
-  },
-]
 
 interface TemplatePopoverProps {
   open: boolean
   onClose: () => void
+  thread: InboxThread | null
+  threadContext: ThreadContext | null
   onInsert: (text: string) => void
   onReplace: (text: string) => void
-  onSendNow: (text: string) => void
+  onSendNow: (payload: TemplateActionPayload) => void
+  onQueue: (payload: TemplateActionPayload) => void
+  onSchedule: (payload: TemplateActionPayload) => void
 }
-
-const stageLabel = (stage: string) => stage.replaceAll('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase())
-
-const FilterChip = ({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) => (
-  <button
-    type="button"
-    className={`nx-tpl-chip${active ? ' is-active' : ''}`}
-    onClick={(e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      onClick()
-    }}
-  >
-    {label}
-  </button>
-)
 
 export const TemplatePopover = ({
   open,
   onClose,
+  thread,
+  threadContext,
   onInsert,
   onReplace,
   onSendNow,
+  onQueue,
+  onSchedule,
 }: TemplatePopoverProps) => {
-  const DEV = Boolean(import.meta.env.DEV)
-  const [search, setSearch] = useState('')
-  const [filterStage, setFilterStage] = useState<string>('All')
-  const [filterUseCase, setFilterUseCase] = useState<string>('All')
-  const popoverRef = useRef<HTMLDivElement>(null)
-  const searchRef = useRef<HTMLInputElement>(null)
+  if (!open || typeof document === 'undefined') return null
 
-  const handleClose = useCallback(() => {
-    if (DEV) console.log(`[NexusPopover]`, { name: 'TemplateLibrary', action: 'close', open: false })
-    onClose()
-  }, [onClose, DEV])
-
-  const filtered = useMemo(() => {
-    const q = search.toLowerCase()
-    return BUILT_IN_TEMPLATES.filter((t) => {
-      if (filterStage !== 'All' && t.stage !== filterStage) return false
-      if (filterUseCase !== 'All' && t.useCase !== filterUseCase) return false
-      if (q && !t.title.toLowerCase().includes(q) && !t.content.toLowerCase().includes(q) && !t.useCase.toLowerCase().includes(q)) return false
-      return true
-    })
-  }, [search, filterStage, filterUseCase])
-
-  useEffect(() => {
-    if (!open) return
-    if (DEV) console.log(`[NexusPopover]`, { name: 'TemplateLibrary', action: 'open', open: true })
-    const t = setTimeout(() => searchRef.current?.focus(), 60)
-    
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') handleClose()
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      clearTimeout(t)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [open, handleClose, DEV])
-
-  useEffect(() => {
-    if (!open) {
-      setSearch('')
-      setFilterStage('All')
-      setFilterUseCase('All')
-    }
-  }, [open])
-
-  if (!open) return null
-  
   return createPortal(
     <div
-      ref={popoverRef}
       className="nx-template-modal-overlay"
       role="presentation"
       onMouseDown={(event) => {
-        if (event.target === popoverRef.current) handleClose()
+        if (event.target === event.currentTarget) onClose()
       }}
     >
       <div
@@ -153,78 +53,39 @@ export const TemplatePopover = ({
         <header className="nx-tpl-header">
           <div>
             <div className="nx-tpl-header__title">Template Library</div>
-            <div className="nx-tpl-header__sub">{filtered.length} templates matching selection</div>
+            <div className="nx-tpl-header__sub">Live templates from Supabase</div>
           </div>
-          <button type="button" className="nx-tpl-close" onClick={handleClose}>
+          <button type="button" className="nx-tpl-close" onClick={onClose} aria-label="Close template library">
             <Icon name="close" />
           </button>
         </header>
 
-        <div className="nx-tpl-search-row">
-          <div className="nx-tpl-search-wrap">
-            <Icon name="search" style={{ width: 14, opacity: 0.6 }} />
-            <input
-              ref={searchRef}
-              type="text"
-              placeholder="Search templates…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="nx-tpl-search"
-            />
-            {search && (
-              <button type="button" className="nx-tpl-search-clear" onClick={() => setSearch('')}>
-                <Icon name="close" />
-              </button>
-            )}
-          </div>
-        </div>
-
-        <div className="nx-tpl-filters">
-          <div className="nx-tpl-filter-group">
-            <span className="nx-tpl-filter-label">Stage</span>
-            <div className="nx-tpl-chip-row">
-              {TEMPLATE_STAGES.map((s) => (
-                <FilterChip key={s} label={s === 'All' ? 'All' : stageLabel(s)} active={filterStage === s} onClick={() => setFilterStage(s)} />
-              ))}
-            </div>
-          </div>
-          <div className="nx-tpl-filter-group">
-            <span className="nx-tpl-filter-label">Category</span>
-            <div className="nx-tpl-chip-row">
-              {TEMPLATE_USE_CASES.map((u) => (
-                <FilterChip key={u} label={u} active={filterUseCase === u} onClick={() => setFilterUseCase(u)} />
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="nx-tpl-list">
-          {filtered.length === 0 ? (
-            <div className="nx-tpl-empty">
-              <p>No templates match filters</p>
-              <button type="button" className="nx-tpl-reset" onClick={() => { setSearch(''); setFilterStage('All'); setFilterUseCase('All'); }}>Clear filters</button>
-            </div>
-          ) : (
-            filtered.map((template) => (
-              <div key={template.id} className="nx-tpl-card">
-                <div className="nx-tpl-card__meta">
-                  <span className="nx-tpl-pill nx-tpl-pill--stage">{stageLabel(template.stage)}</span>
-                  <span className="nx-tpl-pill nx-tpl-pill--usecase">{template.useCase}</span>
-                  <span className="nx-tpl-pill nx-tpl-pill--lang">{template.language}</span>
-                </div>
-                <div className="nx-tpl-card__title">{template.title}</div>
-                <p className="nx-tpl-card__preview">{template.content}</p>
-                <div className="nx-tpl-card__actions">
-                  <button type="button" className="nx-tpl-action" onClick={() => { onInsert(template.content); handleClose(); }}>Insert</button>
-                  <button type="button" className="nx-tpl-action" onClick={() => { onReplace(template.content); handleClose(); }}>Replace</button>
-                  <button type="button" className="nx-tpl-action nx-tpl-action--send" onClick={() => { onSendNow(template.content); handleClose(); }}>Send Now</button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
+        <TemplatePicker
+          thread={thread}
+          threadContext={threadContext}
+          onInsert={(text) => {
+            onInsert(text)
+            onClose()
+          }}
+          onReplace={(text) => {
+            onReplace(text)
+            onClose()
+          }}
+          onSendNow={(text, template) => {
+            onSendNow({ text, template })
+            onClose()
+          }}
+          onQueue={(text, template) => {
+            onQueue({ text, template })
+            onClose()
+          }}
+          onSchedule={(text, template) => {
+            onSchedule({ text, template })
+            onClose()
+          }}
+        />
       </div>
     </div>,
-    document.body
+    document.body,
   )
 }

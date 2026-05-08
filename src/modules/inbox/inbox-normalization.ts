@@ -5,6 +5,7 @@ import type { InboxWorkflowThread } from '../../lib/data/inboxWorkflowData'
 const GOOGLE_MAPS_API_KEY = (import.meta.env as Record<string, string | undefined>).VITE_GOOGLE_MAPS_API_KEY
 
 export interface NormalizedPropertySnapshot {
+  // Property Identity
   fullAddress: string
   city: string
   state: string
@@ -13,26 +14,62 @@ export interface NormalizedPropertySnapshot {
   propertyType: string
   propertyClass: string
   propertyStyle: string
+  streetViewUrl: string | null
+  aerialViewUrl: string | null
+  streetviewImage?: string // alias for streetview_image
+  
+  // Structural
   beds: string
   baths: string
   sqft: string
   yearBuilt: string
   effectiveYear: string
+  unitCount: string
+  lotSize: string
+  lotSizeAcres: string
+  zoning: string
+  occupancy: string
+
+  // Valuation & Financial
   estimatedValue: string
   repairCost: string
   cashOffer: string
   finalScore: string
-  streetViewUrl: string | null
-  aerialViewUrl: string | null
-  unitCount: string
-  lotSize: string
-  lotSizeAcres: string
-  occupancy: string
-  ownerType: string
-  zoning: string
-  floodZone: string
   equityPercent: string
   equityAmount: string
+  loanAmount: string
+  loanBalance: string
+  loanPayment: string
+  assessedTotalValue: string
+  assessedLandValue: string
+  assessedImprovementValue: string
+  taxDelinquent: string
+  taxAmount: string
+  
+  // Owner & Prospect
+  ownerName: string
+  ownerDisplayName: string
+  ownerType: string
+  priorityTier: string
+  language: string
+  bestContactWindow: string
+  prospectFullName: string
+  prospectFirstName: string
+  householdIncome: string
+  netAssetValue: string
+  occupationGroup: string
+  phoneCarrier: string
+
+  // Automation & Intent
+  uiIntent: string
+  automationState: string
+  nextSystemAction: string
+  detectedIntent: string
+  safetyStatus: string
+  routingAllowed: string
+  
+  // Meta
+  floodZone: string
   ownershipYears: string
 }
 
@@ -82,45 +119,102 @@ export const normalizePropertySnapshot = (
   intelligence: ThreadIntelligenceRecord | null,
   thread: InboxWorkflowThread | null
 ): NormalizedPropertySnapshot => {
-  const get = (key: string) => asString(intelligence?.[key] ?? (thread as any)?.[key], '').trim()
+  const get = (key: string, aliases: string[] = []) => {
+    let val = intelligence?.[key]
+    if (val === undefined || val === null || val === '') {
+      for (const alias of aliases) {
+        val = intelligence?.[alias]
+        if (val !== undefined && val !== null && val !== '') break
+      }
+    }
+    if (val === undefined || val === null || val === '') {
+      val = (thread as any)?.[key]
+      if (val === undefined || val === null || val === '') {
+        for (const alias of aliases) {
+          val = (thread as any)?.[alias]
+          if (val !== undefined && val !== null && val !== '') break
+        }
+      }
+    }
+    return asString(val, '').trim()
+  }
+
   const threadAddress = thread?.propertyAddressFull || thread?.propertyAddress || thread?.subject
-  const intelligenceAddress = get('property_address_full') || get('address')
-  const ownerAddressFallback = get('owner_mailing_address') || get('mailing_address') || get('owner_address')
+  const intelligenceAddress = get('property_address_full', ['address'])
+  const ownerAddressFallback = get('owner_mailing_address', ['mailing_address', 'owner_address'])
   
   const address = (threadAddress || intelligenceAddress || ownerAddressFallback || '').trim()
   
   return {
+    // Property Identity
     fullAddress: address,
-    city: get('property_address_city') || get('property_city'),
-    state: get('property_address_state') || get('property_state'),
-    zip: get('property_address_zip') || get('property_zip'),
-    market: get('market') || thread?.market || '',
-    propertyType: get('property_type') || (thread as any)?.propertyType || '',
-    propertyClass: get('property_class') || (thread as any)?.propertyClass || '',
-    propertyStyle: get('property_style') || (thread as any)?.propertyStyle || '',
-    beds: get('beds') || (thread as any)?.beds || '',
-    baths: get('baths') || (thread as any)?.baths || '',
-    sqft: get('sqft') || (thread as any)?.sqft || '',
-    yearBuilt: get('year_built') || (thread as any)?.yearBuilt || '',
-    effectiveYear: get('effective_year_built') || (thread as any)?.effectiveYear || '',
-    estimatedValue: get('estimated_value') || (thread as any)?.estimatedValue || '',
-    repairCost: get('estimated_repair_cost') || (thread as any)?.estimatedRepairCost || '',
-    cashOffer: get('cash_offer') || (thread as any)?.cashOffer || '',
-    finalScore: get('final_acquisition_score') || (thread as any)?.finalAcquisitionScore || '',
+    city: get('property_address_city', ['property_city', 'city']),
+    state: get('property_address_state', ['property_state', 'state']),
+    zip: get('property_address_zip', ['property_zip', 'zip']),
+    market: get('market', ['market_id']) || thread?.market || '',
+    propertyType: get('property_type', ['propertyType']),
+    propertyClass: get('property_class', ['propertyClass']),
+    propertyStyle: get('property_style', ['propertyStyle']),
     streetViewUrl: buildStreetViewUrl(address),
     aerialViewUrl: buildAerialViewUrl(address),
-    unitCount: get('units') || get('number_of_units') || get('unit_count') || '',
-    lotSize: get('lot_size_square_feet') || get('lot_size_sqft') || '',
-    lotSizeAcres: get('lot_size_acres') || '',
+    streetviewImage: get('streetview_image'),
+
+    // Structural
+    beds: get('beds', ['bedrooms']),
+    baths: get('baths', ['bathrooms']),
+    sqft: get('sqft', ['living_area_sqft', 'livingAreaSqft']),
+    yearBuilt: get('year_built', ['yearBuilt']),
+    effectiveYear: get('effective_year_built', ['effectiveYear']),
+    unitCount: get('units', ['number_of_units', 'unit_count']),
+    lotSize: get('lot_size_square_feet', ['lot_size_sqft']),
+    lotSizeAcres: get('lot_size_acres'),
+    zoning: get('zoning', ['zoning_code']),
     occupancy: get('occupancy'),
-    ownerType: get('owner_type'),
-    zoning: get('zoning'),
+
+    // Valuation & Financial
+    estimatedValue: get('estimated_value', ['estimatedValue', 'zestimate']),
+    repairCost: get('estimated_repair_cost', ['repairCost', 'estimatedRepairCost']),
+    cashOffer: get('cash_offer', ['cashOffer', 'mao']),
+    finalScore: get('final_acquisition_score', ['finalScore', 'finalAcquisitionScore']),
+    equityPercent: get('equity_percent', ['equityPercent']),
+    equityAmount: get('equity_amount', ['estimated_equity_amount', 'equityAmount']),
+    loanAmount: get('loan_amount'),
+    loanBalance: get('loan_balance'),
+    loanPayment: get('loan_payment'),
+    assessedTotalValue: get('assessed_total_value'),
+    assessedLandValue: get('assessed_land_value'),
+    assessedImprovementValue: get('assessed_improvement_value'),
+    taxDelinquent: get('tax_delinquent'),
+    taxAmount: get('tax_amount'),
+    
+    // Owner & Prospect
+    ownerName: get('owner_full_name', ['owner_name']),
+    ownerDisplayName: get('owner_display_name', ['ownerDisplayName']),
+    ownerType: get('owner_type_guess', ['owner_type', 'ownerType']),
+    priorityTier: get('owner_priority_tier', ['priority_tier']),
+    language: get('best_language', ['language', 'contactLanguage']),
+    bestContactWindow: get('best_contact_window'),
+    prospectFullName: get('prospect_full_name'),
+    prospectFirstName: get('prospect_first_name'),
+    householdIncome: get('est_household_income', ['household_income', 'householdIncome']),
+    netAssetValue: get('net_asset_value', ['netAssetValue']),
+    occupationGroup: get('occupation_group'),
+    phoneCarrier: get('phone_carrier'),
+
+    // Automation & Intent
+    uiIntent: get('ui_intent', ['uiIntent']),
+    automationState: get('automation_state', ['automationState']),
+    nextSystemAction: get('next_system_action', ['nextSystemAction']),
+    detectedIntent: get('detected_intent', ['detectedIntent']),
+    safetyStatus: get('safety_status'),
+    routingAllowed: get('routing_allowed'),
+    
+    // Meta
     floodZone: get('flood_zone'),
-    equityPercent: get('equity_percent') || (thread as any)?.equityPercent || '',
-    equityAmount: get('estimated_equity_amount') || (thread as any)?.equityAmount || '',
-    ownershipYears: get('ownership_years') || '',
+    ownershipYears: get('ownership_years'),
   }
 }
+
 
 
 /**

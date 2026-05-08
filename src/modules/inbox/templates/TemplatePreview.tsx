@@ -18,9 +18,9 @@ export const TemplatePreview = ({
   onVariableChange: (key: string, value: string) => void
   onInsert: () => void
   onReplace: () => void
-  onSendNow: () => void
-  onQueue: () => void
-  onSchedule: () => void
+  onSendNow: (template: SmsTemplate) => void
+  onQueue: (template: SmsTemplate) => void
+  onSchedule: (template: SmsTemplate) => void
 }) => {
   if (!template || !renderResult) {
     return <div className="nx-template-preview-empty">Select a template to preview.</div>
@@ -74,7 +74,7 @@ export const TemplatePreview = ({
           onClick={(e) => {
             e.preventDefault()
             e.stopPropagation()
-            onSendNow()
+            onSendNow(template)
           }}
         >
           Send Now
@@ -84,7 +84,7 @@ export const TemplatePreview = ({
           onClick={(e) => {
             e.preventDefault()
             e.stopPropagation()
-            onQueue()
+            onQueue(template)
           }}
         >
           Queue Reply
@@ -94,7 +94,7 @@ export const TemplatePreview = ({
           onClick={(e) => {
             e.preventDefault()
             e.stopPropagation()
-            onSchedule()
+            onSchedule(template)
           }}
         >
           Schedule
