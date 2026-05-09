@@ -580,7 +580,7 @@ export const getSavedPresetConfig = (preset: InboxSavedFilterPreset): Partial<In
   if (preset === 'high_motivation') return { view: 'active', advanced: { motivationMin: 70 } }
   if (preset === 'offer_needed') return { view: 'waiting', stage: 'all_stages' }
   if (preset === 'review_required') return { view: 'all', stage: 'all_stages' }
-  if (preset === 'suppressed') return { view: 'suppressed', stage: 'suppressed' }
+  if (preset === 'suppressed') return { view: 'suppressed' }
   if (preset === 'language_focus') return { view: 'all', advanced: { language: 'non_english' } }
   if (preset === 'wrong_numbers') return { view: 'wrong_number' }
   if (preset === 'starred') return { view: 'starred', stage: 'all_stages' }

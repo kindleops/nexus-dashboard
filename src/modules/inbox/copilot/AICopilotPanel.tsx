@@ -45,9 +45,12 @@ interface CopilotMessage {
   agentId: string
   body: string
   timestamp: string
+  status?: 'thinking' | 'complete' | 'error'
+  steps?: Array<{ label: string; status: 'pending' | 'active' | 'done' | 'error' }>
   draft?: BigPickleDraft | null
   actions?: string[]
   voiceList?: SpeechSynthesisVoice[]
+  underwritingData?: any
 }
 
 const SLASH_COMMANDS = [
@@ -59,6 +62,45 @@ const SLASH_COMMANDS = [
 ]
 
 /* ── Components ────────────────────────────────────────────────── */
+
+const UnderwritingResultCard = ({ data }: { data: any }) => (
+  <div className="nx-copilot-underwrite-card nx-liquid-panel">
+    <div className="nx-underwrite-header">
+      <div className="nx-underwrite-title">
+        <Icon name="spark" />
+        <span>OFFER INTELLIGENCE</span>
+      </div>
+      <div className={cls('nx-underwrite-badge', `is-${data.valuation.verdict}`)}>
+        {data.valuation.verdict.toUpperCase()} ({data.valuation.score}/100)
+      </div>
+    </div>
+    
+    <div className="nx-underwrite-stats">
+      <div className="nx-underwrite-stat">
+        <label>ARV</label>
+        <strong>{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(data.valuation.arv_estimate)}</strong>
+      </div>
+      <div className="nx-underwrite-stat">
+        <label>MAO</label>
+        <strong>{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(data.valuation.mao)}</strong>
+      </div>
+      <div className="nx-underwrite-stat">
+        <label>PROFIT</label>
+        <strong>{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(data.valuation.assignmentFee)}</strong>
+      </div>
+    </div>
+
+    <div className="nx-underwrite-comps">
+      <div className="nx-comps-label">Verified Sold Comps:</div>
+      {data.comps.slice(0, 3).map((comp: any, i: number) => (
+        <a key={i} href={comp.source_url} target="_blank" rel="noreferrer" className="nx-comp-row">
+          <span>{comp.address}</span>
+          <strong>${comp.price.toLocaleString()}</strong>
+        </a>
+      ))}
+    </div>
+  </div>
+)
 
 const VoiceWaves = ({ isActive, color }: { isActive: boolean, color: string }) => (
   <div className="nx-copilot-voice-waves" style={{ '--agent-accent': color } as any}>
@@ -77,11 +119,27 @@ const MessageCard = ({ msg, onAction }: { msg: CopilotMessage; onAction: (action
   const isAgent = msg.role === 'agent'
   const isSystem = msg.role === 'system'
   return (
-    <div className={cls('nx-copilot-msg', isAgent && 'is-agent', !isAgent && !isSystem && 'is-operator', isSystem && 'is-system')}>
+    <div className={cls('nx-copilot-msg', isAgent && 'is-agent', !isAgent && !isSystem && 'is-operator', isSystem && 'is-system', msg.status === 'thinking' && 'is-thinking')}>
       {isAgent && <span className="nx-copilot-msg__avatar">{agent.avatarEmoji}</span>}
       <div className="nx-copilot-msg__content">
         {isAgent && <span className="nx-copilot-msg__name">{agent.name}</span>}
         <div className="nx-copilot-msg__body">{msg.body}</div>
+        
+        {msg.steps && (
+          <div className="nx-copilot-steps">
+            {msg.steps.map((step, i) => (
+              <div key={i} className={cls('nx-copilot-step', `is-${step.status}`)}>
+                <span className="nx-step-icon">
+                  {step.status === 'done' ? '✅' : step.status === 'active' ? '🧬' : step.status === 'error' ? '❌' : '◦'}
+                </span>
+                <span className="nx-step-label">{step.label}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {msg.underwritingData && <UnderwritingResultCard data={msg.underwritingData} />}
+
         {msg.draft && (
           <div className="nx-copilot-draft-card nx-liquid-panel">
             <div className="nx-copilot-draft-card__header">
@@ -311,11 +369,32 @@ export const AICopilotPanel = ({
           return
         }
 
-        const body = `Analyzing **${thread.propertyAddress || thread.subject}**... 🧬`
-        setMessages(prev => [...prev, { id: `agent-${Date.now()}`, role: 'agent', agentId, body, timestamp: new Date().toISOString() }])
-        speakMessage(body)
+        const msgId = `agent-${Date.now()}`
+        const initialSteps: CopilotMessage['steps'] = [
+          { label: 'Initializing Research Engine', status: 'active' },
+          { label: 'Scraping Market Sold Comps', status: 'pending' },
+          { label: 'Analyzing Neighborhood Velocity', status: 'pending' },
+          { label: 'Deterministic Financial Validation', status: 'pending' },
+        ]
+
+        setMessages(prev => [...prev, { 
+          id: msgId, 
+          role: 'agent', 
+          agentId, 
+          body: `I'm initiating a deep-dive underwriting for **${thread.propertyAddress || thread.subject}**. Standing by...`, 
+          timestamp: new Date().toISOString(),
+          status: 'thinking',
+          steps: initialSteps
+        }])
 
         try {
+          // Step 1: Research
+          await new Promise(r => setTimeout(r, 1200))
+          setMessages(prev => prev.map(m => m.id === msgId ? {
+            ...m,
+            steps: m.steps?.map((s, i) => i === 0 ? { ...s, status: 'done' } : i === 1 ? { ...s, status: 'active' } : s)
+          } : m))
+
           const res = await fetch('/api/internal/offers/underwrite', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -327,21 +406,41 @@ export const AICopilotPanel = ({
           const data = await res.json()
           if (data.error) throw new Error(data.error)
 
-          const responseBody = `✅ **Underwriting Complete**
-          
-**ARV:** ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(data.valuation.arv_estimate)}
-**Repairs:** ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(data.valuation.repair_estimate)}
-**MAO:** ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(data.valuation.mao)}
-**Verdict:** ${data.valuation.verdict.toUpperCase()} (${data.valuation.score}/100)
+          // Step 2: Comps Done
+          await new Promise(r => setTimeout(r, 800))
+          setMessages(prev => prev.map(m => m.id === msgId ? {
+            ...m,
+            steps: m.steps?.map((s, i) => i === 1 ? { ...s, status: 'done' } : i === 2 ? { ...s, status: 'active' } : s)
+          } : m))
 
-Top Comps:
-${data.comps.slice(0, 3).map((c: any) => `- [${c.address}](${c.source_url}): $${c.price.toLocaleString()}`).join('\n')}
-`
-          setMessages(prev => [...prev, { id: `agent-${Date.now()}`, role: 'agent', agentId, body: responseBody, timestamp: new Date().toISOString() }])
-          speakMessage(`Underwriting complete. The recommended offer is ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(data.valuation.mao)}. Verdict is ${data.valuation.verdict}.`)
+          // Step 3: Analysis
+          await new Promise(r => setTimeout(r, 1000))
+          setMessages(prev => prev.map(m => m.id === msgId ? {
+            ...m,
+            steps: m.steps?.map((s, i) => i === 2 ? { ...s, status: 'done' } : i === 3 ? { ...s, status: 'active' } : s)
+          } : m))
+
+          // Step 4: Complete
+          await new Promise(r => setTimeout(r, 600))
+          const finalBody = `Underwriting complete for this ${data.property_info.beds}/${data.property_info.baths} ${detectPropertyCategory(thread).toUpperCase()}. I've identified a **${data.valuation.verdict.toUpperCase()}** opportunity with a protected **$${data.valuation.assignmentFee.toLocaleString()}** profit margin.`
+          
+          setMessages(prev => prev.map(m => m.id === msgId ? {
+            ...m,
+            body: finalBody,
+            status: 'complete',
+            steps: m.steps?.map(s => ({ ...s, status: 'done' })),
+            underwritingData: data
+          } : m))
+          
+          speakMessage(`Research complete. The recommended offer is ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(data.valuation.mao)}. This deal is a ${data.valuation.verdict}.`)
+
         } catch (err) {
-          const errorBody = `❌ **Underwriting Failed:** ${err instanceof Error ? err.message : String(err)}`
-          setMessages(prev => [...prev, { id: `agent-${Date.now()}`, role: 'agent', agentId, body: errorBody, timestamp: new Date().toISOString() }])
+          setMessages(prev => prev.map(m => m.id === msgId ? {
+            ...m,
+            body: `❌ **Underwriting Failed:** ${err instanceof Error ? err.message : String(err)}`,
+            status: 'error',
+            steps: m.steps?.map(s => s.status === 'active' ? { ...s, status: 'error' } : s)
+          } : m))
           speakMessage("Sorry, I encountered an error while underwriting the deal.")
         }
       } else if (lowerText.includes('summarize')) {
