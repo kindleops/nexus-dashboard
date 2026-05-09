@@ -368,7 +368,7 @@ const matchesViewSelection = (thread: InboxWorkflowThread, view: InboxViewSelect
   const activeHydrated = hydratedCategory === 'automated' || hydratedCategory === 'outbound_active'
   const priorityHydrated = hydratedCategory === 'hot_leads' || hydratedCategory === 'needs_review' || hydratedCategory === 'new_inbound'
 
-  if (view === 'inbound') return latestDirection === 'inbound' && !isArchived
+  if (view === 'inbound') return (latestDirection === 'inbound' || hydratedCategory === 'new_inbound') && !isArchived
   if (view === 'outbound') return latestDirection === 'outbound' && !isArchived
   if (view === 'needs_reply') return (hydratedCategory === 'new_inbound' || needsReply) && !isArchived
   if (view === 'auto_replied') return (hydratedCategory === 'automated' || ['queued', 'sent', 'delivered'].some((status) => autoStatus.includes(status))) && !isArchived
@@ -377,7 +377,7 @@ const matchesViewSelection = (thread: InboxWorkflowThread, view: InboxViewSelect
   if (view === 'offer_requested') return containsAny(text, KEYWORD_GROUPS.offer_requested as unknown as string[]) && !isArchived
   if (view === 'wrong_number') return hydratedCategory === 'dnc_opt_out' && containsAny(text, KEYWORD_GROUPS.wrong_number as unknown as string[]) || uiIntent === 'wrong_person'
   if (view === 'opt_out') return hydratedCategory === 'dnc_opt_out' || isSuppressed || containsAny(text, KEYWORD_GROUPS.opt_out as unknown as string[])
-  if (view === 'manual_review') return hydratedCategory === 'needs_review' || containsAny(text, KEYWORD_GROUPS.manual_review as unknown as string[]) || uiIntent === 'hostile_or_legal'
+  if (view === 'manual_review') return (hydratedCategory === 'needs_review' || containsAny(text, KEYWORD_GROUPS.manual_review as unknown as string[]) || uiIntent === 'hostile_or_legal') && !isArchived
   if (view === 'missing_context') return hydratedCategory === 'cold_no_response' || contextMissing
   if (view === 'priority') return (priorityHydrated || showInPriority) && !isArchived
   if (view === 'active') return (activeHydrated || (!isArchived && !isSuppressed && uiIntent !== 'outbound_waiting')) && !isArchived
@@ -390,7 +390,7 @@ const matchesViewSelection = (thread: InboxWorkflowThread, view: InboxViewSelect
     const assigned = getField(thread, 'assignedAgent') || getField(thread, 'sms_agent_id') || getField(thread, 'ownerId')
     return !assigned
   }
-  if (view === 'needs_response') return (thread.inboxStatus === 'new_reply' || thread.inboxStatus === 'needs_review') && !isArchived
+  if (view === 'needs_response') return (thread.inboxStatus === 'new_reply' || thread.inboxStatus === 'needs_review' || hydratedCategory === 'new_inbound') && !isArchived
   if (view === 'archived') return isArchived
   if (view === 'sent') return uiIntent === 'sent' && !isArchived
   if (view === 'queued') return uiIntent === 'queued' && !isArchived

@@ -791,44 +791,70 @@ export const AcquisitionPage = ({ data }: AcquisitionPageProps) => {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredProperties.map((property) => (
-                    <tr key={property.id}>
-                      <td>
-                        <div className="acq-cell-stack">
-                          <RelationshipChip label={property.address} type="property" id={property.id} onOpen={openRecord} />
-                          <small>{property.market} • {property.lastActivity}</small>
-                        </div>
-                      </td>
-                      <td><span className="acq-badge">{property.propertyType}</span></td>
-                      <td>
-                        <RelationshipChip
-                          label={property.ownerName}
-                          type="owner"
-                          id={property.ownerId}
-                          onOpen={openRecord}
-                        />
-                      </td>
-                      <td>{currency(property.value)}</td>
-                      <td><span className="acq-badge is-emerald">{currency(property.equity)}</span></td>
-                      <td>
-                        <div className="acq-chip-group">
-                          {property.distressTags.length === 0 && <span className="acq-tag">None</span>}
-                          {property.distressTags.map((tag) => (
-                            <span key={`${property.id}-${tag}`} className="acq-tag">{tag}</span>
-                          ))}
-                        </div>
-                      </td>
-                      <td><ScoreBar value={property.aiScore} tone={property.aiScore >= 70 ? 'good' : property.aiScore <= 35 ? 'critical' : 'warn'} /></td>
-                      <td><StatusPill value={property.offerStatus} /></td>
-                      <td>
-                        <div className="acq-action-row">
-                          <button type="button" onClick={() => openRecord('property', property.id)}>Open</button>
-                          <button type="button" onClick={() => setActiveTab('map')}>Map</button>
-                          <button type="button" onClick={() => setActiveTab('underwriting')}>Underwrite</button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {filteredProperties.map((property) => {
+                    const [isUnderwriting, setIsUnderwriting] = useState(false)
+                    return (
+                      <tr key={property.id}>
+                        <td>
+                          <div className="acq-cell-stack">
+                            <RelationshipChip label={property.address} type="property" id={property.id} onOpen={openRecord} />
+                            <small>{property.market} • {property.lastActivity}</small>
+                          </div>
+                        </td>
+                        <td><span className="acq-badge">{property.propertyType}</span></td>
+                        <td>
+                          <RelationshipChip
+                            label={property.ownerName}
+                            type="owner"
+                            id={property.ownerId}
+                            onOpen={openRecord}
+                          />
+                        </td>
+                        <td>{currency(property.value)}</td>
+                        <td><span className="acq-badge is-emerald">{currency(property.equity)}</span></td>
+                        <td>
+                          <div className="acq-chip-group">
+                            {property.distressTags.length === 0 && <span className="acq-tag">None</span>}
+                            {property.distressTags.map((tag) => (
+                              <span key={`${property.id}-${tag}`} className="acq-tag">{tag}</span>
+                            ))}
+                          </div>
+                        </td>
+                        <td><ScoreBar value={property.aiScore} tone={property.aiScore >= 70 ? 'good' : property.aiScore <= 35 ? 'critical' : 'warn'} /></td>
+                        <td><StatusPill value={property.offerStatus} /></td>
+                        <td>
+                          <div className="acq-action-row">
+                            <button type="button" onClick={() => openRecord('property', property.id)}>Open</button>
+                            <button type="button" onClick={() => setActiveTab('map')}>Map</button>
+                            <button 
+                              type="button" 
+                              disabled={isUnderwriting}
+                              onClick={async () => {
+                                setIsUnderwriting(true)
+                                try {
+                                  const res = await fetch('/api/internal/offers/underwrite', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ address: property.address, propertyType: property.propertyType })
+                                  })
+                                  const data = await res.json()
+                                  if (data.error) throw new Error(data.error)
+                                  alert(`Underwriting Complete for ${property.address}:\nARV: ${currency(data.valuation.arv_estimate)}\nMAO: ${currency(data.valuation.mao)}\nVerdict: ${data.valuation.verdict.toUpperCase()}`)
+                                  setActiveTab('underwriting')
+                                } catch (err) {
+                                  alert('Underwriting failed: ' + (err instanceof Error ? err.message : String(err)))
+                                } finally {
+                                  setIsUnderwriting(false)
+                                }
+                              }}
+                            >
+                              {isUnderwriting ? '...' : 'Underwrite'}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             )}

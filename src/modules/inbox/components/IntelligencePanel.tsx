@@ -24,6 +24,7 @@ const DEV = Boolean(import.meta.env.DEV)
 const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
 
 import { CopilotOrbTrigger } from '../copilot/AICopilotPanel'
+import { detectPropertyCategory } from '../helpers/propertyHelpers'
 
 type WorkflowThread = InboxWorkflowThread & Partial<{
   sellerFirstName: string
@@ -297,24 +298,6 @@ const SectionEmptyState = ({ text }: { text: string }) => (
     <span>{text}</span>
   </div>
 )
-
-// ── Property Category Detection ───────────────────────────────────────────
-
-type PropertyCategory = 'sfh' | 'multifamily' | 'hotel' | 'storage' | 'retail' | 'office' | 'industrial' | 'land' | 'other'
-
-const detectPropertyCategory = (thread: WorkflowThread): PropertyCategory => {
-  const pt = normalizeText(get(thread, 'propertyType') || get(thread, 'property_type')).toLowerCase()
-  const units = Number(get(thread, 'unitCount') || get(thread, 'unit_count') || get(thread, 'units')) || 0
-  if (units >= 5 || pt.includes('multifamily') || pt.includes('apartment')) return 'multifamily'
-  if (pt.includes('hotel') || pt.includes('motel') || pt.includes('lodging') || pt.includes('hospitality')) return 'hotel'
-  if (pt.includes('storage') || pt.includes('self-storage') || pt.includes('warehouse') && !pt.includes('industrial')) return 'storage'
-  if (pt.includes('retail') || pt.includes('plaza') || pt.includes('strip') || pt.includes('shopping')) return 'retail'
-  if (pt.includes('office') || pt.includes('medical office') || pt.includes('professional')) return 'office'
-  if (pt.includes('industrial') || pt.includes('warehouse') || pt.includes('manufacturing') || pt.includes('flex')) return 'industrial'
-  if (pt.includes('land') || pt.includes('lot') || pt.includes('acre') || pt.includes('vacant')) return 'land'
-  if (units <= 4 && (pt.includes('single') || pt.includes('sfh') || pt.includes('residential') || pt === '')) return 'sfh'
-  return 'other'
-}
 
 // ── Next Best Action Logic ────────────────────────────────────────────────
 
@@ -1676,6 +1659,9 @@ export const DealStateCard = ({ thread }: { thread: WorkflowThread }) => {
 }
 
 export const OfferMemoCard = ({ thread }: { thread: WorkflowThread }) => {
+  const [isUnderwriting, setIsUnderwriting] = useState(false)
+  const [underwritingData, setUnderwritingData] = useState<any>(null)
+  
   const hasArv = isPresent(get(thread, 'arv') || get(thread, 'afterRepairValue') || get(thread, 'after_repair_value'))
   const aiOffer = formatMoney(get(thread, 'aiRecommendedOffer') || get(thread, 'ai_recommended_opening_offer') || get(thread, 'ai_offer'))
   const cashOffer = formatMoney(get(thread, 'cashOffer') || get(thread, 'cash_offer') || get(thread, 'mao'))
@@ -1686,6 +1672,28 @@ export const OfferMemoCard = ({ thread }: { thread: WorkflowThread }) => {
     : formatDisplayValue(get(thread, 'nextRequiredInfo') || get(thread, 'next_required_info'))
   const aiOpening = aiOffer || (hasArv ? 'Needs underwriting' : 'Needs ARV')
 
+  const handleUnderwrite = async () => {
+    setIsUnderwriting(true)
+    try {
+      const res = await fetch('/api/internal/offers/underwrite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          address: thread.propertyAddress || thread.subject, 
+          propertyType: detectPropertyCategory(thread) 
+        })
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      setUnderwritingData(data)
+    } catch (err) {
+      console.error('Underwriting failed:', err)
+      alert('Underwriting failed: ' + (err instanceof Error ? err.message : String(err)))
+    } finally {
+      setIsUnderwriting(false)
+    }
+  }
+
   return (
     <DossierCard className="nx-offer-memo-card">
       <div className="nx-dossier-section__title nx-dossier-section__title--between">
@@ -1694,10 +1702,46 @@ export const OfferMemoCard = ({ thread }: { thread: WorkflowThread }) => {
       </div>
       <div className="nx-offer-memo-card__rows">
         <IntelField label="LEGACY CASH OFFER" value={cashOffer} />
-        <IntelField label="AI RECOMMENDED OPENING" value={aiOpening} />
-        <IntelField label="WALKAWAY INTERNAL" value={walkaway || 'Needs underwriting'} />
-        <IntelField label="MISSING UNDERWRITING INFO" value={missing} />
-        <IntelField label="CONFIDENCE / SAFE-TO-REVEAL" value={confidence} />
+        <IntelField label="AI RECOMMENDED OPENING" value={underwritingData ? formatMoney(underwritingData.valuation.mao) : aiOpening} />
+        <IntelField label="WALKAWAY INTERNAL" value={underwritingData ? formatMoney(underwritingData.valuation.maoCeiling) : (walkaway || 'Needs underwriting')} />
+        <IntelField label="MISSING UNDERWRITING INFO" value={underwritingData ? 'None (AI Fresh)' : missing} />
+        <IntelField label="CONFIDENCE / SAFE-TO-REVEAL" value={underwritingData ? `${underwritingData.valuation.score}/100 - ${underwritingData.valuation.verdict.toUpperCase()}` : confidence} />
+      </div>
+      
+      {underwritingData && (
+        <div className="nx-underwrite-results">
+          <div className="nx-underwrite-results__title">AI Research Snapshot</div>
+          <div className="nx-underwrite-results__grid">
+            <div className="nx-underwrite-results__item">
+              <span>ARV Estimate</span>
+              <strong>{formatMoney(underwritingData.valuation.arv_estimate)}</strong>
+            </div>
+            <div className="nx-underwrite-results__item">
+              <span>Repair Estimate</span>
+              <strong>{formatMoney(underwritingData.valuation.repair_estimate)}</strong>
+            </div>
+          </div>
+          <div className="nx-underwrite-results__comps">
+            {underwritingData.comps.slice(0, 3).map((comp: any, i: number) => (
+              <a key={i} href={comp.source_url} target="_blank" rel="noreferrer" className="nx-underwrite-comp-link">
+                <Icon name="globe" /> {comp.address} - {formatMoney(comp.price)}
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="nx-offer-memo-card__actions" style={{ marginTop: 12 }}>
+        <button 
+          type="button" 
+          className={cls('nx-intel-action-btn', isUnderwriting && 'is-loading')}
+          onClick={handleUnderwrite}
+          disabled={isUnderwriting}
+          style={{ width: '100%', justifyContent: 'center', background: 'var(--nx-accent-bg)', color: 'var(--nx-accent-text)' }}
+        >
+          <Icon name="spark" />
+          {isUnderwriting ? 'Analyzing Deal...' : 'Run AI Comps & Underwrite'}
+        </button>
       </div>
     </DossierCard>
   )

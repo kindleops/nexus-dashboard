@@ -4,6 +4,7 @@ import type { ThreadContext, ThreadIntelligenceRecord } from '../../../lib/data/
 import { Icon } from '../../../shared/icons'
 import { COPILOT_AGENTS, DEFAULT_AGENT_ID, getAgentById, type CopilotAgent } from './agents'
 import { extractCopilotContext, type BigPickleDraft } from './copilot-context'
+import { detectPropertyCategory } from '../helpers/propertyHelpers'
 import { CopilotOrb } from '../../../shared/copilot/CopilotOrb'
 import * as BigPickle from '../../copilot/providers/bigPickleProvider'
 
@@ -53,6 +54,7 @@ const SLASH_COMMANDS = [
   { cmd: '/draft', label: 'Draft Reply', desc: 'Generate a Big Pickle draft' },
   { cmd: '/voice', label: 'Voices', desc: 'Switch auditory agent profiles' },
   { cmd: '/summarize', label: 'Summarize', desc: 'Summarize this thread' },
+  { cmd: '/underwrite', label: 'Underwrite', desc: 'Run AI Comps & Numbers' },
   { cmd: '/help', label: 'Help', desc: 'Show available commands' },
 ]
 
@@ -301,6 +303,47 @@ export const AICopilotPanel = ({
         
         setMessages(prev => [...prev, { id: `agent-${Date.now()}`, role: 'agent', agentId, body, timestamp: new Date().toISOString(), draft }])
         speakMessage(body)
+      } else if (lowerText.includes('/underwrite') || lowerText.includes('underwrite')) {
+        if (!thread) {
+          const body = "I need thread context to run underwriting. Select a conversation first!"
+          setMessages(prev => [...prev, { id: `agent-${Date.now()}`, role: 'agent', agentId, body, timestamp: new Date().toISOString() }])
+          speakMessage(body)
+          return
+        }
+
+        const body = `Analyzing **${thread.propertyAddress || thread.subject}**... 🧬`
+        setMessages(prev => [...prev, { id: `agent-${Date.now()}`, role: 'agent', agentId, body, timestamp: new Date().toISOString() }])
+        speakMessage(body)
+
+        try {
+          const res = await fetch('/api/internal/offers/underwrite', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              address: thread.propertyAddress || thread.subject, 
+              propertyType: detectPropertyCategory(thread)
+            })
+          })
+          const data = await res.json()
+          if (data.error) throw new Error(data.error)
+
+          const responseBody = `✅ **Underwriting Complete**
+          
+**ARV:** ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(data.valuation.arv_estimate)}
+**Repairs:** ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(data.valuation.repair_estimate)}
+**MAO:** ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(data.valuation.mao)}
+**Verdict:** ${data.valuation.verdict.toUpperCase()} (${data.valuation.score}/100)
+
+Top Comps:
+${data.comps.slice(0, 3).map((c: any) => `- [${c.address}](${c.source_url}): $${c.price.toLocaleString()}`).join('\n')}
+`
+          setMessages(prev => [...prev, { id: `agent-${Date.now()}`, role: 'agent', agentId, body: responseBody, timestamp: new Date().toISOString() }])
+          speakMessage(`Underwriting complete. The recommended offer is ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(data.valuation.mao)}. Verdict is ${data.valuation.verdict}.`)
+        } catch (err) {
+          const errorBody = `❌ **Underwriting Failed:** ${err instanceof Error ? err.message : String(err)}`
+          setMessages(prev => [...prev, { id: `agent-${Date.now()}`, role: 'agent', agentId, body: errorBody, timestamp: new Date().toISOString() }])
+          speakMessage("Sorry, I encountered an error while underwriting the deal.")
+        }
       } else if (lowerText.includes('summarize')) {
         if (!copilotCtx) return
         const { data: summary } = await BigPickle.summarizeThread(copilotCtx)
