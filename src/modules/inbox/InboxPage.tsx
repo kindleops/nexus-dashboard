@@ -1186,24 +1186,33 @@ export default function InboxPage() {
         await handleWorkflowMutation('Timeline: Retrying...', () => retryFailedSend(thread), { skipRefresh: true })
         break
       case 'archive':
-        handleToggleArchive()
+        await handleThreadAction(thread, 'archive')
+        break
+      case 'unarchive':
+        await handleThreadAction(thread, 'unarchive')
         break
       case 'star':
-        handleToggleStar()
+        await handleThreadAction(thread, 'star')
         break
       case 'unstar':
-        handleToggleStar()
+        await handleThreadAction(thread, 'unstar')
         break
       case 'pin':
-        handleTogglePin()
+        await handleThreadAction(thread, 'pin')
         break
       case 'unpin':
-        handleTogglePin()
+        await handleThreadAction(thread, 'unpin')
+        break
+      case 'read':
+        await handleThreadAction(thread, 'read')
+        break
+      case 'unread':
+        await handleThreadAction(thread, 'unread')
         break
       default:
         console.warn('[OperatorAction] Unknown action', action)
     }
-  }, [threads, handleWorkflowMutation, handleToggleArchive, handleToggleStar, handleTogglePin, DEV])
+  }, [threads, handleWorkflowMutation, handleThreadAction, DEV])
 
 
   const handleSend = useCallback(async (text: string, template?: SmsTemplate | null) => {

@@ -29,7 +29,7 @@ const supabase = createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY)
 
 async function dump() {
   const { data, error } = await supabase
-    .from('inbox_threads_hydrated')
+    .from('properties')
     .select('*')
     .limit(1);
   

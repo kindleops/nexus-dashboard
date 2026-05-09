@@ -343,6 +343,14 @@ const ConversationRow = memo(({ thread, selected, queuePreset, onSelect, onThrea
             </button>
             <button
               type="button"
+              className={cls('nx-thread-quick-btn', thread.isRead && 'is-active')}
+              title={thread.isRead ? 'Mark as unread' : 'Mark as read'}
+              onClick={handleAction(thread.isRead ? 'unread' : 'read')}
+            >
+              📥
+            </button>
+            <button
+              type="button"
               className="nx-thread-quick-btn"
               title="Archive thread"
               onClick={handleAction('archive')}

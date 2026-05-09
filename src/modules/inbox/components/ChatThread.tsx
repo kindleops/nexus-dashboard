@@ -204,12 +204,19 @@ export const ChatThread = ({
           <button
             type="button"
             className="nx-chat-action"
+            title={thread.isRead ? 'Mark as unread' : 'Mark as read'}
+            onClick={() => onThreadAction?.(thread.id, thread.isRead ? 'unread' : 'read')}
+          >
+            <Icon name="inbox" />
+          </button>
+          <button
+            type="button"
+            className="nx-chat-action"
             title={thread.isArchived ? 'Unarchive thread' : 'Archive thread'}
             onClick={() => onToggleArchive?.()}
           >
             <Icon name="archive" />
           </button>
-
         </div>
       </header>
 

@@ -220,6 +220,16 @@
   letter-spacing: -0.01em;
 }
 
+.nx-copilot-header__version {
+  font-size: 8px;
+  font-weight: 900;
+  color: rgba(104, 217, 196, 0.4);
+  background: rgba(104, 217, 196, 0.05);
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-left: 4px;
+}
+
 .nx-copilot-header__command-label {
   font-size: 9px;
   font-weight: 900;

@@ -328,68 +328,40 @@ export const AICopilotPanel = ({
     setInputText('')
     setIsTyping(true)
 
-    // Simulate Agent Logic
-    setTimeout(async () => {
-      setIsTyping(false)
-      const lowerText = text.toLowerCase()
+    const lowerText = text.toLowerCase()
 
-      if (lowerText.includes('/voice') || lowerText.includes('voice')) {
-        const body = `I've discovered **${availableVoices.length}** voices on your system. Which one should I use to represent our team?`
-        setMessages(prev => [...prev, { 
-          id: `agent-${Date.now()}`, 
-          role: 'agent', 
-          agentId, 
-          body, 
-          timestamp: new Date().toISOString(),
-          voiceList: availableVoices.slice(0, 10) // Limit to top 10 for UI clarity
-        }])
+    // ── Command: /underwrite ────────────────────────────────────
+    if (lowerText.includes('/underwrite') || lowerText.includes('underwrite')) {
+      setIsTyping(false)
+      if (!thread) {
+        const body = "I need thread context to run underwriting. Select a conversation first!"
+        setMessages(prev => [...prev, { id: `agent-${Date.now()}`, role: 'agent', agentId, body, timestamp: new Date().toISOString() }])
         speakMessage(body)
         return
       }
 
-      if (lowerText.includes('draft') || lowerText.includes('pickle')) {
-        if (!copilotCtx) {
-          const body = "I need thread context to generate a draft. Select a conversation first!"
-          setMessages(prev => [...prev, { id: `agent-${Date.now()}`, role: 'agent', agentId, body, timestamp: new Date().toISOString() }])
-          speakMessage(body)
-          return
-        }
+      const msgId = `agent-${Date.now()}`
+      const initialSteps: CopilotMessage['steps'] = [
+        { label: 'Initializing Research Engine', status: 'active' },
+        { label: 'Scraping Market Sold Comps', status: 'pending' },
+        { label: 'Analyzing Neighborhood Velocity', status: 'pending' },
+        { label: 'Deterministic Financial Validation', status: 'pending' },
+      ]
 
-        const { data: draft, state } = await BigPickle.draftSellerReply(copilotCtx)
-        const isReal = state === 'connected'
-        const body = isReal ? `✨ **Authoritative Big Pickle Draft** ready.` : `🥒 Draft prepared (Mock Mode).`
-        
-        setMessages(prev => [...prev, { id: `agent-${Date.now()}`, role: 'agent', agentId, body, timestamp: new Date().toISOString(), draft }])
-        speakMessage(body)
-      } else if (lowerText.includes('/underwrite') || lowerText.includes('underwrite')) {
-        if (!thread) {
-          const body = "I need thread context to run underwriting. Select a conversation first!"
-          setMessages(prev => [...prev, { id: `agent-${Date.now()}`, role: 'agent', agentId, body, timestamp: new Date().toISOString() }])
-          speakMessage(body)
-          return
-        }
+      setMessages(prev => [...prev, { 
+        id: msgId, 
+        role: 'agent', 
+        agentId, 
+        body: `I'm initiating an ELITE deep-dive underwriting for **${thread.propertyAddress || thread.subject}**. Standing by...`, 
+        timestamp: new Date().toISOString(),
+        status: 'thinking',
+        steps: initialSteps
+      }])
 
-        const msgId = `agent-${Date.now()}`
-        const initialSteps: CopilotMessage['steps'] = [
-          { label: 'Initializing Research Engine', status: 'active' },
-          { label: 'Scraping Market Sold Comps', status: 'pending' },
-          { label: 'Analyzing Neighborhood Velocity', status: 'pending' },
-          { label: 'Deterministic Financial Validation', status: 'pending' },
-        ]
-
-        setMessages(prev => [...prev, { 
-          id: msgId, 
-          role: 'agent', 
-          agentId, 
-          body: `I'm initiating a deep-dive underwriting for **${thread.propertyAddress || thread.subject}**. Standing by...`, 
-          timestamp: new Date().toISOString(),
-          status: 'thinking',
-          steps: initialSteps
-        }])
-
+      // Self-executing async wrapper
+      const run = async () => {
         try {
-          // Step 1: Research
-          await new Promise(r => setTimeout(r, 1200))
+          await new Promise(r => setTimeout(r, 1000))
           setMessages(prev => prev.map(m => m.id === msgId ? {
             ...m,
             steps: m.steps?.map((s, i) => i === 0 ? { ...s, status: 'done' } : i === 1 ? { ...s, status: 'active' } : s)
@@ -406,23 +378,20 @@ export const AICopilotPanel = ({
           const data = await res.json()
           if (data.error) throw new Error(data.error)
 
-          // Step 2: Comps Done
-          await new Promise(r => setTimeout(r, 800))
+          await new Promise(r => setTimeout(r, 1000))
           setMessages(prev => prev.map(m => m.id === msgId ? {
             ...m,
             steps: m.steps?.map((s, i) => i === 1 ? { ...s, status: 'done' } : i === 2 ? { ...s, status: 'active' } : s)
           } : m))
 
-          // Step 3: Analysis
           await new Promise(r => setTimeout(r, 1000))
           setMessages(prev => prev.map(m => m.id === msgId ? {
             ...m,
             steps: m.steps?.map((s, i) => i === 2 ? { ...s, status: 'done' } : i === 3 ? { ...s, status: 'active' } : s)
           } : m))
 
-          // Step 4: Complete
-          await new Promise(r => setTimeout(r, 600))
-          const finalBody = `Underwriting complete for this ${data.property_info.beds}/${data.property_info.baths} ${detectPropertyCategory(thread).toUpperCase()}. I've identified a **${data.valuation.verdict.toUpperCase()}** opportunity with a protected **$${data.valuation.assignmentFee.toLocaleString()}** profit margin.`
+          await new Promise(r => setTimeout(r, 800))
+          const finalBody = `Elite underwriting complete. I've analyzed verified sold data and neighborhood trends. **${data.valuation.verdict.toUpperCase()}** opportunity identified.`
           
           setMessages(prev => prev.map(m => m.id === msgId ? {
             ...m,
@@ -432,29 +401,56 @@ export const AICopilotPanel = ({
             underwritingData: data
           } : m))
           
-          speakMessage(`Research complete. The recommended offer is ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(data.valuation.mao)}. This deal is a ${data.valuation.verdict}.`)
-
+          speakMessage(`Research complete. Verdict is ${data.valuation.verdict}.`)
         } catch (err) {
           setMessages(prev => prev.map(m => m.id === msgId ? {
             ...m,
-            body: `❌ **Underwriting Failed:** ${err instanceof Error ? err.message : String(err)}`,
+            body: `❌ **Underwriting Error:** ${err instanceof Error ? err.message : String(err)}`,
             status: 'error',
             steps: m.steps?.map(s => s.status === 'active' ? { ...s, status: 'error' } : s)
           } : m))
-          speakMessage("Sorry, I encountered an error while underwriting the deal.")
         }
-      } else if (lowerText.includes('summarize')) {
-        if (!copilotCtx) return
-        const { data: summary } = await BigPickle.summarizeThread(copilotCtx)
-        setMessages(prev => [...prev, { id: `agent-${Date.now()}`, role: 'agent', agentId, body: `📝 **Summary:** ${summary}`, timestamp: new Date().toISOString() }])
-        speakMessage(summary)
-      } else {
-        const body = `I've acknowledged your request. As your ${agent.name}, I'm standing by to assist with drafting or summarizing this thread.`
+      }
+      void run()
+      return
+    }
+
+    // ── Command: /draft ─────────────────────────────────────────
+    if (lowerText.includes('/draft') || lowerText.includes('pickle')) {
+      if (!copilotCtx) {
+        setIsTyping(false)
+        const body = "I need thread context to generate a draft. Select a conversation first!"
         setMessages(prev => [...prev, { id: `agent-${Date.now()}`, role: 'agent', agentId, body, timestamp: new Date().toISOString() }])
         speakMessage(body)
+        return
       }
-    }, 1000)
-  }, [inputText, agentId, thread, agent.name, speakMessage])
+      const { data: draft, state } = await BigPickle.draftSellerReply(copilotCtx)
+      setIsTyping(false)
+      const body = state === 'connected' ? `✨ **Big Pickle Draft** ready.` : `🥒 Draft prepared (Mock).`
+      setMessages(prev => [...prev, { id: `agent-${Date.now()}`, role: 'agent', agentId, body, timestamp: new Date().toISOString(), draft }])
+      speakMessage(body)
+      return
+    }
+
+    // ── Command: /summarize ─────────────────────────────────────
+    if (lowerText.includes('/summarize')) {
+      if (!copilotCtx) { setIsTyping(false); return }
+      const { data: summary } = await BigPickle.summarizeThread(copilotCtx)
+      setIsTyping(false)
+      setMessages(prev => [...prev, { id: `agent-${Date.now()}`, role: 'agent', agentId, body: `📝 **Summary:** ${summary}`, timestamp: new Date().toISOString() }])
+      speakMessage(summary)
+      return
+    }
+
+    // ── Fallback Chat ───────────────────────────────────────────
+    setTimeout(() => {
+      setIsTyping(false)
+      const body = `I've acknowledged your request. As your ${agent.name}, I'm standing by to assist with drafting, summarizing, or underwriting this deal.`
+      setMessages(prev => [...prev, { id: `agent-${Date.now()}`, role: 'agent', agentId, body, timestamp: new Date().toISOString() }])
+      speakMessage(body)
+    }, 800)
+
+  }, [inputText, agentId, thread, agent.name, speakMessage, copilotCtx])
 
   const handleAction = useCallback((action: string) => {
     if (action.startsWith('select_voice:')) {
@@ -469,7 +465,6 @@ export const AICopilotPanel = ({
         body,
         timestamp: new Date().toISOString()
       }])
-      // Always speak the voice change even if voice mode is off to "check" it
       const synthesis = window.speechSynthesis
       synthesis.cancel()
       const utterance = new SpeechSynthesisUtterance("Voice profile updated. Standing by for commands.")
@@ -484,13 +479,13 @@ export const AICopilotPanel = ({
         onInsertDraft(lastDraft.draft.draftBody)
       }
     }
-  }, [messages, onInsertDraft])
+  }, [messages, onInsertDraft, agentId, availableVoices])
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isTyping])
 
-  // Welcome message on mount
+  // Welcome message
   useEffect(() => {
     if (messages.length === 0) {
       const body = `Hey! I'm your **${agent.name}** — ${agent.role}. I'm standing by to help you accelerate this deal. What would you like me to do?`
@@ -502,8 +497,7 @@ export const AICopilotPanel = ({
         timestamp: new Date().toISOString(),
       }])
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [agent.id, agent.name, agent.role, messages.length])
 
   const providerState = useMemo(() => BigPickle.getProviderState(), [])
 
@@ -522,6 +516,7 @@ export const AICopilotPanel = ({
           <div className="nx-copilot-header__info">
             <div className="nx-copilot-header__title-row">
               <strong>{agent.name}</strong>
+              <span className="nx-copilot-header__version">v2.1-ELITE</span>
               <span className={cls('nx-provider-badge', `is-${providerState}`)}>
                 {providerState === 'connected' ? 'CONNECTED' : providerState === 'mock_mode' ? 'MOCK MODE' : 'OFFLINE'}
               </span>

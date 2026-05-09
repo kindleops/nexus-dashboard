@@ -1658,10 +1658,15 @@ export const DealStateCard = ({ thread }: { thread: WorkflowThread }) => {
   )
 }
 
-export const OfferMemoCard = ({ thread }: { thread: WorkflowThread }) => {
+export const OfferMemoCard = ({ thread, intelligence }: { thread: WorkflowThread; intelligence: ThreadIntelligenceRecord | null }) => {
   const [isUnderwriting, setIsUnderwriting] = useState(false)
   const [underwritingData, setUnderwritingData] = useState<any>(null)
   
+  useEffect(() => {
+    const existing = intelligence?.comps_snapshot || (thread as any).comps_snapshot
+    if (existing) setUnderwritingData(existing)
+  }, [intelligence, thread])
+
   const hasArv = isPresent(get(thread, 'arv') || get(thread, 'afterRepairValue') || get(thread, 'after_repair_value'))
   const aiOffer = formatMoney(get(thread, 'aiRecommendedOffer') || get(thread, 'ai_recommended_opening_offer') || get(thread, 'ai_offer'))
   const cashOffer = formatMoney(get(thread, 'cashOffer') || get(thread, 'cash_offer') || get(thread, 'mao'))
@@ -1722,7 +1727,7 @@ export const OfferMemoCard = ({ thread }: { thread: WorkflowThread }) => {
             </div>
           </div>
           <div className="nx-underwrite-results__comps">
-            {underwritingData.comps.slice(0, 3).map((comp: any, i: number) => (
+            {underwritingData.comps?.slice(0, 3).map((comp: any, i: number) => (
               <a key={i} href={comp.source_url} target="_blank" rel="noreferrer" className="nx-underwrite-comp-link">
                 <Icon name="globe" /> {comp.address} - {formatMoney(comp.price)}
               </a>
@@ -2095,7 +2100,7 @@ export const IntelligencePanel = ({
       <div className="nx-intel-scroll-body">
         <SellerCommandCard thread={thread} onStatusChange={onStatusChange} onStageChange={onStageChange} />
         <PropertySnapshotCard thread={thread} intelligence={intelligence} />
-        <OfferMemoCard thread={thread} />
+        <OfferMemoCard thread={thread} intelligence={intelligence} />
         <ContactIntelligenceCard thread={thread} intelligence={intelligence} />
         <TimelineCard thread={thread} />
         <LinkedRecordsCard thread={thread} />
