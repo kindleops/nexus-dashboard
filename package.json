@@ -9,7 +9,12 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "setup:inbox": "node scripts/setup-inbox.mjs",
-    "proof:inbox": "node scripts/proof/inbox-proof.mjs"
+    "proof:inbox": "node scripts/proof/inbox-proof.mjs",
+    "proof:inbox-integrity": "node scripts/proof/inbox-integrity.mjs",
+    "proof:smart-inboxes": "node scripts/proof/smart-inboxes.mjs",
+    "proof:inbox-buttons": "node scripts/proof/inbox-buttons.mjs",
+    "proof:queue": "node scripts/proof/queue-proof.mjs",
+    "proof:inbox-backfill": "node scripts/proof/inbox-backfill.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.104.1",
