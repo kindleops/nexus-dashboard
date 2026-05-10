@@ -23,6 +23,8 @@ export type InboxViewSelectValue =
   | 'wrong_number'
   | 'opt_out'
   | 'missing_context'
+  | 'all_inbound'
+  | 'inbound_all'
   | 'manual_review'
   | 'priority'
   | 'active'
@@ -38,6 +40,15 @@ export type InboxViewSelectValue =
   | 'queued'
   | 'failed'
   | 'outbound_active'
+  | 'all_inbound'
+  | 'inbound_all'
+  | 'hot_leads'
+  | 'needs_review'
+  | 'new_inbound'
+  | 'automated'
+  | 'cold_no_response'
+  | 'dnc_opt_out'
+  | 'outbound_only'
 
 
 export type InboxSavedFilterPreset =
@@ -63,6 +74,8 @@ export type InboxSavedFilterPreset =
   | 'opt_out'
   | 'manual_review'
   | 'missing_context'
+  | 'all_inbound'
+  | 'inbound_all'
 
 export interface InboxAdvancedFilters {
   market?: string
@@ -239,6 +252,10 @@ export const savedFilterOptions: Array<{ value: InboxSavedFilterPreset; label: s
 
 const toText = (value: unknown): string => String(value ?? '').trim()
 const toLower = (value: unknown): string => toText(value).toLowerCase()
+const asNumber = (value: unknown, fallback = 0): number => {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : fallback
+}
 
 const getField = (thread: InboxWorkflowThread, key: string): unknown => {
   const row = thread as unknown as Record<string, unknown>
@@ -354,36 +371,32 @@ const matchesViewSelection = (thread: InboxWorkflowThread, view: InboxViewSelect
   
   const hydratedCategory = getHydratedCategory(thread)
   const uiIntent = toLower(getField(thread, 'uiIntent') || getField(thread, 'ui_intent'))
-  const priorityBucket = toLower(getField(thread, 'priorityBucket') || getField(thread, 'priority_bucket'))
   const showInPriority = Boolean(getField(thread, 'showInPriorityInbox') ?? getField(thread, 'show_in_priority_inbox'))
   const isArchived = Boolean(thread.isArchived || thread.inboxStatus === 'closed')
   const isSuppressed = isSuppressedThread(thread)
 
   const latestDirection = toLower(getField(thread, 'latestDirection') || getField(thread, 'lastDirection') || getField(thread, 'directionUsed'))
-  const text = searchableThreadText(thread)
-  const needsReply = Boolean(thread.needsResponse || getField(thread, 'needs_reply') || getField(thread, 'needsReply')) || ((latestDirection === 'inbound') && !String(getField(thread, 'autoReplyStatus') || '').toLowerCase().includes('sent'))
-  const autoStatus = toLower(getField(thread, 'autoReplyStatus') || getField(thread, 'auto_reply_status') || thread.queueStatus || getField(thread, 'deliveryStatus'))
-  const contextMissing = !thread.propertyId || !thread.ownerId || resolveThreadPrimaryName(thread).toLowerCase().includes('unknown') || resolveThreadAddressLine(thread).toLowerCase().includes('no address')
-  const waitingOnSeller = hydratedCategory === 'cold_no_response' || uiIntent === 'outbound_waiting' || toLower(getField(thread, 'queue_status') || getField(thread, 'automation_state')).includes('waiting')
+  const waitingOnSeller = hydratedCategory === 'cold_no_response' || uiIntent === 'outbound_waiting'
   const activeHydrated = hydratedCategory === 'automated' || hydratedCategory === 'outbound_active'
   const priorityHydrated = hydratedCategory === 'hot_leads' || hydratedCategory === 'needs_review' || hydratedCategory === 'new_inbound'
 
+  // CANONICAL VIEW PREDICATES
+  if (view === 'all_inbound' || view === 'inbound_all') return (asNumber(thread.inbound_count || (thread as any).inboundCount, 0) > 0)
+  if (view === 'hot_leads' || view === 'positive_hot') return hydratedCategory === 'hot_leads'
+  if (view === 'needs_review' || view === 'manual_review') return hydratedCategory === 'needs_review'
+  if (view === 'new_inbound' || view === 'needs_reply') return hydratedCategory === 'new_inbound'
+  if (view === 'automated' || view === 'auto_replied') return hydratedCategory === 'automated'
+  if (view === 'outbound_active' || view === 'outbound_only') return hydratedCategory === 'outbound_active'
+  if (view === 'cold_no_response' || view === 'missing_context') return hydratedCategory === 'cold_no_response'
+  if (view === 'dnc_opt_out' || view === 'suppressed' || view === 'opt_out') return hydratedCategory === 'dnc_opt_out'
+  if (view === 'archived') return isArchived
+
+  // Legacy/Compound Views
   if (view === 'inbound') return (latestDirection === 'inbound' || hydratedCategory === 'new_inbound') && !isArchived
-  if (view === 'outbound' || view === 'outbound_active') return (latestDirection === 'outbound' || hydratedCategory === 'outbound_active') && !isArchived
-  if (view === 'needs_reply') return (hydratedCategory === 'new_inbound' || needsReply) && !isArchived
-  if (view === 'auto_replied') return (hydratedCategory === 'automated' || ['queued', 'sent', 'delivered'].some((status) => autoStatus.includes(status))) && !isArchived
-  if (view === 'auto_reply_failed') return (hydratedCategory === 'needs_review' && autoStatus.includes('failed')) || ['failed', 'blocked', 'error', 'undeliver'].some((status) => autoStatus.includes(status))
-  if (view === 'positive_hot') return (hydratedCategory === 'hot_leads' || thread.sentiment === 'hot' || containsAny(text, KEYWORD_GROUPS.positive_hot as unknown as string[])) && !isArchived
-  if (view === 'offer_requested') return containsAny(text, KEYWORD_GROUPS.offer_requested as unknown as string[]) && !isArchived
-  if (view === 'wrong_number') return hydratedCategory === 'dnc_opt_out' && containsAny(text, KEYWORD_GROUPS.wrong_number as unknown as string[]) || uiIntent === 'wrong_person'
-  if (view === 'opt_out') return hydratedCategory === 'dnc_opt_out' || isSuppressed || containsAny(text, KEYWORD_GROUPS.opt_out as unknown as string[])
-  if (view === 'manual_review') return (hydratedCategory === 'needs_review' || containsAny(text, KEYWORD_GROUPS.manual_review as unknown as string[]) || uiIntent === 'hostile_or_legal') && !isArchived
-  if (view === 'missing_context') return hydratedCategory === 'cold_no_response' || contextMissing
+  if (view === 'outbound') return (latestDirection === 'outbound' || hydratedCategory === 'outbound_active') && !isArchived
   if (view === 'priority') return (priorityHydrated || showInPriority) && !isArchived
   if (view === 'active') return (activeHydrated || (!isArchived && !isSuppressed && uiIntent !== 'outbound_waiting')) && !isArchived
   if (view === 'waiting') return (waitingOnSeller || hydratedCategory === 'cold_no_response') && !isArchived
-  if (view === 'hidden') return priorityBucket === 'hidden' || isArchived || thread.isHidden
-  if (view === 'suppressed') return (hydratedCategory === 'dnc_opt_out' || isSuppressed) && !isArchived
   if (view === 'starred') return thread.isStarred
   if (view === 'pinned') return thread.isPinned
   if (view === 'unassigned') {
@@ -391,7 +404,6 @@ const matchesViewSelection = (thread: InboxWorkflowThread, view: InboxViewSelect
     return !assigned
   }
   if (view === 'needs_response') return (thread.inboxStatus === 'new_reply' || thread.inboxStatus === 'needs_review' || hydratedCategory === 'new_inbound') && !isArchived
-  if (view === 'archived') return isArchived
   if (view === 'sent') return uiIntent === 'sent' && !isArchived
   if (view === 'queued') return (uiIntent === 'queued' || hydratedCategory === 'automated') && !isArchived
   if (view === 'failed') return uiIntent === 'failed' && !isArchived
@@ -575,6 +587,7 @@ export const getSavedPresetConfig = (preset: InboxSavedFilterPreset): Partial<In
   if (preset === 'manual_review') return { view: 'manual_review' }
   if (preset === 'auto_replied') return { view: 'auto_replied' }
   if (preset === 'missing_context') return { view: 'missing_context' }
+  if (preset === 'all_inbound' || preset === 'inbound_all') return { view: 'all_inbound' }
   if (preset === 'my_priority') return { view: 'priority' }
   if (preset === 'new_inbounds') return { view: 'needs_reply', stage: 'all_stages' }
   if (preset === 'high_motivation') return { view: 'active', advanced: { motivationMin: 70 } }

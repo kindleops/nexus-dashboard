@@ -7,6 +7,8 @@ import type { ActiveOverlay, NexusTheme } from '../inbox-layout-state'
 import { getStatusVisual, getSellerStageVisual, automationStateVisuals } from '../status-visuals'
 import { buildInboxNotifications, NexusNotificationCenter, type NexusNotification } from './NexusNotificationCenter'
 import type { AutonomousEngineModel } from '../autonomy-engine'
+import { InboxKpiHoverStrip } from './InboxKpiHoverStrip'
+import { buildInboxKpis } from '../inbox-kpi-helpers'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
@@ -23,6 +25,10 @@ interface NexusTopBarProps {
   queueProcessorHealthLoading: boolean
   autonomyModel: AutonomousEngineModel
   theme: NexusTheme
+  viewCounts?: any
+  threads?: InboxWorkflowThread[]
+  activeViewKey?: string
+  onSelectView?: (viewKey: string) => void
   onToggleTheme: () => void
   activeOverlay: ActiveOverlay
   onOpenOverlay: (overlay: ActiveOverlay) => void
@@ -147,6 +153,8 @@ export const NexusTopBar = ({
   const sellerStage = getSellerStageVisual(selectedThread?.conversationStage).label
   const autoState = selectedThread ? automationStateVisuals[selectedThread.automationState] : null
 
+  const kpis = (viewCounts && threads) ? buildInboxKpis(viewCounts, threads) : []
+
   return (
     <header className="nx-topbar">
       <div className="nx-topbar__left">
@@ -160,12 +168,12 @@ export const NexusTopBar = ({
           </div>
         </div>
 
-        {selectedThread && (
-          <div className="nx-topbar-workflow-chips">
-            <WorkflowChip value={fallback(selectedThread.market || selectedThread.marketId, 'Unknown Market')} />
-            <WorkflowChip value={sellerStage} />
-            <WorkflowChip value={inboxStatus} color={autoState?.color} />
-          </div>
+        {kpis.length > 0 && activeViewKey && onSelectView && (
+          <InboxKpiHoverStrip
+            kpis={kpis}
+            activeViewKey={activeViewKey}
+            onSelectKpi={onSelectView}
+          />
         )}
       </div>
 

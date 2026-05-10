@@ -141,14 +141,23 @@ export interface InboxThread {
   thread_id?: string
   threadIsArchived?: boolean
   threadIsRead?: boolean
-
-
-
-
-
+  latestMessage?: string
+  inbox_category?: string
+  display_phone?: string
+  bestPhone?: string
+  isRead?: boolean
+  isDnc?: boolean
+  beds?: string | number
+  baths?: string | number
+  sqft?: string | number
+  yearBuilt?: string | number
+  equityAmount?: number
+  equityPercent?: number
+  motivationScore?: number
+  estimatedRepairCost?: number
+  estimatedValue?: number | null
+  contactLanguage?: string
 }
-
-
 export interface InboxModel {
   threads: InboxThread[]
   /** Non-archived threads where `is_read` is false (notification bell). */

@@ -1025,3 +1025,14 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
+
+/* Align Search and Composer */
+.nx-global-search {
+  max-width: 980px !important;
+  margin: 0 auto;
+}
+.nx-composer-input-area {
+  max-width: 980px !important;
+  margin: 0 auto;
+}
+

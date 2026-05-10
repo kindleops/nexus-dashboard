@@ -53,6 +53,7 @@ type QueuePreset =
   | 'outbound_only'
   | 'missing_context'
   | 'suppressed'
+  | 'inbound_all'
 
 type CategoryKey =
   | 'hot_leads'
@@ -70,6 +71,7 @@ const QUEUE_DESCRIPTIONS: Record<QueuePreset, string> = {
   positive_hot: 'High-intent signals & active sellers',
   manual_review: 'Requires operator triage',
   needs_reply: 'Fresh replies awaiting response',
+  inbound_all: 'All conversations with inbound activity',
   auto_replied: 'AI-managed conversations',
   outbound_only: 'Active outreach in progress',
   missing_context: 'No recent seller activity',
@@ -97,10 +99,18 @@ const VIEW_TO_QUEUE_PRESET: Partial<Record<InboxViewSelectValue, QueuePreset>> =
   positive_hot: 'positive_hot',
   manual_review: 'manual_review',
   needs_reply: 'needs_reply',
+  all_inbound: 'inbound_all',
   auto_replied: 'auto_replied',
   outbound: 'outbound_only',
+  outbound_active: 'outbound_only',
   missing_context: 'missing_context',
   suppressed: 'suppressed',
+  hot_leads: 'positive_hot',
+  needs_review: 'manual_review',
+  new_inbound: 'needs_reply',
+  automated: 'auto_replied',
+  cold_no_response: 'missing_context',
+  dnc_opt_out: 'suppressed',
 }
 
 const HERO_MODE_META: Record<'priority' | 'active' | 'waiting' | 'all', { label: string; tone: string; description: string }> = {
@@ -114,6 +124,7 @@ const QUEUE_HERO_META: Record<QueuePreset, { tone: string; description: string }
   positive_hot: { tone: 'hot', description: 'Motivated sellers and high-intent deal flow' },
   manual_review: { tone: 'review', description: 'Operator review required before the next move' },
   needs_reply: { tone: 'inbound', description: 'Fresh inbound replies ready for action' },
+  inbound_all: { tone: 'inbound-all', description: 'Full historical inbound communication' },
   auto_replied: { tone: 'automated', description: 'Automation-managed threads in motion' },
   outbound_only: { tone: 'outbound', description: 'Live outbound follow-up and outreach' },
   missing_context: { tone: 'cold', description: 'Cooling threads with no recent seller movement' },
