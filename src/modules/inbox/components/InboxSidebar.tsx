@@ -55,7 +55,7 @@ type QueuePreset =
   | 'suppressed'
   | 'inbound_all'
 
-const QUEUE_PRESETS: QueuePreset[] = ['positive_hot', 'manual_review', 'needs_reply', 'auto_replied', 'outbound_only', 'missing_context', 'suppressed']
+const QUEUE_PRESETS: QueuePreset[] = ['positive_hot', 'manual_review', 'needs_reply', 'auto_replied', 'outbound_only', 'missing_context', 'suppressed', 'inbound_all']
 
 const QUEUE_DESCRIPTIONS: Record<QueuePreset, string> = {
   positive_hot: 'High-intent signals & active sellers',
@@ -159,40 +159,17 @@ const getActivityTime = (thread: InboxWorkflowThread) => {
 
 const resolveQueuePreset = (thread: InboxWorkflowThread): QueuePreset => {
   const category = readString(thread, 'inbox_category', 'inboxCategory', 'priorityBucket', 'priority_bucket').toLowerCase()
+  const inboundCount = readNumber(thread, 'inbound_count', 'inboundCount') ?? 0
   
   // 1. Exact matches for backend categories
   if (category === 'hot_leads' || category === 'hot') return 'positive_hot'
   if (category === 'needs_review' || category === 'review') return 'manual_review'
   if (category === 'new_inbound' || category === 'unread') return 'needs_reply'
-  if (category === 'all_inbound' || category === 'inbound_all') return 'inbound_all'
+  if (category === 'all_inbound' || category === 'inbound_all' || inboundCount > 0) return 'inbound_all'
   if (category === 'automated' || category === 'auto') return 'auto_replied'
   if (category === 'outbound_active' || category === 'outbound') return 'outbound_only'
   if (category === 'dnc_opt_out' || category === 'suppressed' || category === 'dnc') return 'suppressed'
   if (category === 'cold_no_response' || category === 'cold' || category === 'normal') return 'missing_context'
-
-  // 2. Fallback heuristic logic if category is missing or 'all'
-  const latestDirection = readString(thread, 'latest_message_direction', 'latestDirection').toLowerCase()
-  const queueStatus = readString(thread, 'queue_status', 'queueStatus', 'autoReplyStatus').toLowerCase()
-  const queueStage = readString(thread, 'queue_stage', 'threadWorkflowStage', 'workflowStage').toLowerCase()
-  const detectedIntent = readString(thread, 'detected_intent', 'uiIntent').toLowerCase()
-  const preview = readString(thread, 'latest_message_body', 'latestMessageBody', 'lastMessageBody', 'preview').toLowerCase()
-  const isHotLead = Boolean((thread as unknown as Record<string, unknown>).is_hot_lead)
-  const isNewInbound = Boolean((thread as unknown as Record<string, unknown>).is_new_inbound)
-  const isDnc = Boolean((thread as unknown as Record<string, unknown>).is_dnc || (thread as unknown as Record<string, unknown>).is_suppressed)
-  const score = readNumber(thread, 'finalAcquisitionScore', 'final_acquisition_score', 'priorityScore', 'priority_score') ?? 0
-  const hoursSinceActivity = Math.max(0, (Date.now() - getActivityTime(thread)) / 36e5)
-
-  if (isDnc || /stop|wrong number|not interested|remove|do not call|dnc|opt out/.test(preview)) return 'suppressed'
-  if (isHotLead || /interested|yes|sell|asking price|call me|offer/.test(preview) || score >= 74) return 'positive_hot'
-  if (queueStatus === 'failed' || queueStatus === 'paused_global_lock' || /manual|review|unclear|ambiguous/.test(`${queueStage} ${detectedIntent}`)) return 'manual_review'
-  if (isNewInbound || latestDirection === 'inbound') return 'needs_reply'
-  if (readNumber(thread, 'inbound_count', 'inboundCount') ?? 0 > 0) return 'inbound_all'
-  if (queueStatus === 'queued' || /queued|automation/.test(queueStatus)) return 'auto_replied'
-  
-  if (latestDirection === 'outbound') {
-    if (/sent|delivered/.test(queueStatus) && hoursSinceActivity <= 72) return 'outbound_only'
-    return 'missing_context'
-  }
 
   return 'missing_context'
 }
@@ -462,20 +439,18 @@ export const InboxSidebar = ({
     : numberOrNull(totalCount) ?? 0
 
   const [manuallyClosed, setManuallyClosed] = useState<Set<QueuePreset>>(new Set())
+  const [hoveredQueue, setHoveredQueue] = useState<QueuePreset | null>(null)
 
   type ModePerspective = 'priority' | 'active' | 'waiting' | 'all'
   const [modePerspective, setModePerspective] = useState<ModePerspective>('all')
 
-
-
   const modeCounts = useMemo(() => {
     const queueThreads = activeQueueConfig ? groupedThreads[activeQueueConfig.preset] : visibleThreads
-    const now = Date.now()
     return {
       priority: queueThreads.filter((t) => (readNumber(t, 'finalAcquisitionScore', 'final_acquisition_score', 'priorityScore', 'priority_score') ?? 0) >= 55).length,
       active: queueThreads.filter((t) => {
         const ts = getActivityTime(t)
-        return ts > 0 && (now - ts) < 48 * 36e5
+        return ts > 0 && (Date.now() - ts) < 48 * 36e5
       }).length,
       waiting: queueThreads.filter((t) => readString(t, 'latest_message_direction', 'latestDirection').toLowerCase() === 'outbound').length,
       all: queueThreads.length,
@@ -522,7 +497,6 @@ export const InboxSidebar = ({
           <span className="nx-sidebar__app-title">ACQUISITIONS INBOX</span>
         </div>
 
-        {/* ── Top bar: label + icon actions ── */}
         <div className="nx-sidebar__label-row">
           <span className="nx-section-label">
             {heroMeta.label}
@@ -565,7 +539,6 @@ export const InboxSidebar = ({
           <span className="nx-sidebar__total-count">{formatCount(numberOrNull(totalCount) ?? threads.length)}</span>
         </div>
 
-        {/* ── Hero card: active queue name + count ── */}
         <div className={cls('nx-sidebar__hero', `is-${heroMeta.tone}`)}>
           <div className="nx-sidebar__hero__glow" aria-hidden="true" />
           <div className="nx-sidebar__hero__inner">
@@ -590,9 +563,7 @@ export const InboxSidebar = ({
           </div>
         </div>
 
-        {/* ── Search ── */}
         <label className="nx-sidebar-search">
-          <Icon name="search" />
           <input
             value={searchQuery}
             onChange={(event) => onSearchQueryChange?.(event.target.value)}
@@ -647,16 +618,6 @@ export const InboxSidebar = ({
                       <span>Total Count</span>
                       <b>{formatCount(numberOrNull(count) ?? 0)}</b>
                     </div>
-                    {displayThreads.slice(0, 3).length > 0 && (
-                      <div className="nx-queue-kpi-popover__samples">
-                        <span className="nx-queue-kpi-popover__samples-title">Top Threads</span>
-                        {displayThreads.slice(0, 3).map((t, idx) => (
-                          <div key={t.id || idx} className="nx-queue-kpi-popover__sample">
-                            {t.propertyAddress || t.ownerName || 'Unknown Thread'}
-                          </div>
-                        ))}
-                      </div>
-                    )}
                   </div>
                 </div>
               )}

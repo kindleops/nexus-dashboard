@@ -8,6 +8,7 @@ export type IconName =
   | 'spark'
   | 'pin'
   | 'chevron-down'
+  | 'chevron-up'
   | 'chevron-right'
   | 'arrow-up-right'
   | 'clock'
@@ -138,6 +139,12 @@ export const Icon = ({ name, ...props }: IconProps) => {
       return (
         <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
           <path d="m6 9 6 6 6-6" {...commonProps} />
+        </svg>
+      )
+    case 'chevron-up':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+          <path d="m18 15-6-6-6 6" {...commonProps} />
         </svg>
       )
     case 'chevron-right':

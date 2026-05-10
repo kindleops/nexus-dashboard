@@ -10,78 +10,121 @@ const currencyFormatter = new Intl.NumberFormat('en-US', {
 })
 
 const percentFormatter = new Intl.NumberFormat('en-US', {
-  minimumFractionDigits: 1,
+  style: 'percent',
+  minimumFractionDigits: 0,
   maximumFractionDigits: 1,
 })
 
 export const formatCompactNumber = (value: number) => compactNumberFormatter.format(value)
 
-export const formatCurrency = (value: number) => currencyFormatter.format(value)
+export const formatCurrency = (value: number | string | null | undefined) => {
+  if (value === null || value === undefined) return 'N/A'
+  const n = typeof value === 'number' ? value : Number.parseFloat(String(value))
+  if (Number.isNaN(n)) return 'N/A'
+  return currencyFormatter.format(n)
+}
 
-export const formatPercent = (value: number) => `${percentFormatter.format(value)}%`
+export const formatMoney = formatCurrency
 
-export const formatMetricValue = (value: number, suffix = '') =>
-  `${compactNumberFormatter.format(value)}${suffix}`
+export const formatPercent = (value: number | string | null | undefined) => {
+  if (value === null || value === undefined) return '0%'
+  const n = typeof value === 'number' ? value : Number.parseFloat(String(value))
+  if (Number.isNaN(n)) return '0%'
+  const val = n > 1 ? n / 100 : n
+  return percentFormatter.format(val)
+}
 
-export const formatClockTime = (value: Date) =>
-  new Intl.DateTimeFormat('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(value)
+export const formatDisplayValue = (value: unknown) => {
+  if (value === null || value === undefined || value === '') return 'Not enriched'
+  return String(value)
+}
 
-export const formatShortDateTime = (iso: string) =>
-  new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(new Date(iso))
+export const formatInteger = (value: number | string | null | undefined) => {
+  if (value === null || value === undefined) return '0'
+  const n = typeof value === 'number' ? value : Number.parseFloat(String(value))
+  if (Number.isNaN(n)) return '0'
+  return Math.round(n).toLocaleString()
+}
 
-export const formatRelativeTime = (iso: string) => {
-  const deltaMinutes = Math.max(1, Math.round((Date.now() - new Date(iso).getTime()) / 60_000))
+export const formatBoolean = (value: boolean | null | undefined) => (value === true ? 'Yes' : value === false ? 'No' : 'Unknown')
 
-  if (deltaMinutes < 60) {
-    return `${deltaMinutes}m ago`
+export const formatScore = (value: number | string | null | undefined) => {
+  const n = typeof value === 'number' ? value : Number.parseFloat(String(value))
+  if (Number.isNaN(n)) return 'N/A'
+  return `${Math.round(n)}/100`
+}
+
+export const formatDate = (iso: string | null | undefined) => {
+  if (!iso) return 'Unknown'
+  try {
+    return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium' }).format(new Date(iso))
+  } catch {
+    return 'Invalid Date'
   }
+}
 
-  const deltaHours = Math.round(deltaMinutes / 60)
-  if (deltaHours < 24) {
-    return `${deltaHours}h ago`
+export const formatPhone = (phone: string | null | undefined) => {
+  if (!phone) return 'Unknown'
+  const cleaned = String(phone).replace(/\D/g, '')
+  if (cleaned.length === 11 && cleaned.startsWith('1')) {
+    const match = cleaned.slice(1).match(/^(\d{3})(\d{3})(\d{4})$/)
+    if (match) return `(${match[1]}) ${match[2]}-${match[3]}`
   }
-
-  const deltaDays = Math.round(deltaHours / 24)
-  return `${deltaDays}d ago`
+  const match = cleaned.match(/^(\d{3})(\d{3})(\d{4})$/)
+  if (match) return `(${match[1]}) ${match[2]}-${match[3]}`
+  return phone
 }
 
-export const formatCompactTime = (iso: string): string => {
-  const delta = Math.max(1, Math.round((Date.now() - new Date(iso).getTime()) / 60_000))
-  if (delta < 60) return `${delta}M`
-  const hours = Math.round(delta / 60)
-  if (hours < 24) return `${hours}H`
-  const days = Math.round(hours / 24)
-  if (days < 30) return `${days}D`
-  const months = Math.round(days / 30)
-  return `${months}MO`
+export const formatDisplayPhone = (raw: string): string => {
+  const digits = raw.replace(/\D/g, '')
+  if (digits.length === 10) {
+    return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
+  }
+  if (digits.length === 11 && digits.startsWith('1')) {
+    return `+1 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`
+  }
+  return raw.startsWith('+') ? raw : `+${digits}`
 }
 
-export const formatMessageTime = (iso: string): string => {
-  const d = new Date(iso)
-  const month = d.getMonth() + 1
-  const day = d.getDate()
-  const year = String(d.getFullYear()).slice(2)
-  const hours = d.getHours()
-  const minutes = d.getMinutes()
-  const ampm = hours >= 12 ? 'pm' : 'am'
-  const hour12 = hours % 12 || 12
-  const minuteStr = minutes.toString().padStart(2, '0')
-  return `${month}/${day}/${year} • ${hour12}:${minuteStr}${ampm}`
+export const formatRelativeTime = (iso: string | null | undefined) => {
+  if (!iso) return ''
+  const date = new Date(iso)
+  const now = new Date()
+  const diff = now.getTime() - date.getTime()
+  const minutes = Math.floor(diff / 60000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `${days}d ago`
+  return date.toLocaleDateString()
 }
 
-export const formatStageLabel = (value: string) =>
-  value
-    .split('-')
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join(' ')
+export const formatCompactTime = (iso: string | null | undefined): string => {
+  if (!iso) return ''
+  const date = new Date(iso)
+  return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+}
+
+export const formatMessageTime = (iso: string | null | undefined): string => {
+  if (!iso) return ''
+  const date = new Date(iso)
+  return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+}
+
+export const formatClockTime = (date: Date): string => {
+  return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })
+}
+
+export const formatShortDateTime = (iso: string): string => {
+  const date = new Date(iso)
+  return `${date.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+}
+
+export const formatStageLabel = (value: string): string => {
+  return value.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+}
 
 export const formatOwnerLabel = (value: string) =>
   value

@@ -173,7 +173,9 @@ full_context AS (
     p.recording_date,
     p.last_sale_doc_type,
     p.past_due_amount,
-    p.ai_score
+    p.ai_score,
+    p.is_corporate_owner,
+    p.out_of_state_owner
   FROM base b
   LEFT JOIN public.prospects pr ON pr.prospect_id::text = b.prospect_id
   LEFT JOIN public.master_owners mo ON mo.master_owner_id::text = b.master_owner_id
@@ -206,8 +208,8 @@ SELECT
   property_tax_delinquent as filter_tax_delinquent,
   property_active_lien as filter_active_lien,
   (equity_percent > 40) as filter_high_equity,
-  (owner_type_guess = 'absentee') as filter_absentee_owner,
-  (is_corporate_owner) as filter_corporate_owner
+  (owner_type_guess = 'absentee' OR out_of_state_owner = true) as filter_absentee_owner,
+  (is_corporate_owner = true) as filter_corporate_owner
 FROM full_context;
 
 GRANT SELECT ON public.inbox_operator_dossier_v TO anon;

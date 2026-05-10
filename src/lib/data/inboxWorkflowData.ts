@@ -97,6 +97,16 @@ export interface InboxThreadWorkflow {
   isProbate?: boolean
   hasLien?: boolean
   motivationScore?: number | string
+  latitude?: number
+  longitude?: number
+  isHotLead?: boolean
+  isNewInbound?: boolean
+  displayName?: string
+  displayAddress?: string
+  displayPhone?: string
+  displayMarket?: string
+  displayStatus?: string
+  displayScore?: number
 }
 
 export type InboxWorkflowThread = InboxThread & InboxThreadWorkflow

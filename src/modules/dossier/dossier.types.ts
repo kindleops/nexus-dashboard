@@ -38,13 +38,17 @@ export interface Property {
   city: string;
   state: string;
   zip: string;
+  county?: string;
   propertyType: PropertyType;
   beds?: number;
   baths?: number;
   sqft?: number;
   yearBuilt?: number;
+  effectiveYearBuilt?: number;
+  unitsCount?: number;
   estimatedValue: number;
   equity: number;
+  equityPercent?: number;
   mortgageBalance: number;
   absentee: boolean;
   vacant: boolean;
@@ -57,6 +61,18 @@ export interface Property {
   distressSignals: DistressSignal[];
   aiPropertyScore: number; // 0-100
   recommendedStrategy: string;
+  buildingCondition?: string;
+  buildingQuality?: string;
+  rehabLevel?: string;
+  stories?: number;
+  style?: string;
+  hvac?: string;
+  constructionType?: string;
+  lotAcreage?: number;
+  annualTax?: number;
+  assessedValue?: number;
+  lastSalePrice?: number;
+  lastSaleDate?: string;
 }
 
 export interface ConversationThread {
@@ -82,10 +98,7 @@ export interface TimelineEvent {
 }
 
 export interface MotivationSignal {
-  signal: DistressSignal;
-  strength: number; // 0-100
-  explanation: string;
-  relevance: 'high' | 'medium' | 'low';
+  signal: DistressSignal; strength: number; explanation: string; relevance: 'high' | 'medium' | 'low';
 }
 
 export interface SellerDossier {
@@ -141,6 +154,17 @@ export interface SellerDossier {
   nextBestAction: string;
   nextBestActionReason: string;
   aiConfidence: number; // 0-100
+
+  // HYDRATION EXTENSIONS
+  prospectFullName?: string;
+  prospectContactScore?: number;
+  financialPressureScore?: number;
+  urgencyScore?: number;
+  priorityTier?: string;
+  followUpCadence?: string;
+  portfolioTotalLoanBalance?: number;
+  taxDelinquentCount?: number;
+  activeLienCount?: number;
 }
 
 export interface DossierModel {

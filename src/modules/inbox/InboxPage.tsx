@@ -451,7 +451,7 @@ export default function InboxPage() {
 
   const displayedMessagesWithTranslation = useMemo(() => {
     if (threadViewMode !== 'translated') return displayedMessages
-    return displayedMessages.map((message) => {
+    return displayedMessages.map((message: ThreadMessage) => {
       if (message.direction !== 'inbound') return message
       const translated = threadTranslations[message.id]
       if (!translated || translated === message.body) return message
@@ -509,15 +509,15 @@ export default function InboxPage() {
   }, [])
 
   const liveThreadQuery = useMemo(() => ({
-    // Keep the live payload broad so the premium left inbox can group every hydrated thread locally.
-    view: 'all' as const,
+    // Use the actual view filter to fetch bucket-specific rows
+    view: viewFilter,
     stage: stageFilter,
     query: searchQuery,
     advanced: advancedFilters,
-  }), [stageFilter, searchQuery, advancedFilters])
+  }), [viewFilter, stageFilter, searchQuery, advancedFilters])
 
   useEffect(() => {
-    setVisibleThreadCount(200)
+    setVisibleThreadCount(1000)
     refreshInbox({ filters: liveThreadQuery })
   }, [liveThreadQuery, refreshInbox])
 
@@ -1812,12 +1812,13 @@ export default function InboxPage() {
         ) : showRightPanel && !isDoubleSided ? (
           <IntelligencePanel
             thread={selected}
-            threadContext={threadContext}
-            intelligence={threadIntelligence}
             onStatusChange={handleStatusChange}
             onStageChange={handleStageChange}
+            onOpenMap={() => setActiveOverlay('map')}
+            onOpenDossier={() => setActiveOverlay('dossier')}
+            onOpenAi={() => setActiveOverlay('ai')}
+            messages={displayedMessages}
           />
-
         ) : null}
       </div>
 

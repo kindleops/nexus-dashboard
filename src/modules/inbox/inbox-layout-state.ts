@@ -5,7 +5,7 @@ export type PanelMode = 'default' | 'hidden' | 'half' | 'full'
 export type InboxMode = 'default' | 'full_single' | 'full_double'
 export type MapMode = 'off' | 'side' | 'half' | 'seventy_five' | 'full'
 export type MapSourceMode = 'visible_threads' | 'loaded_threads' | 'all_active_coordinate_threads'
-export type ActiveOverlay = null | 'notifications' | 'queue' | 'filters' | 'avatar' | 'ai' | 'templates' | 'dossier' | 'keys' | 'activity'
+export type ActiveOverlay = null | 'notifications' | 'queue' | 'filters' | 'avatar' | 'ai' | 'templates' | 'dossier' | 'keys' | 'activity' | 'map'
 
 export interface InboxLayoutState {
   theme: NexusTheme

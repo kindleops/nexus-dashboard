@@ -6,6 +6,7 @@ import { formatRelativeTime } from '../../../shared/formatters'
 import type { ActiveOverlay, NexusTheme } from '../inbox-layout-state'
 import { buildInboxNotifications, NexusNotificationCenter, type NexusNotification } from './NexusNotificationCenter'
 import type { AutonomousEngineModel } from '../autonomy-engine'
+import { InboxKpiOrb } from './InboxKpiOrb'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
@@ -46,47 +47,13 @@ const fallback = (value: unknown, placeholder = 'Unknown') => {
   return text || placeholder
 }
 
-export const ViewToggleButton = ({
-  active,
-  icon,
-  label,
-  shortcut,
-  onClick,
-}: {
-  active?: boolean
-  icon: Parameters<typeof Icon>[0]['name']
-  label: string
-  shortcut?: string
-  onClick: () => void
-}) => (
-  <button
-    type="button"
-    className={cls('nx-view-toggle', active && 'is-active')}
-    onClick={(e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      onClick()
-    }}
-    aria-pressed={Boolean(active)}
-    aria-label={label}
-    title={shortcut ? `${label} (${shortcut})` : label}
-  >
-    <Icon name={icon} />
-  </button>
-)
-
-export const KpiEntryButton = ({ onClick }: { onClick: () => void }) => (
-  <button type="button" className="nx-kpi-entry" onClick={onClick} title="KPI / Analytics">
-    <Icon name="stats" />
-  </button>
-)
-
 export const NexusTopBar = ({
   searchQuery,
   onSearchQueryChange,
   searchResults,
   onSelectSearchResult,
   selectedThread,
+  isSuppressed,
   notificationCount,
   queueProcessorHealth,
   queueProcessorHealthLoading,
@@ -129,6 +96,8 @@ export const NexusTopBar = ({
   const processorLabel = processorStatus === 'healthy' ? 'Healthy' : processorStatus === 'lagging' ? 'Delayed' : 'Unknown'
   
   const notifications = buildInboxNotifications({ unreadCount: notificationCount, selectedThread, queueProcessorHealth, autonomyModel })
+  const unreadNotifications = notifications.filter((item) => item.status !== 'read').length
+
   const handleNotificationAction = (notification: NexusNotification) => {
     if (notification.related_thread_id) onSelectSearchResult(notification.related_thread_id)
     onCloseOverlay()
@@ -150,6 +119,9 @@ export const NexusTopBar = ({
 
       <div className="nx-topbar__center">
         <div className="nx-inbox-utility-row inbox-center-width">
+          <div className="nx-topbar-orb-slot" style={{ marginRight: '12px' }}>
+            <InboxKpiOrb />
+          </div>
           <div className="nx-global-search">
             <Icon name="search" />
             <input
@@ -195,9 +167,9 @@ export const NexusTopBar = ({
         <div className="nx-notification-control">
           <button
             type="button"
-            className={cls('nx-dry-run-toggle', dryRun && 'is-active')}
+            className={cls('nx-dry-run-toggle', dryRun && 'is-active', isSuppressed && 'is-suppressed-context')}
             onClick={onToggleDryRun}
-            title={dryRun ? 'Simulation mode active (Auto-replies require approval)' : 'Live mode active (Auto-replies send automatically)'}
+            title={isSuppressed ? 'Thread is suppressed' : (dryRun ? 'Simulation mode active (Auto-replies require approval)' : 'Live mode active (Auto-replies send automatically)')}
           >
             <Icon name="spark" />
             <span>{dryRun ? 'DRY RUN' : 'LIVE'}</span>
@@ -243,7 +215,7 @@ export const NexusTopBar = ({
           title={theme === 'light' ? 'Dark mode' : 'Light mode'}
           aria-label={theme === 'light' ? 'Enable dark mode' : 'Enable light mode'}
         >
-          <Icon name={theme === 'light' ? 'moon' : 'palette'} />
+          <Icon name={theme === 'light' ? 'close' : 'palette'} />
         </button>
 
         <div className="nx-notification-control">
