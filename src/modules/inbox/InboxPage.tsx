@@ -1616,6 +1616,10 @@ export default function InboxPage() {
         queueProcessorHealthLoading={queueProcessorHealthLoading}
         autonomyModel={autonomyModel}
         theme={theme}
+        viewCounts={viewCounts}
+        threads={threads}
+        activeViewKey={viewFilter}
+        onSelectView={(key) => applySavedPreset(key as any)}
         onToggleTheme={() => setLayoutState((current) => ({
           ...current,
           theme: current.theme === 'dark' ? 'light' : 'dark',
