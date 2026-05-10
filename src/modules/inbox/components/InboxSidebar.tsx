@@ -439,7 +439,6 @@ export const InboxSidebar = ({
     : numberOrNull(totalCount) ?? 0
 
   const [manuallyClosed, setManuallyClosed] = useState<Set<QueuePreset>>(new Set())
-  const [hoveredQueue, setHoveredQueue] = useState<QueuePreset | null>(null)
 
   type ModePerspective = 'priority' | 'active' | 'waiting' | 'all'
   const [modePerspective, setModePerspective] = useState<ModePerspective>('all')
@@ -587,13 +586,10 @@ export const InboxSidebar = ({
           const groupThreads = groupedThreads[group.preset]
           const displayThreads = groupThreads
           const count = getQueueCount(group.preset, viewCounts[group.countKey], groupThreads.length)
-          const isHovered = hoveredQueue === group.preset
           return (
             <section
               key={group.preset}
               className={cls('nx-queue-group', group.accentClass, expanded && 'is-expanded')}
-              onMouseEnter={() => setHoveredQueue(group.preset)}
-              onMouseLeave={() => setHoveredQueue(null)}
             >
               <button
                 type="button"
@@ -606,21 +602,6 @@ export const InboxSidebar = ({
                 <span className="nx-queue-group__count">{formatCount(numberOrNull(count) ?? 0)}</span>
                 <Icon name={expanded ? 'chevron-down' : 'chevron-right'} />
               </button>
-
-              {isHovered && (
-                <div className="nx-queue-kpi-popover">
-                  <header>
-                    <strong>{group.label} Intelligence</strong>
-                  </header>
-                  <div className="nx-queue-kpi-popover__body">
-                    <p className="nx-queue-kpi-popover__desc">{QUEUE_DESCRIPTIONS[group.preset]}</p>
-                    <div className="nx-queue-kpi-popover__detail">
-                      <span>Total Count</span>
-                      <b>{formatCount(numberOrNull(count) ?? 0)}</b>
-                    </div>
-                  </div>
-                </div>
-              )}
 
               {expanded && (
                 <div className="nx-queue-group__threads">

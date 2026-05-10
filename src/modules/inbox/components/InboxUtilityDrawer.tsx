@@ -1,6 +1,6 @@
-import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
-import type { ThreadContext } from '../../../lib/data/inboxData'
 import { Icon } from '../../../shared/icons'
+import { IntelligencePanel } from './IntelligencePanel'
+import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { getStatusVisual, statusStyleVars } from '../status-visuals'
 
 const fallback = (value: unknown, placeholder = 'Unknown') => {
@@ -11,50 +11,37 @@ const fallback = (value: unknown, placeholder = 'Unknown') => {
 export const MapDossierDrawer = ({
   mode,
   thread,
-  context,
-  full,
-  onToggleFull,
+  context: _context,
   onClose,
+  full: _full,
+  onToggleFull: _onToggleFull,
 }: {
   mode: 'map' | 'dossier'
   thread: InboxWorkflowThread | null
-  context: ThreadContext | null
+  context: any
+  onClose: () => void
   full: boolean
   onToggleFull: () => void
-  onClose: () => void
 }) => {
-  const title = mode === 'map' ? 'Map View' : 'Deal Dossier'
-  const address = fallback(context?.property?.address || thread?.propertyAddress || thread?.subject, 'Property Unknown')
-  const statusVisual = getStatusVisual(thread?.inboxStatus)
-  const record = (thread ?? {}) as Record<string, unknown>
-  const propertyRecord = (context?.property ?? {}) as Record<string, unknown>
-  const lat = record['latitude'] ?? record['lat'] ?? propertyRecord['latitude'] ?? propertyRecord['lat']
-  const lng = record['longitude'] ?? record['lng'] ?? propertyRecord['longitude'] ?? propertyRecord['lng']
-  const hasCoordinates = Boolean(lat && lng)
-
+  const address = thread?.propertyAddress || 'Property Unknown'
+  const hasCoordinates = Boolean(thread?.lat && thread?.lng)
+  // Use a proper status visual fallback to avoid type errors
+  const statusVisual = thread ? getStatusVisual(thread.inboxStatus) : { label: 'Unknown', color: '#ccc', bg: '#ccc', border: '#ccc', dot: '#ccc', pulse: 'none', description: 'Unknown' }
+  
   return (
-    <section className={full ? 'nx-view-drawer is-full' : 'nx-view-drawer'}>
+    <section className="nx-utility-drawer">
       <header>
         <span>
           <Icon name={mode === 'map' ? 'map' : 'briefing'} />
-          {title}
+          {mode === 'map' ? 'Map View' : 'Deal Dossier'}
         </span>
-        <div>
-          <button 
-            type="button" 
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onToggleFull(); }} 
-            title={full ? 'Split view' : 'Full view'}
-          >
-            <Icon name={full ? 'layout-split' : 'maximize'} />
-          </button>
-          <button 
-            type="button" 
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClose(); }} 
-            title="Close"
-          >
-            <Icon name="close" />
-          </button>
-        </div>
+        <button 
+          type="button" 
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClose(); }} 
+          title="Close"
+        >
+          <Icon name="close" />
+        </button>
       </header>
 
       {mode === 'map' ? (
@@ -74,15 +61,18 @@ export const MapDossierDrawer = ({
             <p>{hasCoordinates ? 'Selected lead pin is matched to the current status.' : 'No coordinates linked for this lead yet.'}</p>
           </aside>
         </div>
+      ) : thread ? (
+        <IntelligencePanel
+          thread={thread}
+          onStatusChange={() => {}}
+          onStageChange={() => {}}
+          onOpenMap={() => {}}
+          onOpenDossier={() => {}}
+          onOpenAi={() => {}}
+          messages={[]}
+        />
       ) : (
-        <div className="nx-dossier-placeholder">
-          {['Property', 'Prospect', 'Owner', 'Offer', 'History'].map((section) => (
-            <article key={section}>
-              <span>{section}</span>
-              <strong>{section === 'Property' ? address : 'Pending enrichment'}</strong>
-            </article>
-          ))}
-        </div>
+        <div className="nx-dossier-empty">Select a thread to view dossier</div>
       )}
     </section>
   )

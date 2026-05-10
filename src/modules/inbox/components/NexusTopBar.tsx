@@ -21,6 +21,7 @@ interface NexusTopBarProps {
   notificationCount: number
   queueProcessorHealth: QueueProcessorHealth | null
   queueProcessorHealthLoading: boolean
+  onRefreshQueueHealth?: () => void
   autonomyModel: AutonomousEngineModel
   theme: NexusTheme
   viewCounts?: any
@@ -57,6 +58,7 @@ export const NexusTopBar = ({
   notificationCount,
   queueProcessorHealth,
   queueProcessorHealthLoading,
+  onRefreshQueueHealth,
   autonomyModel,
   theme,
   onToggleTheme,
@@ -119,7 +121,7 @@ export const NexusTopBar = ({
 
       <div className="nx-topbar__center">
         <div className="nx-inbox-utility-row inbox-center-width">
-          <div className="nx-topbar-orb-slot" style={{ marginRight: '12px' }}>
+          <div className="nx-topbar-orb-slot">
             <InboxKpiOrb />
           </div>
           <div className="nx-global-search">
@@ -192,13 +194,55 @@ export const NexusTopBar = ({
           </button>
           {activeOverlay === 'queue' && (
             <div className="nx-liquid-popover nx-liquid-popover--processor" role="status">
-              <div className="nx-liquid-popover__title">Queue Processor</div>
-              <p>{queueProcessorHealthLoading ? 'Checking processor health...' : (queueProcessorHealth?.summary ?? 'No processor data yet.')}</p>
-              <div className="nx-processor-pop-grid">
-                <span><small>Status</small><b>{processorLabel}</b></span>
-                <span><small>Queued</small><b>{queueProcessorHealth?.queuedCount ?? 0}</b></span>
-                <span><small>Older Than 10m</small><b>{queueProcessorHealth?.queuedOlderThanLagWindow ?? 0}</b></span>
-                <span><small>Latest Sent</small><b>{queueProcessorHealth?.latestSentAt ? formatRelativeTime(queueProcessorHealth.latestSentAt) : 'Unknown'}</b></span>
+              <div className="nx-processor-pop-header">
+                <div className="nx-processor-pop-header__title">
+                  <Icon name="activity" />
+                  <span>Queue Processor</span>
+                </div>
+                <div className={cls('nx-processor-status-indicator', `is-${processorStatus}`)}>
+                  {processorLabel}
+                </div>
+              </div>
+
+              <div className="nx-processor-pop-body">
+                <div className="nx-processor-summary-text">
+                  {queueProcessorHealthLoading ? 'Synchronizing health data...' : (queueProcessorHealth?.summary ?? 'No processor data available.')}
+                </div>
+                
+                <div className="nx-processor-stats-grid">
+                  <div className="nx-processor-stat-card">
+                    <label>Queued</label>
+                    <b>{queueProcessorHealth?.queuedCount ?? 0}</b>
+                  </div>
+                  <div className="nx-processor-stat-card">
+                    <label>Lagging</label>
+                    <b>{queueProcessorHealth?.queuedOlderThanLagWindow ?? 0}</b>
+                  </div>
+                  <div className="nx-processor-stat-card" style={{ gridColumn: 'span 2' }}>
+                    <label>Latest Sent</label>
+                    <b>{queueProcessorHealth?.latestSentAt ? formatRelativeTime(queueProcessorHealth.latestSentAt) : 'None'}</b>
+                  </div>
+                </div>
+              </div>
+
+              <div className="nx-processor-pop-footer">
+                <div className="nx-processor-last-check">
+                  Updated {queueProcessorHealth?.checkedAt ? formatRelativeTime(queueProcessorHealth.checkedAt) : 'just now'}
+                </div>
+                {onRefreshQueueHealth && (
+                  <button 
+                    type="button" 
+                    className="nx-processor-refresh-btn"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      onRefreshQueueHealth()
+                    }}
+                    disabled={queueProcessorHealthLoading}
+                  >
+                    {queueProcessorHealthLoading ? 'Checking...' : 'Refresh'}
+                  </button>
+                )}
               </div>
             </div>
           )}

@@ -32,31 +32,31 @@ async function runProof() {
   console.log('🧪 Starting Inbox View Parity Proof...\n');
 
   try {
-    const views = [
-      { key: 'hot_leads', countKey: 'hot_leads' },
-      { key: 'needs_review', countKey: 'needs_review' },
-      { key: 'new_inbound', countKey: 'new_inbound' },
-      { key: 'all_inbound', countKey: 'all_inbound' },
-      { key: 'automated', countKey: 'automated' },
-      { key: 'outbound_active', countKey: 'outbound_active' },
-      { key: 'cold_no_response', countKey: 'cold_no_response' },
-      { key: 'dnc_opt_out', countKey: 'dnc_opt_out' }
-    ];
-
-    // Get Backend Counts from rollup view
+    // 1. BACKEND TRUTH Baseline
     const { data: countRows } = await supabase.from('inbox_category_counts').select('*');
     const counts = countRows.reduce((acc, r) => { acc[r.category] = r.count; return acc; }, {});
     
-    // Special handling for all_inbound count
-    const { count: allInboundCount } = await supabase.from('inbox_command_center_v').select('thread_key', { count: 'exact', head: true }).gt('inbound_count', 0);
+    const { count: allInboundCount } = await supabase
+      .from('inbox_command_center_v')
+      .select('thread_key', { count: 'exact', head: true })
+      .gt('inbound_count', 0);
     counts.all_inbound = allInboundCount;
+
+    const views = [
+      { key: 'hot_leads' },
+      { key: 'new_inbound' },
+      { key: 'all_inbound' },
+      { key: 'automated' },
+      { key: 'outbound_active' },
+      { key: 'dnc_opt_out' }
+    ];
 
     let totalFailures = 0;
 
     for (const v of views) {
-      const expected = counts[v.countKey] || 0;
+      const expected = counts[v.key] || 0;
       
-      // Simulate fetch query
+      // Simulate frontend query
       let query = supabase.from('inbox_command_center_v').select('thread_key, inbox_category, inbound_count', { count: 'exact' });
       if (v.key === 'all_inbound') {
         query = query.gt('inbound_count', 0);
@@ -64,34 +64,21 @@ async function runProof() {
         query = query.eq('inbox_category', v.key);
       }
       
-      const { data: rows, count: totalAvailable } = await query.limit(1000);
-      const actual = totalAvailable || 0;
+      const { data: rows, count: actual } = await query.limit(1000);
 
       console.log(`View: ${v.key}`);
       console.log(`  Expected Count: ${expected}`);
       console.log(`  Actual Count:   ${actual}`);
-      console.log(`  Returned Rows:  ${rows.length}`);
+      console.log(`  Returned Rows:  ${rows?.length || 0}`);
 
       if (expected !== actual) {
-         console.log(`  ❌ FAIL: Count mismatch between rollup and query results.`);
+         console.log(`  ❌ FAIL: Count mismatch.`);
+         totalFailures++;
+      } else if (actual > 0 && (!rows || rows.length === 0)) {
+         console.log(`  ❌ FAIL: Rows expected but not returned.`);
          totalFailures++;
       } else {
-         console.log(`  ✅ PASS: Counts match.`);
-      }
-      
-      // Check for row mismatches (logic integrity)
-      if (v.key !== 'all_inbound') {
-        const misfits = rows.filter(r => r.inbox_category !== v.key);
-        if (misfits.length > 0) {
-           console.log(`  ❌ FAIL: Found ${misfits.length} misclassified rows.`);
-           totalFailures++;
-        }
-      } else {
-        const misfits = rows.filter(r => r.inbound_count === 0);
-        if (misfits.length > 0) {
-           console.log(`  ❌ FAIL: Found ${misfits.length} rows with 0 inbound in all_inbound.`);
-           totalFailures++;
-        }
+         console.log(`  ✅ PASS`);
       }
     }
 

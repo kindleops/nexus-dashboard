@@ -22,10 +22,10 @@ if (orbFile.includes('export const InboxKpiOrb') && topBarFile.includes('<InboxK
 }
 
 console.log('\n2. Validating sidebar KPI panels are removed...')
-if (!sidebarFile.includes('nx-queue-kpi-popover') && !sidebarFile.includes('setHoveredQueue')) {
+if (!sidebarFile.includes('nx-queue-kpi-popover') && !sidebarFile.includes('hoveredQueue')) {
   console.log('✅ Sidebar KPI popover logic removed')
 } else {
-  console.error('❌ Sidebar KPI popover logic still exists')
+  console.error('❌ Sidebar KPI popover logic still exists in InboxSidebar.tsx')
   hasErrors = true
 }
 
