@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from '../../../shared/icons'
-import { CopilotOrbTrigger } from '../copilot/AICopilotPanel'
+import { CopilotOrbTrigger } from '../../copilot/components/CopilotOrbTrigger'
 import { TemplatePopover, type TemplateActionPayload } from './TemplatePopover'
 import type { InboxThread } from '../inbox.adapter'
 import type { ThreadContext } from '../../../lib/data/inboxData'

@@ -157,6 +157,17 @@ const getActivityTime = (thread: InboxWorkflowThread) => {
 
 const resolveQueuePreset = (thread: InboxWorkflowThread): QueuePreset => {
   const category = readString(thread, 'inbox_category', 'inboxCategory', 'priorityBucket', 'priority_bucket').toLowerCase()
+  
+  // 1. Exact matches for backend categories
+  if (category === 'hot_leads' || category === 'hot') return 'positive_hot'
+  if (category === 'needs_review' || category === 'review') return 'manual_review'
+  if (category === 'new_inbound' || category === 'unread') return 'needs_reply'
+  if (category === 'automated' || category === 'auto') return 'auto_replied'
+  if (category === 'outbound_active' || category === 'outbound') return 'outbound_only'
+  if (category === 'dnc_opt_out' || category === 'suppressed' || category === 'dnc') return 'suppressed'
+  if (category === 'cold_no_response' || category === 'cold' || category === 'normal') return 'missing_context'
+
+  // 2. Fallback heuristic logic if category is missing or 'all'
   const latestDirection = readString(thread, 'latest_message_direction', 'latestDirection').toLowerCase()
   const queueStatus = readString(thread, 'queue_status', 'queueStatus', 'autoReplyStatus').toLowerCase()
   const queueStage = readString(thread, 'queue_stage', 'threadWorkflowStage', 'workflowStage').toLowerCase()
@@ -164,20 +175,21 @@ const resolveQueuePreset = (thread: InboxWorkflowThread): QueuePreset => {
   const preview = readString(thread, 'latest_message_body', 'latestMessageBody', 'lastMessageBody', 'preview').toLowerCase()
   const isHotLead = Boolean((thread as unknown as Record<string, unknown>).is_hot_lead)
   const isNewInbound = Boolean((thread as unknown as Record<string, unknown>).is_new_inbound)
-  const isDnc = Boolean((thread as unknown as Record<string, unknown>).is_dnc)
+  const isDnc = Boolean((thread as unknown as Record<string, unknown>).is_dnc || (thread as unknown as Record<string, unknown>).is_suppressed)
   const score = readNumber(thread, 'finalAcquisitionScore', 'final_acquisition_score', 'priorityScore', 'priority_score') ?? 0
   const hoursSinceActivity = Math.max(0, (Date.now() - getActivityTime(thread)) / 36e5)
 
-  if (category === 'dnc_opt_out' || isDnc || /stop|wrong number|not interested|remove|do not call|dnc|opt out/.test(preview)) return 'suppressed'
-  if (category === 'hot_leads' || isHotLead || /interested|yes|sell|asking price|call me|offer/.test(preview) || score >= 74) return 'positive_hot'
-  if (category === 'needs_review' || queueStatus === 'failed' || queueStatus === 'paused_global_lock' || /manual|review|unclear|ambiguous/.test(`${queueStage} ${detectedIntent}`)) return 'manual_review'
-  if (category === 'new_inbound' || isNewInbound || latestDirection === 'inbound') return 'needs_reply'
-  if (category === 'automated' || queueStatus === 'queued' || /queued|automation/.test(queueStatus)) return 'auto_replied'
-  if (category === 'outbound_active') return 'outbound_only'
-  if (category === 'cold_no_response') return 'missing_context'
-  if (latestDirection === 'outbound' && /sent|delivered/.test(queueStatus) && hoursSinceActivity <= 72) return 'outbound_only'
-  if (latestDirection === 'outbound' && /sent|delivered/.test(queueStatus)) return 'missing_context'
-  if (latestDirection === 'outbound' && !queueStatus) return 'missing_context'
+  if (isDnc || /stop|wrong number|not interested|remove|do not call|dnc|opt out/.test(preview)) return 'suppressed'
+  if (isHotLead || /interested|yes|sell|asking price|call me|offer/.test(preview) || score >= 74) return 'positive_hot'
+  if (queueStatus === 'failed' || queueStatus === 'paused_global_lock' || /manual|review|unclear|ambiguous/.test(`${queueStage} ${detectedIntent}`)) return 'manual_review'
+  if (isNewInbound || latestDirection === 'inbound') return 'needs_reply'
+  if (queueStatus === 'queued' || /queued|automation/.test(queueStatus)) return 'auto_replied'
+  
+  if (latestDirection === 'outbound') {
+    if (/sent|delivered/.test(queueStatus) && hoursSinceActivity <= 72) return 'outbound_only'
+    return 'missing_context'
+  }
+
   return 'missing_context'
 }
 

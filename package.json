@@ -15,8 +15,9 @@
     "proof:inbox-buttons": "node scripts/proof/inbox-buttons.mjs",
     "proof:queue": "node scripts/proof/queue-proof.mjs",
     "proof:inbox-backfill": "node scripts/proof/inbox-backfill.mjs",
+    "proof:copilot-ui": "node scripts/proof-copilot-ui.mjs",
     "proof:system": "node scripts/proof-inbox.mjs && node scripts/proof-classifier.mjs && node scripts/proof-thread-counts.mjs && node scripts/proof-routing.mjs",
-    "proof": "npm run proof:system && npm run proof:inbox-integrity"
+    "proof": "npm run proof:system && npm run proof:inbox-integrity && npm run proof:copilot-ui"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.104.1",

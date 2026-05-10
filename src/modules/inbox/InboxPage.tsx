@@ -19,10 +19,14 @@ import {
   resumeAutomation,
   retryFailedSend,
   suppressThread,
+  approveQueueItem,
+  cancelQueueItem,
   type InboxStatus,
   type SellerStage,
   type InboxWorkflowThread,
-} from '../../lib/data/inboxWorkflowData'
+  } from '../../lib/data/inboxWorkflowData'
+
+import { executeAutoReply } from '../../lib/data/inboxAutoReply'
 
 
 import {
@@ -57,7 +61,7 @@ import type { TemplateActionPayload } from './components/TemplatePopover'
 import { InboxActivityPanel } from './components/InboxActivityPanel'
 import { InboxCommandMap } from './InboxCommandMap'
 import { InboxUtilityDrawer, MapDossierDrawer } from './components/InboxUtilityDrawer'
-import { AICopilotPanel } from './copilot/AICopilotPanel'
+import { LiveCopilotChat } from '../copilot/components/LiveCopilotChat'
 import { CopilotOrb } from '../../shared/copilot/CopilotOrb'
 import { AdvancedFiltersPopover } from './components/AdvancedFiltersPopover'
 import { InboxCommandPalette, type InboxCmd } from './InboxCommandPalette'
@@ -1019,49 +1023,69 @@ export default function InboxPage() {
     let mutation = async () => ({ ok: true, threadKey: thread.id })
     let optimistic: Partial<InboxWorkflowThread> = {}
 
-    switch (action) {
-      case 'archive':
-        label = 'Thread Archived'
-        mutation = () => archiveThread(thread)
-        optimistic = { isArchived: true, inboxStatus: 'closed' }
-        break
-      case 'unarchive':
-        label = 'Thread Restored'
-        mutation = () => unarchiveThread(thread)
-        optimistic = { isArchived: false, inboxStatus: 'needs_review' }
-        break
-      case 'star':
-        label = 'Thread Starred'
-        mutation = () => starThread(thread)
-        optimistic = { isStarred: true }
-        break
-      case 'unstar':
-        label = 'Star Removed'
-        mutation = () => unstarThread(thread)
-        optimistic = { isStarred: false }
-        break
-      case 'pin':
-        label = 'Thread Pinned'
-        mutation = () => pinThread(thread)
-        optimistic = { isPinned: true }
-        break
-      case 'unpin':
-        label = 'Pin Removed'
-        mutation = () => unpinThread(thread)
-        optimistic = { isPinned: false }
-        break
-      case 'read':
-        label = 'Marked Read'
-        mutation = () => markThreadRead(thread)
-        optimistic = { isRead: true, unread: false, inboxStatus: 'closed' }
-        break
-      case 'unread':
-        label = 'Marked Unread'
-        mutation = () => markThreadUnread(thread)
-        optimistic = { isRead: false, unread: true, inboxStatus: 'new_reply' }
-        break
-      default:
-        return
+    if (action.startsWith('approve_queue:')) {
+      const queueId = action.split(':')[1]
+      label = 'Draft Approved'
+      mutation = () => approveQueueItem(queueId!, thread)
+      optimistic = { inboxStatus: 'queued' }
+    } else if (action.startsWith('cancel_queue:')) {
+      const queueId = action.split(':')[1]
+      label = 'Draft Cancelled'
+      mutation = () => cancelQueueItem(queueId!, thread)
+      optimistic = { inboxStatus: 'waiting' }
+    } else if (action.startsWith('edit_queue:')) {
+      const queueId = action.split(':')[1]
+      // For editing, we could cancel and load text into composer
+      // For now, we'll just treat it as a cancel + focus
+      label = 'Opening Editor...'
+      mutation = () => cancelQueueItem(queueId!, thread)
+      optimistic = { inboxStatus: 'waiting' }
+      // Additional logic to focus composer could go here
+    } else {
+      switch (action) {
+        case 'archive':
+          label = 'Thread Archived'
+          mutation = () => archiveThread(thread)
+          optimistic = { isArchived: true, inboxStatus: 'closed' }
+          break
+        case 'unarchive':
+          label = 'Thread Restored'
+          mutation = () => unarchiveThread(thread)
+          optimistic = { isArchived: false, inboxStatus: 'needs_review' }
+          break
+        case 'star':
+          label = 'Thread Starred'
+          mutation = () => starThread(thread)
+          optimistic = { isStarred: true }
+          break
+        case 'unstar':
+          label = 'Star Removed'
+          mutation = () => unstarThread(thread)
+          optimistic = { isStarred: false }
+          break
+        case 'pin':
+          label = 'Thread Pinned'
+          mutation = () => pinThread(thread)
+          optimistic = { isPinned: true }
+          break
+        case 'unpin':
+          label = 'Pin Removed'
+          mutation = () => unpinThread(thread)
+          optimistic = { isPinned: false }
+          break
+        case 'read':
+          label = 'Marked Read'
+          mutation = () => markThreadRead(thread)
+          optimistic = { isRead: true, unread: false, inboxStatus: 'closed' }
+          break
+        case 'unread':
+          label = 'Marked Unread'
+          mutation = () => markThreadUnread(thread)
+          optimistic = { isRead: false, unread: true, inboxStatus: 'new_reply' }
+          break
+        default:
+          return
+      }
     }
 
     setOptimisticPatches(prev => ({ ...prev, [thread.id]: { ...prev[thread.id], ...optimistic } }))
@@ -1167,7 +1191,11 @@ export default function InboxPage() {
     if (DEV) console.log(`[OperatorAction] ${action} on ${id.slice(-8)}`)
 
     switch (action) {
+      case 'auto_reply':
+        await handleWorkflowMutation('Auto-Reply: Queueing...', () => executeAutoReply(thread, null, { dryRun: autonomyControls.dryRun }), { skipRefresh: false })
+        break
       case 'mark_hot':
+// ... rest of switch
         await handleWorkflowMutation('Lead: HOT', () => markThreadHot(thread), { skipRefresh: true })
         break
       case 'snooze':
@@ -1602,6 +1630,8 @@ export default function InboxPage() {
         onOpenKpis={() => pushRoutePath('/dashboard/kpis')}
         onOpenActivity={() => setActiveOverlay('activity')}
         onResetLayout={() => setLayoutState(resetLayoutMode)}
+        dryRun={autonomyControls.dryRun}
+        onToggleDryRun={() => setAutonomyControls(prev => ({ ...prev, dryRun: !prev.dryRun }))}
       />
 
       <div className="nx-inbox-shell">
@@ -1823,12 +1853,9 @@ export default function InboxPage() {
 
       {aiOpen
         ? createPortal(
-            <AICopilotPanel
+            <LiveCopilotChat
               thread={selected}
-              context={threadContext}
-              intelligence={threadIntelligence}
               onClose={() => setActiveOverlay(null)}
-              onInsertDraft={(text) => setDraftText((prev) => (prev ? `${prev}\n\n${text}` : text))}
             />,
             document.body,
           )

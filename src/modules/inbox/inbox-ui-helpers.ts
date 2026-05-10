@@ -369,7 +369,7 @@ const matchesViewSelection = (thread: InboxWorkflowThread, view: InboxViewSelect
   const priorityHydrated = hydratedCategory === 'hot_leads' || hydratedCategory === 'needs_review' || hydratedCategory === 'new_inbound'
 
   if (view === 'inbound') return (latestDirection === 'inbound' || hydratedCategory === 'new_inbound') && !isArchived
-  if (view === 'outbound') return latestDirection === 'outbound' && !isArchived
+  if (view === 'outbound' || view === 'outbound_active') return (latestDirection === 'outbound' || hydratedCategory === 'outbound_active') && !isArchived
   if (view === 'needs_reply') return (hydratedCategory === 'new_inbound' || needsReply) && !isArchived
   if (view === 'auto_replied') return (hydratedCategory === 'automated' || ['queued', 'sent', 'delivered'].some((status) => autoStatus.includes(status))) && !isArchived
   if (view === 'auto_reply_failed') return (hydratedCategory === 'needs_review' && autoStatus.includes('failed')) || ['failed', 'blocked', 'error', 'undeliver'].some((status) => autoStatus.includes(status))
@@ -381,7 +381,7 @@ const matchesViewSelection = (thread: InboxWorkflowThread, view: InboxViewSelect
   if (view === 'missing_context') return hydratedCategory === 'cold_no_response' || contextMissing
   if (view === 'priority') return (priorityHydrated || showInPriority) && !isArchived
   if (view === 'active') return (activeHydrated || (!isArchived && !isSuppressed && uiIntent !== 'outbound_waiting')) && !isArchived
-  if (view === 'waiting') return waitingOnSeller && !isArchived
+  if (view === 'waiting') return (waitingOnSeller || hydratedCategory === 'cold_no_response') && !isArchived
   if (view === 'hidden') return priorityBucket === 'hidden' || isArchived || thread.isHidden
   if (view === 'suppressed') return (hydratedCategory === 'dnc_opt_out' || isSuppressed) && !isArchived
   if (view === 'starred') return thread.isStarred
@@ -393,7 +393,7 @@ const matchesViewSelection = (thread: InboxWorkflowThread, view: InboxViewSelect
   if (view === 'needs_response') return (thread.inboxStatus === 'new_reply' || thread.inboxStatus === 'needs_review' || hydratedCategory === 'new_inbound') && !isArchived
   if (view === 'archived') return isArchived
   if (view === 'sent') return uiIntent === 'sent' && !isArchived
-  if (view === 'queued') return uiIntent === 'queued' && !isArchived
+  if (view === 'queued') return (uiIntent === 'queued' || hydratedCategory === 'automated') && !isArchived
   if (view === 'failed') return uiIntent === 'failed' && !isArchived
   
   return true

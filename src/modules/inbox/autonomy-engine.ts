@@ -6,6 +6,7 @@ import type { ThreadCommandIntel } from './ai-command-center'
 
 export interface AutonomyControlState {
   autonomousMode: 'active' | 'approval_required' | 'paused' | 'emergency_stop'
+  dryRun: boolean
   requireNegotiationApproval: boolean
   requireHumanReviewForHighRisk: boolean
   marketThrottleMode: 'balanced' | 'aggressive' | 'safe'
@@ -36,6 +37,10 @@ export interface TemplateOptimizationSnapshot {
   action: 'promote' | 'watch' | 'suppress'
 }
 
+import { executeAutoReply, type AutoReplyResult } from '../../lib/data/inboxAutoReply'
+
+const DEV = Boolean(import.meta.env.DEV)
+
 export interface AutonomousEngineModel {
   controls: AutonomyControlState
   autonomyCoverage: number
@@ -58,8 +63,34 @@ export interface AutonomousEngineModel {
   }
 }
 
+/**
+ * Runs a full autonomous cycle: finds eligible threads and queues auto-replies.
+ */
+export const runAutonomousCycle = async (
+  threads: InboxWorkflowThread[],
+  controls: AutonomyControlState
+): Promise<AutoReplyResult[]> => {
+  const eligible = threads.filter((t) => (
+    t.automationState === 'active' && 
+    !t.isSuppressed && 
+    !t.isArchived && 
+    t.inboxStatus === 'new_reply'
+  ))
+
+  if (DEV) console.log(`[AutonomyEngine] Starting cycle for ${eligible.length} eligible threads. DryRun: ${controls.dryRun}`)
+  
+  const results: AutoReplyResult[] = []
+  for (const thread of eligible) {
+    const result = await executeAutoReply(thread, null, { dryRun: controls.dryRun }) 
+    results.push(result)
+  }
+
+  return results
+}
+
 export const defaultAutonomyControlState: AutonomyControlState = {
   autonomousMode: 'active',
+  dryRun: false,
   requireNegotiationApproval: true,
   requireHumanReviewForHighRisk: true,
   marketThrottleMode: 'balanced',

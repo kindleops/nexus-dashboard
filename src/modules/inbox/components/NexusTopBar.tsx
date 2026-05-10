@@ -34,6 +34,8 @@ interface NexusTopBarProps {
   onOpenKpis: () => void
   onOpenActivity: () => void
   onResetLayout: () => void
+  dryRun: boolean
+  onToggleDryRun: () => void
 }
 
 const fallback = (value: unknown, placeholder = 'Unknown') => {
@@ -104,6 +106,8 @@ export const NexusTopBar = ({
   onOpenKpis,
   onOpenActivity,
   onResetLayout,
+  dryRun,
+  onToggleDryRun,
 }: NexusTopBarProps) => {
   const DEV = Boolean(import.meta.env.DEV)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
@@ -205,6 +209,18 @@ export const NexusTopBar = ({
       </div>
 
       <div className="nx-topbar__actions">
+        <div className="nx-notification-control">
+          <button
+            type="button"
+            className={cls('nx-dry-run-toggle', dryRun && 'is-active')}
+            onClick={onToggleDryRun}
+            title={dryRun ? 'Simulation mode active (Auto-replies require approval)' : 'Live mode active (Auto-replies send automatically)'}
+          >
+            <Icon name="spark" />
+            <span>{dryRun ? 'DRY RUN' : 'LIVE'}</span>
+          </button>
+        </div>
+
         <div className="nx-notification-control">
           <button
             type="button"

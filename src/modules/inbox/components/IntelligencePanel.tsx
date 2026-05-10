@@ -23,7 +23,7 @@ import {
 const DEV = Boolean(import.meta.env.DEV)
 const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
 
-import { CopilotOrbTrigger } from '../copilot/AICopilotPanel'
+import { CopilotOrbTrigger } from '../../copilot/components/CopilotOrbTrigger'
 import { detectPropertyCategory } from '../helpers/propertyHelpers'
 
 type WorkflowThread = InboxWorkflowThread & Partial<{

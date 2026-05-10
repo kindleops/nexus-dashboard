@@ -529,7 +529,7 @@ export const getThreadWorkflowState = async (thread: InboxThread): Promise<Inbox
   }
 }
 
-const persistWorkflowPatch = async (
+export const persistWorkflowPatch = async (
   thread: InboxThread,
   patch: Partial<Pick<InboxThreadWorkflow, 'inboxStatus' | 'conversationStage' | 'isArchived' | 'isRead' | 'isPinned' | 'isStarred' | 'isHidden' | 'isSuppressed' | 'priority'>> & { isHotLead?: boolean; automationState?: AutomationState },
 
@@ -852,9 +852,62 @@ export const suppressThread = async (thread: InboxThread): Promise<WorkflowMutat
   return persistWorkflowPatch(thread, { isSuppressed: true, inboxStatus: 'suppressed', conversationStage: 'dead_suppressed' })
 }
 
+export const approveQueueItem = async (queueId: string, thread: InboxThread): Promise<WorkflowMutationResult> => {
+  const supabase = getSupabaseClient()
+  const threadKey = toThreadKey(thread)
+  const now = new Date().toISOString()
+  
+  const { error } = await supabase
+    .from('send_queue')
+    .update({ queue_status: 'queued', updated_at: now })
+    .eq('id', queueId)
+
+  if (error) return { ok: false, writeTarget: 'none', errorMessage: mapErrorMessage(error), threadKey, mutationPayload: null }
+
+  await persistWorkflowPatch(thread, { inboxStatus: 'queued' })
+  
+  await logInboxActivity({
+    event_type: 'message_sent',
+    thread_key: threadKey,
+    actor: 'Operator',
+    title: 'Draft Approved',
+    description: 'Manual approval of queued reply.',
+    metadata: { queue_id: queueId },
+    undo_payload: null
+  })
+
+  return { ok: true, writeTarget: 'inbox_thread_state', errorMessage: null, threadKey, mutationPayload: { status: 'queued' } }
+}
+
+export const cancelQueueItem = async (queueId: string, thread: InboxThread): Promise<WorkflowMutationResult> => {
+  const supabase = getSupabaseClient()
+  const threadKey = toThreadKey(thread)
+  
+  const { error } = await supabase
+    .from('send_queue')
+    .delete()
+    .eq('id', queueId)
+
+  if (error) return { ok: false, writeTarget: 'none', errorMessage: mapErrorMessage(error), threadKey, mutationPayload: null }
+
+  await persistWorkflowPatch(thread, { inboxStatus: 'waiting' })
+  
+  await logInboxActivity({
+    event_type: 'stage_change',
+    thread_key: threadKey,
+    actor: 'Operator',
+    title: 'Draft Cancelled',
+    description: 'Manual deletion of queued draft.',
+    metadata: { queue_id: queueId },
+    undo_payload: null
+  })
+
+  return { ok: true, writeTarget: 'inbox_thread_state', errorMessage: null, threadKey, mutationPayload: { status: 'waiting' } }
+}
 export const unsuppressThread = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
   return persistWorkflowPatch(thread, { isSuppressed: false, inboxStatus: 'needs_review' })
 }
+
 export const markThreadHot = async (thread: InboxThread): Promise<WorkflowMutationResult> => {
   return persistWorkflowPatch(thread, { isHotLead: true, priority: 'high' } as any)
 }

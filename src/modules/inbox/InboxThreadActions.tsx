@@ -13,6 +13,7 @@ export const InboxThreadActions = ({
   onUnpin,
   onToggleStar,
   onSuppress,
+  onAutoReply,
 }: {
   thread: InboxWorkflowThread
   onArchive: () => void
@@ -23,9 +24,18 @@ export const InboxThreadActions = ({
   onUnpin: () => void
   onToggleStar: () => void
   onSuppress: () => void
+  onAutoReply: () => void
 }) => {
+  const isAutoEligible = thread.inboxStatus === 'new_reply' && thread.automationState === 'active'
+
   return (
     <div className="nx-inbox-thread-actions">
+      {isAutoEligible && (
+        <button type="button" className="nx-inbox__conv-btn nx-inbox__conv-btn--primary" onClick={onAutoReply} title="Execute Deterministic Auto-Reply">
+          <Icon name="zap" className="nx-inbox__conv-btn-icon" />
+          Auto-Reply
+        </button>
+      )}
       <button type="button" className={cls('nx-inbox__conv-btn nx-inbox__conv-btn--ghost', thread.isStarred && 'is-active')} onClick={onToggleStar} title={thread.isStarred ? 'Remove Star' : 'Star Lead'}>
         <Icon name="star" className="nx-inbox__conv-btn-icon" />
         {thread.isStarred ? 'Unstar' : 'Star'}
