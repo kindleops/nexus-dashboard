@@ -4,11 +4,8 @@ import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
 import { formatRelativeTime } from '../../../shared/formatters'
 import type { ActiveOverlay, NexusTheme } from '../inbox-layout-state'
-import { getStatusVisual, getSellerStageVisual, automationStateVisuals } from '../status-visuals'
 import { buildInboxNotifications, NexusNotificationCenter, type NexusNotification } from './NexusNotificationCenter'
 import type { AutonomousEngineModel } from '../autonomy-engine'
-import { InboxKpiHoverStrip } from './InboxKpiHoverStrip'
-import { buildInboxKpis } from '../inbox-kpi-helpers'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
@@ -84,12 +81,6 @@ export const KpiEntryButton = ({ onClick }: { onClick: () => void }) => (
   </button>
 )
 
-const WorkflowChip = ({ value, color }: { value: string; color?: string }) => (
-  <div className="nx-workflow-chip">
-    <strong style={color ? { color } : undefined}>{value}</strong>
-  </div>
-)
-
 export const NexusTopBar = ({
   searchQuery,
   onSearchQueryChange,
@@ -138,22 +129,10 @@ export const NexusTopBar = ({
   const processorLabel = processorStatus === 'healthy' ? 'Healthy' : processorStatus === 'lagging' ? 'Delayed' : 'Unknown'
   
   const notifications = buildInboxNotifications({ unreadCount: notificationCount, selectedThread, queueProcessorHealth, autonomyModel })
-  const unreadNotifications = notifications.filter((item) => item.status !== 'read').length
-  
   const handleNotificationAction = (notification: NexusNotification) => {
     if (notification.related_thread_id) onSelectSearchResult(notification.related_thread_id)
     onCloseOverlay()
   }
-
-  const inboxStatus = getStatusVisual(selectedThread?.inboxStatus, {
-    latestDirection: selectedThread?.latestDirection || selectedThread?.directionUsed || null,
-    lastOutboundAt: selectedThread?.lastOutboundAt ?? null,
-    lastInboundAt: selectedThread?.lastInboundAt ?? null,
-  }).label
-  const sellerStage = getSellerStageVisual(selectedThread?.conversationStage).label
-  const autoState = selectedThread ? automationStateVisuals[selectedThread.automationState] : null
-
-  const kpis = (viewCounts && threads) ? buildInboxKpis(viewCounts, threads) : []
 
   return (
     <header className="nx-topbar">
@@ -167,53 +146,49 @@ export const NexusTopBar = ({
             <strong>Inbox</strong>
           </div>
         </div>
-
-        {kpis.length > 0 && activeViewKey && onSelectView && (
-          <InboxKpiHoverStrip
-            kpis={kpis}
-            activeViewKey={activeViewKey}
-            onSelectKpi={onSelectView}
-          />
-        )}
       </div>
 
-      <div className="nx-global-search">
-        <Icon name="search" />
-        <input
-          ref={searchInputRef}
-          aria-label="Search threads, sellers, addresses, or commands"
-          value={searchQuery}
-          onChange={(event) => onSearchQueryChange(event.target.value)}
-          placeholder="Search threads, sellers, addresses, or commands..."
-        />
-        <kbd>⌘K</kbd>
-        {showSearchResults && (
-          <div className="nx-search-results-popover nx-liquid-popover">
-            <div className="nx-search-results-popover__header">
-              <span>Search Results</span>
-              <b>{searchResults.length}</b>
-            </div>
-            <div className="nx-search-results-list">
-              {searchResults.length > 0 ? searchResults.map((thread) => (
-                <button
-                  key={thread.id}
-                  type="button"
-                  className="nx-search-result-item"
-                  onMouseDown={(event) => {
-                    event.preventDefault()
-                    event.stopPropagation()
-                    onSelectSearchResult(thread.id)
-                  }}
-                >
-                  <span>{fallback(thread.ownerName, 'Unknown Seller')}</span>
-                  <small>{fallback(thread.propertyAddress || thread.subject, 'Property Unknown')}</small>
-                </button>
-              )) : (
-                <p>No matching sellers, phones, addresses, or commands.</p>
-              )}
-            </div>
+      <div className="nx-topbar__center">
+        <div className="nx-inbox-utility-row inbox-center-width">
+          <div className="nx-global-search">
+            <Icon name="search" />
+            <input
+              ref={searchInputRef}
+              aria-label="Search threads, sellers, addresses, or commands"
+              value={searchQuery}
+              onChange={(event) => onSearchQueryChange(event.target.value)}
+              placeholder="Search threads, sellers, addresses, or commands..."
+            />
+            <kbd>⌘K</kbd>
+            {showSearchResults && (
+              <div className="nx-search-results-popover nx-liquid-popover">
+                <div className="nx-search-results-popover__header">
+                  <span>Search Results</span>
+                  <b>{searchResults.length}</b>
+                </div>
+                <div className="nx-search-results-list">
+                  {searchResults.length > 0 ? searchResults.map((thread) => (
+                    <button
+                      key={thread.id}
+                      type="button"
+                      className="nx-search-result-item"
+                      onMouseDown={(event) => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        onSelectSearchResult(thread.id)
+                      }}
+                    >
+                      <span>{fallback(thread.ownerName, 'Unknown Seller')}</span>
+                      <small>{fallback(thread.propertyAddress || thread.subject, 'Property Unknown')}</small>
+                    </button>
+                  )) : (
+                    <p>No matching sellers, phones, addresses, or commands.</p>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
 
       <div className="nx-topbar__actions">

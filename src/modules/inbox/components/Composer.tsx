@@ -348,7 +348,7 @@ export const Composer = ({
       )}
 
       <div
-        className={`nx-composer-input-area${isListening ? ' is-listening' : ''}`}
+        className={`nx-composer-input-area inbox-center-width${isListening ? ' is-listening' : ''}`}
         aria-disabled={composerDisabled}
       >
         <button type="button" className="nx-composer-icon-btn" title="Attach file" disabled={composerDisabled}>

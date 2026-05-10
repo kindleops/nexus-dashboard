@@ -55,16 +55,6 @@ type QueuePreset =
   | 'suppressed'
   | 'inbound_all'
 
-type CategoryKey =
-  | 'hot_leads'
-  | 'needs_review'
-  | 'new_inbound'
-  | 'automated'
-  | 'outbound_active'
-  | 'cold_no_response'
-  | 'dnc_opt_out'
-  | 'all'
-
 const QUEUE_PRESETS: QueuePreset[] = ['positive_hot', 'manual_review', 'needs_reply', 'auto_replied', 'outbound_only', 'missing_context', 'suppressed']
 
 const QUEUE_DESCRIPTIONS: Record<QueuePreset, string> = {
@@ -80,7 +70,7 @@ const QUEUE_DESCRIPTIONS: Record<QueuePreset, string> = {
 
 const QUEUE_CONFIG: Array<{
   preset: QueuePreset
-  category: CategoryKey
+  category: string
   icon: string
   label: string
   accentClass: string
@@ -89,6 +79,7 @@ const QUEUE_CONFIG: Array<{
   { preset: 'positive_hot', category: 'hot_leads', icon: '🔥', label: 'HOT LEADS', accentClass: 'is-hot', countKey: 'positive_hot' },
   { preset: 'manual_review', category: 'needs_review', icon: '⚠', label: 'NEEDS REVIEW', accentClass: 'is-review', countKey: 'manual_review' },
   { preset: 'needs_reply', category: 'new_inbound', icon: '📨', label: 'NEW INBOUND', accentClass: 'is-inbound', countKey: 'needs_reply' },
+  { preset: 'inbound_all', category: 'all_inbound', icon: '📥', label: 'ALL INBOUND', accentClass: 'is-inbound-all', countKey: 'all_inbound' },
   { preset: 'auto_replied', category: 'automated', icon: '🤖', label: 'AUTOMATED', accentClass: 'is-automated', countKey: 'auto_replied' },
   { preset: 'outbound_only', category: 'outbound_active', icon: '📤', label: 'OUTBOUND ACTIVE', accentClass: 'is-outbound', countKey: 'outbound_only' },
   { preset: 'missing_context', category: 'cold_no_response', icon: '🧊', label: 'COLD / NO RESPONSE', accentClass: 'is-cold', countKey: 'missing_context' },
@@ -173,6 +164,7 @@ const resolveQueuePreset = (thread: InboxWorkflowThread): QueuePreset => {
   if (category === 'hot_leads' || category === 'hot') return 'positive_hot'
   if (category === 'needs_review' || category === 'review') return 'manual_review'
   if (category === 'new_inbound' || category === 'unread') return 'needs_reply'
+  if (category === 'all_inbound' || category === 'inbound_all') return 'inbound_all'
   if (category === 'automated' || category === 'auto') return 'auto_replied'
   if (category === 'outbound_active' || category === 'outbound') return 'outbound_only'
   if (category === 'dnc_opt_out' || category === 'suppressed' || category === 'dnc') return 'suppressed'
@@ -194,6 +186,7 @@ const resolveQueuePreset = (thread: InboxWorkflowThread): QueuePreset => {
   if (isHotLead || /interested|yes|sell|asking price|call me|offer/.test(preview) || score >= 74) return 'positive_hot'
   if (queueStatus === 'failed' || queueStatus === 'paused_global_lock' || /manual|review|unclear|ambiguous/.test(`${queueStage} ${detectedIntent}`)) return 'manual_review'
   if (isNewInbound || latestDirection === 'inbound') return 'needs_reply'
+  if (readNumber(thread, 'inbound_count', 'inboundCount') ?? 0 > 0) return 'inbound_all'
   if (queueStatus === 'queued' || /queued|automation/.test(queueStatus)) return 'auto_replied'
   
   if (latestDirection === 'outbound') {
@@ -422,10 +415,11 @@ export const InboxSidebar = ({
   const groupedThreads = useMemo(() => {
     const initial = Object.fromEntries(QUEUE_CONFIG.map((group) => [group.preset, [] as InboxWorkflowThread[]])) as Record<QueuePreset, InboxWorkflowThread[]>
     visibleThreads.forEach((thread) => {
-      initial[resolveQueuePreset(thread)].push(thread)
+      const preset = activeViewFilter === 'all_inbound' ? 'inbound_all' : resolveQueuePreset(thread)
+      initial[preset].push(thread)
     })
     return initial
-  }, [visibleThreads])
+  }, [visibleThreads, activeViewFilter])
 
   const firstPopulatedQueue = useMemo(
     () => QUEUE_PRESETS.find((preset) => groupedThreads[preset].length > 0) ?? 'missing_context',
@@ -472,14 +466,7 @@ export const InboxSidebar = ({
   type ModePerspective = 'priority' | 'active' | 'waiting' | 'all'
   const [modePerspective, setModePerspective] = useState<ModePerspective>('all')
 
-  const filterByMode = (threadList: InboxWorkflowThread[], mode: ModePerspective): InboxWorkflowThread[] => {
-    if (mode === 'all') return threadList
-    const now = Date.now()
-    if (mode === 'priority') return threadList.filter((t) => (readNumber(t, 'finalAcquisitionScore', 'final_acquisition_score', 'priorityScore', 'priority_score') ?? 0) >= 55)
-    if (mode === 'active') return threadList.filter((t) => { const ts = getActivityTime(t); return ts > 0 && (now - ts) < 48 * 36e5 })
-    if (mode === 'waiting') return threadList.filter((t) => t.lastDirection === 'outbound' || readString(t, 'latest_message_direction', 'latestDirection').toLowerCase() === 'outbound')
-    return threadList
-  }
+
 
   const modeCounts = useMemo(() => {
     const queueThreads = activeQueueConfig ? groupedThreads[activeQueueConfig.preset] : visibleThreads
@@ -627,10 +614,16 @@ export const InboxSidebar = ({
           const isActive = expandedQueue === group.preset
           const expanded = isActive && !manuallyClosed.has(group.preset)
           const groupThreads = groupedThreads[group.preset]
-          const displayThreads = isActive ? filterByMode(groupThreads, modePerspective) : groupThreads
+          const displayThreads = groupThreads
           const count = getQueueCount(group.preset, viewCounts[group.countKey], groupThreads.length)
+          const isHovered = hoveredQueue === group.preset
           return (
-            <section key={group.preset} className={cls('nx-queue-group', group.accentClass, expanded && 'is-expanded')}>
+            <section
+              key={group.preset}
+              className={cls('nx-queue-group', group.accentClass, expanded && 'is-expanded')}
+              onMouseEnter={() => setHoveredQueue(group.preset)}
+              onMouseLeave={() => setHoveredQueue(null)}
+            >
               <button
                 type="button"
                 className={cls('nx-queue-group__header', isActive && 'is-selected')}
@@ -642,6 +635,31 @@ export const InboxSidebar = ({
                 <span className="nx-queue-group__count">{formatCount(numberOrNull(count) ?? 0)}</span>
                 <Icon name={expanded ? 'chevron-down' : 'chevron-right'} />
               </button>
+
+              {isHovered && (
+                <div className="nx-queue-kpi-popover">
+                  <header>
+                    <strong>{group.label} Intelligence</strong>
+                  </header>
+                  <div className="nx-queue-kpi-popover__body">
+                    <p className="nx-queue-kpi-popover__desc">{QUEUE_DESCRIPTIONS[group.preset]}</p>
+                    <div className="nx-queue-kpi-popover__detail">
+                      <span>Total Count</span>
+                      <b>{formatCount(numberOrNull(count) ?? 0)}</b>
+                    </div>
+                    {displayThreads.slice(0, 3).length > 0 && (
+                      <div className="nx-queue-kpi-popover__samples">
+                        <span className="nx-queue-kpi-popover__samples-title">Top Threads</span>
+                        {displayThreads.slice(0, 3).map((t, idx) => (
+                          <div key={t.id || idx} className="nx-queue-kpi-popover__sample">
+                            {t.propertyAddress || t.ownerName || 'Unknown Thread'}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {expanded && (
                 <div className="nx-queue-group__threads">

@@ -482,7 +482,7 @@ export const useInboxData = () => {
       ...options,
       filters: options.filters !== undefined ? options.filters : lastFetchRef.current.filters,
       cursor: options.cursor ?? null,
-      maxRows: options.maxRows ?? lastFetchRef.current.maxRows ?? 200,
+      maxRows: options.maxRows ?? lastFetchRef.current.maxRows ?? 1000,
     }
 
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -505,8 +505,8 @@ export const useInboxData = () => {
       filters: lastFetchRef.current.filters,
       cursor,
       offset: cursor ? undefined : dataRef.current.threads.length,
-      maxRows: options.maxRows ?? 200,
-      limit: options.limit ?? options.maxRows ?? 200,
+      maxRows: options.maxRows ?? 1000,
+      limit: options.limit ?? options.maxRows ?? 1000,
     }
     return runLoad(moreOptions, 'append')
   }, [loading, runLoad])

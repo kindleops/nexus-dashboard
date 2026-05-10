@@ -213,7 +213,7 @@ const QUEUE_PROCESSOR_LAG_MINUTES = 10
 const DEV = Boolean(import.meta.env.DEV)
 const MESSAGE_EVENTS_THREAD_PAGE_SIZE = 1000
 export const HYDRATED_INBOX_PAGE_SIZE = 1000
-const HYDRATED_INBOX_THREADS_VIEW = 'inbox_command_center_v'
+const HYDRATED_INBOX_THREADS_VIEW = 'inbox_operator_dossier_v'
 const HYDRATED_INBOX_COUNTS_VIEW = 'inbox_category_counts'
 
 const HYDRATED_INBOX_CATEGORIES = [
@@ -224,6 +224,7 @@ const HYDRATED_INBOX_CATEGORIES = [
   'outbound_active',
   'cold_no_response',
   'dnc_opt_out',
+  'all_inbound',
 ] as const
 
 type HydratedInboxCategory = (typeof HYDRATED_INBOX_CATEGORIES)[number]
@@ -245,7 +246,7 @@ const HYDRATED_CATEGORY_BY_VIEW: Partial<Record<string, HydratedInboxCategory | 
 
 const HYDRATED_PRIORITY_CATEGORIES = new Set<HydratedInboxCategory>(['hot_leads', 'needs_review', 'new_inbound'])
 
-const EMPTY_HYDRATED_CATEGORY_COUNTS: Record<HydratedInboxCategory | 'all', number> = {
+const EMPTY_HYDRATED_CATEGORY_COUNTS: Record<HydratedInboxCategory | 'all' | 'all_inbound', number> = {
   hot_leads: 0,
   needs_review: 0,
   new_inbound: 0,
@@ -253,6 +254,7 @@ const EMPTY_HYDRATED_CATEGORY_COUNTS: Record<HydratedInboxCategory | 'all', numb
   outbound_active: 0,
   cold_no_response: 0,
   dnc_opt_out: 0,
+  all_inbound: 0,
   all: 0,
 }
 
@@ -373,18 +375,14 @@ const applyInboxSearchServerFilter = (query: any, text: string | undefined): any
   if (!text || !text.trim()) return query
   const term = `%${text.trim()}%`
   return query.or(
-    `owner_name.ilike.${term},` +
-    `prospect_name.ilike.${term},` +
-    `first_name.ilike.${term},` +
-    `best_phone.ilike.${term},` +
-    `phone.ilike.${term},` +
-    `canonical_e164.ilike.${term},` +
-    `property_address_full.ilike.${term},` +
-    `market.ilike.${term},` +
+    `display_name.ilike.${term},` +
+    `display_address.ilike.${term},` +
+    `display_phone.ilike.${term},` +
+    `display_market.ilike.${term},` +
     `latest_message_body.ilike.${term},` +
     `property_type.ilike.${term},` +
-    `detected_intent.ilike.${term},` +
-    `queue_stage.ilike.${term},` +
+    `ui_intent.ilike.${term},` +
+    `stage.ilike.${term},` +
     `inbox_category.ilike.${term}`
   )
 }
@@ -393,42 +391,52 @@ const applyInboxAdvancedServerFilters = (query: any, filters: Record<string, any
   if (!filters) return query
   let q = query
 
-  if (filters.market) q = q.ilike('market', `%${filters.market}%`)
-  if (filters.state) q = q.eq('property_state', filters.state)
-  if (filters.zip) q = q.eq('property_zip', filters.zip)
-  if (filters.propertyType) q = q.eq('property_type', filters.propertyType)
+  // 1. Geographic Filters
+  if (filters.market) q = q.eq('filter_market', filters.market)
+  if (filters.state) q = q.eq('filter_state', filters.state)
+  if (filters.city) q = q.eq('filter_city', filters.city)
+  if (filters.zip) q = q.eq('filter_zip', filters.zip)
   
+  // 2. Property & Owner Type
+  if (filters.propertyType) q = q.eq('filter_property_type', filters.propertyType)
+  if (filters.propertyClass) q = q.eq('property_class', filters.propertyClass)
+  if (filters.ownerType) q = q.eq('filter_owner_type', filters.ownerType)
+  
+  // 3. Lead & Conversation State
+  if (filters.intent) q = q.eq('filter_intent', filters.intent)
+  if (filters.stage) q = q.eq('filter_stage', filters.stage)
+  if (filters.status) q = q.eq('filter_status', filters.status)
+  if (filters.language) q = q.eq('filter_language', filters.language)
+  if (filters.persona) q = q.eq('filter_agent_persona', filters.persona)
+  if (filters.priorityTier) q = q.eq('filter_priority_tier', filters.priorityTier)
+  
+  // 4. Score Ranges
+  if (filters.aiScoreMin !== undefined) q = q.gte('filter_min_score', filters.aiScoreMin)
+  if (filters.motivationMin !== undefined) q = q.gte('priority_score', filters.motivationMin)
+  
+  // 5. Binary/Boolean Flags
+  if (filters.isHot === true) q = q.eq('filter_is_hot', true)
+  if (filters.isDnc === true) q = q.eq('filter_is_dnc', true)
+  if (filters.taxDelinquent === true) q = q.eq('filter_tax_delinquent', true)
+  if (filters.activeLien === true) q = q.eq('filter_active_lien', true)
+  if (filters.highEquity === true) q = q.eq('filter_high_equity', true)
+  if (filters.absenteeOwner === true) q = q.eq('filter_absentee_owner', true)
+  if (filters.corporateOwner === true) q = q.eq('filter_corporate_owner', true)
+  if (filters.hasProperty === true) q = q.eq('filter_has_property', true)
+  if (filters.hasOwner === true) q = q.eq('filter_has_owner', true)
+  if (filters.hasProspect === true) q = q.eq('filter_has_prospect', true)
+
+  // 6. Directional Filters
+  if (filters.direction === 'inbound') q = q.eq('filter_is_inbound', true)
+  if (filters.direction === 'outbound') q = q.eq('filter_is_outbound', true)
+
+  // 7. Legacy/Numeric Ranges
   if (filters.bedsMin !== undefined) q = q.gte('beds', filters.bedsMin)
   if (filters.bathsMin !== undefined) q = q.gte('baths', filters.bathsMin)
-  
   if (filters.estimatedValueMin !== undefined) q = q.gte('estimated_value', filters.estimatedValueMin)
   if (filters.estimatedValueMax !== undefined) q = q.lte('estimated_value', filters.estimatedValueMax)
-  
   if (filters.repairCostMin !== undefined) q = q.gte('estimated_repair_cost', filters.repairCostMin)
   if (filters.repairCostMax !== undefined) q = q.lte('estimated_repair_cost', filters.repairCostMax)
-  
-  if (filters.cashOfferMin !== undefined) q = q.gte('legacy_cash_offer', filters.cashOfferMin)
-  if (filters.cashOfferMax !== undefined) q = q.lte('legacy_cash_offer', filters.cashOfferMax)
-  
-  if (filters.householdIncomeMin !== undefined) q = q.gte('household_income', filters.householdIncomeMin)
-  if (filters.householdIncomeMax !== undefined) q = q.lte('household_income', filters.householdIncomeMax)
-  
-  if (filters.netAssetValueMin !== undefined) q = q.gte('net_asset_value', filters.netAssetValueMin)
-  if (filters.netAssetValueMax !== undefined) q = q.lte('net_asset_value', filters.netAssetValueMax)
-  
-  if (filters.ownerType) q = q.eq('owner_type', filters.ownerType)
-  if (filters.bestContactWindow) q = q.ilike('best_contact_window', `%${filters.bestContactWindow}%`)
-  
-  if (filters.priority) {
-    const threshold = filters.priority === 'urgent' ? 80 : 50
-    q = q.gte('final_acquisition_score', threshold)
-  }
-  
-  if (filters.aiScoreMin !== undefined) q = q.gte('final_acquisition_score', filters.aiScoreMin)
-  if (filters.motivationMin !== undefined) q = q.gte('motivation_score', filters.motivationMin)
-  
-  if (filters.persona) q = q.eq('agent_persona', filters.persona)
-  if (filters.language) q = q.eq('language', filters.language)
   
   if (filters.activityDateFrom) q = q.gte('latest_message_at', filters.activityDateFrom)
   if (filters.activityDateTo) q = q.lte('latest_message_at', filters.activityDateTo)
@@ -2012,6 +2020,25 @@ export const getInboxThreads = async (
       needsReply: category === 'new_inbound' || unreadCount > 0,
       needs_reply: category === 'new_inbound' || unreadCount > 0,
       autoReplyStatus: automationState || queueStatus || undefined,
+      
+      // Dossier Expansion
+      displayName: asString(row.display_name, ownerDisplayName),
+      displayAddress: asString(row.display_address, address),
+      displayPhone: asString(row.display_phone, displayPhone),
+      displayMarket: asString(row.display_market, marketLabel),
+      displayStatus: asString(row.display_status, status),
+      displayScore: asNumber(row.display_score, finalAcquisitionScore),
+      
+      // Filter Metadata
+      filterState: row.filter_state,
+      filterCity: row.filter_city,
+      filterZip: row.filter_zip,
+      filterMarket: row.filter_market,
+      filterPropertyType: row.filter_property_type,
+      filterOwnerType: row.filter_owner_type,
+      filterLanguage: row.filter_language,
+      filterAgentPersona: row.filter_agent_persona,
+      filterPriorityTier: row.filter_priority_tier,
     }
 
     if (DEV && index === 0) {
