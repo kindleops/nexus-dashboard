@@ -1688,7 +1688,7 @@ export const PropertyHeroCard = ({ thread, snapshot, panelMode }: { thread: Work
           </div>
           <div className="nx-property-panel is-aerial">
             <div className="nx-panel-label">AERIAL VIEW</div>
-            <img src={aerialUrl} alt="Aerial view" />
+            <img src={aerialUrl as string | undefined} alt="Aerial view" />
           </div>
           <div className="nx-property-address-bar">
             <strong>{address}</strong>
@@ -1766,7 +1766,6 @@ export const PropertyHeroCard = ({ thread, snapshot, panelMode }: { thread: Work
 const ContactIntelligenceCard = ({
   thread,
   snapshot,
-  intelligence,
 }: {
   thread: WorkflowThread
   snapshot: NormalizedPropertySnapshot
