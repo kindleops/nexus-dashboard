@@ -237,6 +237,7 @@ const MetricInline = ({
   tone?: 'default' | 'accent' | 'warning' | 'danger' | 'success'
 }) => {
   if (!isPresent(value)) return null
+
   return (
     <div className={cls('nx-metric-inline', tone !== 'default' && `is-${tone}`)}>
       <span className="nx-metric-inline__label">{label}</span>
@@ -244,7 +245,6 @@ const MetricInline = ({
     </div>
   )
 }
-
 const ActionButton = ({
   label,
   icon,
@@ -1308,7 +1308,7 @@ export const OverviewPanel = ({ thread, messages }: { thread: WorkflowThread; me
 }
 
 export const ProspectPanel = ({ thread }: { thread: WorkflowThread; intelligence: ThreadIntelligenceRecord | null }) => {
-  console.log("[DEBUG] Prospect Panel Thread:", thread);
+
   const badges = buildMatchBadges(thread)
   return (
     <div className="nx-intel-panel-grid">
@@ -1340,7 +1340,7 @@ export const ProspectPanel = ({ thread }: { thread: WorkflowThread; intelligence
 }
 
 export const OwnerPanel = ({ thread }: { thread: WorkflowThread; intelligence: ThreadIntelligenceRecord | null }) => {
-  console.log("[DEBUG] Owner Panel Thread:", thread);
+
   return (
   <div className="nx-intel-panel-grid">
     <PanelSection title="Owner Operations" icon="user">
@@ -1599,13 +1599,15 @@ const ContactIntelligenceCard = ({
   const prospectTagBadges = useMemo(() => buildProspectTagBadges(thread), [thread])
 
   const prospectRows: Array<{ label: string; value?: unknown; render?: React.ReactNode }> = [
-    { label: 'AGE', value: thread.age ?? (thread as any).person_flags_json?.age },
+    { label: 'PROSPECT NAME', value: thread.prospect_full_name || thread.displayName },
+    { label: 'AGE', value: (thread as any).prospect_age },
     { label: 'MARITAL STATUS', value: thread.marital_status },
     { label: 'GENDER', value: thread.gender },
     { label: 'LANGUAGE', value: thread.language_preference || thread.contactLanguage },
     { label: 'EDUCATION', value: thread.education_model },
-    { label: 'HOUSEHOLD INCOME', value: formatMoney(thread.est_household_income) },
-    { label: 'NET ASSET VALUE', value: formatMoney(thread.net_asset_value) },
+    { label: 'HOUSEHOLD INCOME', value: thread.est_household_income },
+    { label: 'NET ASSET VALUE', value: thread.net_asset_value },
+    { label: 'BUYING POWER', value: (thread as any).buying_power },
     { label: 'OCCUPATION', value: thread.occupation },
     { label: 'OCCUPATION GROUP', value: thread.occupation_group },
     { 
@@ -1618,7 +1620,7 @@ const ContactIntelligenceCard = ({
       ) : null
     },
     { label: 'PHONE NUMBER', value: fmtPhone(thread.prospect_best_phone || thread.phoneNumber || thread.canonicalE164) },
-    { label: 'PHONE CARRIER', value: thread.phone_carrier },
+    { label: 'PHONE CARRIER', value: (thread as any).phone_carrier },
   ]
 
   const ownerRows: Array<{ label: string; value?: unknown; render?: React.ReactNode }> = [
@@ -1632,8 +1634,8 @@ const ContactIntelligenceCard = ({
   const portfolioRows: Array<{ label: string; value?: unknown; render?: React.ReactNode }> = [
     { label: 'PORTFOLIO PROPERTY COUNT', value: thread.property_count },
     { label: 'PROPERTY TYPE MAJORITY', value: thread.property_type_majority || thread.propertyType },
-    { label: 'SFR COUNT', value: thread.sfr_count },
-    { label: 'MF COUNT', value: thread.mf_count },
+    { label: 'SFR COUNT', value: (thread as any).sfr_count },
+    { label: 'MF COUNT', value: (thread as any).mf_count },
     { label: 'TOTAL UNITS', value: thread.portfolio_total_units },
     { label: 'PORTFOLIO VALUE', value: formatMoney(Number(thread.portfolio_total_value || 0)) },
     { label: 'TOTAL EQUITY', value: formatMoney(Number(thread.portfolio_total_equity || 0)) },
@@ -1693,7 +1695,6 @@ const ContactIntelligenceCard = ({
       {activeTab === 'property' ? (
         <>
           <div className="nx-intel-grid" style={{ marginBottom: 16 }}>
-            <IntelField label="FULL PROPERTY ADDRESS" value={headlineAddress || thread.displayAddress || thread.propertyAddress || thread.subject} />
             <IntelField 
               label="PROPERTY FLAGS" 
               value={propertyTagBadges.length ? 'has_tags' : null} 
