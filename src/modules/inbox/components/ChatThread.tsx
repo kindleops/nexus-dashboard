@@ -162,29 +162,33 @@ export const ChatThread = ({
   return (
     <div className="nx-chat-container">
       <header className="nx-chat-header">
-        <div className="nx-chat-header__info">
+        <div className="nx-chat-header__main">
           <div className="nx-chat-header__name-row">
-            <span className="nx-chat-header__name">{ownerName}</span>
+            <h1 className="nx-chat-header__name">{ownerName}</h1>
             {phoneNumber && (
-              <span className="nx-chat-header__phone">{phoneNumber}</span>
+              <div className="nx-chat-header__phone">
+                <Icon name="phone" />
+                <span>{phoneNumber}</span>
+              </div>
             )}
             {import.meta.env.DEV && (
               <button className="nx-debug-btn-mini" onClick={onOpenDebug} title="Debug Thread">
                 <Icon name="cpu" />
               </button>
-
             )}
           </div>
+          
           {propertyAddress && (
             <span className="nx-chat-header__address">{propertyAddress}</span>
           )}
+
           <div className="nx-thread-meta-line">
-            {market && <span className="nx-market-tag">{market}</span>}
+            {market && <span className="nx-market-tag"><Icon name="map-pin" /> {market}</span>}
             <span className="nx-stage-pill nx-conv-stage-pill">{stageVisual.label}</span>
             <span className="nx-stage-pill" style={{ '--pill-color': statusVisual.color, '--pill-bg': statusVisual.bg, '--pill-border': statusVisual.border } as any}>
               {statusVisual.label}
             </span>
-            {isSuppressed && <span className="nx-suppression-badge">Opted Out</span>}
+            {isSuppressed && <span className="nx-suppression-badge is-danger"><Icon name="slash" /> Opted Out</span>}
           </div>
         </div>
         <div className="nx-chat-header__actions">
@@ -228,29 +232,31 @@ export const ChatThread = ({
         <div className="nx-rail-group">
           {(thread.inboxStatus === 'new_reply' || (thread as any).inbox_category === 'new_inbound') && thread.automationState === 'active' && (
             <button className="nx-rail-btn is-auto-reply" onClick={() => onThreadAction?.(thread.id, 'auto_reply')} title="Queue Deterministic Auto-Reply">
-              <Icon name="zap" /> AUTO-REPLY
+              <Icon name="zap" /> <span>AUTO-REPLY</span>
             </button>
           )}
           <button className="nx-rail-btn is-hot" onClick={() => onThreadAction?.(thread.id, 'mark_hot')}>
-            <Icon name="zap" /> HOT
+            <Icon name="zap" /> <span>HOT</span>
           </button>
           <button className="nx-rail-btn" onClick={() => onThreadAction?.(thread.id, 'snooze')}>
-            <Icon name="clock" /> SNOOZE
+            <Icon name="clock" /> <span>SNOOZE</span>
           </button>
         </div>
+        
         <div className="nx-rail-divider" />
+        
         <div className="nx-rail-group">
           {isAutoPaused ? (
             <button className="nx-rail-btn is-resume" onClick={() => onThreadAction?.(thread.id, 'resume_automation')}>
-              <Icon name="play" /> RESUME AUTO
+              <Icon name="play" /> <span>RESUME AUTO</span>
             </button>
           ) : (
             <button className="nx-rail-btn is-pause" onClick={() => onThreadAction?.(thread.id, 'pause_automation')}>
-              <Icon name="pause" /> PAUSE AUTO
+              <Icon name="pause" /> <span>PAUSE AUTO</span>
             </button>
           )}
           <button className="nx-rail-btn is-dnc" onClick={() => onThreadAction?.(thread.id, 'suppress')}>
-            <Icon name="slash" /> DNC
+            <Icon name="slash" /> <span>DNC</span>
           </button>
         </div>
       </div>

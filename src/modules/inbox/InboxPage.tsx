@@ -62,7 +62,6 @@ import { InboxActivityPanel } from './components/InboxActivityPanel'
 import { InboxCommandMap } from './InboxCommandMap'
 import { InboxUtilityDrawer, MapDossierDrawer } from './components/InboxUtilityDrawer'
 import { LiveCopilotChat } from '../copilot/components/LiveCopilotChat'
-import { CopilotOrb } from '../../shared/copilot/CopilotOrb'
 import { AdvancedFiltersPopover } from './components/AdvancedFiltersPopover'
 import { InboxCommandPalette, type InboxCmd } from './InboxCommandPalette'
 import { InboxSchedulePanel, type ScheduledTime } from './InboxSchedulePanel'
@@ -1835,6 +1834,7 @@ export default function InboxPage() {
             onOpenDossier={() => setActiveOverlay('dossier')}
             onOpenAi={() => setActiveOverlay('ai')}
             messages={displayedMessages}
+            panelMode={rightPanelMode}
           />
         ) : null}
       </div>
@@ -1877,26 +1877,7 @@ export default function InboxPage() {
             />,
             document.body,
           )
-        : (
-          /* Global Floating AI Anchor — visible when side panel is NOT open */
-          <div 
-            className={cls("nx-global-ai-anchor", isAiListening && 'is-listening')} 
-            onClick={() => setActiveOverlay('ai')}
-          >
-            <CopilotOrb 
-              state={isAiListening ? 'listening' : 'idle'} 
-              amplitude={isAiListening ? 0.5 : 0} 
-              onClick={() => setActiveOverlay('ai')} 
-              onPushToTalk={() => setIsAiListening(true)} 
-              onPushToTalkRelease={() => {
-                setIsAiListening(false)
-                setActiveOverlay('ai')
-                // We'll pass an 'auto-voice' intent if we were holding
-              }} 
-            />
-            <span className="nx-global-ai-anchor__label">{isAiListening ? 'LISTENING...' : 'NEXUS AI'}</span>
-          </div>
-        )}
+        : null}
 
       {keysOpen && <InboxUtilityDrawer type="keys" thread={selected} onClose={() => setActiveOverlay(null)} />}
 

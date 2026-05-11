@@ -6,7 +6,6 @@ import { formatRelativeTime } from '../../../shared/formatters'
 import type { ActiveOverlay, NexusTheme } from '../inbox-layout-state'
 import { buildInboxNotifications, NexusNotificationCenter, type NexusNotification } from './NexusNotificationCenter'
 import type { AutonomousEngineModel } from '../autonomy-engine'
-import { InboxKpiOrb } from './InboxKpiOrb'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
@@ -121,9 +120,7 @@ export const NexusTopBar = ({
 
       <div className="nx-topbar__center">
         <div className="nx-inbox-utility-row inbox-center-width">
-          <div className="nx-topbar-orb-slot">
-            <InboxKpiOrb />
-          </div>
+          <div className="nx-topbar-orb-slot" />
           <div className="nx-global-search">
             <Icon name="search" />
             <input

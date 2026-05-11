@@ -11991,8 +11991,25 @@
   letter-spacing: 0.16em;
 }
 
-.nx-ai-assist-card .nx-copilot-orb-trigger {
-  margin: 0 auto;
+.nx-ai-assist-icon {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(123, 231, 226, 0.15), rgba(123, 231, 226, 0.05));
+  border: 1px solid rgba(123, 231, 226, 0.25);
+  color: #7be7e2;
+  box-shadow: 0 8px 24px rgba(123, 231, 226, 0.1);
+  margin-bottom: 2px;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.nx-ai-assist-card:hover .nx-ai-assist-icon {
+  transform: scale(1.1);
+  border-color: rgba(123, 231, 226, 0.45);
+  box-shadow: 0 12px 32px rgba(123, 231, 226, 0.2);
 }
 
 .nx-intelligence-panel .nx-intel-scroll-body {

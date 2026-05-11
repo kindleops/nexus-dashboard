@@ -311,7 +311,8 @@ export const fetchPerformanceOverview = async (filters: PerformanceFilters) => {
     sellerSignals,
     propertySignals,
     stages,
-    touches
+    touches,
+    trends
   }
 }
 

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CopilotContext, CopilotMode, CopilotState, ResolvedIntent } from './copilot-state'
-import { CopilotConsole } from './CopilotConsole'
-import { CopilotOrb } from './CopilotOrb'
-import { CopilotSidecar } from './CopilotSidecar'
 import { loadSettings, subscribeSettings } from '../settings'
 import type { NexusSettings } from '../settings'
 import { useVoiceMode } from './copilot-voice'
 import { parseIntent } from './copilot-state'
+import { NexusCoreOrb } from '../../modules/core/components/NexusCoreOrb'
+import { useNexusActivity } from '../../modules/core/hooks/useNexusActivity'
+import { playSound } from '../sounds'
 
 interface CopilotShellProps {
   open: boolean
@@ -38,6 +38,7 @@ export function CopilotShell({ open, context, onClose, onAction, onToggle }: Cop
     onStart() {
       setOrbState('listening')
       setOrbAmplitude(0.45)
+      playSound('voice-start')
     },
     onInterim(text) {
       setOverlayText(text)
@@ -102,6 +103,7 @@ export function CopilotShell({ open, context, onClose, onAction, onToggle }: Cop
       setOrbAmplitude(0)
       setOverlayText(null)
       setOverlayInterim(false)
+      playSound('voice-stop')
     },
     onError(err) {
       setOrbState('error')
@@ -141,8 +143,9 @@ export function CopilotShell({ open, context, onClose, onAction, onToggle }: Cop
   }, [])
 
   const handleOrbClick = useCallback(() => {
-    onToggle()
-  }, [onToggle])
+    // Legacy onToggle() call removed to prevent opening old sidecar.
+    // NexusCoreOrb internally handles opening the NexusCorePanel.
+  }, [])
 
   const handlePushToTalk = useCallback(() => {
     setOrbState('listening')
@@ -232,7 +235,7 @@ export function CopilotShell({ open, context, onClose, onAction, onToggle }: Cop
   return (
     <>
       {showOrb && (
-        <CopilotOrb
+        <NexusCoreOrb
           state={orbState}
           amplitude={orbAmplitude}
           onClick={handleOrbClick}
@@ -244,25 +247,10 @@ export function CopilotShell({ open, context, onClose, onAction, onToggle }: Cop
         />
       )}
 
-      {(mode === 'sidecar' || mode === 'orb') && (
-        <CopilotSidecar
-          open={open}
-          context={context}
-          onClose={onClose}
-          onAction={handleAction}
-          onPresenceChange={handlePresenceChange}
-        />
-      )}
-
-      {mode === 'console' && (
-        <CopilotConsole
-          open={open}
-          context={context}
-          onClose={onClose}
-          onAction={handleAction}
-          onPresenceChange={handlePresenceChange}
-        />
-      )}
+      {/* 
+          Legacy Copilot sidecar and console rendering removed.
+          Moving towards unified NexusCorePanel for all AI interactions.
+      */}
     </>
   )
 }

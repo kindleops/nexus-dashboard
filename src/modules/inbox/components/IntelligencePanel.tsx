@@ -27,7 +27,6 @@ import {
   sellerStageOptions,
   statusStyleVars,
 } from '../status-visuals'
-import { CopilotOrbTrigger } from '../../copilot/components/CopilotOrbTrigger'
 
 const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
 
@@ -370,12 +369,27 @@ const StatusPill = ({ label, color }: { label: string; color: string }) => (
   </span>
 )
 
-const IntelField = ({ label, value, render }: { label: string; value: unknown; render?: React.ReactNode }) => (
-  <div className="nx-intel-field">
-    <span>{label}</span>
-    <strong>{render ? render : isPresent(value) ? asStr(value) : 'Not enriched'}</strong>
-  </div>
-)
+const IntelField = ({ 
+  label, 
+  value, 
+  render,
+  tone = 'default'
+}: { 
+  label: string; 
+  value: unknown; 
+  render?: React.ReactNode;
+  tone?: 'default' | 'accent' | 'warning' | 'success' | 'danger'
+}) => {
+  const displayValue = render ? render : isPresent(value) ? asStr(value) : 'Not enriched'
+  const isEmpty = !isPresent(value) && !render
+  
+  return (
+    <div className={cls('nx-intel-field-v2', tone !== 'default' && `is-${tone}`, isEmpty && 'is-empty')}>
+      <label className="nx-intel-field-v2__label">{label}</label>
+      <div className="nx-intel-field-v2__value">{displayValue}</div>
+    </div>
+  )
+}
 
 const SectionEmptyState = ({ text }: { text: string }) => (
   <div className="nx-section-empty">
@@ -584,79 +598,110 @@ export const WorkflowControl = ({
     </DossierCard>
   )
 }
+export const OfferMemoCard = ({ thread }: { thread: WorkflowThread }) => {
+  const [isUnderwriting, setIsUnderwriting] = useState(false)
+  const [underwritingData, setUnderwritingData] = useState<any>(null)
+  
+  const hasArv = isPresent(thread.estimatedValue)
+  const aiOffer = Number(thread.ai_recommended_opening_offer || thread.ai_offer || 0)
+  const cashOffer = Number(thread.cashOffer || thread.mao || 0)
+  const walkaway = Number(thread.walkaway_price || thread.walkaway_internal || 0)
+  
+  const confidence = thread.offer_confidence || (hasArv ? 'Review internally' : 'Hold internal')
+  const isConfidenceHigh = confidence.toLowerCase().includes('high') || confidence.toLowerCase().includes('ready')
+  const isConfidenceLow = confidence.toLowerCase().includes('low') || confidence.toLowerCase().includes('hold')
 
-// ── 3. Property Hero Card ─────────────────────────────────────────────────
-
-const PremiumPropertySnapshotCard = ({ thread }: { thread: WorkflowThread; intelligence: ThreadIntelligenceRecord | null }) => {
-  const address = thread.displayAddress || 'Property Unknown'
-  const streetViewUrl = thread.streetview_image
-  const aerialViewUrl = thread.satellite_image || buildAerialViewUrl(address)
-  const [streetFailed, setStreetFailed] = useState(false)
-  const [aerialFailed, setAerialFailed] = useState(false)
-  const links = buildPropertyExternalLinks(address)
-  const market = thread.displayMarket || 'Unknown Market'
-  const propertyType = normalizeText(thread.propertyType || 'Residential')
-  const estimatedValue = formatMoney(Number(thread.estimatedValue || 0))
-  const equityPct = formatPercent(Number(thread.equityPercent || 0))
-  const repairCost = formatMoney(Number(thread.estimatedRepairCost || 0))
+  const handleUnderwrite = async () => {
+    setIsUnderwriting(true)
+    try {
+      const res = await fetch('/api/internal/offers/underwrite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          address: thread.propertyAddress || thread.subject, 
+          propertyType: detectPropertyCategory(thread) 
+        })
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      setUnderwritingData(data)
+    } catch (err) {
+      console.error('Underwriting failed:', err)
+      alert('Underwriting failed: ' + (err instanceof Error ? err.message : String(err)))
+    } finally {
+      setIsUnderwriting(false)
+    }
+  }
 
   return (
-    <div className="nx-dossier-card nx-property-snapshot-card">
-      <div className="nx-property-snapshot__media">
-        <div className="nx-property-snapshot__pane">
-          {streetViewUrl && !streetFailed ? (
-            <img src={streetViewUrl} alt="Street View" onError={() => setStreetFailed(true)} />
-          ) : (
-            <div className="nx-property-hero__fallback">
-              <Icon name="map" />
-              <span>Street View</span>
-              <strong>{address}</strong>
-            </div>
-          )}
-          <span className="nx-property-snapshot__eyebrow">Street</span>
+    <DossierCard className="nx-offer-console nx-glass-card nx-offer-console--elite">
+      <div className="nx-dossier-section__title nx-dossier-section__title--between">
+        <span className="nx-command-label"><Icon name="zap" /> OFFER INTELLIGENCE</span>
+        <div className={cls('nx-status-pill', hasArv ? 'is-success' : 'is-warning')}>
+          {hasArv ? 'READY' : 'NEEDS ARV'}
         </div>
-        <div className="nx-property-snapshot__pane">
-          {aerialViewUrl && !aerialFailed ? (
-            <img src={aerialViewUrl} alt="Aerial View" onError={() => setAerialFailed(true)} />
-          ) : (
-            <div className="nx-property-hero__fallback">
-            <Icon name="map" />
-              <span>Aerial</span>
-            <strong>{address}</strong>
+      </div>
+
+      <div className="nx-offer-metrics-grid">
+        <div className="nx-offer-metric-card">
+          <label>LEGACY CASH</label>
+          <div className="nx-metric-value">{formatMoney(cashOffer)}</div>
+        </div>
+        <div className="nx-offer-metric-card is-highlight">
+          <label>AI RECOMMENDED</label>
+          <div className="nx-metric-value">
+            {underwritingData ? formatMoney(underwritingData.valuation.mao) : (aiOffer > 0 ? formatMoney(aiOffer) : 'PENDING')}
           </div>
-          )}
-          <span className="nx-property-snapshot__eyebrow">Aerial</span>
         </div>
-        
-        <div className="nx-property-snapshot__hover-actions">
-          <div className="nx-property-hero__hover-grid">
-            <LinkedRecordButton label="Zillow" url={links.zillow} icon="globe" />
-            <LinkedRecordButton label="Realtor" url={links.realtor} icon="globe" />
-            <LinkedRecordButton label="Google Search" url={links.googleSearch} icon="search" />
-            <LinkedRecordButton label="Maps" url={links.streetView} icon="map" />
+        <div className="nx-offer-metric-card">
+          <label>WALKAWAY</label>
+          <div className="nx-metric-value">
+            {underwritingData ? formatMoney(underwritingData.valuation.maoCeiling) : (walkaway > 0 ? formatMoney(walkaway) : '--')}
+          </div>
+        </div>
+        <div className="nx-offer-metric-card">
+          <label>CONFIDENCE</label>
+          <div className={cls('nx-metric-sentiment', isConfidenceHigh && 'is-safe', isConfidenceLow && 'is-risk')}>
+            {underwritingData ? `${underwritingData.valuation.score}% SAFE` : confidence.toUpperCase()}
           </div>
         </div>
       </div>
       
-      <div className="nx-property-snapshot__metadata">
-        <div className="nx-property-snapshot__identity-row">
-          <div className="nx-property-snapshot__identity">
-            <strong>{address}</strong>
-            <span>{market} • {propertyType}</span>
+      {underwritingData && (
+        <div className="nx-research-snapshot nx-glass-surface">
+          <div className="nx-snapshot-header">AI RESEARCH TELEMETRY</div>
+          <div className="nx-snapshot-grid">
+            <div className="nx-snapshot-item">
+              <span>ARV EST</span>
+              <strong>{formatMoney(underwritingData.valuation.arv_estimate)}</strong>
+            </div>
+            <div className="nx-snapshot-item">
+              <span>REPAIRS</span>
+              <strong>{formatMoney(underwritingData.valuation.repair_estimate)}</strong>
+            </div>
+          </div>
+          <div className="nx-snapshot-comps">
+            {underwritingData.comps?.slice(0, 3).map((comp: any, i: number) => (
+              <a key={i} href={comp.source_url} target="_blank" rel="noreferrer" className="nx-comp-tag">
+                <Icon name="globe" /> {comp.price ? formatMoney(comp.price) : 'LINK'}
+              </a>
+            ))}
           </div>
         </div>
-        
-        <div className="nx-property-snapshot__metrics">
-          {isPresent(thread.total_bedrooms || thread.beds) && <QuietBadge label={`${thread.total_bedrooms || thread.beds} Bed${(thread.total_bedrooms || thread.beds) !== 1 ? 's' : ''}`} />}
-          {isPresent(thread.total_baths || thread.baths) && <QuietBadge label={`${thread.total_baths || thread.baths} Bath${(thread.total_baths || thread.baths) !== 1 ? 's' : ''}`} />}
-          {isPresent(thread.building_square_feet || thread.sqft) && <QuietBadge label={`${formatInteger(Number(thread.building_square_feet || thread.sqft))} sqft`} />}
-          {isPresent(thread.year_built || (thread as any).yearBuilt) && <QuietBadge label={`Built ${thread.year_built || (thread as any).yearBuilt}`} />}
-          {isPresent(estimatedValue) && <QuietBadge label={estimatedValue || ''} tone="accent" />}
-          {isPresent(equityPct) && <QuietBadge label={`${equityPct} equity`} />}
-          {isPresent(repairCost) && <QuietBadge label={`${repairCost} repairs`} tone="warning" />}
-        </div>
+      )}
+
+      <div className="nx-offer-actions">
+        <button 
+          type="button" 
+          className={cls('nx-command-button is-primary', isUnderwriting && 'is-loading')}
+          onClick={handleUnderwrite}
+          disabled={isUnderwriting}
+        >
+          <Icon name={isUnderwriting ? 'loader' : 'spark'} />
+          {isUnderwriting ? 'ANALYZING...' : 'RUN AI UNDERWRITING'}
+        </button>
       </div>
-    </div>
+    </DossierCard>
   )
 }
 
@@ -915,7 +960,7 @@ const PropertyIntelFields = ({
           ? equityRows
           : taxRows
 
-  return <div className="nx-intel-grid">{rows.map(([label, value]) => <IntelField key={label} label={label} value={value} />)}</div>
+  return <div className="nx-intel-grid-v2">{rows.map(([label, value]) => <IntelField key={label} label={label} value={value} />)}</div>
 }
 
 export const PropertyIntelligenceTabs = ({
@@ -1137,7 +1182,9 @@ const ActionRailCard = ({
     <button type="button" className="nx-intel-action-btn" onClick={onOpenMap}><Icon name="map" /> Map</button>
     <button type="button" className="nx-intel-action-btn" onClick={onOpenDossier}><Icon name="briefing" /> Dossier</button>
     <button type="button" className="nx-ai-assist-card" onClick={onOpenAi}>
-      <CopilotOrbTrigger size="md" isReady={Boolean(thread.aiDraft)} onClick={onOpenAi} />
+      <div className="nx-ai-assist-icon">
+        <Icon name="spark" />
+      </div>
       <span>AI ASSIST</span>
     </button>
   </div>
@@ -1658,37 +1705,23 @@ const PropertyBadge = ({ label, icon, accent = 'neutral' }: { label: string; ico
 }
 
 
-const PropertySnapshotCard = ({ thread, intelligence }: { thread: WorkflowThread; intelligence: ThreadIntelligenceRecord | null }) => {
-  const snapshot = normalizePropertySnapshot(intelligence, thread)
-  const address = snapshot.fullAddress || thread.displayAddress || thread.propertyAddress || thread.subject || 'No linked property'
-  const propertyTypeRaw = snapshot.propertyType || (thread as any).propertyType || thread.property_type_majority || 'Not enriched'
-  const isMultifamily = propertyTypeRaw.toLowerCase().includes('multi') || propertyTypeRaw.toLowerCase().includes('apartment') || (thread.mf_count && Number(thread.mf_count) > 1) || (Number(snapshot.unitCount) > 1)
-  
-  // High-authority unit count search - prioritizing units_count and Property-specific data
-  const unitCount = Number(
-    (thread as any).Units || 
-    (thread as any).units_count || 
-    (thread as any).properties?.Units || 
-    (thread as any).properties?.units_count || 
-    (thread as any).property?.Units || 
-    (thread as any).property?.units_count || 
-    snapshot.unitCount || 
-    thread.mf_count || 
-    (thread as any).units || 
-    (thread as any).metadata?.Units ||
-    (thread as any).metadata?.units ||
-    0
-  )
-  
-  const rawMarket = snapshot.market || thread.displayMarket || thread.market || thread.marketId || ''
-  const displayMarket = (rawMarket && rawMarket.toLowerCase() !== 'unknown') 
+export const PropertyHeroCard = ({ thread, panelMode }: { thread: WorkflowThread; panelMode?: PanelMode }) => {
+  const snapshot = thread.propertySnapshot || {}
+  const address = thread.displayAddress || thread.propertyAddress || thread.subject
+  const isMultifamily = (thread.propertyType || '').toLowerCase().includes('multi') || (snapshot.propertyType || '').toLowerCase().includes('multi')
+  const unitCount = Number(snapshot.unitCount || thread.unit_count || 0)
+  const rawMarket = thread.displayMarket || thread.market || thread.marketId
+  const displayMarket = isPresent(rawMarket) && !/^\d+$/.test(String(rawMarket))
     ? rawMarket 
     : (snapshot.city && snapshot.state ? `${snapshot.city}, ${snapshot.state}` : (rawMarket || 'Unknown market'))
 
   const displayType = isMultifamily 
     ? (unitCount > 0 ? `MULTI FAMILY • ${unitCount} UNITS` : 'MULTI FAMILY')
     : 'SINGLE FAMILY'
+  
   const streetViewUrl = snapshot.streetViewUrl || thread.streetview_image
+  const aerialUrl = snapshot.aerialViewUrl || thread.aerial_view_image || buildAerialViewUrl(address)
+  
   const [imageFailed, setImageFailed] = useState(false)
   const links = buildPropertyExternalLinks(address)
   const chips = [
@@ -1709,8 +1742,48 @@ const PropertySnapshotCard = ({ thread, intelligence }: { thread: WorkflowThread
     setImageFailed(false)
   }, [streetViewUrl, address])
 
+  // Split View: Trigger for Half (50%) and Full modes
+  if (panelMode === 'half' || panelMode === 'full') {
+    return (
+      <DossierCard className="nx-property-hero-shell nx-glass-card nx-property-hero--elite">
+        <div className="nx-property-split-console">
+          <div className="nx-property-panel is-streetview">
+            <div className="nx-panel-label">STREET VIEW</div>
+            {streetViewUrl && !imageFailed ? (
+              <img src={streetViewUrl} alt="Street view" onError={() => setImageFailed(true)} />
+            ) : (
+              <div className="nx-panel-fallback"><Icon name="camera" /></div>
+            )}
+          </div>
+          <div className="nx-property-panel is-aerial">
+            <div className="nx-panel-label">AERIAL VIEW</div>
+            <img src={aerialUrl} alt="Aerial view" />
+          </div>
+          <div className="nx-property-address-bar">
+            <strong>{address}</strong>
+            <div className="nx-property-intel-links">
+              <LinkedRecordButton label="Zillow" url={links.zillow} icon="globe" />
+              <LinkedRecordButton label="Maps" url={links.streetView} icon="map" />
+              <LinkedRecordButton label="Realtor" url={links.realtor} icon="globe" />
+            </div>
+          </div>
+        </div>
+        <div className="nx-property-hero__info nx-glass-surface">
+          <div className="nx-property-hero__telemetry">
+            <div className="nx-telemetry-item"><label>MARKET OPS</label><span>{displayMarket}</span></div>
+            <div className="nx-telemetry-item"><label>ASSET CLASS</label><span className={isMultifamily ? 'is-highlight' : ''}>{displayType}</span></div>
+          </div>
+          <div className="nx-property-hero__chips">
+            {chips.map((chip) => <PropertyBadge key={chip.label} label={chip.label} icon={chip.icon} accent={chip.accent} />)}
+          </div>
+        </div>
+      </DossierCard>
+    )
+  }
+
+  // Standard Hero: Street View Only
   return (
-    <DossierCard className="nx-property-hero-shell">
+    <DossierCard className="nx-property-hero-shell nx-glass-card">
       <div className="nx-property-hero__media">
         {streetViewUrl && !imageFailed ? (
           <img src={streetViewUrl} alt={address} onError={() => setImageFailed(true)} />
@@ -1721,21 +1794,16 @@ const PropertySnapshotCard = ({ thread, intelligence }: { thread: WorkflowThread
             <strong>{address}</strong>
           </div>
         )}
-
         <div className="nx-property-hero__hover-actions">
           <div className="nx-property-hero__hover-grid">
             <LinkedRecordButton label="Zillow" url={links.zillow} icon="globe" />
-            <LinkedRecordButton label="Google Maps" url={links.streetView} icon="map" />
+            <LinkedRecordButton label="Maps" url={links.streetView} icon="map" />
             <LinkedRecordButton label="Search" url={links.googleSearch} icon="search" />
             <LinkedRecordButton label="Realtor" url={links.realtor} icon="globe" />
           </div>
         </div>
       </div>
-
-      <div className="nx-property-hero__info">
-        <div className="nx-property-hero__address">
-          <strong>{address}</strong>
-        </div>
+      <div className="nx-property-hero__info nx-glass-surface" style={{ borderTop: 'none', borderLeft: 'none', borderRight: 'none', borderRadius: '0 0 18px 18px' }}>
         
         <div className="nx-property-hero__telemetry">
           <div className="nx-telemetry-item">
@@ -1784,69 +1852,69 @@ const ContactIntelligenceCard = ({
     .join(' | ')
 
   const topTabs = [
-    ['prospect', 'PROSPECT'],
-    ['owner', 'OWNER'],
-    ['portfolio', 'PORTFOLIO'],
-    ['financial', 'FINANCIAL'],
-    ['property', 'PROPERTY INTEL'],
+    { id: 'prospect', label: 'PROSPECT', icon: 'users' },
+    { id: 'owner', label: 'OWNER', icon: 'user' },
+    { id: 'portfolio', label: 'PORTFOLIO', icon: 'layers' },
+    { id: 'financial', label: 'FINANCIAL', icon: 'trending-up' },
+    { id: 'property', label: 'PROPERTY', icon: 'home' },
   ] as const
 
   const prospectTagBadges = useMemo(() => buildProspectTagBadges(thread), [thread])
 
-  const prospectRows: Array<{ label: string; value?: unknown; render?: React.ReactNode }> = [
+  const prospectRows: Array<{ label: string; value?: unknown; render?: React.ReactNode; tone?: any }> = [
     { label: 'PROSPECT NAME', value: thread.prospect_full_name || thread.displayName },
-    { label: 'AGE', value: (thread as any).prospect_age },
+    { label: 'AGE', value: (thread as any).prospect_age || thread.age },
     { label: 'MARITAL STATUS', value: thread.marital_status },
     { label: 'GENDER', value: thread.gender },
-    { label: 'LANGUAGE', value: thread.language_preference || thread.contactLanguage },
+    { label: 'LANGUAGE', value: thread.language_preference || thread.contactLanguage, tone: 'accent' },
     { label: 'EDUCATION', value: thread.education_model },
-    { label: 'HOUSEHOLD INCOME', value: thread.est_household_income },
-    { label: 'NET ASSET VALUE', value: thread.net_asset_value },
-    { label: 'BUYING POWER', value: (thread as any).buying_power },
+    { label: 'HOUSEHOLD INCOME', value: thread.est_household_income, tone: 'success' },
+    { label: 'NET ASSET VALUE', value: thread.net_asset_value, tone: 'success' },
+    { label: 'BUYING POWER', value: (thread as any).buying_power, tone: 'accent' },
     { label: 'OCCUPATION', value: thread.occupation },
     { label: 'OCCUPATION GROUP', value: thread.occupation_group },
     { 
       label: 'PROSPECT TAGS', 
       value: prospectTagBadges.length ? 'has_tags' : null,
       render: prospectTagBadges.length > 0 ? (
-        <div className="nx-contact-intel-card__match-badges" style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+        <div className="nx-contact-intel-v2__tag-cloud">
           {prospectTagBadges.map((badge, i) => <MatchBadge key={i} label={badge.label} tone={badge.tone} />)}
         </div>
       ) : null
     },
-    { label: 'PHONE NUMBER', value: fmtPhone(thread.prospect_best_phone || thread.phoneNumber || thread.canonicalE164) },
+    { label: 'PHONE NUMBER', value: fmtPhone(thread.prospect_best_phone || thread.phoneNumber || thread.canonicalE164), tone: 'accent' },
     { label: 'PHONE CARRIER', value: (thread as any).phone_carrier },
   ]
 
-  const ownerRows: Array<{ label: string; value?: unknown; render?: React.ReactNode }> = [
+  const ownerRows: Array<{ label: string; value?: unknown; render?: React.ReactNode; tone?: any }> = [
     { label: 'OWNER ADDRESS', value: thread.primary_owner_address || thread.mailing_address },
-    { label: 'PRIORITY TIER', value: thread.owner_priority_tier || thread.priority },
-    { label: 'PRIORITY SCORE /100', value: formatScore(thread.owner_priority_score || thread.finalAcquisitionScore) },
+    { label: 'PRIORITY TIER', value: thread.owner_priority_tier || thread.priority, tone: 'warning' },
+    { label: 'PRIORITY SCORE /100', value: formatScore(thread.owner_priority_score || thread.finalAcquisitionScore), tone: 'accent' },
     { label: 'BEST CONTACT WINDOW', value: (thread as any).best_contact_window },
     { label: 'LANGUAGE', value: thread.language_preference || thread.contactLanguage },
   ]
 
-  const portfolioRows: Array<{ label: string; value?: unknown; render?: React.ReactNode }> = [
-    { label: 'PORTFOLIO PROPERTY COUNT', value: thread.property_count },
+  const portfolioRows: Array<{ label: string; value?: unknown; render?: React.ReactNode; tone?: any }> = [
+    { label: 'PORTFOLIO PROPERTY COUNT', value: thread.property_count, tone: 'accent' },
     { label: 'PROPERTY TYPE MAJORITY', value: thread.property_type_majority || thread.propertyType },
     { label: 'SFR COUNT', value: (thread as any).sfr_count },
     { label: 'MF COUNT', value: (thread as any).mf_count },
-    { label: 'TOTAL UNITS', value: thread.portfolio_total_units },
-    { label: 'PORTFOLIO VALUE', value: formatMoney(Number(thread.portfolio_total_value || 0)) },
-    { label: 'TOTAL EQUITY', value: formatMoney(Number(thread.portfolio_total_equity || 0)) },
-    { label: 'TOTAL DEBT', value: formatMoney(Number(thread.portfolio_total_loan_balance || 0)) },
+    { label: 'TOTAL UNITS', value: thread.portfolio_total_units, tone: 'accent' },
+    { label: 'PORTFOLIO VALUE', value: formatMoney(Number(thread.portfolio_total_value || 0)), tone: 'success' },
+    { label: 'TOTAL EQUITY', value: formatMoney(Number(thread.portfolio_total_equity || 0)), tone: 'success' },
+    { label: 'TOTAL DEBT', value: formatMoney(Number(thread.portfolio_total_loan_balance || 0)), tone: 'warning' },
     { label: 'TOTAL DEBT PAYMENT', value: formatMoney(Number(thread.portfolio_total_loan_payment || 0)) },
   ]
 
-  const financialRows: Array<{ label: string; value?: unknown; render?: React.ReactNode }> = [
-    { label: 'FINANCIAL PRESSURE SCORE', value: formatScore(thread.financial_pressure_score) },
-    { label: 'URGENCY COUNT', value: thread.urgency_count || formatScore(thread.urgency_score) },
-    { label: 'PORTFOLIO TAX DELINQUENT COUNT', value: thread.tax_delinquent_count },
+  const financialRows: Array<{ label: string; value?: unknown; render?: React.ReactNode; tone?: any }> = [
+    { label: 'FINANCIAL PRESSURE SCORE', value: formatScore(thread.financial_pressure_score), tone: 'warning' },
+    { label: 'URGENCY COUNT', value: thread.urgency_count || formatScore(thread.urgency_score), tone: 'danger' },
+    { label: 'PORTFOLIO TAX DELINQUENT COUNT', value: thread.tax_delinquent_count, tone: thread.tax_delinquent_count > 0 ? 'danger' : 'default' },
     { label: 'TAX DELINQUENT BADGE', value: formatBoolean(thread.property_tax_delinquent) },
-    { label: 'PORTFOLIO LIEN COUNT', value: thread.active_lien_count },
+    { label: 'PORTFOLIO LIEN COUNT', value: thread.active_lien_count, tone: thread.active_lien_count > 0 ? 'warning' : 'default' },
     { label: 'ACTIVE LIEN BADGE', value: formatBoolean(thread.property_active_lien) },
     { label: 'OLDEST TAX DELINQUENT YEAR', value: thread.oldest_tax_delinquent_year },
-    { label: 'TOTAL TAX AMOUNT', value: formatMoney(Number(thread.tax_amt || thread.past_due_amount || 0)) },
+    { label: 'TOTAL TAX AMOUNT', value: formatMoney(Number(thread.tax_amt || thread.past_due_amount || 0)), tone: 'danger' },
   ]
 
   const activeRows = activeTab === 'prospect'
@@ -1858,66 +1926,103 @@ const ContactIntelligenceCard = ({
         : financialRows
 
   return (
-    <DossierCard className="nx-contact-intel-card">
-      <div className="nx-dossier-section__title"><Icon name="user" /> <span>Contact & Ownership Intelligence</span></div>
-
-      <div className="nx-intel-internal-tabs">
-        {topTabs.map(([id, label]) => (
-          <button key={id} type="button" className={cls('nx-intel-internal-tab', activeTab === id && 'is-active')} onClick={() => setActiveTab(id)}>
-            {label}
-          </button>
-        ))}
+    <DossierCard className="nx-contact-intel-v2 nx-glass-card">
+      <div className="nx-dossier-section__title">
+        <Icon name="user" /> 
+        <span>Contact & Ownership Intelligence</span>
       </div>
 
-      <div className="nx-contact-intel-card__identity">
-        <div className="nx-dossier-header__avatar">{activeTab === 'property' ? '8M' : initials}</div>
-        <div className="nx-contact-intel-card__identity-copy">
-          <strong>{activeTab === 'property' ? headlineAddress || 'No linked property' : sellerName}</strong>
-          {activeTab === 'prospect' ? (
-            <div className="nx-contact-intel-card__match-badges">
-              {prospectMatchBadges.map((badge) => <MatchBadge key={badge.label} label={badge.label} tone={badge.tone} />)}
-            </div>
-          ) : (
-            <div className="nx-contact-intel-card__identity-chips">
-              {activeTab === 'property'
-                ? <QuietBadge label={standardFormatDisplayValue(propertyType).toUpperCase()} />
-                : <QuietBadge label={ownerIdentityBadge} />}
-            </div>
-          )}
+      <div className="nx-segmented-control-wrapper">
+        <div className="nx-segmented-control">
+          {topTabs.map((t) => (
+            <button 
+              key={t.id} 
+              type="button" 
+              className={cls('nx-segmented-control__btn', activeTab === t.id && 'is-active')} 
+              onClick={() => setActiveTab(t.id as any)}
+            >
+              <Icon name={t.icon as any} />
+              <span>{t.label}</span>
+            </button>
+          ))}
         </div>
       </div>
 
-      {activeTab === 'property' ? (
-        <>
-          <div className="nx-intel-grid" style={{ marginBottom: 16 }}>
-            <IntelField 
-              label="PROPERTY FLAGS" 
-              value={propertyTagBadges.length ? 'has_tags' : null} 
-              render={propertyTagBadges.length > 0 ? (
-                <div className="nx-contact-intel-card__match-badges" style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                  {propertyTagBadges.map((badge, i) => <MatchBadge key={i} label={badge.label} tone={badge.tone as any} />)}
-                </div>
-              ) : null}
-            />
+      <div className="nx-contact-intel-v2__identity nx-glass-surface">
+        <div className="nx-contact-intel-v2__avatar-box">
+          <div className="nx-contact-intel-v2__avatar nx-elite-gradient">
+            {activeTab === 'property' ? <Icon name="home" /> : initials}
           </div>
-          <div className="nx-intel-subtabs">
-            {[
-              ['overview', 'OVERVIEW'],
-              ['location', 'LOCATION'],
-              ['property', 'PROPERTY'],
-              ['equity', 'EQUITY / VALUATION'],
-              ['tax', 'LAND / TAX'],
-            ].map(([id, label]) => (
-              <button key={id} type="button" className={cls('nx-intel-internal-tab', propertyTab === id && 'is-active')} onClick={() => setPropertyTab(id as 'overview' | 'location' | 'property' | 'equity' | 'tax')}>
-                {label}
-              </button>
+          {activeTab === 'prospect' && prospectMatchBadges.length > 0 && (
+            <div className="nx-contact-intel-v2__badge-overlap">
+              <Icon name="check-circle" />
+            </div>
+          )}
+        </div>
+        
+        <div className="nx-contact-intel-v2__identity-copy">
+          <div className="nx-contact-intel-v2__headline-row">
+            <strong>{activeTab === 'property' ? headlineAddress || 'No linked property' : sellerName}</strong>
+            {activeTab === 'prospect' && prospectMatchBadges.length > 0 && (
+              <div className="nx-contact-intel-v2__match-badges">
+                {prospectMatchBadges.map((badge) => <MatchBadge key={badge.label} label={badge.label} tone={badge.tone} />)}
+              </div>
+            )}
+          </div>
+          
+          <div className="nx-contact-intel-v2__sub-headline">
+            {activeTab === 'property'
+              ? <QuietBadge label={standardFormatDisplayValue(propertyType).toUpperCase()} />
+              : <QuietBadge label={ownerIdentityBadge} />}
+          </div>
+        </div>
+      </div>
+
+      <div className="nx-contact-intel-v2__content">
+        {activeTab === 'property' ? (
+          <>
+            <div className="nx-intel-grid-v2">
+              <IntelField 
+                label="PROPERTY FLAGS" 
+                value={propertyTagBadges.length ? 'has_tags' : null} 
+                render={propertyTagBadges.length > 0 ? (
+                  <div className="nx-contact-intel-v2__tag-cloud">
+                    {propertyTagBadges.map((badge, i) => <MatchBadge key={i} label={badge.label} tone={badge.tone as any} />)}
+                  </div>
+                ) : null}
+              />
+            </div>
+            <div className="nx-segmented-control-wrapper is-subtabs">
+              <div className="nx-segmented-control is-subtabs">
+                {[
+                  ['overview', 'OVERVIEW', 'layers'],
+                  ['location', 'LOCATION', 'map'],
+                  ['property', 'PROPERTY', 'grid'],
+                  ['equity', 'EQUITY', 'trending-up'],
+                  ['tax', 'TAX', 'briefing'],
+                ].map(([id, label, icon]) => (
+                  <button 
+                    key={id} 
+                    type="button" 
+                    className={cls('nx-segmented-control__btn', propertyTab === id && 'is-active')} 
+                    onClick={() => setPropertyTab(id as any)}
+                  >
+                    <Icon name={icon as any} />
+                    <span>{label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <PropertyIntelFields thread={thread} subTab={propertyTab} />
+          </>
+        ) : (
+          <div className="nx-intel-grid-v2">
+            {activeRows.map(({ label, value, render, tone }) => (
+              <IntelField key={label} label={label} value={value} render={render} tone={tone} />
             ))}
           </div>
-          <PropertyIntelFields thread={thread} subTab={propertyTab} />
-        </>
-      ) : (
-        <div className="nx-intel-grid">{activeRows.map(({ label, value, render }) => <IntelField key={label} label={label} value={value} render={render} />)}</div>
-      )}
+        )}
+      </div>
     </DossierCard>
   )
 }
@@ -2068,7 +2173,7 @@ export const IntelligencePanel = ({
 
       <div className="nx-intel-scroll-body">
         <SellerCommandCard thread={thread} onStatusChange={onStatusChange} onStageChange={onStageChange} />
-        <PropertySnapshotCard thread={thread} intelligence={intelligence} />
+        <PropertyHeroCard thread={thread} panelMode={panelMode} />
         <OfferMemoCard thread={thread} />
         <ContactIntelligenceCard thread={thread} intelligence={intelligence} />
         <TimelinePanel thread={thread} messages={messages} />
@@ -2076,95 +2181,5 @@ export const IntelligencePanel = ({
         <ActionRailCard thread={thread} onOpenMap={onOpenMap} onOpenDossier={onOpenDossier} onOpenAi={onOpenAi} />
       </div>
     </aside>
-  )
-}
-
-void PremiumPropertySnapshotCard
-void PremiumOfferMemoCard
-
-export const OfferMemoCard = ({ thread }: { thread: WorkflowThread }) => {
-  const [isUnderwriting, setIsUnderwriting] = useState(false)
-  const [underwritingData, setUnderwritingData] = useState<any>(null)
-  
-  const hasArv = isPresent(thread.estimatedValue)
-  const aiOffer = formatMoney(Number(thread.ai_recommended_opening_offer || thread.ai_offer || 0))
-  const cashOffer = formatMoney(Number(thread.cashOffer || thread.mao || 0))
-  const walkaway = formatMoney(Number(thread.walkaway_price || thread.walkaway_internal || 0))
-  const confidence = standardFormatDisplayValue(thread.offer_confidence || (hasArv ? 'Review internally' : 'Hold internal'))
-  const missing = !hasArv ? 'ARV verification' : standardFormatDisplayValue(thread.nextRequiredInfo)
-  const aiOpening = aiOffer || (hasArv ? 'Needs underwriting' : 'Needs ARV')
-
-  const handleUnderwrite = async () => {
-    setIsUnderwriting(true)
-    try {
-      const res = await fetch('/api/internal/offers/underwrite', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          address: thread.propertyAddress || thread.subject, 
-          propertyType: detectPropertyCategory(thread) 
-        })
-      })
-      const data = await res.json()
-      if (data.error) throw new Error(data.error)
-      setUnderwritingData(data)
-    } catch (err) {
-      console.error('Underwriting failed:', err)
-      alert('Underwriting failed: ' + (err instanceof Error ? err.message : String(err)))
-    } finally {
-      setIsUnderwriting(false)
-    }
-  }
-
-  return (
-    <DossierCard className="nx-offer-memo-card">
-      <div className="nx-dossier-section__title nx-dossier-section__title--between">
-        <span><Icon name="zap" /> Offer Intelligence</span>
-        <QuietBadge label={hasArv ? 'READY' : 'NEEDS ARV'} tone={hasArv ? 'success' : 'warning'} />
-      </div>
-      <div className="nx-offer-memo-card__rows">
-        <IntelField label="LEGACY CASH OFFER" value={cashOffer} />
-        <IntelField label="AI RECOMMENDED OPENING" value={underwritingData ? formatMoney(underwritingData.valuation.mao) : aiOpening} />
-        <IntelField label="WALKAWAY INTERNAL" value={underwritingData ? formatMoney(underwritingData.valuation.maoCeiling) : (walkaway || 'Needs underwriting')} />
-        <IntelField label="MISSING UNDERWRITING INFO" value={underwritingData ? 'None (AI Fresh)' : missing} />
-        <IntelField label="CONFIDENCE / SAFE-TO-REVEAL" value={underwritingData ? `${underwritingData.valuation.score}/100 - ${underwritingData.valuation.verdict.toUpperCase()}` : confidence} />
-      </div>
-      
-      {underwritingData && (
-        <div className="nx-underwrite-results">
-          <div className="nx-underwrite-results__title">AI Research Snapshot</div>
-          <div className="nx-underwrite-results__grid">
-            <div className="nx-underwrite-results__item">
-              <span>ARV Estimate</span>
-              <strong>{formatMoney(underwritingData.valuation.arv_estimate)}</strong>
-            </div>
-            <div className="nx-underwrite-results__item">
-              <span>Repair Estimate</span>
-              <strong>{formatMoney(underwritingData.valuation.repair_estimate)}</strong>
-            </div>
-          </div>
-          <div className="nx-underwrite-results__comps">
-            {underwritingData.comps?.slice(0, 3).map((comp: any, i: number) => (
-              <a key={i} href={comp.source_url} target="_blank" rel="noreferrer" className="nx-underwrite-comp-link">
-                <Icon name="globe" /> {comp.address} - {formatMoney(comp.price)}
-              </a>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="nx-offer-memo-card__actions" style={{ marginTop: 12 }}>
-        <button 
-          type="button" 
-          className={cls('nx-intel-action-btn', isUnderwriting && 'is-loading')}
-          onClick={handleUnderwrite}
-          disabled={isUnderwriting}
-          style={{ width: '100%', justifyContent: 'center', background: 'var(--nx-accent-bg)', color: 'var(--nx-accent-text)' }}
-        >
-          <Icon name="spark" />
-          {isUnderwriting ? 'Analyzing Deal...' : 'Run AI Comps & Underwrite'}
-        </button>
-      </div>
-    </DossierCard>
   )
 }

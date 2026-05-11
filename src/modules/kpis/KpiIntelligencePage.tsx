@@ -229,6 +229,26 @@ export const KpiIntelligencePage = () => {
         </article>
       </section>
 
+      {/* Performance Trends */}
+      <section className="nx-kpi-charts-section">
+        {isLoading ? (
+          <div style={{ display: 'flex', gap: 16 }}>
+            {renderSkeleton('33%', '100px')}
+            {renderSkeleton('33%', '100px')}
+            {renderSkeleton('33%', '100px')}
+          </div>
+        ) : overview?.trends && overview.trends.length > 0 ? (
+          <>
+            <TrendChart data={overview.trends} metricKey="sends" label="Outbound Volume" color="#3b82f6" />
+            <TrendChart data={overview.trends} metricKey="reply_rate_pct" label="Reply Rate (%)" color="#6366f1" />
+            <TrendChart data={overview.trends} metricKey="positive_rate_pct" label="Positive Rate (%)" color="#10b981" />
+            <TrendChart data={overview.trends} metricKey="opt_out_rate_pct" label="Opt-Out Rate (%)" color="#ef4444" />
+          </>
+        ) : (
+          <div className="nx-kpi-empty-state" style={{ width: '100%' }}>No trend data available</div>
+        )}
+      </section>
+
       {/* AI Recommendations */}
       <section className="nx-kpi-recommendations">
         <h3><Icon name="cpu" /> Deterministic AI Recommendations</h3>
