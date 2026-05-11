@@ -213,7 +213,7 @@ const QUEUE_PROCESSOR_LAG_MINUTES = 10
 const DEV = Boolean(import.meta.env.DEV)
 const MESSAGE_EVENTS_THREAD_PAGE_SIZE = 1000
 export const HYDRATED_INBOX_PAGE_SIZE = 1000
-const HYDRATED_INBOX_THREADS_VIEW = 'inbox_operator_dossier_v'
+const HYDRATED_INBOX_THREADS_VIEW = 'inbox_command_center_v'
 const HYDRATED_INBOX_COUNTS_VIEW = 'inbox_category_counts'
 
 const HYDRATED_INBOX_CATEGORIES = [
