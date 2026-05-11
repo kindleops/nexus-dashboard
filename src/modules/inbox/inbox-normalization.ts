@@ -59,6 +59,17 @@ export interface NormalizedPropertySnapshot {
   netAssetValue: string
   occupationGroup: string
   phoneCarrier: string
+  gender: string
+  ownerAddress: string
+  portfolioPropertyCount: string
+  sfrCount: string
+  mfCount: string
+  portfolioValue: string
+  financialScore: string
+  urgencyCount: string
+  taxDelinquentCount: string
+  lienCount: string
+  oldestTaxYear: string
 
   // Automation & Intent
   uiIntent: string
@@ -200,6 +211,17 @@ export const normalizePropertySnapshot = (
     netAssetValue: get('net_asset_value', ['netAssetValue']),
     occupationGroup: get('occupation_group'),
     phoneCarrier: get('phone_carrier'),
+    gender: get('gender'),
+    ownerAddress: get('primary_owner_address', ['owner_address', 'mailing_address']),
+    portfolioPropertyCount: get('property_count', ['portfolio_property_count']),
+    sfrCount: get('sfr_count'),
+    mfCount: get('mf_count'),
+    portfolioValue: get('portfolio_total_value', ['portfolioValue']),
+    financialScore: get('financial_pressure_score', ['financialScore']),
+    urgencyCount: get('urgency_count', ['urgency_score']),
+    taxDelinquentCount: get('tax_delinquent_count', ['portfolio_tax_delinquent_count']),
+    lienCount: get('active_lien_count', ['portfolio_lien_count']),
+    oldestTaxYear: get('oldest_tax_delinquent_year', ['oldestTaxYear']),
 
     // Automation & Intent
     uiIntent: get('ui_intent', ['uiIntent']),
