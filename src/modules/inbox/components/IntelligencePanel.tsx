@@ -1308,6 +1308,7 @@ export const OverviewPanel = ({ thread, messages }: { thread: WorkflowThread; me
 }
 
 export const ProspectPanel = ({ thread }: { thread: WorkflowThread; intelligence: ThreadIntelligenceRecord | null }) => {
+  console.log("[DEBUG] Prospect Panel Thread:", thread);
   const badges = buildMatchBadges(thread)
   return (
     <div className="nx-intel-panel-grid">
@@ -1317,13 +1318,15 @@ export const ProspectPanel = ({ thread }: { thread: WorkflowThread; intelligence
           <FieldTile label="Prospect Name" value={thread.prospect_full_name || thread.displayName} tone="accent" />
           <FieldTile label="Matching Confidence" value={formatScore(thread.prospect_contact_score || thread.prospect_phone_score)} />
           <FieldTile label="Contact Match Tags" value={(thread as any).matching_flags || (thread as any).person_flags_text} />
-          <FieldTile label="Age" value={(thread as any).person_flags_json?.age} />
+          <FieldTile label="Age" value={(thread as any).prospect_age} />
           <FieldTile label="Marital Status" value={(thread as any).marital_status} />
           <FieldTile label="Gender" value={(thread as any).gender} />
           <FieldTile label="Language" value={thread.language_preference || thread.contactLanguage} />
           <FieldTile label="Education" value={(thread as any).education_model} />
           <FieldTile label="Household Income" value={(thread as any).est_household_income} />
           <FieldTile label="Net Asset Value" value={(thread as any).net_asset_value} />
+          <FieldTile label="Buying Power" value={(thread as any).buying_power} />
+          <FieldTile label="Phone Carrier" value={(thread as any).phone_carrier} />
           <FieldTile label="Occupation" value={(thread as any).occupation} />
           <FieldTile label="Occupation Group" value={(thread as any).occupation_group} />
           <FieldTile label="Phone Number" value={formatPhone(thread.prospect_best_phone || thread.phoneNumber)} tone="good" />
@@ -1336,10 +1339,14 @@ export const ProspectPanel = ({ thread }: { thread: WorkflowThread; intelligence
   )
 }
 
-export const OwnerPanel = ({ thread }: { thread: WorkflowThread; intelligence: ThreadIntelligenceRecord | null }) => (
+export const OwnerPanel = ({ thread }: { thread: WorkflowThread; intelligence: ThreadIntelligenceRecord | null }) => {
+  console.log("[DEBUG] Owner Panel Thread:", thread);
+  return (
   <div className="nx-intel-panel-grid">
     <PanelSection title="Owner Operations" icon="user">
       <FieldGrid>
+        <FieldTile label="Owner Name" value={thread.ownerDisplayName || thread.ownerName} tone="accent" />
+        <FieldTile label="Language" value={(thread as any).best_language} />
         <FieldTile label="Priority Tier" value={thread.owner_priority_tier || thread.priority} tone="accent" />
         <FieldTile label="Priority Score" value={formatScore(thread.owner_priority_score || thread.finalAcquisitionScore)} />
         <FieldTile label="Best Contact Window" value={thread.best_contact_window || 'Afternoon'} />
@@ -1355,13 +1362,16 @@ export const OwnerPanel = ({ thread }: { thread: WorkflowThread; intelligence: T
       </FieldGrid>
     </PanelSection>
   </div>
-)
+  )
+}
 
 export const PortfolioPanel = ({ thread }: { thread: WorkflowThread; intelligence: ThreadIntelligenceRecord | null }) => (
   <div className="nx-intel-panel-grid">
     <PanelSection title="Portfolio Exposure" icon="layers">
       <FieldGrid>
         <FieldTile label="Portfolio Property Count" value={formatInteger(thread.property_count || 0)} />
+        <FieldTile label="SFR Count" value={formatInteger((thread as any).sfr_count || 0)} />
+        <FieldTile label="MF Count" value={formatInteger((thread as any).mf_count || 0)} />
         <FieldTile label="Total Units" value={formatInteger(thread.portfolio_total_units || 0)} />
         <FieldTile label="Portfolio Value" value={formatMoney(Number(thread.portfolio_total_value || 0))} tone="good" />
         <FieldTile label="Total Equity" value={formatMoney(Number(thread.portfolio_total_equity || 0))} tone="good" />

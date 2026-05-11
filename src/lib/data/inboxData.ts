@@ -1385,6 +1385,7 @@ const normalizeLiveThread = (row: AnyRecord, index: number): InboxThread => {
   const needsReply = asBoolean(row['needs_reply'] ?? row['needsReply'] ?? row['show_in_priority_inbox'] ?? row['showInPriorityInbox'], latestDirection === 'inbound' && !queueStatus)
   
   return {
+    ...row, // Preserve all unmapped dossier fields from the proxy
     id: threadKey,
     leadId: asString(row['property_id'] ?? row['propertyId'] ?? row['master_owner_id'] ?? row['ownerId'], threadKey),
     marketId: asString(row['market'] ?? row['marketId'] ?? row['market_name'], 'unknown') || 'unknown',
