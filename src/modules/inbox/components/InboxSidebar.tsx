@@ -9,7 +9,7 @@ import {
   type InboxSavedFilterPreset,
   type InboxViewSelectValue,
 } from '../inbox-ui-helpers'
-import { getSellerStageVisual, getStatusVisual } from '../status-visuals'
+// Removed unused status-visuals imports
 
 const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
 
@@ -206,44 +206,97 @@ const getInitials = (value: string) =>
     .map((part) => part[0]?.toUpperCase() ?? '')
     .join('') || '+('
 
-const resolveStatusBadge = (thread: InboxWorkflowThread) => {
-  const visual = getStatusVisual(thread.inboxStatus, {
-    latestDirection: thread.latestDirection || readString(thread, 'latest_message_direction', 'latestDirection') || null,
-    lastOutboundAt: thread.lastOutboundAt ?? null,
-    lastInboundAt: thread.lastInboundAt ?? null,
-  })
-  return visual.label.toUpperCase()
+const highlightMessage = (text: string) => {
+  if (!text) return null
+  
+  // High-performance regex split for pricing and urgency
+  const tokens = text.split(/(\$\d+(?:,\d+)*(?:\.\d+)?|\b(?:asap|urgent|quick|now|soon|immediately|priority|fast)\b)/gi)
+  
+  return (
+    <>
+      {tokens.map((token, i) => {
+        const lower = token.toLowerCase()
+        if (token.startsWith('$')) {
+          return <span key={i} className="nx-pricing-highlight">{token}</span>
+        }
+        if (['asap', 'urgent', 'quick', 'now', 'soon', 'immediately', 'priority', 'fast'].includes(lower)) {
+          return <span key={i} className="nx-urgency-highlight">{token}</span>
+        }
+        return token
+      })}
+    </>
+  )
 }
 
-const resolveStageBadge = (thread: InboxWorkflowThread) => {
-  const raw = thread.conversationStage || readString(thread, 'threadWorkflowStage', 'workflowStage', 'queue_stage')
-  return getSellerStageVisual(raw || null).label
+const AcquisitionScoreRing = ({ score }: { score: number }) => {
+  const radius = 10
+  const circumference = 2 * Math.PI * radius
+  const offset = circumference - (score / 100) * circumference
+  const color = score >= 80 ? '#30d158' : score >= 50 ? '#ff9f0a' : '#5bb6ff'
+
+  return (
+    <div className="nx-thread-card__score-ring" title={`Acquisition Score: ${score}%`}>
+      <svg width="24" height="24" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r={radius} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="2" />
+        <circle
+          cx="12"
+          cy="12"
+          r={radius}
+          fill="none"
+          stroke={color}
+          strokeWidth="2"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+          transform="rotate(-90 12 12)"
+          style={{ transition: 'stroke-dashoffset 0.8s ease' }}
+        />
+      </svg>
+    </div>
+  )
 }
 
-const resolveCardBadges = (thread: InboxWorkflowThread) => {
-  const market = resolveThreadMarketBadge(thread)
-  const stage = resolveStageBadge(thread)
-  const status = resolveStatusBadge(thread)
+const resolveIntelligenceChips = (thread: InboxWorkflowThread) => {
+  const chips: { label: string; icon?: string; type?: string; active?: boolean }[] = []
+  
+  const score = readNumber(thread, 'finalAcquisitionScore', 'motivationScore', 'displayScore') ?? 0
 
-  const stageShortMap: Record<string, string> = {
-    'Ownership Check': 'OWNERSHIP',
-    'Interest Probe': 'INTEREST',
-    'Active Communication': 'ACTIVE',
-    'Price Discovery': 'PRICE',
-    'Condition / Details': 'DETAILS',
-    'Offer Stage': 'OFFER',
-    'Contract Sent': 'CONTRACT',
-    'Negotiation': 'NEGOTIATION',
-    'Dead': 'DEAD',
-    'Closed': 'CLOSED',
+  if (thread.isHotLead || score >= 80) {
+    chips.push({ label: 'HOT LEAD', icon: '🔥', type: 'urgency', active: true })
   }
-  const stageShort = stageShortMap[stage] ?? stage.toUpperCase().slice(0, 10)
+  
+  if (thread.automationState === 'active') {
+    chips.push({ label: 'AI ACTIVE', icon: '🤖', type: 'automated', active: true })
+  }
+  
+  if (thread.isTaxDelinquent || thread.property_tax_delinquent) {
+    chips.push({ label: 'TAX DELINQUENT', type: 'risk' })
+  }
+  
+  if (thread.isProbate || (thread as any).isProbate) {
+    chips.push({ label: 'PROBATE', type: 'event' })
+  }
+  
+  if (thread.hasLien || thread.property_active_lien) {
+    chips.push({ label: 'LIEN', type: 'risk' })
+  }
 
-  return [
-    market ? market.toUpperCase() : null,
-    stageShort || null,
-    status || null,
-  ].filter(Boolean) as string[]
+  const units = readNumber(thread, 'units_count', 'Units', 'units')
+  if (units && units > 1) {
+    chips.push({ label: `${units} UNITS`, type: 'property' })
+  }
+
+  const equity = readNumber(thread, 'equityPercent', 'equity_percent', 'equityPercent')
+  if (equity && equity >= 40) {
+    chips.push({ label: `${Math.round(equity)}% EQUITY`, type: 'financial' })
+  }
+
+  const years = readNumber(thread, 'ownership_years', 'ownershipYears', 'ownership_years')
+  if (years && years >= 10) {
+    chips.push({ label: `${years}Y OWNED`, type: 'financial' })
+  }
+
+  return chips.slice(0, 4)
 }
 
 interface ConversationRowProps {
@@ -259,11 +312,16 @@ const ConversationRow = memo(({ thread, selected, queuePreset, onSelect, onThrea
   const address = resolveThreadAddressLine(thread) || readString(thread, 'property_address_full', 'propertyAddressFull') || 'No Address'
   const preview = readString(thread, 'latest_message_body', 'latestMessageBody', 'lastMessageBody', 'preview') || ''
   const time = thread.lastMessageAt || (thread as any).lastMessageIso || thread.updatedAt
-  const avatarToneClass = queuePreset === 'suppressed' ? 'is-dnc' : queuePreset === 'positive_hot' ? 'is-hot' : 'is-default'
-  const previewText = preview.replace(/\s+/g, ' ').trim()
-  const badges = resolveCardBadges(thread)
+  
+  const score = readNumber(thread, 'finalAcquisitionScore', 'motivationScore', 'displayScore') ?? 0
+  const chips = resolveIntelligenceChips(thread)
   const isStarred = Boolean(thread.isStarred)
   const isPinned = Boolean(thread.isPinned)
+  const isUnread = !thread.isRead
+  
+  const market = readString(thread, 'market', 'marketName', 'displayMarket', 'routing_market')
+  const type = readString(thread, 'property_class', 'propertyType', 'property_type')
+// direction removed as it is currently unused in the 4-row layout
 
   const handleAction = (action: string) => (e: React.MouseEvent) => {
     e.preventDefault()
@@ -271,87 +329,119 @@ const ConversationRow = memo(({ thread, selected, queuePreset, onSelect, onThrea
     onThreadAction?.(thread.id, action)
   }
 
+  // Visual Priority Mapping
+  const isHot = thread.isHotLead || score >= 80 || queuePreset === 'positive_hot'
+  const isDnc = thread.isSuppressed || thread.isOptOut || queuePreset === 'suppressed'
+  const isAutomated = thread.automationState === 'active' || queuePreset === 'auto_replied'
+  const needsReview = thread.inboxStatus === 'needs_review' || queuePreset === 'manual_review'
+
   return (
     <div
       role="button"
       tabIndex={0}
       className={cls(
         'nx-thread-card',
-        `queue-${queuePreset}`,
-        avatarToneClass,
+        isHot && 'is-hot',
+        isDnc && 'is-dnc',
+        isAutomated && 'is-automated',
+        needsReview && 'needs-review',
         selected && 'is-selected',
         isPinned && 'is-pinned',
-        isStarred && 'is-starred',
+        isUnread && 'is-unread',
       )}
       data-thread-id={thread.id}
       onClick={() => onSelect(thread.id)}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelect(thread.id) }}
     >
-      <div className="nx-thread-card__avatar">{getInitials(name)}</div>
-      <div className="nx-thread-card__body">
-        <div className="nx-thread-card__topline">
-          <strong className="nx-thread-card__name">{name}</strong>
-          <div className="nx-thread-card__meta">
-            {isPinned && <span className="nx-thread-card__pin-icon" title="Pinned">📌</span>}
-            {isStarred && <span className="nx-thread-card__star-icon" title="Starred">⭐</span>}
-            <time className="nx-thread-card__time">{time ? formatCompactTime(time) : '—'}</time>
+      {/* ROW 1: Identity & Telemetry */}
+      <div className="nx-thread-card__row nx-thread-card__row--1">
+        <div className="nx-thread-card__identity">
+          <div className="nx-thread-card__avatar-lite">
+            {getInitials(name)}
+          </div>
+          <div className="nx-thread-card__name-stack">
+            <div className="nx-thread-card__name">{name}</div>
+            {isUnread && <div className="nx-live-indicator"><span className="nx-live-dot" /></div>}
           </div>
         </div>
+        <div className="nx-thread-card__telemetry">
+          <AcquisitionScoreRing score={score} />
+          <time className="nx-thread-card__time">
+            {time ? formatCompactTime(time) : '—'}
+          </time>
+        </div>
+      </div>
+
+      {/* ROW 2: Property Context */}
+      <div className="nx-thread-card__row nx-thread-card__row--2">
         <div className="nx-thread-card__address">{address}</div>
-        {previewText && <div className="nx-thread-card__preview">{previewText}</div>}
-        <div className="nx-thread-card__footer">
-          {badges.length > 0 && (
-            <div className="nx-thread-card__chips">
-              {badges.slice(0, 3).map((badge, i) => (
-                <span
-                  key={badge}
-                  className={cls(
-                    'nx-thread-chip',
-                    i === 0 && 'is-market',
-                    i === 1 && 'is-stage',
-                    i === 2 && 'is-type',
-                  )}
-                >
-                  {badge}
-                </span>
-              ))}
-            </div>
+        <div className="nx-thread-card__sub-info">
+          {market && (
+            <>
+              <span className="nx-thread-card__separator" />
+              <span>{market.toUpperCase()}</span>
+            </>
           )}
-          <div className="nx-thread-card__quick-actions">
-            <button
-              type="button"
-              className={cls('nx-thread-quick-btn', isStarred && 'is-active')}
-              title={isStarred ? 'Remove star' : 'Star thread'}
-              onClick={handleAction(isStarred ? 'unstar' : 'star')}
-            >
-              ⭐
-            </button>
-            <button
-              type="button"
-              className={cls('nx-thread-quick-btn', isPinned && 'is-active')}
-              title={isPinned ? 'Unpin' : 'Pin thread'}
-              onClick={handleAction(isPinned ? 'unpin' : 'pin')}
-            >
-              📌
-            </button>
-            <button
-              type="button"
-              className={cls('nx-thread-quick-btn', thread.isRead && 'is-active')}
-              title={thread.isRead ? 'Mark as unread' : 'Mark as read'}
-              onClick={handleAction(thread.isRead ? 'unread' : 'read')}
-            >
-              📥
-            </button>
-            <button
-              type="button"
-              className="nx-thread-quick-btn"
-              title="Archive thread"
-              onClick={handleAction('archive')}
-            >
-              🗄
-            </button>
-          </div>
+          {type && (
+            <>
+              <span className="nx-thread-card__separator" />
+              <span>{type.toUpperCase()}</span>
+            </>
+          )}
         </div>
+      </div>
+
+      {/* ROW 3: AI-Highlighted Message Preview */}
+      <div className="nx-thread-card__row nx-thread-card__row--3">
+        <div className="nx-thread-card__preview">
+          {highlightMessage(preview)}
+        </div>
+      </div>
+
+      {/* ROW 4: Intelligence Chips */}
+      <div className="nx-thread-card__row nx-thread-card__row--4">
+        {chips.map((chip, idx) => (
+          <div 
+            key={idx} 
+            className={cls(
+              'nx-intel-chip',
+              chip.active && 'is-active',
+              chip.type === 'automated' && 'is-automated',
+              chip.type === 'urgency' && 'is-urgency'
+            )}
+          >
+            {chip.icon && <span>{chip.icon}</span>}
+            {chip.label}
+          </div>
+        ))}
+      </div>
+
+      {/* QUICK ACTIONS: Floats on hover */}
+      <div className="nx-thread-card__quick-actions">
+        <button
+          type="button"
+          className={cls('nx-thread-quick-btn', isStarred && 'is-active')}
+          title={isStarred ? 'Remove star' : 'Star thread'}
+          onClick={handleAction(isStarred ? 'unstar' : 'star')}
+        >
+          ⭐
+        </button>
+        <button
+          type="button"
+          className={cls('nx-thread-quick-btn', isPinned && 'is-active')}
+          title={isPinned ? 'Unpin' : 'Pin thread'}
+          onClick={handleAction(isPinned ? 'unpin' : 'pin')}
+        >
+          📌
+        </button>
+        <button
+          type="button"
+          className="nx-thread-quick-btn"
+          title="Archive thread"
+          onClick={handleAction('archive')}
+        >
+          🗄
+        </button>
       </div>
     </div>
   )

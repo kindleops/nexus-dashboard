@@ -1,5 +1,5 @@
 import { getSupabaseClient } from '../supabaseClient'
-import { asNumber, type AnyRecord } from './shared'
+import { asNumber } from './shared'
 
 export interface OperationalKpi {
   id: string
@@ -28,86 +28,123 @@ const POSITIVE_INTENTS = ['seller_interested', 'asking_price_provided', 'asks_of
 export const fetchOperationalKpis = async (timeWindow: OperationalKpi['timeWindow'] = '24h'): Promise<OperationalKpis> => {
   const supabase = getSupabaseClient()
   const now = new Date()
-  let startDate = new Date()
+  const startDate = new Date()
+  const prevStartDate = new Date()
   
   if (timeWindow === 'today') {
     startDate.setHours(0, 0, 0, 0)
+    prevStartDate.setDate(startDate.getDate() - 1)
+    prevStartDate.setHours(0, 0, 0, 0)
   } else if (timeWindow === '24h') {
     startDate.setHours(now.getHours() - 24)
+    prevStartDate.setHours(startDate.getHours() - 24)
   } else if (timeWindow === '7d') {
     startDate.setDate(now.getDate() - 7)
+    prevStartDate.setDate(startDate.getDate() - 7)
   } else if (timeWindow === '30d') {
     startDate.setDate(now.getDate() - 30)
+    prevStartDate.setDate(startDate.getDate() - 30)
   }
 
   const startIso = startDate.toISOString()
+  const prevStartIso = prevStartDate.toISOString()
 
   try {
-    // Messaging Performance
-    const { data: msgData, error: msgError } = await supabase
+    // 1. Messaging Performance (Current & Previous)
+    const { data: currentMsgs } = await supabase
       .from('message_events')
       .select('direction, delivery_status, detected_intent, is_opt_out, is_final_failure')
       .gte('created_at', startIso)
 
-    const messaging: OperationalKpi[] = []
-    if (msgError) {
-      console.error('[KPI] Messaging fetch error:', msgError)
-    } else if (msgData) {
-      const inbound = msgData.filter((m: AnyRecord) => m.direction === 'inbound')
-      const outbound = msgData.filter((m: AnyRecord) => m.direction === 'outbound')
-      const delivered = outbound.filter((m: AnyRecord) => m.delivery_status === 'delivered')
-      const failed = outbound.filter((m: AnyRecord) => m.delivery_status === 'failed' || m.is_final_failure)
-      const optOuts = msgData.filter((m: AnyRecord) => m.is_opt_out || String(m.detected_intent) === 'opt_out')
-      const positive = inbound.filter((m: AnyRecord) => POSITIVE_INTENTS.includes(String(m.detected_intent)))
-      const wrongNumber = inbound.filter((m: AnyRecord) => String(m.detected_intent) === 'wrong_number')
+    const { data: prevMsgs } = await supabase
+      .from('message_events')
+      .select('direction, delivery_status, detected_intent, is_opt_out, is_final_failure')
+      .gte('created_at', prevStartIso)
+      .lt('created_at', startIso)
 
-      const replyRate = delivered.length > 0 ? (inbound.length / delivered.length) * 100 : 0
-      const posRate = inbound.length > 0 ? (positive.length / inbound.length) * 100 : 0
-      const optOutRate = delivered.length > 0 ? (optOuts.length / delivered.length) * 100 : 0
-      const wrongNumRate = inbound.length > 0 ? (wrongNumber.length / inbound.length) * 100 : 0
-      const deliveryRate = outbound.length > 0 ? (delivered.length / outbound.length) * 100 : 0
-      const failRate = outbound.length > 0 ? (failed.length / outbound.length) * 100 : 0
+    const calcMsgKpis = (data: { direction: string; delivery_status?: string; detected_intent?: string; is_opt_out?: boolean; is_final_failure?: boolean; }[] | null) => {
+      if (!data) return { replyRate: 0, posRate: 0, optOutRate: 0, deliveryRate: 0, failRate: 0 }
+      const inbound = data.filter(m => m.direction === 'inbound')
+      const outbound = data.filter(m => m.direction === 'outbound')
+      const delivered = outbound.filter(m => m.delivery_status === 'delivered')
+      const failed = outbound.filter(m => m.delivery_status === 'failed' || m.is_final_failure)
+      const positive = inbound.filter(m => POSITIVE_INTENTS.includes(String(m.detected_intent)))
+      const optOuts = data.filter(m => m.is_opt_out || String(m.detected_intent) === 'opt_out')
 
-      messaging.push(
-        { id: 'reply-rate', label: 'Reply Rate', value: replyRate.toFixed(1), unit: '%', category: 'messaging', timeWindow, isAvailable: true, status: replyRate > 10 ? 'good' : 'neutral' },
-        { id: 'pos-reply-rate', label: 'Positive Rate', value: posRate.toFixed(1), unit: '%', category: 'messaging', timeWindow, isAvailable: true, status: posRate > 5 ? 'good' : 'neutral' },
-        { id: 'opt-out-rate', label: 'Opt-Out Rate', value: optOutRate.toFixed(1), unit: '%', category: 'messaging', timeWindow, isAvailable: true, status: optOutRate < 3 ? 'good' : 'warning' },
-        { id: 'wrong-num-rate', label: 'Wrong # Rate', value: wrongNumRate.toFixed(1), unit: '%', category: 'messaging', timeWindow, isAvailable: true },
-        { id: 'delivery-rate', label: 'Delivery Rate', value: deliveryRate.toFixed(1), unit: '%', category: 'messaging', timeWindow, isAvailable: true, status: deliveryRate > 95 ? 'good' : 'warning' },
-        { id: 'failure-rate', label: 'Failure Rate', value: failRate.toFixed(1), unit: '%', category: 'messaging', timeWindow, isAvailable: true, status: failRate < 5 ? 'good' : 'critical' }
-      )
+      return {
+        replyRate: delivered.length > 0 ? (inbound.length / delivered.length) * 100 : 0,
+        posRate: inbound.length > 0 ? (positive.length / inbound.length) * 100 : 0,
+        optOutRate: delivered.length > 0 ? (optOuts.length / delivered.length) * 100 : 0,
+        deliveryRate: outbound.length > 0 ? (delivered.length / outbound.length) * 100 : 0,
+        failRate: outbound.length > 0 ? (failed.length / outbound.length) * 100 : 0
+      }
     }
 
-    // Pipeline & Quality
-    const pipeline: OperationalKpi[] = [
-      { id: 'underwrites-today', label: 'Underwrites Today', value: '—', category: 'pipeline', timeWindow, isAvailable: false },
-      { id: 'offers-ready', label: 'Offers Ready', value: '—', category: 'pipeline', timeWindow, isAvailable: false }
+    const currMsg = calcMsgKpis(currentMsgs)
+    const prevMsg = calcMsgKpis(prevMsgs)
+
+    const getTrend = (curr: number, prev: number): OperationalKpi['trend'] => {
+      if (curr > prev) return 'up'
+      if (curr < prev) return 'down'
+      return 'neutral'
+    }
+
+    const messaging: OperationalKpi[] = [
+      { id: 'reply-rate', label: 'Reply Rate', value: currMsg.replyRate.toFixed(1), unit: '%', category: 'messaging', timeWindow, isAvailable: true, trend: getTrend(currMsg.replyRate, prevMsg.replyRate), status: currMsg.replyRate > 15 ? 'good' : 'warning' },
+      { id: 'pos-reply-rate', label: 'Positive Rate', value: currMsg.posRate.toFixed(1), unit: '%', category: 'messaging', timeWindow, isAvailable: true, trend: getTrend(currMsg.posRate, prevMsg.posRate), status: currMsg.posRate > 10 ? 'good' : 'neutral' },
+      { id: 'delivery-rate', label: 'Delivery Rate', value: currMsg.deliveryRate.toFixed(1), unit: '%', category: 'messaging', timeWindow, isAvailable: true, trend: getTrend(currMsg.deliveryRate, prevMsg.deliveryRate), status: currMsg.deliveryRate > 95 ? 'good' : 'critical' },
+      { id: 'failure-rate', label: 'Failure Rate', value: currMsg.failRate.toFixed(1), unit: '%', category: 'messaging', timeWindow, isAvailable: true, trend: getTrend(prevMsg.failRate, currMsg.failRate), status: currMsg.failRate < 5 ? 'good' : 'critical' },
+      { id: 'opt-out-rate', label: 'Opt-Out Rate', value: currMsg.optOutRate.toFixed(1), unit: '%', category: 'messaging', timeWindow, isAvailable: true, trend: getTrend(prevMsg.optOutRate, currMsg.optOutRate), status: currMsg.optOutRate < 3 ? 'good' : 'warning' }
     ]
 
-    // Financial
-    const { data: propData, error: propError } = await supabase
-      .from('properties')
-      .select('estimated_value, cash_offer, equity_amount')
-      .not('cash_offer', 'is', null)
-      .limit(100)
+    // 2. Automation Health
+    const { data: queueData } = await supabase
+      .from('send_queue')
+      .select('queue_status')
+      .gte('created_at', startIso)
 
-    const financial: OperationalKpi[] = []
-    if (propError) {
-      console.error('[KPI] Property fetch error:', propError)
-    } else if (propData && propData.length > 0) {
-      const avgArv = propData.reduce((sum: number, p: AnyRecord) => sum + asNumber(p.estimated_value, 0), 0) / propData.length
-      const avgOffer = propData.reduce((sum: number, p: AnyRecord) => sum + asNumber(p.cash_offer, 0), 0) / propData.length
-      
-      financial.push(
-        { id: 'avg-arv', label: 'Avg ARV', value: Math.round(avgArv).toLocaleString(), unit: '$', category: 'financial', timeWindow, isAvailable: true },
-        { id: 'avg-offer', label: 'Avg Offer', value: Math.round(avgOffer).toLocaleString(), unit: '$', category: 'financial', timeWindow, isAvailable: true }
-      )
-    }
+    const pending = queueData?.filter(q => ['pending', 'queued', 'scheduled'].includes(q.queue_status)).length || 0
+    const failedQueue = queueData?.filter(q => q.queue_status === 'failed').length || 0
+    
+    const automation: OperationalKpi[] = [
+      { id: 'queue-pending', label: 'In Queue', value: pending, category: 'automation', timeWindow, isAvailable: true, status: pending > 50 ? 'warning' : 'good' },
+      { id: 'queue-failed', label: 'Queue Failures', value: failedQueue, category: 'automation', timeWindow, isAvailable: true, status: failedQueue > 0 ? 'critical' : 'good' }
+    ]
+
+    // 3. Quality & Pipeline (from Command Center View)
+    const { data: pipelineData } = await supabase
+      .from('inbox_command_center_v')
+      .select('is_hot_lead, final_acquisition_score, cash_offer, estimated_value')
+      .not('is_archived', 'eq', true)
+
+    const hotLeads = pipelineData?.filter(p => p.is_hot_lead).length || 0
+    const underwrites = pipelineData?.filter(p => asNumber(p.final_acquisition_score, 0) > 0).length || 0
+    const offersReady = pipelineData?.filter(p => asNumber(p.cash_offer, 0) > 0).length || 0
+    
+    const quality: OperationalKpi[] = [
+      { id: 'hot-leads', label: 'Hot Leads', value: hotLeads, category: 'quality', timeWindow, isAvailable: true, status: hotLeads > 5 ? 'good' : 'neutral' },
+      { id: 'avg-acq-score', label: 'Avg Acq Score', value: (pipelineData && pipelineData.length > 0 ? (pipelineData.reduce((sum, p) => sum + asNumber(p.final_acquisition_score, 0), 0) / pipelineData.length).toFixed(1) : '0'), category: 'quality', timeWindow, isAvailable: true }
+    ]
+
+    const pipeline: OperationalKpi[] = [
+      { id: 'underwrites', label: 'Total Underwrites', value: underwrites, category: 'pipeline', timeWindow, isAvailable: true },
+      { id: 'offers-ready', label: 'Offers Ready', value: offersReady, category: 'pipeline', timeWindow, isAvailable: true, status: offersReady > 0 ? 'good' : 'neutral' }
+    ]
+
+    // 4. Financial
+    const activeOffers = pipelineData?.filter(p => asNumber(p.cash_offer, 0) > 0) || []
+    const avgArv = activeOffers.length > 0 ? activeOffers.reduce((sum, p) => sum + asNumber(p.estimated_value, 0), 0) / activeOffers.length : 0
+    const avgOffer = activeOffers.length > 0 ? activeOffers.reduce((sum, p) => sum + asNumber(p.cash_offer, 0), 0) / activeOffers.length : 0
+
+    const financial: OperationalKpi[] = [
+      { id: 'avg-arv', label: 'Avg ARV', value: Math.round(avgArv).toLocaleString(), unit: '$', category: 'financial', timeWindow, isAvailable: true },
+      { id: 'avg-offer', label: 'Avg Offer', value: Math.round(avgOffer).toLocaleString(), unit: '$', category: 'financial', timeWindow, isAvailable: true }
+    ]
 
     return {
       messaging,
-      quality: [],
-      automation: [],
+      quality,
+      automation,
       pipeline,
       financial,
       lastUpdated: new Date().toISOString()
@@ -124,3 +161,5 @@ export const fetchOperationalKpis = async (timeWindow: OperationalKpi['timeWindo
     }
   }
 }
+
+

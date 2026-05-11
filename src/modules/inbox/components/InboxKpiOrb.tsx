@@ -1,6 +1,8 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import { Icon, type IconName } from '../../../shared/icons'
-import { fetchOperationalKpis, type OperationalKpi, type OperationalKpis } from '../../../lib/data/inboxKpis'
+import { type OperationalKpi } from '../../../lib/data/inboxKpis'
+import { useOperationalKpis } from '../../../lib/data/operationalKpis'
+import { usePerformanceIntelligence, type TimeWindow } from '../../../lib/data/performanceIntelligence'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
@@ -8,19 +10,11 @@ const cls = (...tokens: Array<string | false | null | undefined>) =>
 export const InboxKpiOrb = () => {
   const [isOpen, setIsOpen] = useState(false)
   const [isPinned, setIsPinned] = useState(false)
-  const [kpis, setKpis] = useState<OperationalKpis | null>(null)
   const [timeWindow, setTimeWindow] = useState<OperationalKpi['timeWindow']>('24h')
   const [pinnedKpiId, setPinnedKpiId] = useState<string>(() => localStorage.getItem('nexus.pinnedInboxKpi') || 'reply-rate')
 
-  useEffect(() => {
-    const load = async () => {
-      const data = await fetchOperationalKpis(timeWindow)
-      setKpis(data)
-    }
-    load()
-    const interval = setInterval(load, 60000) // Refresh every minute
-    return () => clearInterval(interval)
-  }, [timeWindow])
+  const { kpis, isLive, recommendations } = useOperationalKpis(timeWindow)
+  const { outliers, coverage } = usePerformanceIntelligence(timeWindow as TimeWindow)
 
   const allKpisList = useMemo(() => {
     if (!kpis) return []
@@ -81,17 +75,24 @@ export const InboxKpiOrb = () => {
     >
       {/* The Orb / Capsule */}
       <div 
-        className={cls('nx-kpi-orb', isPinned && 'is-pinned-active')}
+        className={cls(
+          'nx-kpi-orb', 
+          isPinned && 'is-pinned-active',
+          isLive && 'is-live-pulsing'
+        )}
         onClick={() => setIsPinned(!isPinned)}
       >
         <div className="nx-kpi-orb__glow" />
         <div className="nx-kpi-orb__inner">
-          <Icon name="activity" />
+          <div className={cls('nx-kpi-orb__icon-box', isLive && 'is-active')}>
+            <Icon name={isLive ? 'zap' : 'activity'} />
+          </div>
           {pinnedKpi && (
             <span className="nx-kpi-orb__headline">
               {pinnedKpi.label} <strong>{pinnedKpi.value}{pinnedKpi.unit}</strong>
             </span>
           )}
+          {isLive && <div className="nx-kpi-orb__live-tag">LIVE</div>}
         </div>
       </div>
 
@@ -99,13 +100,19 @@ export const InboxKpiOrb = () => {
       {(isOpen || isPinned) && (
         <div className="nx-orb-dashboard nx-liquid-popover">
           <header className="nx-orb-dashboard__header">
-            <div className="nx-orb-dashboard__title">Operational Intelligence</div>
+            <div className="nx-orb-dashboard__title-stack">
+              <div className="nx-orb-dashboard__title">Operational Intelligence</div>
+              <div className="nx-orb-dashboard__subtitle">System Telemetry v2.0</div>
+            </div>
             <div className="nx-orb-dashboard__windows">
               {(['today', '24h', '7d', '30d'] as const).map(w => (
                 <button 
                   key={w} 
                   className={cls('nx-orb-dashboard__window-btn', timeWindow === w && 'is-active')}
-                  onClick={() => setTimeWindow(w)}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setTimeWindow(w)
+                  }}
                 >
                   {w.toUpperCase()}
                 </button>
@@ -114,24 +121,121 @@ export const InboxKpiOrb = () => {
           </header>
 
           <div className="nx-orb-dashboard__content">
-            <section className="nx-orb-dashboard__section">
-              <label>Messaging Performance</label>
-              <div className="nx-orb-dashboard__grid">
-                {kpis?.messaging.map(renderKpiCard)}
-              </div>
-            </section>
+            <div className="nx-orb-dashboard__scroll-area">
+              <section className="nx-orb-dashboard__section">
+                <label>Messaging & Response</label>
+                <div className="nx-orb-dashboard__grid">
+                  {kpis?.messaging.map(renderKpiCard)}
+                </div>
+              </section>
 
-            <section className="nx-orb-dashboard__section">
-              <label>Pipeline & Financial</label>
-              <div className="nx-orb-dashboard__grid">
-                {[...(kpis?.pipeline || []), ...(kpis?.financial || [])].map(renderKpiCard)}
+              <section className="nx-orb-dashboard__section">
+                <label>Automation & Quality</label>
+                <div className="nx-orb-dashboard__grid">
+                  {[...(kpis?.automation || []), ...(kpis?.quality || [])].map(renderKpiCard)}
+                </div>
+              </section>
+
+              <section className="nx-orb-dashboard__section">
+                <label>Pipeline & Financials</label>
+                <div className="nx-orb-dashboard__grid">
+                  {[...(kpis?.pipeline || []), ...(kpis?.financial || [])].map(renderKpiCard)}
+                </div>
+              </section>
+
+              {/* Performance Intelligence Section */}
+              <section className="nx-orb-dashboard__section">
+                <label>Performance Outliers</label>
+                <div className="nx-orb-dashboard__outliers">
+                  {outliers?.bestTemplate && (
+                    <div className="nx-outlier-card is-winner">
+                      <div className="nx-outlier-card__header">
+                        <Icon name="award" />
+                        <span>Best Template</span>
+                      </div>
+                      <div className="nx-outlier-card__body">
+                        <div className="nx-outlier-card__key">{outliers.bestTemplate.template_key}</div>
+                        <div className="nx-outlier-card__stats">
+                          {outliers.bestTemplate.positive_rate_pct.toFixed(1)}% pos rate • {outliers.bestTemplate.sends} sends
+                        </div>
+                        <div className="nx-outlier-card__rec">Rec: Increase weight for similar leads.</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {outliers?.riskiestTemplate && (
+                    <div className="nx-outlier-card is-risky">
+                      <div className="nx-outlier-card__header">
+                        <Icon name="alert-triangle" />
+                        <span>Riskiest Template</span>
+                      </div>
+                      <div className="nx-outlier-card__body">
+                        <div className="nx-outlier-card__key">{outliers.riskiestTemplate.template_key}</div>
+                        <div className="nx-outlier-card__stats">
+                          {outliers.riskiestTemplate.opt_out_rate_pct.toFixed(1)}% opt-out rate
+                        </div>
+                        <div className="nx-outlier-card__rec">Rec: Rewrite or reduce volume.</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {outliers?.bestNumber && (
+                    <div className="nx-outlier-card is-healthy">
+                      <div className="nx-outlier-card__header">
+                        <Icon name="check-circle" />
+                        <span>Best Number</span>
+                      </div>
+                      <div className="nx-outlier-card__body">
+                        <div className="nx-outlier-card__key">{outliers.bestNumber.friendly_name || outliers.bestNumber.textgrid_number_key}</div>
+                        <div className="nx-outlier-card__stats">
+                          Score: {outliers.bestNumber.health_score.toFixed(0)} • {outliers.bestNumber.reply_rate_pct.toFixed(1)}% reply
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {coverage && (
+                    <div className="nx-outlier-card is-coverage">
+                      <div className="nx-outlier-card__header">
+                        <Icon name="search" />
+                        <span>Attribution Coverage</span>
+                      </div>
+                      <div className="nx-outlier-card__body">
+                        <div className="nx-outlier-card__value">{coverage.coverage_pct.toFixed(1)}%</div>
+                        <div className="nx-outlier-card__rec">Rec: Recover missing IDs from send_queue.</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </section>
+            </div>
+
+            {/* AI Recommendation Strip */}
+            {recommendations.length > 0 && (
+              <div className="nx-orb-dashboard__recs">
+                <div className="nx-orb-dashboard__recs-header">
+                  <Icon name="brain" />
+                  <span>AI Recommendations</span>
+                </div>
+                <div className="nx-orb-dashboard__recs-list">
+                  {recommendations.map((rec, i) => (
+                    <div key={i} className="nx-orb-dashboard__rec-item">
+                      {rec}
+                    </div>
+                  ))}
+                </div>
               </div>
-            </section>
+            )}
           </div>
 
           <footer className="nx-orb-dashboard__footer">
-            <span>Last updated: {kpis?.lastUpdated ? new Date(kpis.lastUpdated).toLocaleTimeString() : '—'}</span>
-            <div className="nx-orb-dashboard__hint">Click a metric to pin it to the orb</div>
+            <div className="nx-orb-dashboard__status">
+              <div className="nx-orb-dashboard__status-indicator is-healthy" />
+              <span>System Nominal</span>
+            </div>
+            <div className="nx-orb-dashboard__last-updated">
+              {kpis?.lastUpdated ? `Sync: ${new Date(kpis.lastUpdated).toLocaleTimeString()}` : 'Connecting...'}
+            </div>
           </footer>
         </div>
       )}

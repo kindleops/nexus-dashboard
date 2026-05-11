@@ -1646,32 +1646,64 @@ export const TimelinePanel = ({ thread, messages }: { thread: WorkflowThread; me
   )
 }
 
+// ── Property Hero Components ──────────────────────────────────────────────
+
+const PropertyBadge = ({ label, icon, accent = 'neutral' }: { label: string; icon?: string; accent?: 'neutral' | 'blue' | 'green' | 'purple' }) => {
+  return (
+    <div className={`nx-prop-badge is-${accent}`}>
+      {icon && <Icon name={icon as any} className="nx-prop-badge__icon" />}
+      <span className="nx-prop-badge__label">{label}</span>
+    </div>
+  )
+}
+
 
 const PropertySnapshotCard = ({ thread, intelligence }: { thread: WorkflowThread; intelligence: ThreadIntelligenceRecord | null }) => {
   const snapshot = normalizePropertySnapshot(intelligence, thread)
   const address = snapshot.fullAddress || thread.displayAddress || thread.propertyAddress || thread.subject || 'No linked property'
-  const market = snapshot.market || thread.displayMarket || thread.market || thread.marketId || 'Unknown market'
   const propertyTypeRaw = snapshot.propertyType || (thread as any).propertyType || thread.property_type_majority || 'Not enriched'
-  const isMultifamily = propertyTypeRaw.toLowerCase().includes('multi') || propertyTypeRaw.toLowerCase().includes('apartment') || (thread.mf_count && Number(thread.mf_count) > 1)
-  const unitCount = thread.mf_count || (thread as any).mfCount || (thread as any).unitCount
+  const isMultifamily = propertyTypeRaw.toLowerCase().includes('multi') || propertyTypeRaw.toLowerCase().includes('apartment') || (thread.mf_count && Number(thread.mf_count) > 1) || (Number(snapshot.unitCount) > 1)
   
+  // High-authority unit count search - prioritizing units_count and Property-specific data
+  const unitCount = Number(
+    (thread as any).Units || 
+    (thread as any).units_count || 
+    (thread as any).properties?.Units || 
+    (thread as any).properties?.units_count || 
+    (thread as any).property?.Units || 
+    (thread as any).property?.units_count || 
+    snapshot.unitCount || 
+    thread.mf_count || 
+    (thread as any).units || 
+    (thread as any).metadata?.Units ||
+    (thread as any).metadata?.units ||
+    0
+  )
+  
+  const rawMarket = snapshot.market || thread.displayMarket || thread.market || thread.marketId || ''
+  const displayMarket = (rawMarket && rawMarket.toLowerCase() !== 'unknown') 
+    ? rawMarket 
+    : (snapshot.city && snapshot.state ? `${snapshot.city}, ${snapshot.state}` : (rawMarket || 'Unknown market'))
+
   const displayType = isMultifamily 
-    ? `Multi Family • ${unitCount || 2} Units`
-    : 'Single Family'
+    ? (unitCount > 0 ? `MULTI FAMILY • ${unitCount} UNITS` : 'MULTI FAMILY')
+    : 'SINGLE FAMILY'
   const streetViewUrl = snapshot.streetViewUrl || thread.streetview_image
   const [imageFailed, setImageFailed] = useState(false)
   const links = buildPropertyExternalLinks(address)
   const chips = [
-    snapshot.beds || thread.total_bedrooms || thread.beds ? `${snapshot.beds || thread.total_bedrooms || thread.beds} BEDS` : null,
-    snapshot.baths || thread.total_baths || thread.baths ? `${snapshot.baths || thread.total_baths || thread.baths} BATHS` : null,
-    snapshot.sqft || thread.building_square_feet || thread.sqft
-      ? `${formatInteger(Number(snapshot.sqft || thread.building_square_feet || thread.sqft))} SQFT`
-      : null,
-    snapshot.yearBuilt || thread.year_built ? `BUILT ${snapshot.yearBuilt || thread.year_built}` : null,
-    formatMoney(thread.estimatedValue),
-    formatPercent(thread.equityPercent) ? `${formatPercent(thread.equityPercent)} EQUITY` : null,
-    formatMoney(thread.estimatedRepairCost) ? `${formatMoney(thread.estimatedRepairCost)} REPAIRS` : null,
-  ].filter(Boolean) as string[]
+    (snapshot.beds || thread.total_bedrooms || thread.beds) && { label: `${snapshot.beds || thread.total_bedrooms || thread.beds} BEDS`, icon: 'bed', accent: 'neutral' },
+    (snapshot.baths || thread.total_baths || thread.baths) && { label: `${snapshot.baths || thread.total_baths || thread.baths} BATHS`, icon: 'droplet', accent: 'neutral' },
+    (snapshot.sqft || thread.building_square_feet || thread.sqft) && { 
+      label: `${formatInteger(Number(snapshot.sqft || thread.building_square_feet || thread.sqft))} SQFT`, 
+      icon: 'maximize', 
+      accent: 'neutral' 
+    },
+    (snapshot.yearBuilt || thread.year_built) && { label: `BUILT ${snapshot.yearBuilt || thread.year_built}`, icon: 'calendar', accent: 'neutral' },
+    thread.estimatedValue && { label: formatMoney(thread.estimatedValue), icon: 'dollar-sign', accent: 'green' },
+    formatPercent(thread.equityPercent) && { label: `${formatPercent(thread.equityPercent)} EQUITY`, icon: 'trending-up', accent: 'purple' },
+    thread.estimatedRepairCost && { label: `${formatMoney(thread.estimatedRepairCost)} REPAIRS`, icon: 'tool', accent: 'blue' },
+  ].filter(Boolean) as any[]
 
   useEffect(() => {
     setImageFailed(false)
@@ -1704,9 +1736,27 @@ const PropertySnapshotCard = ({ thread, intelligence }: { thread: WorkflowThread
         <div className="nx-property-hero__address">
           <strong>{address}</strong>
         </div>
-        <div className="nx-property-hero__location">{market} • {displayType}</div>
+        
+        <div className="nx-property-hero__telemetry">
+          <div className="nx-telemetry-item">
+            <label>LOCATION</label>
+            <span>{displayMarket}</span>
+          </div>
+          <div className="nx-telemetry-item">
+            <label>PROPERTY TYPE</label>
+            <span className={isMultifamily ? 'is-highlight' : ''}>{displayType}</span>
+          </div>
+        </div>
+
         <div className="nx-property-hero__chips">
-          {chips.map((chip) => <QuietBadge key={chip} label={chip} />)}
+          {chips.map((chip) => (
+            <PropertyBadge 
+              key={chip.label} 
+              label={chip.label} 
+              icon={chip.icon} 
+              accent={chip.accent} 
+            />
+          ))}
         </div>
       </div>
     </DossierCard>
@@ -1900,10 +1950,12 @@ const SellerCommandCard = ({
   return (
     <DossierCard className="nx-seller-command-card">
       <div className="nx-seller-command-card__identity">
-        <div className="nx-dossier-header__avatar">{initials}</div>
+        <div className="nx-dossier-header__avatar is-command">{initials}</div>
         <div className="nx-seller-command-card__info">
           <strong>{sellerName}</strong>
-          <span>{[ownerType, thread.isAbsentee ? 'ABSENTEE' : null, market].filter(Boolean).join(' • ')}</span>
+          <span className="nx-seller-sub-telemetry">
+            {[ownerType, thread.isAbsentee ? 'ABSENTEE' : null, market].filter(Boolean).join(' • ')}
+          </span>
         </div>
       </div>
 

@@ -19,8 +19,11 @@
     "proof:dossier-hydration": "node scripts/proof/dossier-hydration-proof.mjs",
     "proof:copilot-ui": "node scripts/proof-copilot-ui.mjs",
     "proof:system": "node scripts/proof-inbox.mjs && node scripts/proof-classifier.mjs && node scripts/proof-thread-counts.mjs && node scripts/proof-routing.mjs",
-    "proof": "npm run proof:system && npm run proof:inbox-integrity && npm run proof:copilot-ui && npm run proof:operator-dossier && npm run proof:real-kpis",
+    "proof": "npm run proof:system && npm run proof:inbox-integrity && npm run proof:copilot-ui && npm run proof:operator-dossier && npm run proof:real-kpis && npm run proof:template-performance && npm run proof:number-performance && npm run proof:performance-attribution",
     "proof:real-kpis": "node scripts/proof/real-kpis.mjs",
+    "proof:template-performance": "node scripts/proof/template-performance.mjs",
+    "proof:number-performance": "node scripts/proof/number-performance.mjs",
+    "proof:performance-attribution": "node scripts/proof/performance-attribution.mjs",
     "proof:lead-context-hydration": "node scripts/proof/lead-context-hydration.mjs"
   },
   "dependencies": {
