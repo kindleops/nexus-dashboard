@@ -50,22 +50,22 @@ async function runProof() {
   let allPassed = true;
 
   try {
-    // 1. Detect null thread_key in inbox_threads_hydrated
-    console.log('1️⃣ Checking for null thread_key in inbox_threads_hydrated...');
+    // 1. Detect null thread_key in inbox_command_center_v
+    console.log('1️⃣ Checking for null thread_key in inbox_command_center_v...');
     const { data: nullKeys, error: nullKeysError } = await supabase
-      .from('inbox_threads_hydrated')
+      .from('inbox_command_center_v')
       .select('*')
       .is('thread_key', null)
       .limit(1);
 
     if (nullKeysError) {
-      console.error(`   ❌ Error querying inbox_threads_hydrated: ${nullKeysError.message}`);
+      console.error(`   ❌ Error querying inbox_command_center_v: ${nullKeysError.message}`);
       allPassed = false;
     } else if (nullKeys && nullKeys.length > 0) {
-      console.error('   ❌ Found rows with null thread_key in inbox_threads_hydrated');
+      console.error('   ❌ Found rows with null thread_key in inbox_command_center_v');
       allPassed = false;
     } else {
-      console.log('   ✅ No null thread_keys detected in inbox_threads_hydrated');
+      console.log('   ✅ No null thread_keys detected in inbox_command_center_v');
     }
 
     // 2. Validate deduped_message_events row count

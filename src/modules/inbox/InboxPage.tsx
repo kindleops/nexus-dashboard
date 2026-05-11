@@ -1076,12 +1076,12 @@ export default function InboxPage() {
         case 'read':
           label = 'Marked Read'
           mutation = () => markThreadRead(thread)
-          optimistic = { isRead: true, unread: false, inboxStatus: 'closed' }
+          optimistic = { isRead: true, unread: false, unreadCount: 0, status: 'read', inboxStatus: 'closed' }
           break
         case 'unread':
           label = 'Marked Unread'
           mutation = () => markThreadUnread(thread)
-          optimistic = { isRead: false, unread: true, inboxStatus: 'new_reply' }
+          optimistic = { isRead: false, unread: true, unreadCount: 1, status: 'unread', inboxStatus: 'new_reply' }
           break
         default:
           return
@@ -1309,6 +1309,23 @@ export default function InboxPage() {
           [selected.id]: (current[selected.id] ?? []).filter((pending) => pending.id !== optimisticMessage.id),
         }))
       } else {
+        // Optimistically update the thread so it clears from the unread queue instantly
+        setOptimisticPatches((prev) => ({
+          ...prev,
+          [selected.id]: {
+            ...prev[selected.id],
+            isRead: true,
+            unread: false,
+            unreadCount: 0,
+            status: 'replied',
+            inboxStatus: 'waiting',
+            latestMessageBody: text.trim(),
+            latestMessageAt: timestamp,
+            latestDirection: 'outbound',
+            inboxCategory: 'outbound_active'
+          }
+        }))
+
         setPendingMessagesByThread((current) => ({
           ...current,
           [selected.id]: dedupeMessages((current[selected.id] ?? []).map((pending) => (

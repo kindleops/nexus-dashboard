@@ -39,7 +39,7 @@ async function runProof() {
   try {
     const { data, error } = await supabase
       .from('send_queue')
-      .select('queue_status, status')
+      .select('queue_status')
       .limit(1000);
 
     if (error) {
@@ -52,7 +52,7 @@ async function runProof() {
 
     const counts = {};
     data.forEach(row => {
-      const status = row.queue_status || row.status || 'unknown';
+      const status = row.queue_status || 'unknown';
       counts[status] = (counts[status] || 0) + 1;
     });
 

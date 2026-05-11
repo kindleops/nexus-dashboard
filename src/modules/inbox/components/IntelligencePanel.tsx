@@ -1107,7 +1107,7 @@ export const LinkedRecordsCard = ({ thread }: { thread: WorkflowThread }) => {
 
   return (
     <DossierCard className="nx-bottom-app-links nx-linked-records-card">
-      <div className="nx-bottom-app-links__title">Linked Apps</div>
+      <div className="nx-bottom-app-links__title">LINKED APPS</div>
       <div className="nx-bottom-app-links__grid">
         {thread.propertyId && <LinkedRecordButton label="Property App" url={`${baseUrl}/properties/${thread.propertyId}`} icon="layers" variant="internal" />}
         {thread.ownerId && <LinkedRecordButton label="Owner App" url={`${baseUrl}/owners/${thread.ownerId}`} icon="user" variant="internal" />}
@@ -1859,7 +1859,7 @@ const ContactIntelligenceCard = ({
 
   return (
     <DossierCard className="nx-contact-intel-card">
-      <div className="nx-dossier-section__title"><Icon name="user" /> <span>Contact &amp; Ownership Intelligence</span></div>
+      <div className="nx-dossier-section__title"><Icon name="user" /> <span>Contact & Ownership Intelligence</span></div>
 
       <div className="nx-intel-internal-tabs">
         {topTabs.map(([id, label]) => (

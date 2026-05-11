@@ -117,12 +117,12 @@ async function runProof() {
     }
 
     // 4. Validate Hydration
-    console.log('\n4️⃣  Validating hydration (inbox_threads_hydrated)...');
-    const { data: hydrated } = await supabase.from('inbox_threads_hydrated').select('*').limit(5);
+    console.log('\n4️⃣  Validating hydration (inbox_command_center_v)...');
+    const { data: hydrated } = await supabase.from('inbox_command_center_v').select('*').limit(5);
     if (hydrated && hydrated.length > 0) {
-      const hasFields = hydrated.every(h => 'owner_name' in h || 'property_address_full' in h);
+      const hasFields = hydrated.every(h => 'display_name' in h && 'property_address_full' in h);
       if (hasFields) {
-        console.log('   ✅ Hydration successful: Thread rows contain owner/property data.');
+        console.log('   ✅ Hydration successful: Thread rows contain display name/property data.');
       }
     }
 

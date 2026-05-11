@@ -51,6 +51,10 @@ import { AcquisitionQueueApp } from '../modules/acquisition/apps/AcquisitionQueu
 import { loadAcquisitionWorkspace } from '../modules/acquisition/acquisition.adapter'
 import type { AcquisitionWorkspaceModel } from '../modules/acquisition/acquisition.types'
 
+import { AgentsPage } from '../modules/agents/AgentsPage'
+import { loadAgents } from '../modules/agents/agents.adapter'
+import type { AgentsModel } from '../modules/agents/agents.adapter'
+
 interface AppRoute<TData> {
   path: string
   title: string
@@ -276,8 +280,16 @@ const dossierRoute = defineRoute<DossierModel>({
   render: (data) => <DossierPage data={data} />,
 })
 
+const agentsRoute = defineRoute<AgentsModel>({
+  path: '/agents',
+  title: 'NEXUS | AI Agent Performance',
+  loader: loadAgents,
+  render: (data) => <AgentsPage data={data} />,
+})
+
 const routes = [
   homeRoute,
+  agentsRoute,
   acquisitionRoute,
   acquisitionOwnersRoute,
   acquisitionPropertiesRoute,

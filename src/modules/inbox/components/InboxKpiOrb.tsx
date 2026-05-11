@@ -150,13 +150,13 @@ export const InboxKpiOrb = () => {
                   {outliers?.bestTemplate && (
                     <div className="nx-outlier-card is-winner">
                       <div className="nx-outlier-card__header">
-                        <Icon name="award" />
+                        <Icon name="star" />
                         <span>Best Template</span>
                       </div>
                       <div className="nx-outlier-card__body">
                         <div className="nx-outlier-card__key">{outliers.bestTemplate.template_key}</div>
                         <div className="nx-outlier-card__stats">
-                          {outliers.bestTemplate.positive_rate_pct.toFixed(1)}% pos rate • {outliers.bestTemplate.sends} sends
+                          {(outliers.bestTemplate.positive_rate_pct ?? 0).toFixed(1)}% pos rate • {outliers.bestTemplate.sends} sends
                         </div>
                         <div className="nx-outlier-card__rec">Rec: Increase weight for similar leads.</div>
                       </div>
@@ -166,13 +166,13 @@ export const InboxKpiOrb = () => {
                   {outliers?.riskiestTemplate && (
                     <div className="nx-outlier-card is-risky">
                       <div className="nx-outlier-card__header">
-                        <Icon name="alert-triangle" />
+                        <Icon name="alert" />
                         <span>Riskiest Template</span>
                       </div>
                       <div className="nx-outlier-card__body">
                         <div className="nx-outlier-card__key">{outliers.riskiestTemplate.template_key}</div>
                         <div className="nx-outlier-card__stats">
-                          {outliers.riskiestTemplate.opt_out_rate_pct.toFixed(1)}% opt-out rate
+                          {(outliers.riskiestTemplate.opt_out_rate_pct ?? 0).toFixed(1)}% opt-out rate
                         </div>
                         <div className="nx-outlier-card__rec">Rec: Rewrite or reduce volume.</div>
                       </div>
@@ -182,13 +182,28 @@ export const InboxKpiOrb = () => {
                   {outliers?.bestNumber && (
                     <div className="nx-outlier-card is-healthy">
                       <div className="nx-outlier-card__header">
-                        <Icon name="check-circle" />
+                        <Icon name="check" />
                         <span>Best Number</span>
                       </div>
                       <div className="nx-outlier-card__body">
-                        <div className="nx-outlier-card__key">{outliers.bestNumber.friendly_name || outliers.bestNumber.textgrid_number_key}</div>
-                        <div className="nx-outlier-card__stats">
-                          Score: {outliers.bestNumber.health_score.toFixed(0)} • {outliers.bestNumber.reply_rate_pct.toFixed(1)}% reply
+                        <div className="nx-outlier-card__key">{outliers.bestNumber.textgrid_number_key}</div>
+                        <div className="nx-outlier-card__stat">
+                          Delivery: {(outliers.bestNumber.delivery_rate_pct ?? 0).toFixed(0)}% • {(outliers.bestNumber.reply_rate_pct ?? 0).toFixed(1)}% reply
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {outliers?.riskiestNumber && (
+                    <div className="nx-outlier-card is-risky">
+                      <div className="nx-outlier-card__header">
+                        <Icon name="alert" />
+                        <span>Riskiest Number</span>
+                      </div>
+                      <div className="nx-outlier-card__body">
+                        <div className="nx-outlier-card__key">{outliers.riskiestNumber.textgrid_number_key}</div>
+                        <div className="nx-outlier-card__stat">
+                          Failure: {(outliers.riskiestNumber.failure_rate_pct ?? 0).toFixed(1)}% • {(outliers.riskiestNumber.opt_out_rate_pct ?? 0).toFixed(1)}% opt-out
                         </div>
                       </div>
                     </div>
@@ -201,7 +216,7 @@ export const InboxKpiOrb = () => {
                         <span>Attribution Coverage</span>
                       </div>
                       <div className="nx-outlier-card__body">
-                        <div className="nx-outlier-card__value">{coverage.coverage_pct.toFixed(1)}%</div>
+                        <div className="nx-outlier-card__value">{(coverage.coverage_pct ?? 0).toFixed(1)}%</div>
                         <div className="nx-outlier-card__rec">Rec: Recover missing IDs from send_queue.</div>
                       </div>
                     </div>

@@ -583,7 +583,7 @@ const fetchDataset = async (): Promise<Dataset> => {
     safeSelect('properties'),
     safeSelect('phone_numbers'),
     safeSelect('emails'),
-    safeSelect('send_queue'),
+    safeSelect('send_queue', 'id, queue_status, created_at, scheduled_at, message_body, market'),
     safeSelect('message_events'),
     safeSelect('ai_conversation_brain'),
     safeSelect('offers'),
@@ -665,9 +665,9 @@ export const getAcquisitionKpis = async (): Promise<AcquisitionKpi[]> => {
     return asString(getFirst(event, ['direction']), '').toLowerCase() === 'inbound' &&
       asBoolean(getFirst(event, ['unread']), false)
   }).length
-  const readyQueue = dataset.sendQueue.filter((item) => asString(getFirst(item, ['status']), '').toLowerCase() === 'ready').length
+  const readyQueue = dataset.sendQueue.filter((item) => asString(getFirst(item, ['queue_status', 'status']), '').toLowerCase() === 'ready').length
   const failedSends = dataset.sendQueue.filter((item) => {
-    const status = asString(getFirst(item, ['status']), '').toLowerCase()
+    const status = asString(getFirst(item, ['queue_status', 'status']), '').toLowerCase()
     return status === 'failed' || status === 'retry'
   }).length
   const offersReady = dataset.offers.filter((offer) => contains(asString(getFirst(offer, ['status']), ''), 'ready')).length
@@ -1194,7 +1194,7 @@ export const getRecordRelationships = async (
 export const getAcquisitionAutomations = async (): Promise<AcquisitionAutomation[]> => {
   const dataset = await fetchDataset()
   const failedQueue = dataset.sendQueue.filter((item) => {
-    const status = asString(getFirst(item, ['status']), '').toLowerCase()
+    const status = asString(getFirst(item, ['queue_status', 'status']), '').toLowerCase()
     return status === 'failed' || status === 'retry'
   }).length
   const inboundCount = dataset.messageEvents.filter((item) =>

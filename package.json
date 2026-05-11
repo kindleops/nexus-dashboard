@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "setup:inbox": "node scripts/setup-inbox.mjs",
+    "proof:queue-recovery": "node scripts/proof/queue-recovery.mjs",
     "proof:inbox": "node scripts/proof/inbox-proof.mjs",
     "proof:inbox-integrity": "node scripts/proof/inbox-integrity.mjs",
     "proof:smart-inboxes": "node scripts/proof/smart-inboxes.mjs",
@@ -23,8 +24,11 @@
     "proof:real-kpis": "node scripts/proof/real-kpis.mjs",
     "proof:template-performance": "node scripts/proof/template-performance.mjs",
     "proof:number-performance": "node scripts/proof/number-performance.mjs",
-    "proof:performance-attribution": "node scripts/proof/performance-attribution.mjs",
-    "proof:lead-context-hydration": "node scripts/proof/lead-context-hydration.mjs"
+    "proof:lead-context-hydration": "node scripts/proof/lead-context-hydration.mjs",
+    "proof:kpi-data-coverage": "node scripts/proof/kpi-data-coverage.mjs",
+    "proof:kpi-dimensions": "node scripts/proof/kpi-dimensions.mjs",
+    "proof:kpi-command-center": "node scripts/proof/kpi-command-center.mjs",
+    "proof:kpi-ui": "node scripts/proof/kpi-ui.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.104.1",

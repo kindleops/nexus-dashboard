@@ -93,7 +93,7 @@ const runStaticInboxProof = () => {
   ])
 
   assertContains('hydrated supabase loader exists', 'src/lib/data/inboxData.ts', [
-    'HYDRATED_INBOX_THREADS_VIEW = \'inbox_threads_hydrated\'',
+    'HYDRATED_INBOX_THREADS_VIEW = \'inbox_command_center_v\'',
     'HYDRATED_INBOX_COUNTS_VIEW = \'inbox_category_counts\'',
     'HYDRATED_INBOX_PAGE_SIZE = 200',
     '.order(\'final_acquisition_score\'',

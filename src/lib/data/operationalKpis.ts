@@ -9,7 +9,7 @@ export const useOperationalKpis = (timeWindow: OperationalKpi['timeWindow'] = '2
   const [isLive, setIsLive] = useState(false)
   
   const lastFetchRef = useRef<number>(0)
-  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const load = useCallback(async (isInitial = false) => {
     if (isInitial) setIsLoading(true)

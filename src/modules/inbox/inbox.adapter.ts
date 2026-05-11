@@ -522,6 +522,17 @@ const threadIdentity = (thread: Pick<InboxThread, 'id' | 'threadKey'>): string =
 
 // selectedThreadPreserved: merge refreshes into existing rows instead of replacing the list.
 const mergeInboxModels = (prev: InboxModel, next: InboxModel, mode: 'refresh' | 'append'): InboxModel => {
+  // Prevent wiping out the inbox if a background refresh encounters an error
+  if (next.liveFetchStatus === 'fallback_error' && prev.threads.length > 0) {
+    if (isDev) console.warn('[mergeInboxModels] Ignoring fallback_error to prevent wiping existing threads', next.liveFetchError)
+    return {
+      ...prev,
+      liveFetchStatus: 'fallback_error',
+      liveFetchError: next.liveFetchError,
+      dataMode: next.dataMode,
+    }
+  }
+
   const prevByKey = new Map(prev.threads.map((thread) => [threadIdentity(thread), thread]))
   const mergedById = new Map<string, InboxThread>()
   const ordered = mode === 'append'
@@ -718,9 +729,11 @@ export const useInboxData = () => {
                   latestMessageAt: at,
                   latestDirection: direction,
                   messageCount: (threads[idx].messageCount || 0) + 1,
-                  status: direction === 'inbound' ? 'unread' : threads[idx].status,
-                  unreadCount: direction === 'inbound' ? (threads[idx].unreadCount || 0) + 1 : threads[idx].unreadCount,
-                  needsReply: direction === 'inbound' ? true : threads[idx].needsReply,
+                  status: direction === 'inbound' ? 'unread' : 'replied',
+                  unreadCount: direction === 'inbound' ? (threads[idx].unreadCount || 0) + 1 : 0,
+                  needsReply: direction === 'inbound',
+                  isRead: direction !== 'inbound',
+                  inboxCategory: direction === 'outbound' && threads[idx].inboxCategory === 'new_inbound' ? 'outbound_active' : threads[idx].inboxCategory,
                 }
                 
                 // Sort after update
@@ -743,7 +756,9 @@ export const useInboxData = () => {
                   inboxCategory: row.inbox_category || threads[idx].inboxCategory,
                   uiIntent: row.detected_intent || row.ui_intent || threads[idx].uiIntent,
                   workflowStage: row.thread_stage || threads[idx].workflowStage,
-                  status: row.is_archived ? 'archived' : threads[idx].status,
+                  status: row.is_archived ? 'archived' : (row.is_read ? 'read' : threads[idx].status),
+                  unreadCount: row.is_read ? 0 : threads[idx].unreadCount,
+                  isRead: row.is_read ?? threads[idx].isRead,
                 }
                 return { ...prev, threads }
               }
