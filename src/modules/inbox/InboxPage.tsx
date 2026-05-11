@@ -179,7 +179,6 @@ export default function InboxPage() {
   const [layoutState, setLayoutState] = useState(defaultInboxLayoutState)
   const [dossierFull, setDossierFull] = useState(false)
   const [optimisticPatches, setOptimisticPatches] = useState<Record<string, Partial<InboxWorkflowThread>>>({})
-  const [isAiListening, setIsAiListening] = useState(false)
   const [isSending, setIsSending] = useState(false)
   const [debugModalOpen, setDebugModalOpen] = useState(false)
 

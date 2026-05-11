@@ -24,7 +24,14 @@ The entire inbox system is built on a deterministic data cascade. **Do not bypas
 5. **`inbox_command_center_v`**: (Planned/Upcoming) The unified dashboard rollup view.
 6. **Frontend Inbox UI**: Consumes hydrated views via `src/lib/data/inboxData.ts`. **No raw data manipulation happens here.**
 
-## 3. Underwriting Truth Hierarchy
+## 3. Truth Layer Protection (Immutable Schema Mandate)
+
+To prevent the "Missing Dossier Data" regression:
+1. **No View Truncation**: When updating `inbox_threads_hydrated` or `inbox_command_center_v`, you MUST NOT remove existing enrichment columns. All columns from `prospects`, `master_owners`, and `properties` must remain available.
+2. **Atomic Migrations**: Every migration that touches hydrated views must include the full view definition with all existing columns preserved.
+3. **Validation First**: Before committing any view change, verify that `gender`, `marital_status`, and `portfolio_total_value` still exist and contain data.
+
+## 4. Underwriting Truth Hierarchy
 
 1. **Research Source**: Zillow/Redfin/Realtor.com Sold Listings > Estimates.
 2. **Proximity**: 0.5 miles > 1.0 miles.
@@ -32,13 +39,13 @@ The entire inbox system is built on a deterministic data cascade. **Do not bypas
 4. **Final ARV**: Derived from top 3 closest sold comps. No Zestimates or automated valuations.
 5. **Profit Floor**: SFR ($20,000) / Multifamily ($50,000 or 5% of ARV).
 
-## 4. Deterministic Engineering Principles
+## 5. Deterministic Engineering Principles
 
 - **Idempotency**: All Supabase migrations and queue jobs must be idempotent.
 - **Explicit Joins**: Always define `JOIN` conditions strictly. Never rely on implicit natural joins.
 - **Performance**: Hydrated views must use indexed columns for joins (`property_id`, `master_owner_id`, `canonical_e164`).
 
-## 5. Agent Skills
+## 6. Agent Skills
 
 Refer to `.agents/skills/` for specific operational playbooks:
 - `inbox-truth-layer`: For debugging the message cascade.

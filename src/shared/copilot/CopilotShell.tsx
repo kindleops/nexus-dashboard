@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { CopilotContext, CopilotMode, CopilotState, ResolvedIntent } from './copilot-state'
+import type { CopilotContext, CopilotState, ResolvedIntent } from './copilot-state'
 import { loadSettings, subscribeSettings } from '../settings'
 import type { NexusSettings } from '../settings'
 import { useVoiceMode } from './copilot-voice'
 import { parseIntent } from './copilot-state'
 import { NexusCoreOrb } from '../../modules/core/components/NexusCoreOrb'
-import { useNexusActivity } from '../../modules/core/hooks/useNexusActivity'
 import { playSound } from '../sounds'
 
 interface CopilotShellProps {
@@ -16,7 +15,7 @@ interface CopilotShellProps {
   onToggle: () => void
 }
 
-export function CopilotShell({ open, context, onClose, onAction, onToggle }: CopilotShellProps) {
+export function CopilotShell({ open, context, onAction, onToggle }: CopilotShellProps) {
   const [settings, setSettings] = useState<NexusSettings>(loadSettings)
   const [orbState, setOrbState] = useState<CopilotState>('idle')
   const [orbAmplitude, setOrbAmplitude] = useState(0)
@@ -113,7 +112,6 @@ export function CopilotShell({ open, context, onClose, onAction, onToggle }: Cop
   })
   bgVoiceRef.current = bgVoice
 
-  const mode = (settings.copilotMode as CopilotMode) ?? 'sidecar'
   const enabled = settings.copilotEnabled !== false
   const orbPlacement = settings.orbPlacement ?? 'dock'
   const autoOpenOnRoomChange = settings.copilotAutoOpen ?? false
@@ -134,13 +132,6 @@ export function CopilotShell({ open, context, onClose, onAction, onToggle }: Cop
       setOrbAmplitude(0)
     }
   }, [open])
-
-  const handlePresenceChange = useCallback((state: CopilotState, amplitude: number) => {
-    setOrbState(state)
-    // If amplitude is zero but we're in speaking state, use a soft fallback so orb still animates
-    const amp = amplitude || (state === 'speaking' ? 0.55 : 0)
-    setOrbAmplitude(amp)
-  }, [])
 
   const handleOrbClick = useCallback(() => {
     // Legacy onToggle() call removed to prevent opening old sidecar.
@@ -220,10 +211,6 @@ export function CopilotShell({ open, context, onClose, onAction, onToggle }: Cop
     window.addEventListener('nx:copilot-tts-amplitude', handler)
     return () => window.removeEventListener('nx:copilot-tts-amplitude', handler)
   }, [settings.copilotVoiceMode, orbState])
-
-  const handleAction = useCallback((intent: ResolvedIntent) => {
-    onAction(intent)
-  }, [onAction])
 
   if (!enabled) return null
 

@@ -1,5 +1,7 @@
--- migration: extend_inbox_threads_hydrated_dossier
--- description: Adds all necessary dossier fields to the hydrated inbox views so they flow into the UI properly.
+-- migration: rebuild_inbox_truth_layer_final
+-- description: Rebuilds the hydrated inbox views with full enrichment data and fixes the swapped field bug.
+-- ARCHITECTURAL WARNING: This is part of the TRUTH LAYER. Do NOT truncate columns from this view in future migrations.
+-- See GEMINI.md Section 3 for the Immutable Schema Mandate.
 
 BEGIN;
 
@@ -140,8 +142,6 @@ SELECT
   r.resolved_prospect_id as prospect_id,
   r.final_resolved_property_id as property_id,
   r.resolved_phone_carrier as phone_carrier,
-  NULL::integer as sfr_count,
-  NULL::integer as mf_count,
   
   -- Core fields
   p.property_address_full, 
@@ -195,6 +195,7 @@ SELECT
   mo.portfolio_total_equity,
   mo.portfolio_total_loan_balance,
   mo.portfolio_total_loan_payment,
+  mo.portfolio_total_tax_amount,
   mo.portfolio_total_units,
   mo.property_count,
   mo.tax_delinquent_count,
@@ -213,9 +214,9 @@ SELECT
   mo.joined_property_ids_json,
 
   -- PROPERTY FIELDS
-  p.property_address_city,
-  p.property_address_state,
-  p.property_address_zip,
+  p.property_address_city as property_city,
+  p.property_address_state as property_state,
+  p.property_address_zip as property_zip,
   p.property_county_name,
   p.market_region,
   p.property_class,

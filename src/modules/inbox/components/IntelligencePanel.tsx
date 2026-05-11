@@ -3,9 +3,12 @@ import type { ThreadIntelligenceRecord, ThreadMessage, ThreadContext } from '../
 import type { InboxStatus, SellerStage, InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import type { PanelMode } from '../inbox-layout-state'
 import {
+  normalizePropertySnapshot,
   buildPropertyExternalLinks,
   buildAerialViewUrl,
+  buildStreetViewUrl,
 } from '../inbox-normalization'
+import type { NormalizedPropertySnapshot } from '../inbox-normalization'
 import { Icon, type IconName } from '../../../shared/icons'
 import { 
   formatCurrency, 
@@ -756,73 +759,6 @@ export const AIActionCard = ({ thread, isSuppressed }: { thread: WorkflowThread;
 
 // ── 5. Offer Intelligence ─────────────────────────────────────────────────
 
-const PremiumOfferMemoCard = ({ thread }: { thread: WorkflowThread }) => {
-  const hasArv = isPresent(thread.estimatedValue)
-  const hasCondition = isPresent(thread.estimatedRepairCost)
-
-  const cashOffer = thread.cashOffer || thread.mao
-  const aiOffer = thread.ai_recommended_opening_offer || thread.ai_offer
-  const walkaway = thread.walkaway_price || thread.walkaway_internal
-  const offerConfidence = thread.offer_confidence || thread.confidenceBand
-  const nextRequired = thread.nextRequiredInfo
-
-  const offerStatus = useMemo(() => {
-    if (thread.isSuppressed || (thread as any).isOptOut) return { label: 'Blocked', color: '#ff453a' }
-    if (aiOffer && isPresent(aiOffer)) return { label: 'Ready', color: '#30d158' }
-    if (!hasArv) return { label: 'Needs ARV', color: '#ff453a' }
-    if (!hasCondition) return { label: 'Needs Repairs', color: '#ffd60a' }
-    return { label: 'Ready', color: '#30d158' }
-  }, [aiOffer, hasArv, hasCondition, thread.isSuppressed])
-
-  let aiOfferDisplay: string
-  if (aiOffer && isPresent(aiOffer)) {
-    aiOfferDisplay = formatMoney(Number(aiOffer)) || normalizeText(aiOffer)
-  } else if (!hasArv) {
-    aiOfferDisplay = 'Needs ARV'
-  } else if (!hasCondition) {
-    aiOfferDisplay = 'Needs condition'
-  } else {
-    aiOfferDisplay = 'Needs underwriting'
-  }
-
-  const hasAnyOfferField = [cashOffer, aiOffer, walkaway].some((v) => isPresent(v))
-
-  return (
-    <DossierCard className="nx-force-card nx-offer-card nx-offer-memo-card">
-      <div className="nx-dossier-section__title" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-          <Icon name="zap" />
-          Offer Intelligence
-        </span>
-        <QuietBadge
-          label={offerStatus.label}
-          tone={offerStatus.label === 'Ready' ? 'success' : offerStatus.label === 'Blocked' ? 'danger' : 'warning'}
-        />
-      </div>
-      <div className="nx-offer-memo-card__body">
-        <div className="nx-offer-memo-card__group">
-          <MetricInline label="Legacy cash offer" value={formatMoney(Number(cashOffer || 0))} tone="accent" />
-          <MetricInline label="AI recommended opening" value={aiOfferDisplay} tone="accent" />
-          <MetricInline label="MAO" value={formatMoney(Number(thread.mao || 0))} />
-          <MetricInline label="Walkaway internal" value={formatMoney(Number(walkaway || 0)) || 'Needs underwriting'} tone="danger" />
-        </div>
-        <div className="nx-offer-memo-card__group">
-          <MetricInline
-            label="Missing underwriting info"
-            value={isPresent(nextRequired) ? asStr(nextRequired) : !hasArv ? 'ARV verification' : !hasCondition ? 'Condition details' : 'None'}
-            tone={!hasAnyOfferField || !hasArv || !hasCondition ? 'warning' : 'default'}
-          />
-          <MetricInline
-            label="Confidence / safe-to-reveal"
-            value={isPresent(offerConfidence) ? asStr(offerConfidence) : hasArv && hasCondition ? 'Reasonable to review internally' : 'Hold internal'}
-          />
-        </div>
-      </div>
-      {!hasAnyOfferField && <SectionEmptyState text="No offer figures yet. Underwriting inputs needed." />}
-    </DossierCard>
-  )
-}
-
 // ── 6. Property Intelligence Tabs ─────────────────────────────────────────
 
 const PROPERTY_TABS = [
@@ -1167,12 +1103,10 @@ export const LinkedRecordsCard = ({ thread }: { thread: WorkflowThread }) => {
 }
 
 const ActionRailCard = ({
-  thread,
   onOpenMap,
   onOpenDossier,
   onOpenAi,
 }: {
-  thread: WorkflowThread
   onOpenMap: () => void
   onOpenDossier: () => void
   onOpenAi: () => void
@@ -1704,12 +1638,11 @@ const PropertyBadge = ({ label, icon, accent = 'neutral' }: { label: string; ico
 }
 
 
-export const PropertyHeroCard = ({ thread, panelMode }: { thread: WorkflowThread; panelMode?: PanelMode }) => {
-  const snapshot = thread.propertySnapshot || {}
-  const address = thread.displayAddress || thread.propertyAddress || thread.subject
+export const PropertyHeroCard = ({ thread, snapshot, panelMode }: { thread: WorkflowThread; snapshot: NormalizedPropertySnapshot; panelMode?: PanelMode }) => {
+  const address = snapshot.fullAddress || thread.displayAddress || thread.propertyAddress || thread.subject
   const isMultifamily = (thread.propertyType || '').toLowerCase().includes('multi') || (snapshot.propertyType || '').toLowerCase().includes('multi')
   const unitCount = Number(snapshot.unitCount || thread.units_count || 0)
-  const rawMarket = thread.displayMarket || thread.market || thread.marketId
+  const rawMarket = snapshot.market || thread.displayMarket || thread.market || thread.marketId
   const displayMarket = isPresent(rawMarket) && !/^\d+$/.test(String(rawMarket))
     ? rawMarket
     : (snapshot.city && snapshot.state ? `${snapshot.city}, ${snapshot.state}` : (rawMarket || 'Unknown market'))
@@ -1718,7 +1651,7 @@ export const PropertyHeroCard = ({ thread, panelMode }: { thread: WorkflowThread
     ? (unitCount > 0 ? `MULTI FAMILY • ${unitCount} UNITS` : 'MULTI FAMILY')
     : 'SINGLE FAMILY'
 
-  const streetViewUrl = snapshot.streetViewUrl || thread.streetview_image
+  const streetViewUrl = snapshot.streetViewUrl || snapshot.streetviewImage || thread.streetview_image || buildStreetViewUrl(address)
   const aerialUrl = snapshot.aerialViewUrl || thread.satellite_image || buildAerialViewUrl(address)  
   const [imageFailed, setImageFailed] = useState(false)
   const links = buildPropertyExternalLinks(address)
@@ -1731,9 +1664,9 @@ export const PropertyHeroCard = ({ thread, panelMode }: { thread: WorkflowThread
       accent: 'neutral' 
     },
     (snapshot.yearBuilt || thread.year_built) && { label: `BUILT ${snapshot.yearBuilt || thread.year_built}`, icon: 'calendar', accent: 'neutral' },
-    thread.estimatedValue && { label: formatMoney(thread.estimatedValue), icon: 'dollar-sign', accent: 'green' },
-    formatPercent(thread.equityPercent) && { label: `${formatPercent(thread.equityPercent)} EQUITY`, icon: 'trending-up', accent: 'purple' },
-    thread.estimatedRepairCost && { label: `${formatMoney(thread.estimatedRepairCost)} REPAIRS`, icon: 'tool', accent: 'blue' },
+    (snapshot.estimatedValue || thread.estimatedValue) && { label: formatMoney(Number(snapshot.estimatedValue || thread.estimatedValue)), icon: 'dollar-sign', accent: 'green' },
+    (snapshot.equityPercent || formatPercent(thread.equityPercent)) && { label: `${snapshot.equityPercent || formatPercent(thread.equityPercent)} EQUITY`, icon: 'trending-up', accent: 'purple' },
+    (snapshot.repairCost || thread.estimatedRepairCost) && { label: `${formatMoney(Number(snapshot.repairCost || thread.estimatedRepairCost))} REPAIRS`, icon: 'tool', accent: 'blue' },
   ].filter(Boolean) as any[]
 
   useEffect(() => {
@@ -1832,20 +1765,23 @@ export const PropertyHeroCard = ({ thread, panelMode }: { thread: WorkflowThread
 
 const ContactIntelligenceCard = ({
   thread,
+  snapshot,
+  intelligence,
 }: {
   thread: WorkflowThread
+  snapshot: NormalizedPropertySnapshot
   intelligence: ThreadIntelligenceRecord | null
 }) => {
   const [activeTab, setActiveTab] = useState<'prospect' | 'owner' | 'portfolio' | 'financial' | 'property'>('prospect')
   const [propertyTab, setPropertyTab] = useState<'overview' | 'location' | 'property' | 'equity' | 'tax'>('overview')
 
-  const sellerName = thread.displayName || thread.ownerDisplayName || thread.ownerName || 'Unknown seller'
+  const sellerName = snapshot.ownerDisplayName || snapshot.ownerName || thread.displayName || thread.ownerDisplayName || thread.ownerName || 'Unknown seller'
   const initials = sellerName.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()
-  const headlineAddress = thread.displayAddress || thread.propertyAddress || thread.subject
-  const propertyType = thread.propertyType || 'Not enriched'
+  const headlineAddress = snapshot.fullAddress || thread.displayAddress || thread.propertyAddress || thread.subject
+  const propertyType = snapshot.propertyType || thread.propertyType || 'Not enriched'
   const prospectMatchBadges = useMemo(() => buildMatchBadges(thread), [thread])
   const propertyTagBadges = useMemo(() => buildPropertyTagBadges(thread), [thread])
-  const ownerIdentityBadge = [asStr(thread.ownerType || thread.owner_type_guess || 'Individual').toUpperCase(), thread.isAbsentee ? 'ABSENTEE' : null]
+  const ownerIdentityBadge = [asStr(snapshot.ownerType || thread.ownerType || thread.owner_type_guess || 'Individual').toUpperCase(), thread.isAbsentee ? 'ABSENTEE' : null]
     .filter(Boolean)
     .join(' | ')
 
@@ -1860,17 +1796,17 @@ const ContactIntelligenceCard = ({
   const prospectTagBadges = useMemo(() => buildProspectTagBadges(thread), [thread])
 
   const prospectRows: Array<{ label: string; value?: unknown; render?: React.ReactNode; tone?: any }> = [
-    { label: 'PROSPECT NAME', value: thread.prospect_full_name || thread.displayName },
+    { label: 'PROSPECT NAME', value: snapshot.prospectFullName || thread.prospect_full_name || thread.displayName },
     { label: 'AGE', value: (thread as any).prospect_age || thread.age },
     { label: 'MARITAL STATUS', value: thread.marital_status },
-    { label: 'GENDER', value: thread.gender },
-    { label: 'LANGUAGE', value: thread.language_preference || thread.contactLanguage, tone: 'accent' },
+    { label: 'GENDER', value: snapshot.gender || thread.gender },
+    { label: 'LANGUAGE', value: snapshot.language || thread.language_preference || thread.contactLanguage, tone: 'accent' },
     { label: 'EDUCATION', value: thread.education_model },
-    { label: 'HOUSEHOLD INCOME', value: thread.est_household_income, tone: 'success' },
-    { label: 'NET ASSET VALUE', value: thread.net_asset_value, tone: 'success' },
+    { label: 'HOUSEHOLD INCOME', value: snapshot.householdIncome || thread.est_household_income, tone: 'success' },
+    { label: 'NET ASSET VALUE', value: snapshot.netAssetValue || thread.net_asset_value, tone: 'success' },
     { label: 'BUYING POWER', value: (thread as any).buying_power, tone: 'accent' },
     { label: 'OCCUPATION', value: thread.occupation },
-    { label: 'OCCUPATION GROUP', value: thread.occupation_group },
+    { label: 'OCCUPATION GROUP', value: snapshot.occupationGroup || thread.occupation_group },
     { 
       label: 'PROSPECT TAGS', 
       value: prospectTagBadges.length ? 'has_tags' : null,
@@ -1881,38 +1817,38 @@ const ContactIntelligenceCard = ({
       ) : null
     },
     { label: 'PHONE NUMBER', value: fmtPhone(thread.prospect_best_phone || thread.phoneNumber || thread.canonicalE164), tone: 'accent' },
-    { label: 'PHONE CARRIER', value: (thread as any).phone_carrier },
+    { label: 'PHONE CARRIER', value: snapshot.phoneCarrier || (thread as any).phone_carrier },
   ]
 
   const ownerRows: Array<{ label: string; value?: unknown; render?: React.ReactNode; tone?: any }> = [
-    { label: 'OWNER ADDRESS', value: thread.primary_owner_address || thread.mailing_address },
-    { label: 'PRIORITY TIER', value: thread.owner_priority_tier || thread.priority, tone: 'warning' },
-    { label: 'PRIORITY SCORE /100', value: formatScore(thread.owner_priority_score || thread.finalAcquisitionScore), tone: 'accent' },
-    { label: 'BEST CONTACT WINDOW', value: (thread as any).best_contact_window },
-    { label: 'LANGUAGE', value: thread.language_preference || thread.contactLanguage },
+    { label: 'OWNER ADDRESS', value: snapshot.ownerAddress || thread.primary_owner_address || thread.mailing_address },
+    { label: 'PRIORITY TIER', value: snapshot.priorityTier || thread.owner_priority_tier || thread.priority, tone: 'warning' },
+    { label: 'PRIORITY SCORE /100', value: snapshot.finalScore || formatScore(thread.owner_priority_score || thread.finalAcquisitionScore), tone: 'accent' },
+    { label: 'BEST CONTACT WINDOW', value: snapshot.bestContactWindow || (thread as any).best_contact_window },
+    { label: 'LANGUAGE', value: snapshot.language || thread.language_preference || thread.contactLanguage },
   ]
 
   const portfolioRows: Array<{ label: string; value?: unknown; render?: React.ReactNode; tone?: any }> = [
-    { label: 'PORTFOLIO PROPERTY COUNT', value: thread.property_count, tone: 'accent' },
-    { label: 'PROPERTY TYPE MAJORITY', value: thread.property_type_majority || thread.propertyType },
-    { label: 'SFR COUNT', value: (thread as any).sfr_count },
-    { label: 'MF COUNT', value: (thread as any).mf_count },
-    { label: 'TOTAL UNITS', value: thread.portfolio_total_units, tone: 'accent' },
-    { label: 'PORTFOLIO VALUE', value: formatMoney(Number(thread.portfolio_total_value || 0)), tone: 'success' },
-    { label: 'TOTAL EQUITY', value: formatMoney(Number(thread.portfolio_total_equity || 0)), tone: 'success' },
-    { label: 'TOTAL DEBT', value: formatMoney(Number(thread.portfolio_total_loan_balance || 0)), tone: 'warning' },
-    { label: 'TOTAL DEBT PAYMENT', value: formatMoney(Number(thread.portfolio_total_loan_payment || 0)) },
+    { label: 'PORTFOLIO PROPERTY COUNT', value: snapshot.portfolioPropertyCount || thread.property_count, tone: 'accent' },
+    { label: 'PROPERTY TYPE MAJORITY', value: snapshot.propertyType || thread.property_type_majority || thread.propertyType },
+    { label: 'SFR COUNT', value: snapshot.sfrCount || (thread as any).sfr_count },
+    { label: 'MF COUNT', value: snapshot.mfCount || (thread as any).mf_count },
+    { label: 'TOTAL UNITS', value: snapshot.unitCount || thread.portfolio_total_units, tone: 'accent' },
+    { label: 'PORTFOLIO VALUE', value: formatMoney(Number(snapshot.portfolioValue || thread.portfolio_total_value || 0)), tone: 'success' },
+    { label: 'TOTAL EQUITY', value: formatMoney(Number(snapshot.equityAmount || thread.portfolio_total_equity || 0)), tone: 'success' },
+    { label: 'TOTAL DEBT', value: formatMoney(Number(snapshot.loanAmount || thread.portfolio_total_loan_balance || 0)), tone: 'warning' },
+    { label: 'TOTAL DEBT PAYMENT', value: formatMoney(Number(snapshot.loanPayment || thread.portfolio_total_loan_payment || 0)) },
   ]
 
   const financialRows: Array<{ label: string; value?: unknown; render?: React.ReactNode; tone?: any }> = [
-    { label: 'FINANCIAL PRESSURE SCORE', value: formatScore(thread.financial_pressure_score), tone: 'warning' },
-    { label: 'URGENCY COUNT', value: thread.urgency_count || formatScore(thread.urgency_score), tone: 'danger' },
-    { label: 'PORTFOLIO TAX DELINQUENT COUNT', value: thread.tax_delinquent_count, tone: (thread.tax_delinquent_count ?? 0) > 0 ? 'danger' : 'neutral' },
-    { label: 'TAX DELINQUENT BADGE', value: formatBoolean(thread.property_tax_delinquent) },
-    { label: 'PORTFOLIO LIEN COUNT', value: thread.active_lien_count, tone: (thread.active_lien_count ?? 0) > 0 ? 'warning' : 'neutral' },
+    { label: 'FINANCIAL PRESSURE SCORE', value: snapshot.financialScore || formatScore(thread.financial_pressure_score), tone: 'warning' },
+    { label: 'URGENCY COUNT', value: snapshot.urgencyCount || thread.urgency_count || formatScore(thread.urgency_score), tone: 'danger' },
+    { label: 'PORTFOLIO TAX DELINQUENT COUNT', value: snapshot.taxDelinquentCount || thread.tax_delinquent_count, tone: (Number(snapshot.taxDelinquentCount || thread.tax_delinquent_count) > 0) ? 'danger' : 'neutral' },
+    { label: 'TAX DELINQUENT BADGE', value: snapshot.taxDelinquent || formatBoolean(thread.property_tax_delinquent) },
+    { label: 'PORTFOLIO LIEN COUNT', value: snapshot.lienCount || thread.active_lien_count, tone: (Number(snapshot.lienCount || thread.active_lien_count) > 0) ? 'warning' : 'neutral' },
     { label: 'ACTIVE LIEN BADGE', value: formatBoolean(thread.property_active_lien) },
-    { label: 'OLDEST TAX DELINQUENT YEAR', value: thread.oldest_tax_delinquent_year },
-    { label: 'TOTAL TAX AMOUNT', value: formatMoney(Number(thread.tax_amt || thread.past_due_amount || 0)), tone: 'danger' },
+    { label: 'OLDEST TAX DELINQUENT YEAR', value: snapshot.oldestTaxYear || thread.oldest_tax_delinquent_year },
+    { label: 'TOTAL TAX AMOUNT', value: formatMoney(Number(snapshot.taxAmount || thread.tax_amt || thread.past_due_amount || 0)), tone: 'danger' },
   ]
 
   const activeRows = activeTab === 'prospect'
@@ -2158,6 +2094,8 @@ export const IntelligencePanel = ({
     )
   }
 
+  const snapshot = useMemo(() => normalizePropertySnapshot(intelligence || null, thread), [intelligence, thread])
+
   return (
     <aside className={cls('nx-intelligence-panel', `is-mode-${panelMode}`)}>
       <header className="nx-intel-header">
@@ -2171,12 +2109,12 @@ export const IntelligencePanel = ({
 
       <div className="nx-intel-scroll-body">
         <SellerCommandCard thread={thread} onStatusChange={onStatusChange} onStageChange={onStageChange} />
-        <PropertyHeroCard thread={thread} panelMode={panelMode} />
+        <PropertyHeroCard thread={thread} snapshot={snapshot} panelMode={panelMode} />
         <OfferMemoCard thread={thread} />
-        <ContactIntelligenceCard thread={thread} intelligence={intelligence} />
+        <ContactIntelligenceCard thread={thread} snapshot={snapshot} intelligence={intelligence} />
         <TimelinePanel thread={thread} messages={messages} />
         <LinkedRecordsCard thread={thread} />
-        <ActionRailCard thread={thread} onOpenMap={onOpenMap} onOpenDossier={onOpenDossier} onOpenAi={onOpenAi} />
+        <ActionRailCard onOpenMap={onOpenMap} onOpenDossier={onOpenDossier} onOpenAi={onOpenAi} />
       </div>
     </aside>
   )
