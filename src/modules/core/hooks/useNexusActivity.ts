@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { getSupabaseClient } from '../../../lib/supabaseClient';
-import { NexusCoreState, OrbActivityMetrics } from '../types/orb';
+import type { NexusCoreState, OrbActivityMetrics } from '../types/orb';
 
 const DECAY_RATE = 0.95; // Multiply heat by this every tick
 const TICK_INTERVAL = 2000; // 2 seconds
@@ -114,7 +114,7 @@ export function useNexusActivity() {
         console.error('Failed to fetch hot lead count', err);
       }
       
-      setMetrics(prev => ({
+      setMetrics({
         queueSendsPerMin: activityCounts.current.sends * 30,
         repliesPerMin: activityCounts.current.replies * 30,
         classificationsPerMin: activityCounts.current.classifications * 30,
@@ -122,7 +122,7 @@ export function useNexusActivity() {
         hotLeadCount: activityCounts.current.hotLeads,
         automationExecutionCount: activityCounts.current.automations,
         heatIndex: heatRef.current,
-      }));
+      });
     }, TICK_INTERVAL);
 
     return () => {

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNexusActivity } from '../hooks/useNexusActivity';
 import { ORB_STATES } from './orb-state-machine';
@@ -41,7 +41,6 @@ export function NexusCoreOrb({
 
   const config = useMemo(() => {
     const base = ORB_STATES[activeState];
-    const ampBoost = amplitude * 0.5;
     
     return {
       ...base,
@@ -218,7 +217,7 @@ function CanvasParticles({ speed, color, density }: { speed: number, color: stri
         particles.current.push(createParticle());
       }
 
-      particles.current.forEach((p, i) => {
+      particles.current.forEach((p: any) => {
         p.distance += p.speed;
         p.life -= 0.01 * (1 / speed);
         p.opacity = p.life;
@@ -233,7 +232,8 @@ function CanvasParticles({ speed, color, density }: { speed: number, color: stri
         ctx.fill();
 
         if (p.life <= 0 || p.distance > canvas.width / 2) {
-          particles.current[i] = createParticle();
+          const index = particles.current.indexOf(p);
+          if (index > -1) particles.current[index] = createParticle();
         }
       });
 
@@ -256,3 +256,4 @@ function CanvasParticles({ speed, color, density }: { speed: number, color: stri
     />
   );
 }
+

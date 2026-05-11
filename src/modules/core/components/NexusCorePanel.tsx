@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { OrbActivityMetrics, NexusCoreState } from '../types/orb';
+import type { OrbActivityMetrics, NexusCoreState } from '../types/orb';
 import { ORB_STATES } from './orb-state-machine';
 
 interface NexusCorePanelProps {
@@ -15,7 +15,6 @@ export function NexusCorePanel({ metrics, activeState, onClose }: NexusCorePanel
 
   useEffect(() => {
     if (activeState !== 'idle') {
-      const timestamp = new Date().toLocaleTimeString();
       const message = `[INTEL] ${stateConfig.label.toUpperCase()} - System engagement surge detected. ${metrics.queueSendsPerMin} tx/min throughput.`;
       setLogs(prev => [message, ...prev].slice(0, 50));
     }

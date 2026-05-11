@@ -3,7 +3,6 @@ import type { ThreadIntelligenceRecord, ThreadMessage, ThreadContext } from '../
 import type { InboxStatus, SellerStage, InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import type { PanelMode } from '../inbox-layout-state'
 import {
-  normalizePropertySnapshot,
   buildPropertyExternalLinks,
   buildAerialViewUrl,
 } from '../inbox-normalization'
@@ -697,7 +696,7 @@ export const OfferMemoCard = ({ thread }: { thread: WorkflowThread }) => {
           onClick={handleUnderwrite}
           disabled={isUnderwriting}
         >
-          <Icon name={isUnderwriting ? 'loader' : 'spark'} />
+          <Icon name={isUnderwriting ? 'refresh-cw' : 'spark'} />
           {isUnderwriting ? 'ANALYZING...' : 'RUN AI UNDERWRITING'}
         </button>
       </div>
@@ -1709,19 +1708,18 @@ export const PropertyHeroCard = ({ thread, panelMode }: { thread: WorkflowThread
   const snapshot = thread.propertySnapshot || {}
   const address = thread.displayAddress || thread.propertyAddress || thread.subject
   const isMultifamily = (thread.propertyType || '').toLowerCase().includes('multi') || (snapshot.propertyType || '').toLowerCase().includes('multi')
-  const unitCount = Number(snapshot.unitCount || thread.unit_count || 0)
+  const unitCount = Number(snapshot.unitCount || thread.units_count || 0)
   const rawMarket = thread.displayMarket || thread.market || thread.marketId
   const displayMarket = isPresent(rawMarket) && !/^\d+$/.test(String(rawMarket))
-    ? rawMarket 
+    ? rawMarket
     : (snapshot.city && snapshot.state ? `${snapshot.city}, ${snapshot.state}` : (rawMarket || 'Unknown market'))
 
-  const displayType = isMultifamily 
+  const displayType = isMultifamily
     ? (unitCount > 0 ? `MULTI FAMILY • ${unitCount} UNITS` : 'MULTI FAMILY')
     : 'SINGLE FAMILY'
-  
+
   const streetViewUrl = snapshot.streetViewUrl || thread.streetview_image
-  const aerialUrl = snapshot.aerialViewUrl || thread.aerial_view_image || buildAerialViewUrl(address)
-  
+  const aerialUrl = snapshot.aerialViewUrl || thread.satellite_image || buildAerialViewUrl(address)  
   const [imageFailed, setImageFailed] = useState(false)
   const links = buildPropertyExternalLinks(address)
   const chips = [
@@ -1752,7 +1750,7 @@ export const PropertyHeroCard = ({ thread, panelMode }: { thread: WorkflowThread
             {streetViewUrl && !imageFailed ? (
               <img src={streetViewUrl} alt="Street view" onError={() => setImageFailed(true)} />
             ) : (
-              <div className="nx-panel-fallback"><Icon name="camera" /></div>
+              <div className="nx-panel-fallback"><Icon name="eye" /></div>
             )}
           </div>
           <div className="nx-property-panel is-aerial">
@@ -1909,9 +1907,9 @@ const ContactIntelligenceCard = ({
   const financialRows: Array<{ label: string; value?: unknown; render?: React.ReactNode; tone?: any }> = [
     { label: 'FINANCIAL PRESSURE SCORE', value: formatScore(thread.financial_pressure_score), tone: 'warning' },
     { label: 'URGENCY COUNT', value: thread.urgency_count || formatScore(thread.urgency_score), tone: 'danger' },
-    { label: 'PORTFOLIO TAX DELINQUENT COUNT', value: thread.tax_delinquent_count, tone: thread.tax_delinquent_count > 0 ? 'danger' : 'default' },
+    { label: 'PORTFOLIO TAX DELINQUENT COUNT', value: thread.tax_delinquent_count, tone: (thread.tax_delinquent_count ?? 0) > 0 ? 'danger' : 'neutral' },
     { label: 'TAX DELINQUENT BADGE', value: formatBoolean(thread.property_tax_delinquent) },
-    { label: 'PORTFOLIO LIEN COUNT', value: thread.active_lien_count, tone: thread.active_lien_count > 0 ? 'warning' : 'default' },
+    { label: 'PORTFOLIO LIEN COUNT', value: thread.active_lien_count, tone: (thread.active_lien_count ?? 0) > 0 ? 'warning' : 'neutral' },
     { label: 'ACTIVE LIEN BADGE', value: formatBoolean(thread.property_active_lien) },
     { label: 'OLDEST TAX DELINQUENT YEAR', value: thread.oldest_tax_delinquent_year },
     { label: 'TOTAL TAX AMOUNT', value: formatMoney(Number(thread.tax_amt || thread.past_due_amount || 0)), tone: 'danger' },
@@ -1955,7 +1953,7 @@ const ContactIntelligenceCard = ({
           </div>
           {activeTab === 'prospect' && prospectMatchBadges.length > 0 && (
             <div className="nx-contact-intel-v2__badge-overlap">
-              <Icon name="check-circle" />
+              <Icon name="check" />
             </div>
           )}
         </div>

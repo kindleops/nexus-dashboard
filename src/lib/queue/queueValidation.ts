@@ -5,7 +5,7 @@
  * Prevents malformed rows from causing silent failures in the runner.
  */
 
-import { normalizePhone } from '@/lib/data/inboxWorkflowData';
+import { normalizePhone } from '../data/inboxWorkflowData';
 
 export interface QueueValidationResult {
   isValid: boolean;

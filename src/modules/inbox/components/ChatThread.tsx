@@ -183,7 +183,7 @@ export const ChatThread = ({
           )}
 
           <div className="nx-thread-meta-line">
-            {market && <span className="nx-market-tag"><Icon name="map-pin" /> {market}</span>}
+            {market && <span className="nx-market-tag"><Icon name="pin" /> {market}</span>}
             <span className="nx-stage-pill nx-conv-stage-pill">{stageVisual.label}</span>
             <span className="nx-stage-pill" style={{ '--pill-color': statusVisual.color, '--pill-bg': statusVisual.bg, '--pill-border': statusVisual.border } as any}>
               {statusVisual.label}

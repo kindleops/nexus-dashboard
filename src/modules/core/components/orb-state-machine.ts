@@ -1,4 +1,4 @@
-import { NexusCoreState, OrbStateConfig } from '../types/orb';
+import type { NexusCoreState, OrbStateConfig } from '../types/orb';
 
 export const ORB_STATES: Record<NexusCoreState, OrbStateConfig> = {
   idle: {

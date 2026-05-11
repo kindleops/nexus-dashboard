@@ -137,7 +137,7 @@ export interface SentMessageItem {
 
 const tableProbeCache = new Map<string, boolean>()
 
-const normalizePhone = (value: unknown): string => {
+export const normalizePhone = (value: unknown): string => {
   const raw = asString(value, '').trim()
   if (!raw) return ''
   const hasPlus = raw.startsWith('+')
