@@ -38,6 +38,23 @@ const fmtPhone = formatPhone
 const standardFormatDisplayValue = (v: any) => String(v ?? 'Not enriched')
 
 type WorkflowThread = InboxWorkflowThread & Partial<{
+  age: number
+  phone_carrier: string
+  property_type_majority: string
+  sfr_count: number
+  mf_count: number
+  urgency_count: number
+  is_corporate_owner: boolean
+  person_flags_json: any
+  marital_status: string
+  gender: string
+  education_model: string
+  est_household_income: string
+  net_asset_value: string
+  occupation: string
+  occupation_group: string
+  primary_owner_address: string
+  mailing_address: string
   sellerFirstName: string
   motivationScore: number
   equityPercent: number
@@ -354,10 +371,10 @@ const StatusPill = ({ label, color }: { label: string; color: string }) => (
   </span>
 )
 
-const IntelField = ({ label, value }: { label: string; value: unknown }) => (
+const IntelField = ({ label, value, render }: { label: string; value: unknown; render?: React.ReactNode }) => (
   <div className="nx-intel-field">
     <span>{label}</span>
-    <strong>{isPresent(value) ? asStr(value) : 'Not enriched'}</strong>
+    <strong>{render ? render : isPresent(value) ? asStr(value) : 'Not enriched'}</strong>
   </div>
 )
 
@@ -1135,7 +1152,7 @@ const YesNoBadge = ({ label, yes }: { label: string; yes: boolean }) => (
   <span className={cls('nx-binary-badge', yes ? 'is-yes' : 'is-no')}>{label}: {yes ? 'Yes' : 'No'}</span>
 )
 
-const buildMatchBadges = (thread: WorkflowThread) => {
+const buildMatchBadges = (thread: WorkflowThread, limit = 3) => {
   const tags = String((thread as any).matching_flags || (thread as any).person_flags_text || '')
     .split(/[;,|]/)
     .map((tag) => tag.trim())
@@ -1152,7 +1169,35 @@ const buildMatchBadges = (thread: WorkflowThread) => {
   if (tags.some((tag) => /resident|occupant/i.test(tag))) out.set('Resident', 'yellow')
   if (tags.some((tag) => /renter|tenant/i.test(tag))) out.set('Likely Renting', 'red')
   if (!out.size) out.set('Potential Owner', 'yellow')
-  return Array.from(out.entries()).map(([label, tone]) => ({ label, tone }))
+  return Array.from(out.entries()).map(([label, tone]) => ({ label, tone })).slice(0, limit)
+}
+
+const buildProspectTagBadges = (thread: WorkflowThread, limit = 10) => {
+  const tagsText = String((thread as any).matching_flags || (thread as any).person_flags_text || (thread as any).seller_tags_text || '')
+  const jsonTags = Array.isArray((thread as any).person_flags_json) ? (thread as any).person_flags_json : []
+  const tags = tagsText.split(/[;,|]/).map((tag) => tag.trim()).filter(Boolean)
+  const combined = Array.from(new Set([...tags, ...jsonTags])).slice(0, limit)
+  
+  return combined.map((tag: string) => {
+    let tone: 'green' | 'yellow' | 'red' = 'green'
+    if (/renter|tenant|do not call|dnc|suppressed|dead/i.test(tag)) tone = 'red'
+    else if (/probate|foreclosure|divorce|lien|tax/i.test(tag)) tone = 'yellow'
+    return { label: tag, tone }
+  })
+}
+
+const buildPropertyTagBadges = (thread: WorkflowThread, limit = 12) => {
+  const tagsText = String((thread as any).property_flags_text || (thread as any).podio_tags || '')
+  const jsonTags = Array.isArray((thread as any).property_flags_json) ? (thread as any).property_flags_json : []
+  const tags = tagsText.split(/[;,|]/).map((tag) => tag.trim()).filter(Boolean)
+  const combined = Array.from(new Set([...tags, ...jsonTags])).slice(0, limit)
+  
+  return combined.map((tag: string) => {
+    let tone: 'green' | 'yellow' | 'red' = 'green'
+    if (/vacant|boarded|condemned|fire/i.test(tag)) tone = 'red'
+    else if (/probate|foreclosure|divorce|lien|tax|delinquent/i.test(tag)) tone = 'yellow'
+    return { label: tag, tone }
+  })
 }
 
 const MiniTimeline = ({ thread, messages, limit = 8 }: { thread: WorkflowThread; messages: ThreadMessage[]; limit?: number }) => {
@@ -1528,6 +1573,7 @@ const ContactIntelligenceCard = ({
   const headlineAddress = thread.displayAddress || thread.propertyAddress || thread.subject
   const propertyType = thread.propertyType || 'Not enriched'
   const prospectMatchBadges = useMemo(() => buildMatchBadges(thread), [thread])
+  const propertyTagBadges = useMemo(() => buildPropertyTagBadges(thread), [thread])
   const ownerIdentityBadge = [asStr(thread.ownerType || thread.owner_type_guess || 'Individual').toUpperCase(), thread.isAbsentee ? 'ABSENTEE' : null]
     .filter(Boolean)
     .join(' | ')
@@ -1540,50 +1586,60 @@ const ContactIntelligenceCard = ({
     ['property', 'PROPERTY INTEL'],
   ] as const
 
-  const prospectRows: Array<[string, unknown]> = [
-    ['AGE', (thread as any).age ?? (thread as any).person_flags_json?.age],
-    ['MARITAL STATUS', (thread as any).marital_status],
-    ['GENDER', (thread as any).gender],
-    ['LANGUAGE', thread.language_preference || thread.contactLanguage],
-    ['EDUCATION', (thread as any).education_model],
-    ['HOUSEHOLD INCOME', formatMoney((thread as any).est_household_income)],
-    ['NET ASSET VALUE', formatMoney((thread as any).net_asset_value)],
-    ['OCCUPATION', (thread as any).occupation],
-    ['OCCUPATION GROUP', (thread as any).occupation_group],
-    ['PROSPECT TAGS', (thread as any).matching_flags || (thread as any).person_flags_text],
-    ['PHONE NUMBER', fmtPhone(thread.prospect_best_phone || thread.phoneNumber || thread.canonicalE164)],
-    ['PHONE CARRIER', (thread as any).phone_carrier],
+  const prospectTagBadges = useMemo(() => buildProspectTagBadges(thread), [thread])
+
+  const prospectRows: Array<{ label: string; value?: unknown; render?: React.ReactNode }> = [
+    { label: 'AGE', value: thread.age ?? (thread as any).person_flags_json?.age },
+    { label: 'MARITAL STATUS', value: thread.marital_status },
+    { label: 'GENDER', value: thread.gender },
+    { label: 'LANGUAGE', value: thread.language_preference || thread.contactLanguage },
+    { label: 'EDUCATION', value: thread.education_model },
+    { label: 'HOUSEHOLD INCOME', value: formatMoney(thread.est_household_income) },
+    { label: 'NET ASSET VALUE', value: formatMoney(thread.net_asset_value) },
+    { label: 'OCCUPATION', value: thread.occupation },
+    { label: 'OCCUPATION GROUP', value: thread.occupation_group },
+    { 
+      label: 'PROSPECT TAGS', 
+      value: prospectTagBadges.length ? 'has_tags' : null,
+      render: prospectTagBadges.length > 0 ? (
+        <div className="nx-contact-intel-card__match-badges" style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          {prospectTagBadges.map((badge, i) => <MatchBadge key={i} label={badge.label} tone={badge.tone} />)}
+        </div>
+      ) : null
+    },
+    { label: 'PHONE NUMBER', value: fmtPhone(thread.prospect_best_phone || thread.phoneNumber || thread.canonicalE164) },
+    { label: 'PHONE CARRIER', value: thread.phone_carrier },
   ]
 
-  const ownerRows: Array<[string, unknown]> = [
-    ['OWNER ADDRESS', (thread as any).primary_owner_address || (thread as any).mailing_address],
-    ['PRIORITY TIER', thread.owner_priority_tier || thread.priority],
-    ['PRIORITY SCORE /100', formatScore(thread.owner_priority_score || thread.finalAcquisitionScore)],
-    ['BEST CONTACT WINDOW', (thread as any).best_contact_window],
-    ['LANGUAGE', thread.language_preference || thread.contactLanguage],
+  const ownerRows: Array<{ label: string; value?: unknown; render?: React.ReactNode }> = [
+    { label: 'OWNER ADDRESS', value: thread.primary_owner_address || thread.mailing_address },
+    { label: 'PRIORITY TIER', value: thread.owner_priority_tier || thread.priority },
+    { label: 'PRIORITY SCORE /100', value: formatScore(thread.owner_priority_score || thread.finalAcquisitionScore) },
+    { label: 'BEST CONTACT WINDOW', value: (thread as any).best_contact_window },
+    { label: 'LANGUAGE', value: thread.language_preference || thread.contactLanguage },
   ]
 
-  const portfolioRows: Array<[string, unknown]> = [
-    ['PORTFOLIO PROPERTY COUNT', thread.property_count],
-    ['PROPERTY TYPE MAJORITY', (thread as any).property_type_majority || thread.propertyType],
-    ['SFR COUNT', (thread as any).sfr_count],
-    ['MF COUNT', (thread as any).mf_count],
-    ['TOTAL UNITS', thread.portfolio_total_units],
-    ['PORTFOLIO VALUE', formatMoney(thread.portfolio_total_value)],
-    ['TOTAL EQUITY', formatMoney(thread.portfolio_total_equity)],
-    ['TOTAL DEBT', formatMoney(thread.portfolio_total_loan_balance)],
-    ['TOTAL DEBT PAYMENT', formatMoney(thread.portfolio_total_loan_payment)],
+  const portfolioRows: Array<{ label: string; value?: unknown; render?: React.ReactNode }> = [
+    { label: 'PORTFOLIO PROPERTY COUNT', value: thread.property_count },
+    { label: 'PROPERTY TYPE MAJORITY', value: thread.property_type_majority || thread.propertyType },
+    { label: 'SFR COUNT', value: thread.sfr_count },
+    { label: 'MF COUNT', value: thread.mf_count },
+    { label: 'TOTAL UNITS', value: thread.portfolio_total_units },
+    { label: 'PORTFOLIO VALUE', value: formatMoney(Number(thread.portfolio_total_value || 0)) },
+    { label: 'TOTAL EQUITY', value: formatMoney(Number(thread.portfolio_total_equity || 0)) },
+    { label: 'TOTAL DEBT', value: formatMoney(Number(thread.portfolio_total_loan_balance || 0)) },
+    { label: 'TOTAL DEBT PAYMENT', value: formatMoney(Number(thread.portfolio_total_loan_payment || 0)) },
   ]
 
-  const financialRows: Array<[string, unknown]> = [
-    ['FINANCIAL PRESSURE SCORE', formatScore(thread.financial_pressure_score)],
-    ['URGENCY COUNT', (thread as any).urgency_count || formatScore(thread.urgency_score)],
-    ['PORTFOLIO TAX DELINQUENT COUNT', thread.tax_delinquent_count],
-    ['TAX DELINQUENT BADGE', formatBoolean(thread.property_tax_delinquent)],
-    ['PORTFOLIO LIEN COUNT', thread.active_lien_count],
-    ['ACTIVE LIEN BADGE', formatBoolean(thread.property_active_lien)],
-    ['OLDEST TAX DELINQUENT YEAR', (thread as any).oldest_tax_delinquent_year],
-    ['TOTAL TAX AMOUNT', formatMoney(thread.tax_amt || thread.past_due_amount)],
+  const financialRows: Array<{ label: string; value?: unknown; render?: React.ReactNode }> = [
+    { label: 'FINANCIAL PRESSURE SCORE', value: formatScore(thread.financial_pressure_score) },
+    { label: 'URGENCY COUNT', value: thread.urgency_count || formatScore(thread.urgency_score) },
+    { label: 'PORTFOLIO TAX DELINQUENT COUNT', value: thread.tax_delinquent_count },
+    { label: 'TAX DELINQUENT BADGE', value: formatBoolean(thread.property_tax_delinquent) },
+    { label: 'PORTFOLIO LIEN COUNT', value: thread.active_lien_count },
+    { label: 'ACTIVE LIEN BADGE', value: formatBoolean(thread.property_active_lien) },
+    { label: 'OLDEST TAX DELINQUENT YEAR', value: thread.oldest_tax_delinquent_year },
+    { label: 'TOTAL TAX AMOUNT', value: formatMoney(Number(thread.tax_amt || thread.past_due_amount || 0)) },
   ]
 
   const activeRows = activeTab === 'prospect'
@@ -1626,6 +1682,18 @@ const ContactIntelligenceCard = ({
 
       {activeTab === 'property' ? (
         <>
+          <div className="nx-intel-grid" style={{ marginBottom: 16 }}>
+            <IntelField label="FULL PROPERTY ADDRESS" value={headlineAddress || thread.displayAddress || thread.propertyAddress || thread.subject} />
+            <IntelField 
+              label="PROPERTY FLAGS" 
+              value={propertyTagBadges.length ? 'has_tags' : null} 
+              render={propertyTagBadges.length > 0 ? (
+                <div className="nx-contact-intel-card__match-badges" style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {propertyTagBadges.map((badge, i) => <MatchBadge key={i} label={badge.label} tone={badge.tone as any} />)}
+                </div>
+              ) : null}
+            />
+          </div>
           <div className="nx-intel-subtabs">
             {[
               ['overview', 'OVERVIEW'],
@@ -1642,7 +1710,7 @@ const ContactIntelligenceCard = ({
           <PropertyIntelFields thread={thread} subTab={propertyTab} />
         </>
       ) : (
-        <div className="nx-intel-grid">{activeRows.map(([label, value]) => <IntelField key={label} label={label} value={value} />)}</div>
+        <div className="nx-intel-grid">{activeRows.map(({ label, value, render }) => <IntelField key={label} label={label} value={value} render={render} />)}</div>
       )}
     </DossierCard>
   )

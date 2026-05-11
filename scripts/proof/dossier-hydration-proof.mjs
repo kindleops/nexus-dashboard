@@ -41,12 +41,12 @@ async function runProof() {
   try {
     let columnList = [];
     const { data: cols, error: colError } = await supabase.rpc('exec_sql', { 
-      sql_query: "SELECT column_name FROM information_schema.columns WHERE table_name = 'inbox_operator_dossier_v' AND table_schema = 'public'" 
+      sql_query: "SELECT column_name FROM information_schema.columns WHERE table_name = 'inbox_command_center_v' AND table_schema = 'public'" 
     });
 
     if (colError) {
       console.warn(`   ⚠️ exec_sql failed, falling back to sample row inspection...`);
-      const { data: sampleRows, error: sampleErr } = await supabase.from('inbox_operator_dossier_v').select('*').limit(1);
+      const { data: sampleRows, error: sampleErr } = await supabase.from('inbox_command_center_v').select('*').limit(1);
       if (sampleErr) {
         console.error(`   ❌ Failed to fetch sample: ${sampleErr.message}`);
         allPassed = false;
@@ -85,8 +85,7 @@ async function runProof() {
        allPassed = false;
     }
 
-    console.log('\n2️⃣ Sampling threads for hydration consistency...');
-    const { data: samples, error: sampleError } = await supabase.from('inbox_operator_dossier_v').select('*').limit(20);
+    const { data: samples, error: sampleError } = await supabase.from('inbox_command_center_v').select('*').limit(20);
     
     if (sampleError) {
       console.error(`   ❌ Failed to fetch samples: ${sampleError.message}`);

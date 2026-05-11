@@ -3,6 +3,7 @@ import type { InboxModel, InboxThread } from '../../modules/inbox/inbox.adapter'
 import type { InboxViewSelectValue } from '../../modules/inbox/inbox-ui-helpers'
 import type { InboxWorkflowThread } from './inboxWorkflowData'
 import type { SmsTemplate } from './templateData'
+import { resolveOutboundTextgridNumber } from './textgridRouting'
 import { getSupabaseClient, hasSupabaseEnv } from '../supabaseClient'
 import {
   asBoolean,
@@ -3023,12 +3024,20 @@ export const queueReplyFromInbox = async (
     return { ok: false, queueId: null, status: null, errorMessage: 'Thread has no valid phone number', insertPayloadKeys: [] }
   }
 
-  // Resolve from number with better fallback chain
-  const fromPhone = [
-    normalizePhone(thread.ourNumber ?? ''),
-    normalizePhone(import.meta.env.VITE_TEXTGRID_FROM_NUMBER ?? ''),
-    normalizePhone(import.meta.env.VITE_TEXTGRID_NUMBER ?? ''),
-  ].find((phone) => phone && phone.length > 0) || null
+  const routingResult = await resolveOutboundTextgridNumber({
+    marketId: thread.marketId,
+    ourNumber: thread.ourNumber,
+    phoneNumber: thread.phoneNumber,
+    textgridNumberId: thread.textgridNumberId,
+    property_address_state: thread.property_address_state
+  }, false)
+
+  if (!routingResult.ok) {
+    return { ok: false, queueId: null, status: null, errorMessage: routingResult.error || 'Routing failed', insertPayloadKeys: [] }
+  }
+
+  const fromPhone = routingResult.from_phone_number
+  const textgridNumberId = routingResult.textgrid_number_id
 
   const supabase = getSupabaseClient()
   const now = new Date().toISOString()
@@ -3079,7 +3088,7 @@ export const queueReplyFromInbox = async (
     payload.selected_template_id = templateAttachment.templateId
   }
   if (isValidUUID(asString(thread.phoneNumberId, ''))) payload.phone_number_id = thread.phoneNumberId
-  if (isValidUUID(asString(thread.textgridNumberId, ''))) payload.textgrid_number_id = thread.textgridNumberId
+  if (isValidUUID(asString(textgridNumberId, ''))) payload.textgrid_number_id = textgridNumberId
   if (thread.propertyAddress) payload.property_address = thread.propertyAddress
   if (isValidUUID(asString(thread.ownerId, ''))) payload.master_owner_id = thread.ownerId
   if (isValidUUID(asString(thread.prospectId, ''))) payload.prospect_id = thread.prospectId
@@ -3635,12 +3644,20 @@ export const scheduleReplyFromInbox = async (
     return { ok: false, queueId: null, status: null, errorMessage: 'Thread has no valid phone number', insertPayloadKeys: [] }
   }
 
-  // Resolve from number with better fallback chain
-  const fromPhone = [
-    normalizePhone(thread.ourNumber ?? ''),
-    normalizePhone(import.meta.env.VITE_TEXTGRID_FROM_NUMBER ?? ''),
-    normalizePhone(import.meta.env.VITE_TEXTGRID_NUMBER ?? ''),
-  ].find((phone) => phone && phone.length > 0) || null
+  const routingResult = await resolveOutboundTextgridNumber({
+    marketId: thread.marketId,
+    ourNumber: thread.ourNumber,
+    phoneNumber: thread.phoneNumber,
+    textgridNumberId: thread.textgridNumberId,
+    property_address_state: thread.property_address_state
+  }, false)
+
+  if (!routingResult.ok) {
+    return { ok: false, queueId: null, status: null, errorMessage: routingResult.error || 'Routing failed', insertPayloadKeys: [] }
+  }
+
+  const fromPhone = routingResult.from_phone_number
+  const textgridNumberId = routingResult.textgrid_number_id
 
   const supabase = getSupabaseClient()
   const now = new Date().toISOString()
@@ -3692,7 +3709,7 @@ export const scheduleReplyFromInbox = async (
     payload.selected_template_id = templateAttachment.templateId
   }
   if (isValidUUID(asString(thread.phoneNumberId, ''))) payload.phone_number_id = thread.phoneNumberId
-  if (isValidUUID(asString(thread.textgridNumberId, ''))) payload.textgrid_number_id = thread.textgridNumberId
+  if (isValidUUID(asString(textgridNumberId, ''))) payload.textgrid_number_id = textgridNumberId
   if (thread.propertyAddress) payload.property_address = thread.propertyAddress
   if (isValidUUID(asString(thread.ownerId, ''))) payload.master_owner_id = thread.ownerId
   if (isValidUUID(asString(thread.prospectId, ''))) payload.prospect_id = thread.prospectId
