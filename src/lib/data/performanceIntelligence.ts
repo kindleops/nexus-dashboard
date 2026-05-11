@@ -118,7 +118,7 @@ export const fetchPerformanceOutliers = async (window: TimeWindow = '7d') => {
   }
 }
 
-export const fetchAttributionCoverage = async (window: TimeWindow = 'all_time') => {
+export const fetchAttributionCoverage = async () => {
   const supabase = getSupabaseClient()
   
   // Simple check on raw counts from the view
@@ -140,8 +140,18 @@ export const fetchAttributionCoverage = async (window: TimeWindow = 'all_time') 
 }
 
 export const usePerformanceIntelligence = (window: TimeWindow = '7d') => {
-  const [outliers, setOutliers] = useState<any>(null)
-  const [coverage, setCoverage] = useState<any>(null)
+  const [outliers, setOutliers] = useState<{
+    bestTemplate: TemplatePerformance | undefined
+    riskiestTemplate: TemplatePerformance | undefined
+    bestNumber: NumberPerformance | undefined
+    riskiestNumber: NumberPerformance | undefined
+    bestCombo: ComboPerformance | undefined
+  } | null>(null)
+  const [coverage, setCoverage] = useState<{
+    total: number
+    known: number
+    coverage_pct: number
+  } | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
   const load = useCallback(async () => {
@@ -149,7 +159,7 @@ export const usePerformanceIntelligence = (window: TimeWindow = '7d') => {
     try {
       const [o, c] = await Promise.all([
         fetchPerformanceOutliers(window),
-        fetchAttributionCoverage('all_time')
+        fetchAttributionCoverage()
       ])
       setOutliers(o)
       setCoverage(c)
