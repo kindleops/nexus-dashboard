@@ -4168,6 +4168,7 @@
   color: var(--text-muted);
   display: grid;
   place-items: center;
+  cursor: pointer;
 }
 
 .nx-toast-card > button:hover {
@@ -4180,44 +4181,147 @@
 }
 
 /* ─── Notification Center Panel ──────────────────────────────────────── */
+.nx-notification-center {
+  background: rgba(15, 20, 31, 0.94) !important;
+  backdrop-filter: blur(48px) saturate(210%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  box-shadow: 0 42px 90px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05) inset !important;
+}
 
+.nx-notification-center header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
 
+.nx-notification-center header div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
 
+.nx-notification-center header span {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
 
+.nx-notification-center header strong {
+  color: #fff;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
 
+.nx-notification-center header button {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+}
 
+.nx-notification-center header button:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+}
 
+.nx-notification-center__tools {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  background: rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
 
+.nx-notification-center__tools button {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  transition: all 0.2s ease;
+}
 
+.nx-notification-center__tools button:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.nx-notification-center__tools button.is-active {
+  color: #fff;
+  background: var(--accent-blue-soft);
+  border-color: rgba(10, 132, 255, 0.4);
+  box-shadow: 0 0 12px rgba(10, 132, 255, 0.2);
+}
+
+.nx-notification-center__tools button:last-child {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--accent-blue);
+  padding-right: 0;
+}
+
+.nx-notification-center__tools button:last-child:hover {
+  color: #60a5fa;
+  text-decoration: underline;
+}
 
 .nx-notification-tabs {
   flex: 0 0 auto;
   display: flex;
-  gap: 4px;
-  padding: 8px 14px;
+  gap: 6px;
+  padding: 10px 14px;
   overflow-x: auto;
   scrollbar-width: none;
-  border-bottom: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .nx-notification-tabs::-webkit-scrollbar { display: none; }
 
 .nx-notification-tabs button {
-  min-height: 26px;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  padding: 0 10px;
+  min-height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 0 12px;
   color: var(--text-muted);
-  background: transparent;
+  background: rgba(255, 255, 255, 0.03);
   font-size: 11px;
   font-weight: 700;
   white-space: nowrap;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.nx-notification-tabs button:hover {
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .nx-notification-tabs button.is-active {
   color: #fff;
   border-color: rgba(10, 132, 255, 0.45);
   background: var(--accent-blue-soft);
+  box-shadow: 0 4px 12px rgba(10, 132, 255, 0.1);
 }
 
 .nx-notification-list {
@@ -4226,51 +4330,64 @@
   overflow-y: auto;
   display: grid;
   align-content: start;
-  gap: 6px;
-  padding: 10px 10px 14px;
+  gap: 8px;
+  padding: 12px;
   scrollbar-width: thin;
 }
 
 .nx-notification-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px;
-  border: 1px solid var(--glass-border);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.035);
+  grid-template-columns: minmax(0, 1fr) 34px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
   overflow: hidden;
-  transition: border-color 0.14s ease;
+  transition: all 0.24s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.nx-notification-card.is-critical { border-color: rgba(255, 69, 58, 0.35); }
-.nx-notification-card.is-warning { border-color: rgba(255, 214, 10, 0.3); }
-.nx-notification-card.is-success { border-color: rgba(48, 209, 88, 0.28); }
-.nx-notification-card.is-read { opacity: 0.55; }
+.nx-notification-card:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.16);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.nx-notification-card.is-critical { border-color: rgba(255, 69, 58, 0.25); background: linear-gradient(90deg, rgba(255, 69, 58, 0.06), rgba(255, 255, 255, 0.03)); }
+.nx-notification-card.is-warning { border-color: rgba(255, 214, 10, 0.2); background: linear-gradient(90deg, rgba(255, 214, 10, 0.05), rgba(255, 255, 255, 0.03)); }
+.nx-notification-card.is-success { border-color: rgba(48, 209, 88, 0.2); background: linear-gradient(90deg, rgba(48, 209, 88, 0.05), rgba(255, 255, 255, 0.03)); }
+.nx-notification-card.is-read { opacity: 0.65; filter: grayscale(0.2); }
 
 .nx-notification-card__main {
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) auto;
-  gap: 10px;
-  padding: 10px 12px;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 12px 14px;
   text-align: left;
   border: 0;
   background: transparent;
   color: inherit;
+  cursor: pointer;
 }
 
 .nx-notification-card__icon {
-  width: 28px;
-  height: 28px;
+  width: 34px;
+  height: 34px;
   display: grid;
   place-items: center;
-  border-radius: 8px;
+  border-radius: 10px;
   color: var(--text-secondary);
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.08);
   flex: 0 0 auto;
+  transition: all 0.2s ease;
 }
 
-.nx-notification-card.is-critical .nx-notification-card__icon { color: var(--danger); background: rgba(255, 69, 58, 0.14); }
-.nx-notification-card.is-warning .nx-notification-card__icon { color: var(--warning); background: rgba(255, 214, 10, 0.12); }
-.nx-notification-card.is-success .nx-notification-card__icon { color: var(--success); background: rgba(48, 209, 88, 0.12); }
+.nx-notification-card:hover .nx-notification-card__icon {
+  transform: scale(1.05);
+}
+
+.nx-notification-card.is-critical .nx-notification-card__icon { color: #ff6b6b; background: rgba(255, 69, 58, 0.14); box-shadow: 0 0 15px rgba(255, 69, 58, 0.15); }
+.nx-notification-card.is-warning .nx-notification-card__icon { color: #ffd93d; background: rgba(255, 214, 10, 0.12); box-shadow: 0 0 15px rgba(255, 214, 10, 0.1); }
+.nx-notification-card.is-success .nx-notification-card__icon { color: #6bff91; background: rgba(48, 209, 88, 0.12); box-shadow: 0 0 15px rgba(48, 209, 88, 0.1); }
 
 .nx-notification-card__main > span:not(.nx-notification-card__icon) {
   min-width: 0;
@@ -4281,6 +4398,9 @@
 .nx-notification-card__main > span > small {
   color: var(--text-muted);
   font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4288,8 +4408,9 @@
 
 .nx-notification-card__main > span > strong {
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
+  letter-spacing: -0.01em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4297,33 +4418,49 @@
 
 .nx-notification-card__main > span > em {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   font-style: normal;
+  line-height: 1.4;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: normal;
 }
 
 .nx-notification-card__main > b {
   align-self: center;
   white-space: nowrap;
   color: var(--accent-blue);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(10, 132, 255, 0.1);
+  transition: all 0.2s ease;
+}
+
+.nx-notification-card:hover .nx-notification-card__main > b {
+  background: var(--accent-blue);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(10, 132, 255, 0.3);
 }
 
 .nx-notification-card > button:last-child {
   display: grid;
   place-items: center;
   border: 0;
-  border-left: 1px solid var(--glass-border);
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
   background: transparent;
   color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
 }
 
 .nx-notification-card > button:last-child:hover {
-  color: var(--text-secondary);
-  background: rgba(255, 255, 255, 0.06);
+  color: var(--danger);
+  background: rgba(255, 69, 58, 0.08);
 }
 
 .nx-notification-empty {
@@ -13484,4 +13621,297 @@
 
 .nx-timeline-card {
   padding: 16px !important;
+}
+
+/* ─── Phase 3 Inbox Intelligence UI ─── */
+
+.nx-memory-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  transition: all 0.3s ease;
+}
+
+.nx-memory-badge.is-active {
+  background: rgba(10, 132, 255, 0.12);
+  border-color: rgba(10, 132, 255, 0.3);
+  color: #64d2ff;
+  box-shadow: 0 0 12px rgba(10, 132, 255, 0.15);
+}
+
+.nx-memory-badge__orb {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor;
+}
+
+.nx-memory-badge.is-active .nx-memory-badge__orb {
+  animation: nx-orb-pulse 2s infinite ease-in-out;
+}
+
+@keyframes nx-orb-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.3); }
+}
+
+.nx-temp-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+}
+
+.nx-temp-indicator.is-high,
+.nx-temp-indicator.is-hot {
+  color: #ff453a;
+  border-color: rgba(255, 69, 58, 0.3);
+  background: rgba(255, 69, 58, 0.08);
+}
+
+.nx-temp-indicator.is-medium,
+.nx-temp-indicator.is-warming,
+.nx-temp-indicator.is-engaged {
+  color: #ffd60a;
+  border-color: rgba(255, 214, 10, 0.3);
+  background: rgba(255, 214, 10, 0.08);
+}
+
+.nx-temp-indicator.is-cold,
+.nx-temp-indicator.is-low {
+  color: #5bb6ff;
+  border-color: rgba(91, 182, 255, 0.3);
+  background: rgba(91, 182, 255, 0.08);
+}
+
+.nx-temp-indicator.is-dead,
+.nx-temp-indicator.is-none {
+  color: #aab3c5;
+  border-color: rgba(170, 179, 197, 0.2);
+  background: rgba(170, 179, 197, 0.05);
+}
+
+.nx-seller-command-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+/* AI Decision Detail */
+.nx-timeline-details-shell {
+  margin-top: 8px;
+}
+
+.nx-timeline-details-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  color: #64d2ff;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 4px 0;
+  cursor: pointer;
+  opacity: 0.8;
+  transition: opacity 0.2s;
+}
+
+.nx-timeline-details-toggle:hover {
+  opacity: 1;
+}
+
+.nx-timeline-details-content {
+  margin-top: 8px;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  animation: nx-details-in 0.2s ease-out;
+}
+
+@keyframes nx-details-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.nx-ai-decision-detail {
+  display: grid;
+  gap: 10px;
+}
+
+.nx-ai-decision-detail__reason strong,
+.nx-ai-decision-detail__rules strong {
+  display: block;
+  font-size: 10px;
+  color: #64d2ff;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+  letter-spacing: 0.04em;
+}
+
+.nx-ai-decision-detail__reason p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.nx-ai-decision-detail__rules ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.nx-ai-decision-detail__meta {
+  display: flex;
+  justify-content: space-between;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.4);
+  text-transform: uppercase;
+}
+
+.nx-nba-chip {
+  margin-top: 12px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(10, 132, 255, 0.1), rgba(167, 139, 250, 0.1));
+  border: 1px solid rgba(10, 132, 255, 0.2);
+  padding: 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.nx-nba-chip__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  font-weight: 800;
+  color: #64d2ff;
+  text-transform: uppercase;
+}
+
+.nx-nba-chip__conf {
+  margin-left: auto;
+  opacity: 0.7;
+}
+
+.nx-nba-chip__body {
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Chat Turn Enrichment */
+.nx-turn-intel {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.nx-turn-intent {
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: #64d2ff;
+}
+
+.nx-turn-conf {
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.nx-nba-chip.is-expanded {
+  background: linear-gradient(135deg, rgba(10, 132, 255, 0.15), rgba(167, 139, 250, 0.15));
+  border-color: rgba(10, 132, 255, 0.4);
+}
+
+.nx-nba-chip__toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: #64d2ff;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-top: 8px;
+  padding: 4px 0;
+  cursor: pointer;
+  opacity: 0.8;
+  transition: opacity 0.2s;
+}
+
+.nx-nba-chip__toggle:hover {
+  opacity: 1;
+}
+
+.nx-nba-chip__reasoning {
+  margin-top: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  line-height: 1.5;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.nx-turn-intel__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nx-turn-intel__why {
+  background: none;
+  border: none;
+  color: #64d2ff;
+  padding: 2px;
+  display: flex;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+
+.nx-turn-intel__why:hover {
+  opacity: 1;
+}
+
+.nx-turn-intel__reason {
+  margin-top: 6px;
+  padding: 8px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 6px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.4;
+  border: 1px solid rgba(255, 255, 255, 0.05);
 }

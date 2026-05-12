@@ -28,7 +28,10 @@
     "proof:kpi-data-coverage": "node scripts/proof/kpi-data-coverage.mjs",
     "proof:kpi-dimensions": "node scripts/proof/kpi-dimensions.mjs",
     "proof:kpi-command-center": "node scripts/proof/kpi-command-center.mjs",
-    "proof:kpi-ui": "node scripts/proof/kpi-ui.mjs"
+    "proof:kpi-ui": "node scripts/proof/kpi-ui.mjs",
+    "proof:inbox-phase3-intelligence": "node scripts/proof/inbox-phase3-intelligence.mjs",
+    "proof:no-dossier-regression": "node scripts/proof/no-dossier-regression.mjs",
+    "proof:timeline-intelligence-events": "node scripts/proof/timeline-intelligence-events.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.104.1",

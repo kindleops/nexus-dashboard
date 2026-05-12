@@ -30,6 +30,9 @@ import {
   statusStyleVars,
 } from '../status-visuals'
 
+import { usePhase3Intelligence } from '../hooks/usePhase3Intelligence'
+import type { Phase3Intelligence } from '../../../lib/data/inboxIntelligencePhase3'
+
 const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
 
 import { detectPropertyCategory } from '../helpers/propertyHelpers'
@@ -399,6 +402,60 @@ const SectionEmptyState = ({ text }: { text: string }) => (
     <p>{text}</p>
   </div>
 )
+
+const MemoryActiveBadge = ({ active }: { active: boolean }) => (
+  <div className={cls('nx-memory-badge', active && 'is-active')}>
+    <div className="nx-memory-badge__orb" />
+    <span>{active ? 'MEMORY ACTIVE' : 'COLD MEMORY'}</span>
+  </div>
+)
+
+const SellerTemperatureIndicator = ({ interest }: { interest: string }) => {
+  const label = interest?.toUpperCase() || 'UNKNOWN'
+  // tone is currently unused but kept for future semantic coloring
+  // let tone: any = 'accent'
+  // if (interest === 'high') tone = 'danger'
+  // if (interest === 'medium') tone = 'warning'
+  
+  return (
+    <div className={cls('nx-temp-indicator', `is-${interest}`)}>
+      <Icon name="zap" />
+      <span>{label} INTEREST</span>
+    </div>
+  )
+}
+
+const NextBestActionChip = ({ action, confidence, reasoning }: { action: string; confidence?: number; reasoning?: string }) => {
+  const [showReason, setShowReason] = useState(false)
+  
+  return (
+    <div className={cls('nx-nba-chip', showReason && 'is-expanded')}>
+      <div className="nx-nba-chip__header">
+        <Icon name="spark" />
+        <span>NEXT BEST ACTION</span>
+        {confidence && <span className="nx-nba-chip__conf">{Math.round(confidence * 100)}% CONF</span>}
+      </div>
+      <div className="nx-nba-chip__body">{action}</div>
+      {reasoning && (
+        <>
+          <button 
+            type="button" 
+            className="nx-nba-chip__toggle" 
+            onClick={() => setShowReason(!showReason)}
+          >
+            <Icon name={showReason ? 'chevron-up' : 'chevron-down'} />
+            <span>{showReason ? 'Hide reasoning' : 'Why this action?'}</span>
+          </button>
+          {showReason && (
+            <div className="nx-nba-chip__reasoning nx-glass-surface">
+              {reasoning}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
 
 // ── Next Best Action Logic ────────────────────────────────────────────────
 
@@ -1432,14 +1489,17 @@ const TimelineEvent = ({
   time, 
   state = 'neutral', 
   subtext, 
-  badge
+  badge,
+  details
 }: { 
   label: string; 
   time: string; 
   state?: 'neutral' | 'positive' | 'negative' | 'active'; 
   subtext?: string;
-  badge?: { label: string; tone: 'accent' | 'success' | 'danger' | 'neutral' }
+  badge?: { label: string; tone: 'accent' | 'success' | 'danger' | 'neutral' };
+  details?: React.ReactNode;
 }) => {
+  const [showDetails, setShowDetails] = useState(false)
   const stateColor = {
     neutral: '#0a84ff',
     positive: '#30d158',
@@ -1448,24 +1508,39 @@ const TimelineEvent = ({
   }[state] || '#0a84ff'
 
   return (
-    <div className={`nx-timeline-item is-${state}`}>
+    <div className={cls('nx-timeline-item', `is-${state}`)}>
       <div className="nx-timeline-connector" />
       <div 
         className="nx-timeline-dot" 
         style={{ backgroundColor: stateColor, borderColor: 'rgba(0,0,0,0.4)' }}
       />
       <div className="nx-timeline-content">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', width: '100%' }}>
-          <div className="nx-timeline-label-group">
-            <div className="nx-timeline-label">{label}</div>
-            <div className="nx-timeline-time">
-              {new Date(time).toLocaleDateString()} , {new Date(time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+        <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', width: '100%' }}>
+            <div className="nx-timeline-label-group">
+              <div className="nx-timeline-label">{label}</div>
+              <div className="nx-timeline-time">
+                {new Date(time).toLocaleDateString()} , {new Date(time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </div>
+              {subtext && <div className="nx-timeline-subtext">{subtext}</div>}
             </div>
-            {subtext && <div className="nx-timeline-subtext">{subtext}</div>}
+            {badge && (
+              <div className={`nx-timeline-item-badge is-${badge.tone || 'neutral'}`}>
+                {badge.label}
+              </div>
+            )}
           </div>
-          {badge && (
-            <div className={`nx-timeline-item-badge is-${badge.tone || 'neutral'}`}>
-              {badge.label}
+          {details && (
+            <div className="nx-timeline-details-shell">
+              <button 
+                type="button" 
+                className="nx-timeline-details-toggle" 
+                onClick={() => setShowDetails(!showDetails)}
+              >
+                <Icon name={showDetails ? 'chevron-down' : 'chevron-right'} />
+                <span>{showDetails ? 'Hide Details' : 'View AI Decision Detail'}</span>
+              </button>
+              {showDetails && <div className="nx-timeline-details-content">{details}</div>}
             </div>
           )}
         </div>
@@ -1474,15 +1549,45 @@ const TimelineEvent = ({
   )
 }
 
-export const TimelinePanel = ({ thread, messages }: { thread: WorkflowThread; messages: ThreadMessage[] }) => {
-  const events = useMemo(() => {
-    const rawEvents: Array<{ label: string; time: string | Date; state: 'neutral' | 'positive' | 'negative' | 'active'; subtext?: string; badge?: any; priority: number }> = []
+const AIDecisionDetail = ({ 
+  decision, 
+  routing 
+}: { 
+  decision?: Phase3Intelligence['aiDecisions'][0], 
+  routing?: Phase3Intelligence['routingDecisions'][0] 
+}) => {
+  if (!decision && !routing) return null
 
-    // Exhaustive classification based on user-provided script
+  return (
+    <div className="nx-ai-decision-detail">
+      <div className="nx-ai-decision-detail__reason">
+        <strong>Reasoning:</strong>
+        <p>{decision?.decision_value || routing?.decision_type.replace(/_/g, ' ')}</p>
+      </div>
+      {routing?.rules_triggered && routing.rules_triggered.length > 0 && (
+        <div className="nx-ai-decision-detail__rules">
+          <strong>Rules Triggered:</strong>
+          <ul>
+            {routing.rules_triggered.map((rule, i) => <li key={i}>{rule}</li>)}
+          </ul>
+        </div>
+      )}
+      <div className="nx-ai-decision-detail__meta">
+        <span>Confidence: {Math.round((decision?.confidence || routing?.confidence || 0) * 100)}%</span>
+        {routing?.routed_to && <span>Action: {routing.routed_to}</span>}
+      </div>
+    </div>
+  )
+}
+
+export const TimelinePanel = ({ thread, messages, phase3 }: { thread: WorkflowThread; messages: ThreadMessage[]; phase3?: Phase3Intelligence | null }) => {
+  const events = useMemo(() => {
+    const rawEvents: Array<{ label: string; time: string | Date; state: 'neutral' | 'positive' | 'negative' | 'active'; subtext?: string; badge?: any; priority: number; details?: React.ReactNode }> = []
+
+    // ... existing classifyMessage function ...
     const classifyMessage = (body: string) => {
       const text = body.toLowerCase().trim()
       
-      // Negative / Compliance / Objections (Red)
       const isNegative = [
         'stop', 'unsubscribe', 'remove', 'cancel', 'quit', 'end', 'para', 'basta', 'detente', // Compliance
         'wrong number', 'not the owner', 'already sold', 'not interested', 'no interest', 'pass', 'nah', 'nope', // Objections
@@ -1495,7 +1600,6 @@ export const TimelinePanel = ({ thread, messages }: { thread: WorkflowThread; me
       
       if (isNegative) return { label: 'Negative Intent', state: 'negative' }
       
-      // Positive / Motivation / Signal (Green)
       const isPositive = [
         'interested', 'how much', 'price', 'offer', 'ready', 'motivated', 'vacant', 'empty',
         'yes', 'yeah', 'yup', 'sure', 'ok', 'let\'s talk', 'call me', 'email me', 'send offer',
@@ -1505,20 +1609,17 @@ export const TimelinePanel = ({ thread, messages }: { thread: WorkflowThread; me
       
       if (isPositive) return { label: 'Positive Intent', state: 'positive' }
       
-      // Neutral / Curious / Questions (Blue)
       const isCurious = ['how does it work', 'process', 'info', 'details', 'who is this', 'who are you', 'how did you get my number'].some(p => text.includes(p))
       if (isCurious) return { label: 'Neutral Intent (Curious)', state: 'neutral' }
       
       return { label: 'Neutral Intent', state: 'neutral' }
     }
 
-    // 1. Initial Lead Entry (If firstTouchAt exists and is before messages)
     const firstTouchAt = thread.firstTouchAt || thread.first_touch_at
     if (firstTouchAt && (!messages || messages.length === 0)) {
       rawEvents.push({ label: 'Lead Entered Pipeline', time: firstTouchAt, state: 'neutral', priority: 0 })
     }
 
-    // 2. Messages & Detailed Classification
     const safeMessages = [...(messages || [])].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
     let firstOutboundFound = false
     
@@ -1539,7 +1640,6 @@ export const TimelinePanel = ({ thread, messages }: { thread: WorkflowThread; me
           priority: 2 
         })
 
-        // Specific Milestones
         if (body.toLowerCase().includes('$') || body.toLowerCase().includes('price')) {
           rawEvents.push({ label: 'Asking Price Given', time: timestamp, state: 'positive', priority: 3 })
         }
@@ -1563,7 +1663,6 @@ export const TimelinePanel = ({ thread, messages }: { thread: WorkflowThread; me
       }
     })
 
-    // 3. System States (Excluding "Automation Active" as requested)
     if (thread.estimatedValue) {
       rawEvents.push({ 
         label: 'AI Underwrite Complete', 
@@ -1584,25 +1683,72 @@ export const TimelinePanel = ({ thread, messages }: { thread: WorkflowThread; me
       })
     }
 
-    // 4. Final Processing: Sort Chronologically and Apply Active State to LAST event
-    const sorted = rawEvents.sort((a, b) => {
+    if (phase3) {
+      phase3.recentTurns.forEach(turn => {
+        if (turn.intent_detected) {
+          rawEvents.push({
+            label: `Memory Intent: ${turn.intent_detected}`,
+            time: turn.created_at,
+            state: 'active',
+            subtext: `Handled by ${turn.handled_by} (${Math.round((turn.confidence_score || 0) * 100)}% conf)`,
+            priority: 4
+          })
+        }
+      })
+
+      phase3.routingDecisions.forEach(rd => {
+        rawEvents.push({
+          label: `AI Routing: ${rd.decision_type.replace(/_/g, ' ')}`,
+          time: rd.created_at,
+          state: 'active',
+          subtext: `Routed to ${rd.routed_to}`,
+          badge: { label: 'ESCALATION', tone: rd.decision_type.includes('escalate') ? 'danger' : 'accent' },
+          details: <AIDecisionDetail routing={rd} />,
+          priority: 5
+        })
+      })
+
+      phase3.aiDecisions.forEach(ad => {
+        rawEvents.push({
+          label: `AI Decision: ${ad.decision_category.replace(/_/g, ' ')}`,
+          time: ad.created_at,
+          state: 'positive',
+          subtext: ad.decision_value,
+          details: <AIDecisionDetail decision={ad} />,
+          priority: 4
+        })
+      })
+
+      phase3.negotiationEvents.forEach(ne => {
+        const type = ne.event_type.replace(/_/g, ' ')
+        rawEvents.push({
+          label: `Milestone: ${type}`,
+          time: ne.created_at,
+          state: 'positive',
+          subtext: String(ne.event_payload?.reason || ne.event_payload?.summary || ''),
+          badge: { label: 'NEGOTIATION', tone: 'success' },
+          priority: 6
+        })
+      })
+    }
+
+    const sorted = [...rawEvents].sort((a, b) => {
       const timeA = new Date(a.time).getTime()
       const timeB = new Date(b.time).getTime()
       if (timeA !== timeB) return timeA - timeB
       return a.priority - b.priority
     })
 
-    // Tag the very last event as "active" (purple pulse)
     if (sorted.length > 0) {
       const lastIdx = sorted.length - 1
       sorted[lastIdx] = { ...sorted[lastIdx], state: 'active' }
     }
 
-    // Return in REVERSE for UI display (latest on top)
     return [...sorted].reverse()
-  }, [thread, messages])
+  }, [thread, messages, phase3])
 
   const isCritical = thread.inboxStatus === 'new_reply' || thread.priority === 'urgent'
+  const hasMemory = Boolean(phase3?.thread)
 
   return (
     <div className="nx-intel-panel-grid">
@@ -1613,13 +1759,18 @@ export const TimelinePanel = ({ thread, messages }: { thread: WorkflowThread; me
             <Icon name="activity" />
             Automation Timeline
           </span>
-          {isCritical && <QuietBadge label="CRITICAL" tone="danger" />}
+          <div style={{ display: 'flex', gap: 8 }}>
+            {hasMemory ? <QuietBadge label="MEMORY ACTIVE" tone="success" /> : <QuietBadge label="MEMORY NOT BUILT YET" tone="default" />}
+            {isCritical && <QuietBadge label="CRITICAL" tone="danger" />}
+          </div>
         </div>
 
         <div className="nx-timeline-v2">
-          {events.map((ev, idx) => (
+          {events.length > 0 ? events.map((ev, idx) => (
             <TimelineEvent key={idx} {...ev} time={typeof ev.time === 'string' ? ev.time : ev.time.toISOString()} />
-          ))}
+          )) : (
+            <SectionEmptyState text="No timeline events captured yet." />
+          )}
         </div>
       </DossierCard>
     </div>
@@ -1962,10 +2113,12 @@ const ContactIntelligenceCard = ({
 
 const SellerCommandCard = ({
   thread,
+  phase3,
   onStatusChange,
   onStageChange,
 }: {
   thread: WorkflowThread
+  phase3: Phase3Intelligence | null
   onStatusChange: (status: InboxStatus | 'sent_message') => void
   onStageChange: (stage: SellerStage) => void
 }) => {
@@ -1985,16 +2138,22 @@ const SellerCommandCard = ({
   const stageVisual = getSellerStageVisual(thread.conversationStage)
   const automationLabel = thread.automationState === 'active' ? 'AUTOMATION ACTIVE' : 'AUTOMATION READY'
 
+  const memoryActive = Boolean(phase3?.thread)
+  const sellerInterest = phase3?.latestSnapshot?.state_data?.seller_interest || 'none'
+
   return (
     <DossierCard className="nx-seller-command-card">
-      <div className="nx-seller-command-card__identity">
-        <div className="nx-dossier-header__avatar is-command">{initials}</div>
-        <div className="nx-seller-command-card__info">
-          <strong>{sellerName}</strong>
-          <span className="nx-seller-sub-telemetry">
-            {[ownerType, thread.isAbsentee ? 'ABSENTEE' : null, market].filter(Boolean).join(' • ')}
-          </span>
+      <div className="nx-seller-command-card__header">
+        <div className="nx-seller-command-card__identity">
+          <div className="nx-dossier-header__avatar is-command">{initials}</div>
+          <div className="nx-seller-command-card__info">
+            <strong>{sellerName}</strong>
+            <span className="nx-seller-sub-telemetry">
+              {[ownerType, thread.isAbsentee ? 'ABSENTEE' : null, market].filter(Boolean).join(' • ')}
+            </span>
+          </div>
         </div>
+        <SellerTemperatureIndicator interest={sellerInterest} />
       </div>
 
       <div className="nx-seller-command-card__controls">
@@ -2043,9 +2202,18 @@ const SellerCommandCard = ({
 
       <div className="nx-seller-command-card__chips">
         <QuietBadge label={automationLabel} tone="accent" />
+        <MemoryActiveBadge active={memoryActive} />
         {isPresent(finalScore) && <QuietBadge label={`SCORE ${finalScore}`} />}
         {lastContact && <QuietBadge label={`LAST CONTACT ${formatRelativeTime(lastContact).toUpperCase()}`} />}
       </div>
+      
+      {phase3?.latestSnapshot?.state_data?.next_best_action && (
+        <NextBestActionChip 
+          action={phase3.latestSnapshot.state_data.next_best_action} 
+          confidence={phase3.latestSnapshot.state_data.confidence} 
+          reasoning={phase3.latestSnapshot.state_data.reasoning || phase3.latestSnapshot.capture_reason}
+        />
+      )}
     </DossierCard>
   )
 }
@@ -2094,6 +2262,7 @@ export const IntelligencePanel = ({
   }
 
   const snapshot = useMemo(() => normalizePropertySnapshot(intelligence || null, thread), [intelligence, thread])
+  const { data: phase3 } = usePhase3Intelligence(thread.threadKey)
 
   return (
     <aside className={cls('nx-intelligence-panel', `is-mode-${panelMode}`)}>
@@ -2107,11 +2276,11 @@ export const IntelligencePanel = ({
       </header>
 
       <div className="nx-intel-scroll-body">
-        <SellerCommandCard thread={thread} onStatusChange={onStatusChange} onStageChange={onStageChange} />
+        <SellerCommandCard thread={thread} phase3={phase3} onStatusChange={onStatusChange} onStageChange={onStageChange} />
         <PropertyHeroCard thread={thread} snapshot={snapshot} panelMode={panelMode} />
         <OfferMemoCard thread={thread} />
         <ContactIntelligenceCard thread={thread} snapshot={snapshot} intelligence={intelligence} />
-        <TimelinePanel thread={thread} messages={messages} />
+        <TimelinePanel thread={thread} messages={messages} phase3={phase3} />
         <LinkedRecordsCard thread={thread} />
         <ActionRailCard onOpenMap={onOpenMap} onOpenDossier={onOpenDossier} onOpenAi={onOpenAi} />
       </div>

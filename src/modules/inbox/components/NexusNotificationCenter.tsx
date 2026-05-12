@@ -339,7 +339,8 @@ export const NexusNotificationCenter = ({
                     setShowUnreadOnly((value) => !value)
                   }}
                 >
-                  Unread {unreadCount}
+                  <Icon name="bell" />
+                  Unread {unreadCount > 0 ? `(${unreadCount})` : ''}
                 </button>
                 <button 
                   type="button" 
@@ -350,6 +351,7 @@ export const NexusNotificationCenter = ({
                     setShowCriticalOnly((value) => !value)
                   }}
                 >
+                  <Icon name="alert" />
                   Critical
                 </button>
                 <button 

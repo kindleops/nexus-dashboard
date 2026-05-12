@@ -5,6 +5,7 @@ import { Icon } from '../../../shared/icons'
 import { formatMessageTime } from '../../../shared/formatters'
 import { getThreadMatchedKeywords, resolveThreadAddressLine, resolveThreadMarketBadge, resolveThreadPrimaryName } from '../inbox-ui-helpers'
 import { getStatusVisual, getSellerStageVisual } from '../status-visuals'
+import { usePhase3Intelligence } from '../hooks/usePhase3Intelligence'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
@@ -89,6 +90,7 @@ export const ChatThread = ({
   onOpenDebug,
   searchQuery = '',
 }: ChatThreadProps) => {
+  const { data: phase3 } = usePhase3Intelligence(thread?.threadKey)
   const listRef = useRef<HTMLDivElement | null>(null)
   const scrollSnapshotRef = useRef<{ height: number; top: number; nearBottom: boolean }>({
     height: 0,
@@ -270,6 +272,52 @@ export const ChatThread = ({
             <div key={msg.id} className={cls('nx-bubble-wrap', isOutbound ? 'is-outbound' : 'is-inbound')}>
               <div className="nx-chat-bubble">
                 {highlightText(msg.body, matchedKeywords.length ? matchedKeywords : [searchQuery])}
+                
+                {/* Phase 3 Turn Intelligence */}
+                {(() => {
+                  const turn = phase3?.recentTurns.find(t => 
+                    t.metadata?.inbound_message_id === msg.id || 
+                    t.metadata?.outbound_message_id === msg.id ||
+                    t.metadata?.message_event_id === msg.id
+                  )
+                  if (!turn || (!turn.intent_detected && !turn.confidence_score)) return null
+                  
+                  return (
+                    <div className="nx-turn-intel">
+                      <div className="nx-turn-intel__row">
+                        {turn.intent_detected && (
+                          <span className="nx-turn-intent">
+                            {turn.intent_detected.replace(/_/g, ' ')}
+                          </span>
+                        )}
+                        {turn.confidence_score && (
+                          <span className="nx-turn-conf">
+                            {Math.round(turn.confidence_score * 100)}%
+                          </span>
+                        )}
+                        {typeof turn.metadata?.reasoning === 'string' && (
+                          <button 
+                            type="button" 
+                            className="nx-turn-intel__why" 
+                            onClick={(e) => {
+                              const target = e.currentTarget.nextElementSibling as HTMLElement
+                              if (target) {
+                                target.style.display = target.style.display === 'none' ? 'block' : 'none'
+                              }
+                            }}
+                          >
+                            <Icon name="alert-circle" />
+                          </button>
+                        )}
+                      </div>
+                      {typeof turn.metadata?.reasoning === 'string' && (
+                        <div className="nx-turn-intel__reason" style={{ display: 'none' }}>
+                          {turn.metadata.reasoning}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
               </div>
 
               <div className="nx-bubble-footer">
