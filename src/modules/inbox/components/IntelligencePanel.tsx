@@ -306,11 +306,7 @@ const DossierTabGroup = ({
 }) => (
   <div className="nx-dossier-tabs">
     {tabs.map((t) => (
-      <button
-        key={t.id}
-        type="button"
-        className={cls('nx-dossier-tab', t.id === active && 'is-active')}
-        onClick={() => onChange(t.id)}
+      <button type="button" key={t.id} className={cls('nx-dossier-tab', t.id === active && 'is-active')} onClick={() => onChange(t.id)}
       >
         <Icon name={t.icon as any} />
         <span>{t.label}</span>
@@ -438,17 +434,14 @@ const NextBestActionChip = ({ action, confidence, reasoning }: { action: string;
       <div className="nx-nba-chip__body">{action}</div>
       {reasoning && (
         <>
-          <button 
-            type="button" 
-            className="nx-nba-chip__toggle" 
-            onClick={() => setShowReason(!showReason)}
+          <button type="button" className="nx-nba-chip__toggle" onClick={() => setShowReason(!showReason)}
           >
             <Icon name={showReason ? 'chevron-up' : 'chevron-down'} />
             <span>{showReason ? 'Hide reasoning' : 'Why this action?'}</span>
           </button>
           {showReason && (
             <div className="nx-nba-chip__reasoning nx-glass-surface">
-              {reasoning}
+              {String(reasoning || '')}
             </div>
           )}
         </>
@@ -609,7 +602,7 @@ export const WorkflowControl = ({
           {statusOpen && (
             <div className="nx-workflow-menu nx-liquid-panel">
               {inboxStatusOptions.map((opt) => (
-                <button key={opt.value} type="button" className={cls('nx-workflow-menu-item', opt.value === thread.inboxStatus && 'is-selected')} style={statusStyleVars(opt)} onClick={() => handleStatusChange(opt.value as InboxStatus)}>
+                <button type="button" key={opt.value} className={cls('nx-workflow-menu-item', opt.value === thread.inboxStatus && 'is-selected')} style={statusStyleVars(opt)} onClick={() => handleStatusChange(opt.value as InboxStatus)}>
                   <i className="nx-workflow-dot" style={{ background: opt.color }} />
                   <div><strong>{opt.label}</strong><small>{opt.description}</small></div>
                 </button>
@@ -629,7 +622,7 @@ export const WorkflowControl = ({
           {stageOpen && (
             <div className="nx-workflow-menu nx-liquid-panel">
               {sellerStageOptions.map((opt) => (
-                <button key={opt.value} type="button" className={cls('nx-workflow-menu-item', opt.value === thread.conversationStage && 'is-selected')} style={statusStyleVars(opt)} onClick={() => handleStageChange(opt.value as SellerStage)}>
+                <button type="button" key={opt.value} className={cls('nx-workflow-menu-item', opt.value === thread.conversationStage && 'is-selected')} style={statusStyleVars(opt)} onClick={() => handleStageChange(opt.value as SellerStage)}>
                   <i className="nx-workflow-dot" style={{ background: opt.color }} />
                   <div><strong>{opt.label}</strong><small>{opt.description}</small></div>
                 </button>
@@ -750,12 +743,7 @@ export const OfferMemoCard = ({ thread }: { thread: WorkflowThread }) => {
       )}
 
       <div className="nx-offer-actions">
-        <button 
-          type="button" 
-          className={cls('nx-command-button is-primary', isUnderwriting && 'is-loading')}
-          onClick={handleUnderwrite}
-          disabled={isUnderwriting}
-        >
+        <button type="button" className={cls('nx-command-button is-primary', isUnderwriting && 'is-loading')} onClick={handleUnderwrite} disabled={isUnderwriting}>
           <Icon name={isUnderwriting ? 'refresh-cw' : 'spark'} />
           {isUnderwriting ? 'ANALYZING...' : 'RUN AI UNDERWRITING'}
         </button>
@@ -1295,11 +1283,7 @@ const INTELLIGENCE_TABS: Array<{ id: IntelligenceTabId; label: string }> = [
 export const DossierTabNav = ({ active, onChange }: { active: IntelligenceTabId; onChange: (tab: IntelligenceTabId) => void }) => (
   <nav className="nx-intelligence-tabs" aria-label="Deal intelligence tabs">
     {INTELLIGENCE_TABS.map((tab) => (
-      <button
-        key={tab.id}
-        type="button"
-        className={cls('nx-intelligence-tab', active === tab.id && 'is-active')}
-        onClick={() => onChange(tab.id)}
+      <button type="button" key={tab.id} className={cls('nx-intelligence-tab', active === tab.id && 'is-active')} onClick={() => onChange(tab.id)}
       >
         <span>{tab.label}</span>
       </button>
@@ -1532,10 +1516,7 @@ const TimelineEvent = ({
           </div>
           {details && (
             <div className="nx-timeline-details-shell">
-              <button 
-                type="button" 
-                className="nx-timeline-details-toggle" 
-                onClick={() => setShowDetails(!showDetails)}
+              <button type="button" className="nx-timeline-details-toggle" onClick={() => setShowDetails(!showDetails)}
               >
                 <Icon name={showDetails ? 'chevron-down' : 'chevron-right'} />
                 <span>{showDetails ? 'Hide Details' : 'View AI Decision Detail'}</span>
@@ -1562,7 +1543,7 @@ const AIDecisionDetail = ({
     <div className="nx-ai-decision-detail">
       <div className="nx-ai-decision-detail__reason">
         <strong>Reasoning:</strong>
-        <p>{decision?.decision_value || routing?.decision_type.replace(/_/g, ' ')}</p>
+        <p>{String(decision?.decision_value || routing?.decision_type?.replace(/_/g, ' ') || '')}</p>
       </div>
       {routing?.rules_triggered && routing.rules_triggered.length > 0 && (
         <div className="nx-ai-decision-detail__rules">
@@ -2019,11 +2000,7 @@ const ContactIntelligenceCard = ({
       <div className="nx-segmented-control-wrapper">
         <div className="nx-segmented-control">
           {topTabs.map((t) => (
-            <button 
-              key={t.id} 
-              type="button" 
-              className={cls('nx-segmented-control__btn', activeTab === t.id && 'is-active')} 
-              onClick={() => setActiveTab(t.id as any)}
+            <button type="button" key={t.id} className={cls('nx-segmented-control__btn', activeTab === t.id && 'is-active')} onClick={() => setActiveTab(t.id as any)}
             >
               <Icon name={t.icon as any} />
               <span>{t.label}</span>
@@ -2085,11 +2062,7 @@ const ContactIntelligenceCard = ({
                   ['equity', 'EQUITY', 'trending-up'],
                   ['tax', 'TAX', 'briefing'],
                 ].map(([id, label, icon]) => (
-                  <button 
-                    key={id} 
-                    type="button" 
-                    className={cls('nx-segmented-control__btn', propertyTab === id && 'is-active')} 
-                    onClick={() => setPropertyTab(id as any)}
+                  <button type="button" key={id} className={cls('nx-segmented-control__btn', propertyTab === id && 'is-active')} onClick={() => setPropertyTab(id as any)}
                   >
                     <Icon name={icon as any} />
                     <span>{label}</span>
@@ -2166,7 +2139,7 @@ const SellerCommandCard = ({
           {statusOpen && (
             <div className="nx-workflow-menu nx-liquid-panel">
               {inboxStatusOptions.map((opt) => (
-                <button key={opt.value} type="button" className={cls('nx-workflow-menu-item', opt.value === thread.inboxStatus && 'is-selected')} style={statusStyleVars(opt)} onClick={() => {
+                <button type="button" key={opt.value} className={cls('nx-workflow-menu-item', opt.value === thread.inboxStatus && 'is-selected')} style={statusStyleVars(opt)} onClick={() => {
                   onStatusChange(opt.value as InboxStatus | 'sent_message')
                   setStatusOpen(false)
                 }}>
@@ -2187,7 +2160,7 @@ const SellerCommandCard = ({
           {stageOpen && (
             <div className="nx-workflow-menu nx-liquid-panel">
               {sellerStageOptions.map((opt) => (
-                <button key={opt.value} type="button" className={cls('nx-workflow-menu-item', opt.value === thread.conversationStage && 'is-selected')} style={statusStyleVars(opt)} onClick={() => {
+                <button type="button" key={opt.value} className={cls('nx-workflow-menu-item', opt.value === thread.conversationStage && 'is-selected')} style={statusStyleVars(opt)} onClick={() => {
                   onStageChange(opt.value as SellerStage)
                   setStageOpen(false)
                 }}>

@@ -174,7 +174,7 @@ export const ChatThread = ({
               </div>
             )}
             {import.meta.env.DEV && (
-              <button className="nx-debug-btn-mini" onClick={onOpenDebug} title="Debug Thread">
+              <button type="button" className="nx-debug-btn-mini" onClick={onOpenDebug} title="Debug Thread">
                 <Icon name="cpu" />
               </button>
             )}
@@ -194,35 +194,19 @@ export const ChatThread = ({
           </div>
         </div>
         <div className="nx-chat-header__actions">
-          <button
-            type="button"
-            className={cls('nx-chat-action', isStarred && 'is-active')}
-            title={isStarred ? 'Unstar thread' : 'Star thread'}
-            onClick={() => onToggleStar?.()}
+          <button type="button" className={cls('nx-chat-action', isStarred && 'is-active')} title={isStarred ? 'Unstar thread' : 'Star thread'} onClick={() => onToggleStar?.()}
           >
             <Icon name="star" />
           </button>
-          <button
-            type="button"
-            className={cls('nx-chat-action', thread.isPinned && 'is-active')}
-            title={thread.isPinned ? 'Unpin thread' : 'Pin thread'}
-            onClick={() => onTogglePin?.()}
+          <button type="button" className={cls('nx-chat-action', thread.isPinned && 'is-active')} title={thread.isPinned ? 'Unpin thread' : 'Pin thread'} onClick={() => onTogglePin?.()}
           >
             <Icon name="bookmark" />
           </button>
-          <button
-            type="button"
-            className="nx-chat-action"
-            title={thread.isRead ? 'Mark as unread' : 'Mark as read'}
-            onClick={() => onThreadAction?.(thread.id, thread.isRead ? 'unread' : 'read')}
+          <button type="button" className="nx-chat-action" title={thread.isRead ? 'Mark as unread' : 'Mark as read'} onClick={() => onThreadAction?.(thread.id, thread.isRead ? 'unread' : 'read')}
           >
             <Icon name="inbox" />
           </button>
-          <button
-            type="button"
-            className="nx-chat-action"
-            title={thread.isArchived ? 'Unarchive thread' : 'Archive thread'}
-            onClick={() => onToggleArchive?.()}
+          <button type="button" className="nx-chat-action" title={thread.isArchived ? 'Unarchive thread' : 'Archive thread'} onClick={() => onToggleArchive?.()}
           >
             <Icon name="archive" />
           </button>
@@ -233,14 +217,14 @@ export const ChatThread = ({
       <div className="nx-operator-rail">
         <div className="nx-rail-group">
           {(thread.inboxStatus === 'new_reply' || (thread as any).inbox_category === 'new_inbound') && thread.automationState === 'active' && (
-            <button className="nx-rail-btn is-auto-reply" onClick={() => onThreadAction?.(thread.id, 'auto_reply')} title="Queue Deterministic Auto-Reply">
+            <button type="button" className="nx-rail-btn is-auto-reply" onClick={() => onThreadAction?.(thread.id, 'auto_reply')} title="Queue Deterministic Auto-Reply">
               <Icon name="zap" /> <span>AUTO-REPLY</span>
             </button>
           )}
-          <button className="nx-rail-btn is-hot" onClick={() => onThreadAction?.(thread.id, 'mark_hot')}>
+          <button type="button" className="nx-rail-btn is-hot" onClick={() => onThreadAction?.(thread.id, 'mark_hot')}>
             <Icon name="zap" /> <span>HOT</span>
           </button>
-          <button className="nx-rail-btn" onClick={() => onThreadAction?.(thread.id, 'snooze')}>
+          <button type="button" className="nx-rail-btn" onClick={() => onThreadAction?.(thread.id, 'snooze')}>
             <Icon name="clock" /> <span>SNOOZE</span>
           </button>
         </div>
@@ -249,15 +233,15 @@ export const ChatThread = ({
         
         <div className="nx-rail-group">
           {isAutoPaused ? (
-            <button className="nx-rail-btn is-resume" onClick={() => onThreadAction?.(thread.id, 'resume_automation')}>
+            <button type="button" className="nx-rail-btn is-resume" onClick={() => onThreadAction?.(thread.id, 'resume_automation')}>
               <Icon name="play" /> <span>RESUME AUTO</span>
             </button>
           ) : (
-            <button className="nx-rail-btn is-pause" onClick={() => onThreadAction?.(thread.id, 'pause_automation')}>
+            <button type="button" className="nx-rail-btn is-pause" onClick={() => onThreadAction?.(thread.id, 'pause_automation')}>
               <Icon name="pause" /> <span>PAUSE AUTO</span>
             </button>
           )}
-          <button className="nx-rail-btn is-dnc" onClick={() => onThreadAction?.(thread.id, 'suppress')}>
+          <button type="button" className="nx-rail-btn is-dnc" onClick={() => onThreadAction?.(thread.id, 'suppress')}>
             <Icon name="slash" /> <span>DNC</span>
           </button>
         </div>
@@ -296,13 +280,12 @@ export const ChatThread = ({
                           </span>
                         )}
                         {typeof turn.metadata?.reasoning === 'string' && (
-                          <button 
-                            type="button" 
-                            className="nx-turn-intel__why" 
-                            onClick={(e) => {
-                              const target = e.currentTarget.nextElementSibling as HTMLElement
-                              if (target) {
-                                target.style.display = target.style.display === 'none' ? 'block' : 'none'
+                          <button type="button" className="nx-turn-intel__why" onClick={(e) => {
+                              const btn = e.currentTarget
+                              const intel = btn.closest('.nx-turn-intel')
+                              const reason = intel?.querySelector('.nx-turn-intel__reason') as HTMLElement
+                              if (reason) {
+                                reason.style.display = reason.style.display === 'none' ? 'block' : 'none'
                               }
                             }}
                           >
@@ -313,6 +296,11 @@ export const ChatThread = ({
                       {typeof turn.metadata?.reasoning === 'string' && (
                         <div className="nx-turn-intel__reason" style={{ display: 'none' }}>
                           {turn.metadata.reasoning}
+                        </div>
+                      )}
+                      {typeof turn.metadata?.reasoning === 'object' && turn.metadata.reasoning !== null && (
+                        <div className="nx-turn-intel__reason" style={{ display: 'none' }}>
+                          {JSON.stringify(turn.metadata.reasoning)}
                         </div>
                       )}
                     </div>
@@ -343,19 +331,19 @@ export const ChatThread = ({
                     </span>
                     {deliveryBadge === 'approval' && (
                       <div className="nx-approval-actions">
-                        <button className="nx-approve-btn" onClick={() => onThreadAction?.(thread.id, 'approve_queue:' + msg.id)} title="Approve & Send Now">
+                        <button type="button" className="nx-approve-btn" onClick={() => onThreadAction?.(thread.id, 'approve_queue:' + msg.id)} title="Approve & Send Now">
                           <Icon name="check" />
                         </button>
-                        <button className="nx-edit-btn" onClick={() => onThreadAction?.(thread.id, 'edit_queue:' + msg.id)} title="Edit Draft">
+                        <button type="button" className="nx-edit-btn" onClick={() => onThreadAction?.(thread.id, 'edit_queue:' + msg.id)} title="Edit Draft">
                           <Icon name="file-text" />
                         </button>
-                        <button className="nx-cancel-btn" onClick={() => onThreadAction?.(thread.id, 'cancel_queue:' + msg.id)} title="Cancel & Delete Draft">
+                        <button type="button" className="nx-cancel-btn" onClick={() => onThreadAction?.(thread.id, 'cancel_queue:' + msg.id)} title="Cancel & Delete Draft">
                           <Icon name="x" />
                         </button>
                       </div>
                     )}
                     {deliveryBadge === 'failed' && (
-                      <button className="nx-retry-btn" onClick={() => onThreadAction?.(thread.id, 'retry_send')} title="Retry sending">
+                      <button type="button" className="nx-retry-btn" onClick={() => onThreadAction?.(thread.id, 'retry_send')} title="Retry sending">
                         <Icon name="refresh-cw" />
                       </button>
                     )}
