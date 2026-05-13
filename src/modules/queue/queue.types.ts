@@ -1,4 +1,4 @@
-export type QueueItemStatus = 'ready' | 'scheduled' | 'sent' | 'delivered' | 'failed' | 'held' | 'approval' | 'retry'
+export type QueueItemStatus = 'ready' | 'scheduled' | 'sent' | 'delivered' | 'failed' | 'held' | 'approval' | 'retry' | 'queued' | 'sending' | 'blocked' | 'cancelled' | 'replied_before_send'
 export type QueueItemPriority = 'P0' | 'P1' | 'P2' | 'P3'
 export type DeliveryStatus = 'pending' | 'sent' | 'delivered' | 'failed' | 'bounced' | 'rejected'
 export type FailureReason =
@@ -52,6 +52,19 @@ export interface QueueItem {
   linkedPropertyId: string | null
   linkedOwnerId: string | null
   metadata?: Record<string, any>
+
+  // Tactical Intelligence Fields
+  sellerTemperature: 'cold' | 'warm' | 'hot' | 'dnc' | 'unknown'
+  currentStage: string
+  nextBestAction: string | null
+  memoryStatus: 'none' | 'partial' | 'rich'
+  urgencyScore: number // 0-100
+  extractedIntent: string | null
+  routingReason: string | null
+  failureGroup: 'Carrier' | 'Compliance' | 'Routing' | 'Template' | 'Webhook' | 'Contact Window' | 'Duplicate' | 'Payload' | 'Unknown' | null
+  retryEligible: boolean
+  approvalReason: string | null
+  priorThreadSummary: string | null
 }
 
 export interface QueueModel {

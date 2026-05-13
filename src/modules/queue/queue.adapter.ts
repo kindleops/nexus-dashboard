@@ -24,6 +24,11 @@ const STATUS_DISTRIBUTION: Record<QueueItemStatus, number> = {
   held: 7,
   approval: 12,
   retry: 9,
+  queued: 10,
+  sending: 5,
+  blocked: 3,
+  cancelled: 2,
+  replied_before_send: 4,
 }
 
 const FAILURE_REASONS: FailureReason[] = [
@@ -87,6 +92,17 @@ const generateQueueItem = (index: number): QueueItem => {
     linkedInboxThreadId: Math.random() > 0.4 ? `thread-${Math.random().toString(36).substring(7)}` : null,
     linkedPropertyId: `prop-${Math.random().toString(36).substring(7)}`,
     linkedOwnerId: `owner-${Math.random().toString(36).substring(7)}`,
+    sellerTemperature: ['cold', 'warm', 'hot', 'dnc', 'unknown'][Math.floor(Math.random() * 5)] as any,
+    currentStage: ['Lead', 'Nurture', 'Negotiation', 'Follow-up'][Math.floor(Math.random() * 4)],
+    nextBestAction: ['Call seller', 'Send offer', 'Review comps', 'Wait'][Math.floor(Math.random() * 4)],
+    memoryStatus: ['none', 'partial', 'rich'][Math.floor(Math.random() * 3)] as any,
+    urgencyScore: Math.floor(Math.random() * 100),
+    extractedIntent: ['Wants higher price', 'Needs to sell fast', 'Not interested right now', null][Math.floor(Math.random() * 4)],
+    routingReason: ['High confidence', 'Matches filter', 'Operator requested', null][Math.floor(Math.random() * 4)],
+    failureGroup: ['Carrier', 'Compliance', 'Routing', 'Template', 'Webhook', 'Contact Window', 'Duplicate', 'Payload', 'Unknown', null][Math.floor(Math.random() * 10)] as any,
+    retryEligible: Math.random() > 0.5,
+    approvalReason: status === 'approval' ? 'High risk message' : null,
+    priorThreadSummary: 'Discussed pricing and timeline last week.',
   }
 }
 

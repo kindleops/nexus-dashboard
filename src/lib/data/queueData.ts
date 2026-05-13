@@ -40,6 +40,11 @@ const toQueueStatus = (value: unknown): QueueItemStatus => {
   if (status === 'held') return 'held'
   if (status === 'approval' || status === 'awaiting_approval') return 'approval'
   if (status === 'retry' || status === 'retrying') return 'retry'
+  if (status === 'queued') return 'queued'
+  if (status === 'sending') return 'sending'
+  if (status === 'blocked') return 'blocked'
+  if (status === 'cancelled') return 'cancelled'
+  if (status === 'replied_before_send') return 'replied_before_send'
   return 'scheduled'
 }
 
@@ -227,6 +232,28 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
 
     const metadata = (row['metadata'] as AnyRecord) || {}
 
+    // Tactical Intelligence Extraction
+    const sellerTemperatureRaw = asString(getFirst(row, ['seller_temperature']), asString(metadata.seller_temperature, 'unknown'))
+    const sellerTemperature: QueueItem['sellerTemperature'] =
+      ['cold', 'warm', 'hot', 'dnc'].includes(sellerTemperatureRaw) ? (sellerTemperatureRaw as any) : 'unknown'
+
+    const failureReason = toFailureReason(getFirst(row, ['failed_reason', 'failure_reason', 'error_code']))
+    const failureGroupRaw = asString(getFirst(row, ['failure_group']), asString(metadata.failure_group, ''))
+
+    let failureGroup: QueueItem['failureGroup'] = null
+    if (failureGroupRaw && ['Carrier', 'Compliance', 'Routing', 'Template', 'Webhook', 'Contact Window', 'Duplicate', 'Payload', 'Unknown'].includes(failureGroupRaw)) {
+      failureGroup = failureGroupRaw as any
+    } else if (failureReason) {
+      if (failureReason === 'carrier_error') failureGroup = 'Carrier'
+      else if (failureReason === 'dnc_conflict') failureGroup = 'Compliance'
+      else if (failureReason === 'textgrid_error') failureGroup = 'Webhook'
+      else if (failureReason === 'invalid_phone') failureGroup = 'Routing'
+      else if (failureReason === 'template_missing') failureGroup = 'Template'
+      else if (failureReason === 'outside_contact_window') failureGroup = 'Contact Window'
+      else if (failureReason === 'sync_error') failureGroup = 'Payload'
+      else failureGroup = 'Unknown'
+    }
+
     return {
       id,
       queueId,
@@ -250,7 +277,7 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
       language: asString(getFirst(row, ['language']), 'en') === 'es' ? 'es' : 'en',
       retryCount,
       maxRetries,
-      failureReason: toFailureReason(getFirst(row, ['failed_reason', 'failure_reason', 'error_code'])),
+      failureReason,
       deliveryStatus: deliveryFromStatus(status),
       createdAt: asIso(getFirst(row, ['created_at'])) ?? new Date().toISOString(),
       updatedAt: asIso(getFirst(row, ['updated_at'])) ?? new Date().toISOString(),
@@ -265,6 +292,19 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
       linkedPropertyId: propertyId || null,
       linkedOwnerId: ownerId || null,
       metadata,
+
+      // New Tactical Intelligence Fields
+      sellerTemperature,
+      currentStage: asString(getFirst(row, ['current_stage']), asString(metadata.current_stage, 'Nurture')),
+      nextBestAction: asString(getFirst(row, ['next_best_action'])) || asString(metadata.next_best_action) || null,
+      memoryStatus: asString(getFirst(row, ['memory_status']), asString(metadata.memory_status, 'none')) as QueueItem['memoryStatus'],
+      urgencyScore: asNumber(getFirst(row, ['urgency_score']), asNumber(metadata.urgency_score, 0)),
+      extractedIntent: asString(getFirst(row, ['extracted_intent'])) || asString(metadata.extracted_intent) || null,
+      routingReason: asString(getFirst(row, ['routing_reason'])) || asString(metadata.routing_reason) || null,
+      failureGroup,
+      retryEligible: asBoolean(getFirst(row, ['retry_eligible']), asBoolean(metadata.retry_eligible, retryCount < maxRetries)),
+      approvalReason: asString(getFirst(row, ['approval_reason'])) || asString(metadata.approval_reason) || null,
+      priorThreadSummary: asString(getFirst(row, ['prior_thread_summary'])) || asString(metadata.prior_thread_summary) || null,
     }
   })
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { getSupabaseClient } from '../../lib/supabaseClient'
 import {
   fetchQueueModel,
@@ -59,7 +59,7 @@ const RiskTag = ({ level }: { level: 'low' | 'medium' | 'high' }) => (
 /**
  * Queue Card for Grid/List views
  */
-const QueueCard = ({ 
+const OperationalRow = ({
   item, 
   isSelected, 
   onClick 
@@ -69,36 +69,53 @@ const QueueCard = ({
   onClick: () => void 
 }) => (
   <div 
-    className={cls('nx-queue-card', isSelected && 'is-selected')} 
+    className={cls('nx-operational-row', isSelected && 'is-selected')}
     onClick={onClick}
   >
-    <div className="nx-queue-card__header">
-      <div className="nx-queue-card__seller-info">
-        <span className="nx-queue-card__seller">{item.sellerName}</span>
-        <span className="nx-queue-card__address">{item.propertyAddress}</span>
+    <div className="nx-op-cell is-seller">
+      <span className="nx-seller-name">{item.sellerName}</span>
+      <span className="nx-seller-address">{item.propertyAddress}</span>
+      <div className="nx-op-hover-intel">
+        <span className={cls('nx-temp-dot', `is-${item.sellerTemperature}`)} />
+        <small>{item.sellerTemperature.toUpperCase()}</small>
+        {item.memoryStatus !== 'none' && (
+          <>
+            <span className="nx-intel-divider" />
+            <Icon name="brain" className="nx-intel-icon" />
+            <small>Memory Active</small>
+          </>
+        )}
       </div>
-      <StatusBadge status={item.status} />
     </div>
     
-    {item.messageText && (
-      <div className="nx-queue-card__preview">
-        {item.messageText}
-      </div>
-    )}
+    <div className="nx-op-cell is-status">
+      <StatusBadge status={item.status} />
+      <span className="nx-op-stage">{item.currentStage}</span>
+    </div>
 
-    <div className="nx-queue-card__footer">
-      <div className="nx-card-time">
-        <Icon name="clock" />
-        {formatRelativeTime(item.scheduledForLocal)}
+    <div className="nx-op-cell is-action">
+      <span className="nx-next-action">{item.nextBestAction || 'Automated Outreach'}</span>
+      {item.urgencyScore > 75 && <RiskTag level="high" />}
+    </div>
+
+    <div className="nx-op-cell is-timing">
+      <span className="nx-timing-val">{formatRelativeTime(item.scheduledForLocal)}</span>
+      <span className="nx-timing-sub">{item.market}</span>
+    </div>
+
+    <div className="nx-op-cell is-ai">
+      <div className="nx-ai-bar">
+        <div className="nx-ai-fill" style={{ width: `${item.aiConfidence}%`, background: item.aiConfidence > 85 ? 'var(--success)' : 'var(--warning)' }} />
       </div>
-      <div className="nx-card-template">
-        <Icon name="file-text" />
-        {item.templateName}
-      </div>
-      {item.riskLevel === 'high' && <RiskTag level="high" />}
+      <span className="nx-ai-val">{item.aiConfidence}%</span>
+    </div>
+
+    <div className="nx-op-cell is-agent">
+      <span className="nx-agent-name">{item.agent}</span>
     </div>
   </div>
 )
+
 
 /**
  * Intelligence Row
@@ -145,12 +162,14 @@ const CollapsibleInspectorCard = ({
 /**
  * Intelligence Inspector Panel
  */
-const QueueInspector = ({ 
+const TacticalIntelligenceStack = ({
   item, 
-  onAction 
+  onAction,
+  viewMode
 }: { 
   item: QueueItem | null, 
-  onAction: (action: string, id: string) => void 
+  onAction: (action: string, id: string) => void,
+  viewMode: string
 }) => {
   const [showMetadata, setShowMetadata] = useState(false)
 
@@ -158,8 +177,8 @@ const QueueInspector = ({
     return (
       <aside className="nx-queue-inspector is-empty">
         <div className="nx-empty-state">
-          <Icon name="target" style={{ width: 48, height: 48, opacity: 0.2, marginBottom: 16 }} />
-          <p>Select a queue item to inspect signal</p>
+          <Icon name="radar" style={{ width: 48, height: 48, opacity: 0.2, marginBottom: 16 }} />
+          <p>Awaiting operational target</p>
         </div>
       </aside>
     )
@@ -169,7 +188,7 @@ const QueueInspector = ({
     <aside className="nx-queue-inspector">
       <header className="nx-queue-inspector-header">
         <div className="nx-inspector-title">
-          <h2>Item Intelligence</h2>
+          <h2>Tactical Intelligence</h2>
           <StatusBadge status={item.status} />
         </div>
         <button className="nx-inspector-close" onClick={() => onAction('deselect', item.id)}>
@@ -178,28 +197,59 @@ const QueueInspector = ({
       </header>
 
       <div className="nx-queue-inspector-body">
+        {/* Dynamic Context Block based on View */}
+        {viewMode === 'approval' && (
+          <CollapsibleInspectorCard title="AI Review Rationale" icon="shield">
+            <div className="nx-inspector-grid">
+              <IntelRow label="Reason" value={item.approvalReason || 'Requires human review'} className="is-warning" />
+              <IntelRow label="Confidence" value={`${item.aiConfidence}%`} />
+              <IntelRow label="Risk Assessment" value={item.riskLevel.toUpperCase()} className={`is-risk-${item.riskLevel}`} />
+            </div>
+            {item.priorThreadSummary && (
+              <div className="nx-approval-message-preview" style={{ marginTop: '12px' }}>
+                <Icon name="file-text" />
+                <p><strong>Memory:</strong> {item.priorThreadSummary}</p>
+              </div>
+            )}
+          </CollapsibleInspectorCard>
+        )}
+
+        {viewMode === 'failed' && (
+          <CollapsibleInspectorCard title="Diagnostics & Recovery" icon="alert" className="is-error">
+            <div className="nx-error-box" style={{ marginBottom: 12 }}>
+              <strong>{item.failureGroup || 'System Failure'} - {item.failureReason || 'Unknown'}</strong>
+              <p>Attempt {item.retryCount} of {item.maxRetries}</p>
+            </div>
+            <div className="nx-inspector-grid">
+              <IntelRow label="Retry Eligible" value={item.retryEligible ? 'Yes' : 'No'} className={item.retryEligible ? 'is-success' : 'is-error'} />
+              <IntelRow label="Action Required" value={item.retryEligible ? 'Retry Sequence' : 'Human Intervention'} />
+            </div>
+          </CollapsibleInspectorCard>
+        )}
+
+        {/* Global Core Execution Details */}
         <CollapsibleInspectorCard title="Execution Details" icon="radar">
           <div className="nx-inspector-grid">
             <IntelRow label="Scheduled" value={new Date(item.scheduledForLocal).toLocaleString()} />
-            <IntelRow label="Timezone" value={item.timezone} />
-            <IntelRow label="Touch #" value={item.touchNumber} />
             <IntelRow label="Priority" value={item.priority.toUpperCase()} className={cls(item.priority === 'P0' && 'is-urgent')} />
-            <IntelRow label="Risk" value={item.riskLevel.toUpperCase()} className={cls(`is-risk-${item.riskLevel}`)} />
-            <IntelRow label="Language" value={item.language === 'es' ? 'Spanish' : 'English'} />
+            <IntelRow label="Stage" value={item.currentStage} />
+            <IntelRow label="Market" value={item.market} />
+            <IntelRow label="Next Action" value={item.nextBestAction || 'Automated Outreach'} />
           </div>
         </CollapsibleInspectorCard>
 
-        <CollapsibleInspectorCard title="Seller & Property" icon="user">
+        {/* Seller Telemetry */}
+        <CollapsibleInspectorCard title="Seller Telemetry" icon="user">
           <div className="nx-inspector-grid">
             <IntelRow label="Seller" value={item.sellerName} />
-            <IntelRow label="Phone" value={item.phone} />
-            <IntelRow label="Market" value={item.market} />
-            <IntelRow label="Address" value={item.propertyAddress} />
-            <IntelRow label="Owner ID" value={item.linkedOwnerId || '—'} className="is-id-row" />
+            <IntelRow label="Temperature" value={item.sellerTemperature.toUpperCase()} className={`is-temp-${item.sellerTemperature}`} />
+            <IntelRow label="Urgency" value={`${item.urgencyScore}/100`} />
+            <IntelRow label="Intent" value={item.extractedIntent || 'Discovering'} />
+            <IntelRow label="Memory" value={item.memoryStatus.toUpperCase()} />
           </div>
         </CollapsibleInspectorCard>
 
-        <CollapsibleInspectorCard title="Payload Signal" icon="file-text">
+        <CollapsibleInspectorCard title="Payload Signal" icon="file-text" defaultExpanded={viewMode === 'approval'}>
           <div className="nx-inspector-message-preview">
             <div className="nx-msg-meta">
               <span>{item.templateName}</span>
@@ -208,15 +258,6 @@ const QueueInspector = ({
             <p>{item.messageText}</p>
           </div>
         </CollapsibleInspectorCard>
-
-        {item.status === 'failed' && (
-          <CollapsibleInspectorCard title="Error Diagnostic" icon="alert" className="is-error">
-            <div className="nx-error-box">
-              <strong>{item.failureReason || 'Unknown Failure'}</strong>
-              <p>Retry attempt {item.retryCount} of {item.maxRetries}</p>
-            </div>
-          </CollapsibleInspectorCard>
-        )}
 
         <div className="nx-inspector-advanced">
           <button 
@@ -238,29 +279,30 @@ const QueueInspector = ({
       <div className="nx-queue-inspector-actions">
         {item.status === 'approval' && (
           <button className="nx-btn nx-btn--primary" onClick={() => onAction('approve', item.id)}>
-            <Icon name="check" /> Approve Send
+            <Icon name="check" /> Approve
           </button>
         )}
         {(item.status === 'ready' || item.status === 'scheduled') && (
           <button className="nx-btn nx-btn--secondary" onClick={() => onAction('hold', item.id)}>
-            <Icon name="shield" /> Hold Item
+            <Icon name="shield" /> Hold
           </button>
         )}
-        {item.status === 'failed' && (
+        {item.status === 'failed' && item.retryEligible && (
           <button className="nx-btn nx-btn--primary" onClick={() => onAction('retry', item.id)}>
-            <Icon name="zap" /> Retry Now
+            <Icon name="zap" /> Retry Sequence
           </button>
         )}
         <button className="nx-btn nx-btn--secondary" onClick={() => onAction('reschedule', item.id)}>
           <Icon name="calendar" /> Reschedule
         </button>
         <button className="nx-btn nx-btn--danger" onClick={() => onAction('cancel', item.id)}>
-          <Icon name="close" /> Cancel
+          <Icon name="close" /> Suppress
         </button>
       </div>
     </aside>
   )
 }
+
 
 // ── Main Page Component ────────────────────────────────────────────────────
 interface QueuePageProps {
@@ -401,6 +443,41 @@ export const QueuePage = ({ data: initialData }: QueuePageProps = {}) => {
     return true
   })
 
+  // Group items for Week view (Campaign Clusters)
+  const weekClusters = useMemo(() => {
+    if (viewMode !== 'week') return []
+    const groups = new Map<string, QueueItem[]>()
+
+    filteredItems.forEach(item => {
+      // Group by Market + Temperature + Stage
+      const key = `${item.market}|${item.sellerTemperature}|${item.currentStage}`
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key)!.push(item)
+    })
+
+    return Array.from(groups.entries()).map(([key, items]) => {
+      const [market, temp, stage] = key.split('|')
+      return { market, temp, stage, items }
+    }).sort((a, b) => b.items.length - a.items.length)
+  }, [filteredItems, viewMode])
+
+  // Group items for Failed view
+  const failedGroups = useMemo(() => {
+    if (viewMode !== 'failed') return []
+    const groups = new Map<string, QueueItem[]>()
+
+    filteredItems.forEach(item => {
+      const key = item.failureGroup || 'Unknown'
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key)!.push(item)
+    })
+
+    return Array.from(groups.entries()).map(([group, items]) => ({
+      group,
+      items
+    })).sort((a, b) => b.items.length - a.items.length)
+  }, [filteredItems, viewMode])
+
   // Group items for Today view
   const timeBuckets = [
     { label: 'Past Due / Overdue', filter: (i: QueueItem) => new Date(i.scheduledForLocal) < new Date() && (i.status === 'ready' || i.status === 'retry') },
@@ -513,7 +590,7 @@ export const QueuePage = ({ data: initialData }: QueuePageProps = {}) => {
         <main className="nx-queue-main">
           <div className="nx-queue-scroll-area">
             {viewMode === 'today' && (
-              <div className="nx-today-view">
+              <div className="nx-today-view" data-testid="queue-today-view">
                 {timeBuckets.map(bucket => {
                   const items = filteredItems.filter(bucket.filter)
                   if (items.length === 0) return null
@@ -523,9 +600,18 @@ export const QueuePage = ({ data: initialData }: QueuePageProps = {}) => {
                         <h3>{bucket.label}</h3>
                         <span className="nx-queue-group-count">{items.length}</span>
                       </div>
-                      <div className="nx-queue-grid">
+                      <div className="nx-operational-stack">
+                        {/* Table Header for Today View Rows */}
+                        <div className="nx-operational-row is-header">
+                          <div className="nx-op-cell is-seller">Seller & Property</div>
+                          <div className="nx-op-cell is-status">Stage</div>
+                          <div className="nx-op-cell is-action">Next Action</div>
+                          <div className="nx-op-cell is-timing">Timing & Market</div>
+                          <div className="nx-op-cell is-ai">AI Confidence</div>
+                          <div className="nx-op-cell is-agent">Agent</div>
+                        </div>
                         {items.map((item: QueueItem) => (
-                          <QueueCard 
+                          <OperationalRow
                             key={item.id} 
                             item={item} 
                             isSelected={selectedItemId === item.id}
@@ -544,18 +630,22 @@ export const QueuePage = ({ data: initialData }: QueuePageProps = {}) => {
               </div>
             )}
 
-            {(viewMode === 'list' || viewMode === 'approval' || viewMode === 'failed') && (
-              <div className="nx-list-view">
+            {viewMode === 'list' && (
+              <div className="nx-list-view" data-testid="queue-list-view">
                 <div className="nx-queue-table-container">
-                  <table className="nx-queue-table">
+                  <table className="nx-queue-table is-dense">
                     <thead>
                       <tr>
-                        <th>Seller & Property</th>
+                        <th>Seller / Property</th>
+                        <th style={{ width: '25%' }}>Message Preview</th>
                         <th>Status</th>
                         <th>Scheduled</th>
                         <th>Market</th>
                         <th>Agent</th>
+                        <th>Stage</th>
+                        <th>Temp</th>
                         <th>Risk</th>
+                        <th className="nx-table-actions-th">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -571,55 +661,264 @@ export const QueuePage = ({ data: initialData }: QueuePageProps = {}) => {
                               <small>{item.propertyAddress}</small>
                             </div>
                           </td>
+                          <td className="nx-cell-preview">
+                            <span className="nx-preview-text">{item.messageText}</span>
+                          </td>
                           <td><StatusBadge status={item.status} /></td>
                           <td>{formatRelativeTime(item.scheduledForLocal)}</td>
                           <td>{item.market}</td>
                           <td>{item.agent}</td>
-                          <td><RiskTag level={item.riskLevel} /></td>
+                          <td>{item.currentStage}</td>
+                          <td>
+                            <span className={cls('nx-temp-dot', `is-${item.sellerTemperature}`)} />
+                          </td>
+                          <td>{item.urgencyScore > 75 ? <RiskTag level="high" /> : <RiskTag level={item.riskLevel} />}</td>
+                          <td>
+                            <div className="nx-table-quick-actions" onClick={e => e.stopPropagation()}>
+                              {(item.status === 'ready' || item.status === 'scheduled') && (
+                                <button className="nx-icon-btn" title="Hold" onClick={() => handleAction('hold', item.id)}><Icon name="shield" /></button>
+                              )}
+                              {item.status === 'failed' && item.retryEligible && (
+                                <button className="nx-icon-btn is-primary" title="Retry" onClick={() => handleAction('retry', item.id)}><Icon name="zap" /></button>
+                              )}
+                              <button className="nx-icon-btn" title="Edit" onClick={() => emitNotification({ title: 'Not Implemented', detail: 'Inline edit requires backend API', severity: 'warning', sound: 'notification' })}><Icon name="file-text" /></button>
+                              <button className="nx-icon-btn is-danger" title="Suppress" onClick={() => handleAction('cancel', item.id)}><Icon name="close" /></button>
+                            </div>
+                          </td>
                         </tr>
                       ))}
+                      {filteredItems.length === 0 && (
+                        <tr>
+                          <td colSpan={10} className="nx-table-empty">
+                            No items found in the current view.
+                          </td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
               </div>
             )}
 
+            {viewMode === 'approval' && (
+              <div className="nx-approval-stack" data-testid="queue-approval-view">
+                {filteredItems.map((item: QueueItem) => (
+                  <div key={item.id} className={cls('nx-approval-card', selectedItemId === item.id && 'is-selected')} onClick={() => setSelectedItemId(item.id)}>
+                    <div className="nx-approval-card-header">
+                      <div className="nx-approval-seller">
+                        <h4>{item.sellerName}</h4>
+                        <span>{item.propertyAddress}</span>
+                      </div>
+                      <div className="nx-approval-meta-tags">
+                        <span className="nx-tag is-warning"><Icon name="shield" /> {item.approvalReason || 'Human Review Required'}</span>
+                        <span className={cls('nx-tag', item.aiConfidence > 80 ? 'is-success' : 'is-error')}>AI Confidence: {item.aiConfidence}%</span>
+                      </div>
+                    </div>
+
+                    <div className="nx-approval-card-body">
+                      <div className="nx-approval-context">
+                        <div className="nx-context-row">
+                          <span className="nx-label">Extracted Intent:</span>
+                          <span className="nx-value">{item.extractedIntent || 'Unknown'}</span>
+                        </div>
+                        <div className="nx-context-row">
+                          <span className="nx-label">Seller Temp:</span>
+                          <span className="nx-value is-caps">{item.sellerTemperature}</span>
+                        </div>
+                        {item.priorThreadSummary && (
+                          <div className="nx-context-row is-full">
+                            <span className="nx-label">Prior Thread Summary:</span>
+                            <span className="nx-value">{item.priorThreadSummary}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="nx-approval-message-box">
+                        <div className="nx-message-box-header">
+                          <span>Proposed AI Reply</span>
+                          <span className="nx-template-name">{item.templateName}</span>
+                        </div>
+                        <p>{item.messageText}</p>
+                      </div>
+                    </div>
+
+                    <div className="nx-approval-card-footer" onClick={e => e.stopPropagation()}>
+                      <button className="nx-btn nx-btn--primary" onClick={() => handleAction('approve', item.id)}>
+                        <Icon name="check" /> Approve
+                      </button>
+                      <button className="nx-btn nx-btn--secondary" onClick={() => emitNotification({ title: 'Not Implemented', detail: 'Inline edit requires backend API', severity: 'warning', sound: 'notification' })}>
+                        <Icon name="file-text" /> Edit
+                      </button>
+                      <button className="nx-btn nx-btn--secondary" onClick={() => handleAction('hold', item.id)}>
+                        <Icon name="shield" /> Hold
+                      </button>
+                      <button className="nx-btn nx-btn--danger" onClick={() => handleAction('cancel', item.id)}>
+                        <Icon name="close" /> Suppress
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {filteredItems.length === 0 && (
+                  <div className="nx-queue-empty">
+                    <p>No items pending human approval.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {viewMode === 'failed' && (
+              <div className="nx-failure-stack" data-testid="queue-failed-view">
+                {failedGroups.map(({ group, items }: { group: string, items: QueueItem[] }) => (
+                  <div key={group} className="nx-failure-group">
+                    <div className="nx-failure-group-header">
+                      <h3>{group} Failures</h3>
+                      <span className="nx-count-badge">{items.length}</span>
+                    </div>
+                    <div className="nx-operational-stack is-nested">
+                      {items.map((item: QueueItem) => (
+                        <div
+                          key={item.id}
+                          className={cls('nx-failure-item', selectedItemId === item.id && 'is-selected')}
+                          onClick={() => setSelectedItemId(item.id)}
+                        >
+                          <div className="nx-failure-item-top">
+                            <div className="nx-failure-item-identity">
+                              <strong>{item.sellerName}</strong>
+                              <span>{item.propertyAddress}</span>
+                            </div>
+                            <span className="nx-failure-reason">{item.failureReason || 'Unknown Error'}</span>
+                          </div>
+                          <div className="nx-failure-item-bottom">
+                            <span className="nx-failure-meta">
+                              Attempt {item.retryCount} of {item.maxRetries} • {item.retryEligible ? 'Retry Eligible' : 'Human Action Required'}
+                            </span>
+                            <div className="nx-failure-actions" onClick={e => e.stopPropagation()}>
+                              {item.retryEligible && (
+                                <button className="nx-btn nx-btn--xs nx-btn--primary" onClick={() => handleAction('retry', item.id)}>
+                                  <Icon name="zap" style={{ width: 12, height: 12, marginRight: 4 }} /> Retry
+                                </button>
+                              )}
+                              <button className="nx-btn nx-btn--xs nx-btn--secondary" onClick={() => emitNotification({ title: 'Not Implemented', detail: 'Rerouting requires backend support.', severity: 'warning', sound: 'notification' })}>
+                                Reroute
+                              </button>
+                              <button className="nx-btn nx-btn--xs nx-btn--danger" onClick={() => handleAction('cancel', item.id)}>
+                                Suppress
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                {failedGroups.length === 0 && (
+                  <div className="nx-queue-empty">
+                    <p>No failed items in queue.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {viewMode === 'week' && (
-              <div className="nx-week-board">
-                {/* Simplified week view implementation */}
-                <div className="nx-queue-grid">
-                   {filteredItems.map((item: QueueItem) => (
-                    <QueueCard 
-                      key={item.id} 
-                      item={item} 
-                      isSelected={selectedItemId === item.id}
-                      onClick={() => setSelectedItemId(item.id)}
-                    />
+              <div className="nx-week-board" data-testid="queue-week-view">
+                <div className="nx-campaign-swimlanes">
+                  {weekClusters.map((cluster: { market: string, temp: string, stage: string, items: QueueItem[] }) => (
+                    <div key={`${cluster.market}-${cluster.temp}-${cluster.stage}`} className="nx-campaign-cluster">
+                      <div className="nx-cluster-header">
+                        <div className="nx-cluster-identity">
+                          <h3>{cluster.market.toUpperCase()}</h3>
+                          <span className={cls('nx-cluster-tag', `is-${cluster.temp}`)}>{cluster.temp}</span>
+                          <span className="nx-cluster-tag is-stage">{cluster.stage}</span>
+                        </div>
+                        <div className="nx-cluster-metrics">
+                          <span>{cluster.items.length} Sellers</span>
+                          <span>{cluster.items.filter((i: QueueItem) => i.urgencyScore > 50).length} High Urgency</span>
+                        </div>
+                      </div>
+
+                      <div className="nx-operational-stack is-nested">
+                        {cluster.items.map((item: QueueItem) => (
+                          <OperationalRow
+                            key={item.id}
+                            item={item}
+                            isSelected={selectedItemId === item.id}
+                            onClick={() => setSelectedItemId(item.id)}
+                          />
+                        ))}
+                      </div>
+                    </div>
                   ))}
+                  {weekClusters.length === 0 && (
+                    <div className="nx-queue-empty">
+                      <p>No campaign clusters active for this week.</p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
 
             {viewMode === 'month' && (
-              <div className="nx-month-heatmap">
-                 <div className="nx-queue-grid">
-                   {filteredItems.map((item: QueueItem) => (
-                    <QueueCard 
-                      key={item.id} 
-                      item={item} 
-                      isSelected={selectedItemId === item.id}
-                      onClick={() => setSelectedItemId(item.id)}
-                    />
-                  ))}
-                </div>
+              <div className="nx-month-heatmap" data-testid="queue-month-view">
+                 {/* Heatmap Calendar */}
+                 <div className="nx-queue-month-grid">
+                   {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+                     <div key={day} className="nx-month-day-label">{day}</div>
+                   ))}
+                   {/* Empty cells for start of month alignment */}
+                   <div className="nx-month-cell is-empty" />
+                   <div className="nx-month-cell is-empty" />
+                   {Array.from({ length: 30 }).map((_, i) => {
+                     // Generate deterministic metrics from array index to avoid Math.random
+                     const outVolume = (i * 13) % 120 + 20
+                     const inVolume = (i * 7) % 5
+                     const activityLevel = outVolume > 100 ? 4 : outVolume > 70 ? 3 : outVolume > 40 ? 2 : 1
+                     const isSelected = selectedItemId === `day-${i}`
+
+                     return (
+                       <div
+                         key={i}
+                         className={cls('nx-month-cell', i === 14 && 'is-today', isSelected && 'is-selected')}
+                         onClick={() => setSelectedItemId(`day-${i}`)}
+                       >
+                         <span className="nx-month-date">{i + 1}</span>
+                         <div className="nx-month-intensity" data-level={activityLevel} />
+                         <div className="nx-month-metrics">
+                           <span>{outVolume} Out</span>
+                           <span style={{ color: 'var(--success)' }}>{inVolume} In</span>
+                         </div>
+                       </div>
+                     )
+                   })}
+                 </div>
+
+                 {/* Cadence Timeline */}
+                 <div className="nx-forecast-timeline">
+                   <h3>Automation Cadence Timeline</h3>
+                   <div className="nx-timeline-track">
+                     <div className="nx-timeline-marker" style={{ left: '15%' }} title="Nurture Wave" />
+                     <div className="nx-timeline-marker is-spike" style={{ left: '45%' }} title="High Volume Outreach" />
+                     <div className="nx-timeline-marker" style={{ left: '80%' }} title="Follow-up Cycle" />
+                   </div>
+                   <div className="nx-operational-stack is-nested">
+                      {filteredItems.slice(0, 5).map((item: QueueItem) => (
+                        <OperationalRow
+                          key={item.id}
+                          item={item}
+                          isSelected={selectedItemId === item.id}
+                          onClick={() => setSelectedItemId(item.id)}
+                        />
+                      ))}
+                   </div>
+                 </div>
               </div>
             )}
           </div>
         </main>
 
-        <QueueInspector 
+        <TacticalIntelligenceStack
           item={selectedItem} 
           onAction={handleAction} 
+          viewMode={viewMode}
         />
       </div>
     </div>
