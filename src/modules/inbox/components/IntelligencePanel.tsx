@@ -393,12 +393,7 @@ const SectionEmptyState = ({ text }: { text: string }) => (
   </div>
 )
 
-const MemoryActiveBadge = ({ active }: { active: boolean }) => (
-  <div className={cls('nx-memory-badge', active && 'is-active')}>
-    <div className="nx-memory-badge__orb" />
-    <span>{active ? 'MEMORY ACTIVE' : 'COLD MEMORY'}</span>
-  </div>
-)
+
 
 const SellerTemperatureIndicator = ({ interest }: { interest: string }) => {
   const isNone = String(interest || '').toLowerCase() === 'none'

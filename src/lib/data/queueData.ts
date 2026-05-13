@@ -19,11 +19,9 @@ export type {
 }
 import { getSupabaseClient } from '../supabaseClient'
 import {
-  asBoolean,
   asIso,
   asNumber,
   asString,
-  getFirst,
   mapErrorMessage,
   normalizeStatus,
   safeArray,
@@ -133,11 +131,11 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
     aiConfidence: Math.max(0, Math.min(100, asNumber(row.ai_confidence, 72))),
     estimatedCost: Math.max(asNumber(row.estimated_cost, 0.018), 0.01),
     textgridNumber: asString(row.from_phone_number, ''),
-    linkedInboxThreadId: asString(row.thread_key, null),
-    linkedPropertyId: asString(row.property_id, null),
-    linkedOwnerId: asString(row.master_owner_id, null),
-    dealTemperature: asString(row.deal_temperature, null),
-    nextBestAction: asString(row.next_best_action, null),
+    linkedInboxThreadId: asString(row.thread_key, undefined),
+    linkedPropertyId: asString(row.property_id, undefined),
+    linkedOwnerId: asString(row.master_owner_id, undefined),
+    dealTemperature: asString(row.deal_temperature, undefined),
+    nextBestAction: asString(row.next_best_action, undefined),
     metadata: (row.metadata as AnyRecord) || {},
   }))
 
@@ -150,7 +148,7 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
   
   const now = new Date().toDateString()
   const sentTodayCount = items.filter((i) => i.sentAt && new Date(i.sentAt).toDateString() === now).length
-  const deliveredTodayCount = items.filter((i) => i.deliveredAt && new Date(i.deliveredAt).toDateString() === now).length
+  const deliveredTodayCount = items.filter((i) => (i as any).deliveredAt && new Date((i as any).deliveredAt).toDateString() === now).length
 
   const apiPressureLevel: 'low' | 'medium' | 'high' =
     failedCount + retryCount > items.length * 0.1
