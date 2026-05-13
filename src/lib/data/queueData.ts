@@ -86,206 +86,71 @@ const deliveryFromStatus = (status: QueueItemStatus): DeliveryStatus => {
 export const fetchQueueModel = async (): Promise<QueueModel> => {
   const supabase = getSupabaseClient()
 
-  const [queueResult, ownerResult, propertyResult, phoneResult, marketResult] = await Promise.all([
-    supabase
-      .from('send_queue')
-      .select(`
-        id,
-        queue_id,
-        queue_key,
-        queue_status,
-        scheduled_for,
-        scheduled_for_local,
-        timezone,
-        to_phone_number,
-        from_phone_number,
-        message_type,
-        use_case_template,
-        message_body,
-        message_text,
-        selected_template_id,
-        selected_agent_id,
-        master_owner_id,
-        owner_id,
-        property_id,
-        prospect_id,
-        phone_number_id,
-        market_id,
-        market,
-        retry_count,
-        max_retries,
-        failed_reason,
-        paused_reason,
-        created_at,
-        updated_at,
-        metadata,
-        priority,
-        risk_level,
-        ai_confidence,
-        estimated_cost,
-        sent_at,
-        approved_at,
-        held_at,
-        touch_number,
-        language
-      `)
-      .order('created_at', { ascending: false })
-      .limit(1200),
-    supabase
-      .from('owners')
-      .select('owner_id,master_owner_id,full_name,first_name,last_name,entity_name,market')
-      .limit(2000),
-    supabase
-      .from('properties')
-      .select('property_id,owner_id,master_owner_id,property_address,property_address_city,property_address_state,market')
-      .limit(3000),
-    supabase
-      .from('phone_numbers')
-      .select('phone_id,owner_id,master_owner_id,phone,phone_number,status')
-      .limit(3000),
-    supabase
-      .from('markets')
-      .select('id,name')
-      .limit(100),
-  ])
+  const { data, error } = await supabase
+    .from('queue_command_center_v')
+    .select('*')
+    .limit(1000)
 
-  if (queueResult.error) throw new Error(mapErrorMessage(queueResult.error))
-  if (ownerResult.error) throw new Error(mapErrorMessage(ownerResult.error))
-  if (propertyResult.error) throw new Error(mapErrorMessage(propertyResult.error))
-  if (phoneResult.error) throw new Error(mapErrorMessage(phoneResult.error))
-  if (marketResult.error) throw new Error(mapErrorMessage(marketResult.error))
+  if (error) throw new Error(mapErrorMessage(error))
 
-  const queueRows = safeArray(queueResult.data as AnyRecord[])
-  const ownerRows = safeArray(ownerResult.data as AnyRecord[])
-  const propertyRows = safeArray(propertyResult.data as AnyRecord[])
-  const phoneRows = safeArray(phoneResult.data as AnyRecord[])
-  const marketRows = safeArray(marketResult.data as AnyRecord[])
-
-  const ownerById = new Map<string, AnyRecord>()
-  for (const row of ownerRows) {
-    const ownerId = asString(getFirst(row, ['owner_id', 'master_owner_id']), '')
-    if (ownerId) ownerById.set(ownerId, row)
-  }
-
-  const propertyById = new Map<string, AnyRecord>()
-  for (const row of propertyRows) {
-    const propertyId = asString(getFirst(row, ['property_id']), '')
-    if (propertyId) propertyById.set(propertyId, row)
-  }
-
-  const marketById = new Map<string, string>()
-  for (const row of marketRows) {
-    const id = asString(row['id'], '')
-    if (id) marketById.set(id, asString(row['name'], ''))
-  }
-
-  const phonesByOwner = new Map<string, string>()
-  for (const row of phoneRows) {
-    const ownerId = asString(getFirst(row, ['owner_id', 'master_owner_id']), '')
-    if (!ownerId || phonesByOwner.has(ownerId)) continue
-    phonesByOwner.set(ownerId, asString(getFirst(row, ['phone', 'phone_number']), ''))
-  }
-
-  const items: QueueItem[] = queueRows.map((row, index) => {
-    const id = asString(row['id'], `queue-${index + 1}`)
-    const queueId = asString(row['queue_id'] || row['id'], id)
-    const ownerId = asString(getFirst(row, ['owner_id', 'master_owner_id']), '')
-    const propertyId = asString(getFirst(row, ['property_id']), '')
-    const owner = ownerById.get(ownerId)
-    const property = propertyById.get(propertyId)
-
-    const status = toQueueStatus(getFirst(row, ['queue_status', 'status']))
-    const scheduledIso =
-      asIso(getFirst(row, ['scheduled_for', 'scheduled_at', 'send_at'])) ?? new Date().toISOString()
-    const localScheduledIso = asIso(getFirst(row, ['scheduled_for_local'])) || scheduledIso
-
-    const sellerName = asString(
-      getFirst(owner ?? row, ['full_name', 'entity_name', 'seller_name', 'first_name']),
-      'Unknown seller',
-    )
-
-    const propertyAddress = asString(
-      getFirst(property ?? row, ['property_address', 'address', 'property']),
-      'No property linked',
-    )
-
-    const market = asString(
-      marketById.get(asString(row['market_id'], '')) ??
-      getFirst(row, ['market']) ?? 
-      getFirst(owner ?? row, ['market']) ?? 
-      getFirst(property ?? row, ['market']),
-      'Market unknown',
-    )
-
-    const phone =
-      asString(getFirst(row, ['to_phone_number', 'phone']), '') ||
-      phonesByOwner.get(ownerId) ||
-      'No phone'
-
-    const retryCount = asNumber(getFirst(row, ['retry_count']), 0)
-    const maxRetries = Math.max(asNumber(getFirst(row, ['max_retries']), 3), retryCount || 0)
-
-    const metadata = (row['metadata'] as AnyRecord) || {}
-
-    return {
-      id,
-      queueId,
-      sellerName,
-      propertyAddress,
-      market,
-      phone,
-      agent: asString(getFirst(row, ['selected_agent_id', 'agent_name', 'agent']), 'NEXUS'),
-      templateName: asString(getFirst(row, ['template_name', 'use_case_template']), 'Template not attached'),
-      templateSource: 'system',
-      useCase: asString(getFirst(row, ['message_type', 'use_case']), 'listing'),
-      stage: asString(getFirst(row, ['stage', 'seller_stage']), 'lead'),
-      messageText: asString(getFirst(row, ['message_body', 'message_text', 'message']), ''),
-      scheduledForLocal: localScheduledIso,
-      scheduledForUtc: scheduledIso,
-      timezone: asString(getFirst(row, ['timezone']), 'America/Chicago'),
-      contactWindow: 'flexible',
-      status,
-      priority: toPriority(getFirst(row, ['priority'])),
-      touchNumber: Math.max(asNumber(getFirst(row, ['touch_number']), 1), 1),
-      language: asString(getFirst(row, ['language']), 'en') === 'es' ? 'es' : 'en',
-      retryCount,
-      maxRetries,
-      failureReason: toFailureReason(getFirst(row, ['failed_reason', 'failure_reason', 'error_code'])),
-      deliveryStatus: deliveryFromStatus(status),
-      createdAt: asIso(getFirst(row, ['created_at'])) ?? new Date().toISOString(),
-      updatedAt: asIso(getFirst(row, ['updated_at'])) ?? new Date().toISOString(),
-      sentAt: asIso(getFirst(row, ['sent_at'])),
-      approvedByOperator: asIso(getFirst(row, ['approved_at'])) ? 'operator' : null,
-      requiresApproval: status === 'approval' || asBoolean(getFirst(row, ['requires_approval']), false),
-      riskLevel: toRisk(getFirst(row, ['risk_level'])),
-      aiConfidence: Math.max(0, Math.min(100, asNumber(getFirst(row, ['ai_confidence', 'confidence']), 72))),
-      estimatedCost: Math.max(asNumber(getFirst(row, ['estimated_cost']), 0.018), 0.01),
-      textgridNumber: asString(getFirst(row, ['from_phone_number', 'textgrid_number']), phone),
-      linkedInboxThreadId: asString(getFirst(metadata, ['thread_id', 'conversation_id', 'thread_key']), '') || null,
-      linkedPropertyId: propertyId || null,
-      linkedOwnerId: ownerId || null,
-      metadata,
-    }
-  })
+  const rows = safeArray(data as AnyRecord[])
+  const items: QueueItem[] = rows.map((row) => ({
+    id: asString(row.id, ''),
+    queueId: asString(row.queue_id, ''),
+    sellerName: asString(row.seller_name, 'Unknown seller'),
+    propertyAddress: asString(row.property_address, 'No property linked'),
+    city: asString(row.city, ''),
+    state: asString(row.state, ''),
+    zip: asString(row.zip, ''),
+    market: asString(row.market, 'Market unknown'),
+    phone: asString(row.to_phone_number, 'No phone'),
+    agent: asString(row.agent_persona || row.selected_agent_id, 'NEXUS'),
+    templateName: asString(row.template_name || row.use_case_template, 'Template not attached'),
+    templateSource: 'system',
+    useCase: asString(row.use_case_template, 'listing'),
+    stage: asString(row.current_stage || 'lead', 'lead'),
+    messageText: asString(row.message_text || row.message_body, ''),
+    messageBody: asString(row.message_body || row.message_text, ''),
+    scheduledForLocal: asIso(row.scheduled_for_local) ?? new Date().toISOString(),
+    scheduledForUtc: asIso(row.scheduled_for) ?? new Date().toISOString(),
+    timezone: asString(row.timezone, 'America/Chicago'),
+    contactWindow: 'flexible',
+    status: toQueueStatus(row.queue_status),
+    priority: toPriority(row.priority),
+    touchNumber: asNumber(row.touch_number, 1),
+    language: asString(row.language, 'en') === 'es' ? 'es' : 'en',
+    retryCount: asNumber(row.retry_count, 0),
+    maxRetries: asNumber(row.max_retries, 3),
+    failureReason: toFailureReason(row.failed_reason),
+    deliveryStatus: deliveryFromStatus(toQueueStatus(row.queue_status)),
+    createdAt: asIso(row.created_at) ?? new Date().toISOString(),
+    updatedAt: asIso(row.updated_at) ?? new Date().toISOString(),
+    sentAt: asIso(row.sent_at),
+    deliveredAt: asIso(row.delivered_at),
+    approvedByOperator: asIso(row.approved_at) ? 'operator' : null,
+    requiresApproval: row.queue_status === 'approval' || row.risk_level === 'high',
+    riskLevel: toRisk(row.risk_level),
+    aiConfidence: Math.max(0, Math.min(100, asNumber(row.ai_confidence, 72))),
+    estimatedCost: Math.max(asNumber(row.estimated_cost, 0.018), 0.01),
+    textgridNumber: asString(row.from_phone_number, ''),
+    linkedInboxThreadId: asString(row.thread_key, null),
+    linkedPropertyId: asString(row.property_id, null),
+    linkedOwnerId: asString(row.master_owner_id, null),
+    dealTemperature: asString(row.deal_temperature, null),
+    nextBestAction: asString(row.next_best_action, null),
+    metadata: (row.metadata as AnyRecord) || {},
+  }))
 
   const readyCount = items.filter((i) => i.status === 'ready').length
   const scheduledCount = items.filter((i) => i.status === 'scheduled').length
-  const approvalCount = items.filter((i) => i.status === 'approval').length
-  const failedCount = items.filter((i) => i.status === 'failed').length
+  const approvalCount = items.filter((i) => i.status === 'approval' || i.riskLevel === 'high').length
+  const failedCount = items.filter((i) => i.status === 'failed' || i.status === 'retry').length
   const retryCount = items.filter((i) => i.status === 'retry').length
   const heldCount = items.filter((i) => i.status === 'held').length
-  const sentTodayCount = items.filter((i) => {
-    if (i.status !== 'sent' && i.status !== 'delivered') return false
-    const sentAt = i.sentAt ? new Date(i.sentAt) : null
-    if (!sentAt) return false
-    return sentAt.toDateString() === new Date().toDateString()
-  }).length
-  const deliveredTodayCount = items.filter((i) => {
-    if (i.status !== 'delivered') return false
-    const sentAt = i.sentAt ? new Date(i.sentAt) : null
-    if (!sentAt) return false
-    return sentAt.toDateString() === new Date().toDateString()
-  }).length
+  
+  const now = new Date().toDateString()
+  const sentTodayCount = items.filter((i) => i.sentAt && new Date(i.sentAt).toDateString() === now).length
+  const deliveredTodayCount = items.filter((i) => i.deliveredAt && new Date(i.deliveredAt).toDateString() === now).length
 
   const apiPressureLevel: 'low' | 'medium' | 'high' =
     failedCount + retryCount > items.length * 0.1

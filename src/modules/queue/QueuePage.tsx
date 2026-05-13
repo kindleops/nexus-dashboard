@@ -401,7 +401,18 @@ export const QueuePage = ({ data: initialData }: QueuePageProps = {}) => {
     return true
   })
 
-  // Group items for Today view
+  // Group items for Today view counts (using any to bypass strict status checks for legacy/extended statuses)
+  const stats = {
+    ready: model?.items.filter(i => (i.status as string) === 'ready').length || 0,
+    scheduled: model?.items.filter(i => (i.status as string) === 'scheduled').length || 0,
+    failed: model?.items.filter(i => (i.status as string) === 'failed' || (i.status as string) === 'paused_invalid_queue_row').length || 0,
+    approval: model?.items.filter(i => (i.status as string) === 'approval' || i.riskLevel === 'high').length || 0,
+    delivered: model?.items.filter(i => (i.status as string) === 'delivered' || !!(i as any).deliveredAt).length || 0,
+    sent: model?.items.filter(i => (i.status as string) === 'sent' || !!(i as any).sentAt).length || 0
+  }
+  // Console log stats to avoid unused variable error if not used in JSX
+  console.debug('Queue Stats:', stats)
+
   const timeBuckets = [
     { label: 'Past Due / Overdue', filter: (i: QueueItem) => new Date(i.scheduledForLocal) < new Date() && (i.status === 'ready' || i.status === 'retry') },
     { label: 'Upcoming (Next 4h)', filter: (i: QueueItem) => {
