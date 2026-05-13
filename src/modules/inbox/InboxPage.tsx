@@ -37,7 +37,6 @@ import {
   queueReplyFromInbox,
   scheduleReplyFromInbox,
   sendInboxMessageNow,
-  SERVER_INBOX_THREAD_STAGE_VALUES,
   type QueueProcessorHealth,
   type ThreadIntelligenceRecord,
   type ThreadMessage,
@@ -53,6 +52,7 @@ import { emitNotification } from '../../shared/NotificationToast'
 import { Icon } from '../../shared/icons'
 import { NexusTopBar } from './components/NexusTopBar'
 import { InboxSidebar } from './components/InboxSidebar'
+import { InboxConversationTable, type ConversationTableSort } from './components/InboxConversationTable'
 import { ChatThread } from './components/ChatThread'
 import { Composer } from './components/Composer'
 import { ComposerTranslationBar } from './components/ComposerTranslationBar'
@@ -97,6 +97,7 @@ import {
   type InboxStageSelectValue,
   type InboxViewSelectValue,
 } from './inbox-ui-helpers'
+import { buildConversationDecision } from './inbox-decisioning'
 import './inbox-premium.css'
 import './inbox-rebuild.css'
 import './inbox-polish.css'
@@ -118,6 +119,8 @@ const LANGUAGE_LABELS: Record<string, string> = {
 }
 
 type ThreadTranslateViewMode = 'original' | 'translated'
+type CommandCenterViewMode = 'split' | 'list' | 'dossier'
+type TableDensityMode = 'comfortable' | 'compact' | 'ultra_compact'
 
 const normalizeLanguageCode = (value: unknown): string | null => {
   if (typeof value !== 'string') return null
@@ -148,8 +151,11 @@ export default function InboxPage() {
   const [viewFilter, setViewFilter] = useState<InboxViewSelectValue>('priority')
   const [savedPreset, setSavedPreset] = useState<InboxSavedFilterPreset>('my_priority')
   const [advancedFilters, setAdvancedFilters] = useState<InboxAdvancedFilters>({ outOfStateOwner: 'all' })
-  const [rightViewFilter, setRightViewFilter] = useState<InboxViewSelectValue>('active')
+  const [rightViewFilter, setRightViewFilter] = useState<InboxViewSelectValue>('new_replies')
   const [rightSavedPreset, setRightSavedPreset] = useState<InboxSavedFilterPreset>('new_inbounds')
+  const [commandViewMode, setCommandViewMode] = useState<CommandCenterViewMode>('split')
+  const [tableSort, setTableSort] = useState<ConversationTableSort>('last_activity_desc')
+  const [tableDensity, setTableDensity] = useState<TableDensityMode>('compact')
   const [searchQuery, setSearchQuery] = useState('')
   const [draftText, setDraftText] = useState('')
   const [selectedMessages, setSelectedMessages] = useState<ThreadMessage[]>([])
@@ -250,58 +256,83 @@ export default function InboxPage() {
   }, [data.mapPins, threads])
 
   const advancedFilterOptions = useMemo(() => getAdvancedFilterOptions(threads), [threads])
-  
-  const viewCounts = useMemo(() => {
-    const local = getInboxViewCounts(threads)
-    const pick = (backend: number | null | undefined, localVal: number) => {
-      if (data.dataMode !== 'live') return localVal
-      if (backend !== null && backend !== undefined) return backend
-      return localVal
-    }
+  const decisions = useMemo(
+    () => new Map(threads.map((thread) => [thread.id, buildConversationDecision(thread)])),
+    [threads],
+  )
 
-    const priority = pick(data.priorityInboxCount, local.priority)
-    const active = pick(data.activeInboxCount, local.active)
-    const waiting = pick(data.waitingInboxCount, local.waiting)
-    const all = pick(data.allInboxCount, local.all)
-    const unread = pick(data.unreadThreadsCount, local.needs_response)
+  const viewCounts = useMemo(() => {
+    const safeRate = (numerator: number, denominator: number): number | null => {
+      if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) return null
+      const rate = (numerator / denominator) * 100
+      if (!Number.isFinite(rate) || rate < 0 || rate > 100) return null
+      return Math.round(rate)
+    }
+    const local = getInboxViewCounts(threads)
+    const now = new Date()
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+    const sentToday = threads.filter((thread) => {
+      const ts = new Date(thread.lastOutboundAt || 0).getTime()
+      return Number.isFinite(ts) && ts >= startOfDay
+    }).length
+    const repliesToday = threads.filter((thread) => {
+      const ts = new Date(thread.lastInboundAt || 0).getTime()
+      return Number.isFinite(ts) && ts >= startOfDay
+    }).length
+    const positiveRepliesToday = threads.filter((thread) => {
+      const decision = decisions.get(thread.id)
+      const ts = new Date(thread.lastInboundAt || 0).getTime()
+      return Number.isFinite(ts) && ts >= startOfDay && (decision?.seller_intent === 'seller_interested' || decision?.seller_intent === 'price_interest')
+    }).length
+    const optOutsToday = threads.filter((thread) => {
+      const decision = decisions.get(thread.id)
+      const ts = new Date(thread.lastInboundAt || thread.lastMessageAt || 0).getTime()
+      return Number.isFinite(ts) && ts >= startOfDay && decision?.suppression_status === 'suppressed'
+    }).length
+    const outboundThreadsToday = threads.filter((thread) => {
+      const ts = new Date(thread.lastOutboundAt || 0).getTime()
+      return Number.isFinite(ts) && ts >= startOfDay
+    }).length
+    const deliveredThreadsToday = threads.filter((thread) => {
+      const ts = new Date(thread.lastOutboundAt || 0).getTime()
+      return Number.isFinite(ts) && ts >= startOfDay && String(thread.deliveryStatus || '').toLowerCase() === 'delivered'
+    }).length
 
     return {
       ...local,
-      priority,
-      active,
-      waiting,
-      all,
-      unread,
-      needs_reply: pick(data.counts?.needs_reply, local.needs_reply),
-      positive_hot: pick(data.counts?.positive_hot, local.positive_hot),
-      missing_context: pick(data.counts?.missing_context, local.missing_context),
-      auto_replied: pick(data.counts?.auto_replied, local.auto_replied),
-      auto_reply_failed: local.auto_reply_failed,
-      offer_requested: local.offer_requested,
-      wrong_number: local.wrong_number,
-      opt_out: pick(data.counts?.suppressed, local.opt_out),
-      manual_review: pick(data.counts?.manual_review, local.manual_review),
-      my_priority: priority,
-      new_inbounds: active,
-      offer_needed: waiting,
-      review_required: all,
-      active_conversations: active,
-      waiting_for_reply: waiting,
-      all_threads: all,
-      archived_leads: pick(data.archivedThreadsCount, local.archived),
-      wrong_numbers: pick(data.hiddenThreadsCount, local.hidden),
-      suppressed: pick(data.suppressedThreadsCount, local.suppressed),
+      new_replies: local.new_replies,
+      priority: local.priority,
+      negotiating: local.negotiating,
+      follow_up_due: local.follow_up_due,
+      waiting_on_seller: local.waiting_on_seller,
+      automated: local.automated,
+      needs_review: local.needs_review,
+      cold_no_response: local.cold_no_response,
+      suppressed: local.suppressed,
+      all: local.all,
+      active: local.active,
+      my_priority: local.priority,
+      new_inbounds: local.new_replies,
+      offer_needed: local.follow_up_due,
+      review_required: local.needs_review,
+      active_conversations: local.active,
+      waiting_for_reply: local.waiting_on_seller,
+      all_threads: local.all,
+      archived_leads: local.archived,
+      wrong_numbers: local.wrong_number,
+      sent_today: sentToday,
+      replies_today: repliesToday,
+      positive_reply_rate: safeRate(positiveRepliesToday, repliesToday),
+      opt_out_rate: safeRate(optOutsToday, outboundThreadsToday),
+      delivery_rate: safeRate(deliveredThreadsToday, outboundThreadsToday),
+      queue_health: local.automated > 0 ? 'Healthy' : 'Watch',
     }
-  }, [threads, data])
+  }, [decisions, threads])
 
-  const serverFilterOptions: ApplyInboxFiltersOptions = useMemo(() => {
-    const live = data.dataMode === 'live'
-    const double = layoutState.inboxMode === 'full_double'
-    return {
-      skipViewFilter: live && !double,
-      skipStageFilter: live && !double && stageFilter !== 'all_stages' && SERVER_INBOX_THREAD_STAGE_VALUES.has(stageFilter),
-    }
-  }, [data.dataMode, layoutState.inboxMode, stageFilter])
+  const serverFilterOptions: ApplyInboxFiltersOptions = useMemo(() => ({
+    skipViewFilter: false,
+    skipStageFilter: false,
+  }), [])
 
   const filtered = useMemo(() => (
     applyInboxFilters(threads, {
@@ -310,7 +341,7 @@ export default function InboxPage() {
       view: viewFilter,
       advanced: advancedFilters,
     }, serverFilterOptions)
-  ), [threads, searchQuery, stageFilter, viewFilter, advancedFilters, serverFilterOptions])
+  ), [advancedFilters, searchQuery, serverFilterOptions, stageFilter, threads, viewFilter])
 
   const handleLoadMore = useCallback(async () => {
     await loadMore()
@@ -507,12 +538,11 @@ export default function InboxPage() {
   }, [])
 
   const liveThreadQuery = useMemo(() => ({
-    // Use the actual view filter to fetch bucket-specific rows
-    view: viewFilter,
-    stage: stageFilter,
-    query: searchQuery,
-    advanced: advancedFilters,
-  }), [viewFilter, stageFilter, searchQuery, advancedFilters])
+    view: 'all',
+    stage: 'all_stages',
+    query: '',
+    advanced: {},
+  }), [])
 
   useEffect(() => {
     setVisibleThreadCount(1000)
@@ -1649,8 +1679,45 @@ export default function InboxPage() {
         onToggleDryRun={() => setAutonomyControls(prev => ({ ...prev, dryRun: !prev.dryRun }))}
       />
 
+      <div className="nx-command-viewbar">
+        <div className="nx-command-viewbar__modes">
+          {(['split', 'list', 'dossier'] as CommandCenterViewMode[]).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              className={cls('nx-command-viewbar__mode', commandViewMode === mode && 'is-active')}
+              onClick={() => setCommandViewMode(mode)}
+            >
+              {mode === 'split' ? 'Split View' : mode === 'list' ? 'List View' : 'Dossier View'}
+            </button>
+          ))}
+        </div>
+        <div className="nx-command-viewbar__modes">
+          {([
+            ['full', 'Full'],
+            ['default', 'Compact'],
+            ['hidden', 'Hidden'],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className={cls('nx-command-viewbar__mode', leftPanelMode === value && 'is-active')}
+              onClick={() => setLayoutState((current) => ({ ...current, leftPanelMode: value }))}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="nx-command-viewbar__quick-filters">
+          <button type="button" className="nx-command-viewbar__chip" onClick={() => applySavedPreset('positive_hot')}>Hot</button>
+          <button type="button" className="nx-command-viewbar__chip" onClick={() => setViewFilter('spanish_language')}>Spanish</button>
+          <button type="button" className="nx-command-viewbar__chip" onClick={() => setViewFilter('automated')}>Auto-Eligible</button>
+          <button type="button" className="nx-command-viewbar__chip" onClick={() => setViewFilter('needs_review')}>Needs Review</button>
+        </div>
+      </div>
+
       <div className="nx-inbox-shell">
-        {showLeftPanel && (
+        {showLeftPanel && commandViewMode !== 'dossier' && (
           <InboxSidebar
             threads={threads}
             selectedId={selected?.id ?? null}
@@ -1669,6 +1736,7 @@ export default function InboxPage() {
             onSearchQueryChange={setSearchQuery}
             visibleThreadCount={visibleThreadCount}
             loadingError={data.liveFetchError}
+            densityMode={leftPanelMode === 'full' ? 'full' : 'compact'}
           />
         )}
 
@@ -1691,10 +1759,11 @@ export default function InboxPage() {
             onSearchQueryChange={setSearchQuery}
             visibleThreadCount={visibleThreadCount}
             loadingError={data.liveFetchError}
+            densityMode="compact"
           />
         )}
 
-        <main className="nx-inbox-center">
+        <main className={cls('nx-inbox-center', commandViewMode === 'list' && 'is-list-mode', commandViewMode === 'dossier' && 'is-dossier-mode')}>
           {dossierOpen && (
             <MapDossierDrawer
               mode="dossier"
@@ -1710,67 +1779,80 @@ export default function InboxPage() {
             <div className="nx-filtered-out-notice">Selected thread is not in the current filter; detail remains open.</div>
           )}
 
-          <ChatThread
-            thread={selected}
-            messages={displayedMessagesWithTranslation}
-            loading={messagesLoading}
-            isSuppressed={selectedSuppressed}
-            isStarred={selected?.isStarred ?? false}
-            onTogglePin={handleTogglePin}
-            onToggleStar={handleToggleStar}
-            onToggleArchive={handleToggleArchive}
-            onThreadAction={handleOperatorAction}
-            onOpenDebug={() => setDebugModalOpen(true)}
-            searchQuery={searchQuery}
-          />
+          {commandViewMode === 'list' ? (
+            <InboxConversationTable
+              threads={filtered}
+              selectedId={selected?.id ?? null}
+              sort={tableSort}
+              density={tableDensity}
+              onSortChange={setTableSort}
+              onDensityChange={setTableDensity}
+              onSelect={handleSelect}
+            />
+          ) : (
+            <>
+              <ChatThread
+                thread={selected}
+                messages={displayedMessagesWithTranslation}
+                loading={messagesLoading}
+                isSuppressed={selectedSuppressed}
+                isStarred={selected?.isStarred ?? false}
+                onTogglePin={handleTogglePin}
+                onToggleStar={handleToggleStar}
+                onToggleArchive={handleToggleArchive}
+                onThreadAction={handleOperatorAction}
+                onOpenDebug={() => setDebugModalOpen(true)}
+                searchQuery={searchQuery}
+              />
 
+              {showTranslation && (
+                <ComposerTranslationBar
+                  sellerLanguageLabel={sellerLanguageLabel}
+                  sellerLanguageCode={sellerLanguageCode}
+                  isSellerLanguageEnglish={isEnglishLanguage(sellerLanguageCode)}
+                  hasInboundMessages={threadHasInboundMessages}
+                  hasThreadTranslations={Object.keys(threadTranslations).length > 0}
+                  threadViewMode={threadViewMode}
+                  isThreadTranslating={threadTranslationLoading}
+                  isDraftTranslating={draftTranslationLoading}
+                  hasDraftText={Boolean(draftText.trim())}
+                  translatedDraftPreview={translatedDraftPreview}
+                  translationError={translationError}
+                  canRevertDraft={Boolean(originalDraftBeforeTranslation)}
+                  onTranslateThread={handleTranslateThread}
+                  onTranslateDraft={handleTranslateDraft}
+                  onSetThreadViewMode={setThreadViewMode}
+                  onUseDraftTranslation={handleUseDraftTranslation}
+                  onRevertDraft={handleRevertDraftTranslation}
+                />
+              )}
 
-          {showTranslation && (
-            <ComposerTranslationBar
-            sellerLanguageLabel={sellerLanguageLabel}
-            sellerLanguageCode={sellerLanguageCode}
-            isSellerLanguageEnglish={isEnglishLanguage(sellerLanguageCode)}
-            hasInboundMessages={threadHasInboundMessages}
-            hasThreadTranslations={Object.keys(threadTranslations).length > 0}
-            threadViewMode={threadViewMode}
-            isThreadTranslating={threadTranslationLoading}
-            isDraftTranslating={draftTranslationLoading}
-            hasDraftText={Boolean(draftText.trim())}
-            translatedDraftPreview={translatedDraftPreview}
-            translationError={translationError}
-            canRevertDraft={Boolean(originalDraftBeforeTranslation)}
-            onTranslateThread={handleTranslateThread}
-            onTranslateDraft={handleTranslateDraft}
-            onSetThreadViewMode={setThreadViewMode}
-            onUseDraftTranslation={handleUseDraftTranslation}
-            onRevertDraft={handleRevertDraftTranslation}
-          />
+              <Composer
+                draftText={draftText}
+                setDraftText={setDraftText}
+                onSend={handleSend}
+                isSending={isSending}
+                onOpenSchedule={() => {
+                  setScheduledTemplatePayload({ text: draftText, template: null })
+                  setSchedulePanelOpen(true)
+                }}
+                onAI={() => setActiveOverlay('ai')}
+                thread={selected}
+                threadContext={threadContext}
+                onInsertTemplate={(text) => setDraftText(prev => prev ? `${prev}\n\n${text}` : text)}
+                onReplaceTemplate={(text) => setDraftText(text)}
+                onSendTemplate={handleSendTemplate}
+                onQueueTemplate={handleQueueTemplate}
+                onScheduleTemplate={handleScheduleTemplate}
+                onTranslate={() => setShowTranslation(!showTranslation)}
+                isTranslating={showTranslation}
+                disabled={!selected || selectedSuppressed}
+                disabledReason={!selected ? 'Select a thread to compose' : 'Messaging disabled for suppressed thread'}
+                aiHint={null}
+                aiSuggestions={commandIntel?.suggestions ?? []}
+              />
+            </>
           )}
-
-          <Composer
-            draftText={draftText}
-            setDraftText={setDraftText}
-            onSend={handleSend}
-            isSending={isSending}
-            onOpenSchedule={() => {
-              setScheduledTemplatePayload({ text: draftText, template: null })
-              setSchedulePanelOpen(true)
-            }}
-            onAI={() => setActiveOverlay('ai')}
-            thread={selected}
-            threadContext={threadContext}
-            onInsertTemplate={(text) => setDraftText(prev => prev ? `${prev}\n\n${text}` : text)}
-            onReplaceTemplate={(text) => setDraftText(text)}
-            onSendTemplate={handleSendTemplate}
-            onQueueTemplate={handleQueueTemplate}
-            onScheduleTemplate={handleScheduleTemplate}
-            onTranslate={() => setShowTranslation(!showTranslation)}
-            isTranslating={showTranslation}
-            disabled={!selected || selectedSuppressed}
-            disabledReason={!selected ? 'Select a thread to compose' : 'Messaging disabled for suppressed thread'}
-            aiHint={null}
-            aiSuggestions={commandIntel?.suggestions ?? []}
-          />
         </main>
 
         {mapOpen ? (
@@ -1824,7 +1906,7 @@ export default function InboxPage() {
               </div>
             )}
           </aside>
-        ) : showRightPanel && !isDoubleSided ? (
+        ) : (showRightPanel && !isDoubleSided) || commandViewMode === 'dossier' ? (
           <IntelligencePanel
             thread={selected}
             onStatusChange={handleStatusChange}
@@ -1833,7 +1915,7 @@ export default function InboxPage() {
             onOpenDossier={() => setActiveOverlay('dossier')}
             onOpenAi={() => setActiveOverlay('ai')}
             messages={displayedMessages}
-            panelMode={rightPanelMode}
+            panelMode={rightPanelMode === 'hidden' ? 'default' : rightPanelMode}
           />
         ) : null}
       </div>

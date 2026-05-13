@@ -6188,6 +6188,75 @@ h3 { font-size: 0.8125rem; }
   background: #0a0c10;
 }
 
+.nx-icm--full {
+  min-height: 72vh;
+}
+
+.nx-icm__toolbar {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 160px;
+  z-index: 12;
+  display: grid;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.nx-icm__activity-tabs,
+.nx-icm__mode-tabs,
+.nx-icm__filter-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  pointer-events: auto;
+}
+
+.nx-icm__mode-tab,
+.nx-icm__filter-row select,
+.nx-icm__actions button {
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(8, 10, 15, 0.88);
+  color: rgba(236, 242, 251, 0.82);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.nx-icm__mode-tab.is-active {
+  border-color: rgba(91, 182, 255, 0.32);
+  background: rgba(91, 182, 255, 0.14);
+  color: #fff;
+}
+
+.nx-icm__filter-row select {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.nx-icm__checkbox {
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(8, 10, 15, 0.88);
+  color: rgba(236, 242, 251, 0.76);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  pointer-events: auto;
+}
+
 .nx-icm--empty {
   align-items: center;
   justify-content: center;
@@ -6243,6 +6312,7 @@ h3 { font-size: 0.8125rem; }
   bottom: 28px;
   left: 10px;
   right: 10px;
+  max-width: 420px;
   background: rgba(8, 10, 15, 0.88);
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: var(--radius-sm, 5px);
@@ -6252,7 +6322,11 @@ h3 { font-size: 0.8125rem; }
   display: flex;
   flex-direction: column;
   gap: 5px;
-  pointer-events: none;
+  pointer-events: auto;
+}
+
+.nx-icm__card--actionable {
+  gap: 8px;
 }
 
 .nx-icm__card-row {
@@ -6305,6 +6379,13 @@ h3 { font-size: 0.8125rem; }
   white-space: nowrap;
 }
 
+.nx-icm__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 /* ── Attribution ────────────────────────────────────────────────────────── */
 
 .nx-icm__attribution {
@@ -6337,6 +6418,71 @@ h3 { font-size: 0.8125rem; }
   min-width: 110px;
 }
 
+.nx-icm__market-strip {
+  position: absolute;
+  top: 104px;
+  right: 10px;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 220px;
+}
+
+.nx-icm__market-card {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(8, 10, 15, 0.9);
+  color: rgba(236, 242, 251, 0.82);
+  text-align: left;
+}
+
+.nx-icm__market-card strong {
+  color: #fff;
+}
+
+.nx-icm__overlay-kpis {
+  position: absolute;
+  top: 104px;
+  left: 10px;
+  z-index: 12;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  gap: 8px;
+  width: min(720px, calc(100% - 250px));
+  pointer-events: none;
+}
+
+.nx-icm__overlay-kpi {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: linear-gradient(180deg, rgba(11, 15, 22, 0.92), rgba(7, 10, 15, 0.88));
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.nx-icm__overlay-kpi span {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: rgba(226, 234, 246, 0.54);
+}
+
+.nx-icm__overlay-kpi strong {
+  font-size: 18px;
+  font-weight: 900;
+  color: #fff;
+  line-height: 1;
+}
+
 .nx-icm__legend-title {
   font-size: 9.5px;
   font-weight: 600;
@@ -6364,6 +6510,53 @@ h3 { font-size: 0.8125rem; }
   font-size: 10.5px;
   color: rgba(255, 255, 255, 0.52);
   font-weight: 500;
+}
+
+.nx-icm__ticker {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  z-index: 12;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.nx-icm__ticker-item {
+  min-width: 196px;
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(91, 182, 255, 0.14);
+  background: linear-gradient(180deg, rgba(8, 12, 18, 0.94), rgba(6, 9, 14, 0.88));
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.nx-icm__ticker-label {
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: #5bb6ff;
+}
+
+.nx-icm__ticker-subject {
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nx-icm__ticker-meta {
+  font-size: 10px;
+  color: rgba(228, 236, 247, 0.56);
 }
 
 /* ── Pulse marker (injected as DOM element by MapLibre) ─────────────────── */
@@ -17688,4 +17881,3 @@ h3 { font-size: 0.8125rem; }
   .nx-header-actions-v3 { flex-direction: column; }
   .nx-header-telemetry-rail-v3 { gap: 8px; }
 }
-

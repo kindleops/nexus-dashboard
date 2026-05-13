@@ -11042,11 +11042,26 @@
 }
 
 .nx-thread-card__time {
-  font-size: 10px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-end !important;
+  gap: 2px !important;
+  min-width: 68px !important;
   font-weight: 700 !important;
-  color: rgba(255, 255, 255, 0.4) !important;
+  text-align: right !important;
+}
+
+.nx-thread-card__time-day {
+  font-size: 10px !important;
+  color: rgba(255, 255, 255, 0.52) !important;
   text-transform: uppercase !important;
-  letter-spacing: 0.05em !important;
+  letter-spacing: 0.08em !important;
+}
+
+.nx-thread-card__time-clock {
+  font-size: 12px !important;
+  color: rgba(255, 255, 255, 0.82) !important;
+  letter-spacing: 0.01em !important;
 }
 
 /* ROW 2: Property Context */
@@ -12986,6 +13001,14 @@
 
 .nx-premium-inbox.is-light-mode .nx-thread-card__time {
   color: rgba(80, 95, 120, 0.6);
+}
+
+.nx-premium-inbox.is-light-mode .nx-thread-card__time-day {
+  color: rgba(80, 95, 120, 0.62) !important;
+}
+
+.nx-premium-inbox.is-light-mode .nx-thread-card__time-clock {
+  color: rgba(19, 31, 52, 0.88) !important;
 }
 
 .nx-premium-inbox.is-light-mode .nx-thread-card__avatar {

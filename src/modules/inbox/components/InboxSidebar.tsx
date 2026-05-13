@@ -1,7 +1,7 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef } from 'react'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
-import { formatCompactTime } from '../../../shared/formatters'
+import { formatInboxThreadTimestamp } from '../../../shared/formatters'
 import {
   resolveThreadAddressLine,
   resolveThreadMarketBadge,
@@ -9,7 +9,14 @@ import {
   type InboxSavedFilterPreset,
   type InboxViewSelectValue,
 } from '../inbox-ui-helpers'
-// Removed unused status-visuals imports
+import {
+  buildConversationDecision,
+  isHotLeadDecision,
+  matchesInboxBucket,
+  sortThreadsByDecision,
+  type ConversationDecision,
+  type InboxBucket,
+} from '../inbox-decisioning'
 
 const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
 
@@ -33,7 +40,7 @@ interface InboxSidebarProps {
   onThreadAction?: (id: string, action: string) => void
   savedPreset: InboxSavedFilterPreset
   onApplySavedPreset: (preset: InboxSavedFilterPreset) => void
-  viewCounts: Record<string, number | null | undefined>
+  viewCounts: Record<string, number | string | null | undefined>
   onOpenAdvancedFilters: () => void
   onClearFilters?: () => void
   onLoadMore: () => void
@@ -43,93 +50,68 @@ interface InboxSidebarProps {
   onSearchQueryChange?: (value: string) => void
   visibleThreadCount?: number
   loadingError?: string | null
+  densityMode?: 'full' | 'compact'
 }
 
-type QueuePreset =
-  | 'positive_hot'
-  | 'manual_review'
-  | 'needs_reply'
-  | 'auto_replied'
-  | 'outbound_only'
-  | 'missing_context'
-  | 'suppressed'
-  | 'inbound_all'
-
-const QUEUE_PRESETS: QueuePreset[] = ['positive_hot', 'manual_review', 'needs_reply', 'auto_replied', 'outbound_only', 'missing_context', 'suppressed', 'inbound_all']
-
-const QUEUE_DESCRIPTIONS: Record<QueuePreset, string> = {
-  positive_hot: 'High-intent signals & active sellers',
-  manual_review: 'Requires operator triage',
-  needs_reply: 'Fresh replies awaiting response',
-  inbound_all: 'All conversations with inbound activity',
-  auto_replied: 'AI-managed conversations',
-  outbound_only: 'Active outreach in progress',
-  missing_context: 'No recent seller activity',
-  suppressed: 'Compliant suppressions & DNC',
-}
-
-const QUEUE_CONFIG: Array<{
-  preset: QueuePreset
-  category: string
-  icon: string
+type BucketConfig = {
+  bucket: InboxBucket
+  view: InboxViewSelectValue
   label: string
+  icon: string
+  description: string
   accentClass: string
   countKey: string
-}> = [
-  { preset: 'positive_hot', category: 'hot_leads', icon: '🔥', label: 'HOT LEADS', accentClass: 'is-hot', countKey: 'positive_hot' },
-  { preset: 'manual_review', category: 'needs_review', icon: '⚠', label: 'NEEDS REVIEW', accentClass: 'is-review', countKey: 'manual_review' },
-  { preset: 'needs_reply', category: 'new_inbound', icon: '📨', label: 'NEW INBOUND', accentClass: 'is-inbound', countKey: 'needs_reply' },
-  { preset: 'inbound_all', category: 'all_inbound', icon: '📥', label: 'ALL INBOUND', accentClass: 'is-inbound-all', countKey: 'all_inbound' },
-  { preset: 'auto_replied', category: 'automated', icon: '🤖', label: 'AUTOMATED', accentClass: 'is-automated', countKey: 'auto_replied' },
-  { preset: 'outbound_only', category: 'outbound_active', icon: '📤', label: 'OUTBOUND ACTIVE', accentClass: 'is-outbound', countKey: 'outbound_only' },
-  { preset: 'missing_context', category: 'cold_no_response', icon: '🧊', label: 'COLD / NO RESPONSE', accentClass: 'is-cold', countKey: 'missing_context' },
-  { preset: 'suppressed', category: 'dnc_opt_out', icon: '🚫', label: 'DNC / OPT OUT', accentClass: 'is-dnc', countKey: 'suppressed' },
+}
+
+const BUCKETS: BucketConfig[] = [
+  { bucket: 'new_replies', view: 'new_replies', label: 'NEW REPLIES', icon: '📨', description: 'Unread inbound replies that need attention now', accentClass: 'is-inbound', countKey: 'new_replies' },
+  { bucket: 'priority', view: 'priority', label: 'PRIORITY', icon: '⚡', description: 'Unread, high-priority conversations', accentClass: 'is-hot', countKey: 'priority' },
+  { bucket: 'negotiating', view: 'negotiating', label: 'NEGOTIATING', icon: '💬', description: 'Price discussion, underwriting, and offer motion', accentClass: 'is-review', countKey: 'negotiating' },
+  { bucket: 'follow_up_due', view: 'follow_up_due', label: 'FOLLOW-UP DUE', icon: '⏰', description: 'System-owned follow-ups due now', accentClass: 'is-outbound', countKey: 'follow_up_due' },
+  { bucket: 'waiting_on_seller', view: 'waiting_on_seller', label: 'WAITING ON SELLER', icon: '⌛', description: 'Outbound sent, waiting for seller response', accentClass: 'is-inbound-all', countKey: 'waiting_on_seller' },
+  { bucket: 'automated', view: 'automated', label: 'AUTOMATED', icon: '⚙️', description: 'Deterministic automation can safely act', accentClass: 'is-automated', countKey: 'automated' },
+  { bucket: 'needs_review', view: 'needs_review', label: 'NEEDS REVIEW', icon: '🛡', description: 'Ambiguous, legal, hostile, or low-confidence threads', accentClass: 'is-review', countKey: 'needs_review' },
+  { bucket: 'cold_no_response', view: 'cold_no_response', label: 'COLD / NO RESPONSE', icon: '🧊', description: 'Outbound with no inbound reply past threshold', accentClass: 'is-cold', countKey: 'cold_no_response' },
+  { bucket: 'dnc_suppressed', view: 'dnc_opt_out', label: 'DNC / SUPPRESSED', icon: '🚫', description: 'Opt-out, wrong number, DNC, or legal suppression', accentClass: 'is-dnc', countKey: 'suppressed' },
+  { bucket: 'all_conversations', view: 'all_conversations', label: 'ALL CONVERSATIONS', icon: '🗂', description: 'Every loaded thread in the command center', accentClass: 'is-all', countKey: 'all' },
 ]
 
-const VIEW_TO_QUEUE_PRESET: Partial<Record<InboxViewSelectValue, QueuePreset>> = {
-  positive_hot: 'positive_hot',
-  manual_review: 'manual_review',
-  needs_reply: 'needs_reply',
-  all_inbound: 'inbound_all',
-  auto_replied: 'auto_replied',
-  outbound: 'outbound_only',
-  outbound_active: 'outbound_only',
-  missing_context: 'missing_context',
-  suppressed: 'suppressed',
-  hot_leads: 'positive_hot',
-  needs_review: 'manual_review',
-  new_inbound: 'needs_reply',
-  automated: 'auto_replied',
-  cold_no_response: 'missing_context',
-  dnc_opt_out: 'suppressed',
-}
+const KPI_STRIP = [
+  { key: 'new_replies', label: 'New Replies' },
+  { key: 'needs_review', label: 'Needs Review' },
+  { key: 'follow_up_due', label: 'Follow-Up Due' },
+  { key: 'active', label: 'Active Threads' },
+  { key: 'sent_today', label: 'Sent Today' },
+  { key: 'replies_today', label: 'Replies Today' },
+  { key: 'positive_reply_rate', label: 'Positive Reply Rate' },
+  { key: 'opt_out_rate', label: 'Opt-Out Rate' },
+  { key: 'delivery_rate', label: 'Delivery Rate' },
+  { key: 'queue_health', label: 'Queue Health' },
+] as const
 
-const HERO_MODE_META: Record<'priority' | 'active' | 'waiting' | 'all', { label: string; tone: string; description: string }> = {
-  priority: { label: 'PRIORITY INBOX', tone: 'priority', description: 'Actionable signals & urgent replies' },
-  active: { label: 'ACTIVE INBOX', tone: 'active', description: 'Recently engaged seller conversations' },
-  waiting: { label: 'WAITING INBOX', tone: 'waiting', description: 'Outbound threads awaiting a response' },
-  all: { label: 'ALL MESSAGES', tone: 'all', description: 'Full conversation flow for this inbox' },
-}
-
-const QUEUE_HERO_META: Record<QueuePreset, { tone: string; description: string }> = {
-  positive_hot: { tone: 'hot', description: 'Motivated sellers and high-intent deal flow' },
-  manual_review: { tone: 'review', description: 'Operator review required before the next move' },
-  needs_reply: { tone: 'inbound', description: 'Fresh inbound replies ready for action' },
-  inbound_all: { tone: 'inbound-all', description: 'Full historical inbound communication' },
-  auto_replied: { tone: 'automated', description: 'Automation-managed threads in motion' },
-  outbound_only: { tone: 'outbound', description: 'Live outbound follow-up and outreach' },
-  missing_context: { tone: 'cold', description: 'Cooling threads with no recent seller movement' },
-  suppressed: { tone: 'suppressed', description: 'Suppressed and do-not-contact conversations' },
-}
+const COMPACT_STATS = [
+  { key: 'new_replies', label: 'New Replies', icon: '📬' },
+  { key: 'priority', label: 'Priority', icon: '⚡' },
+  { key: 'needs_review', label: 'Needs Review', icon: '⚠' },
+  { key: 'follow_up_due', label: 'Follow-Up Due', icon: '⏰' },
+] as const
 
 const numberOrNull = (value: unknown): number | null => {
   const num = Number(value)
   return Number.isFinite(num) ? num : null
 }
 
-const formatCount = (value: number | null | undefined) => {
+const formatCount = (value: number | null | undefined) => value === null || value === undefined ? '—' : `${value}`
+const formatMetric = (key: typeof KPI_STRIP[number]['key'], value: unknown) => {
   if (value === null || value === undefined) return '—'
-  return `${value}`
+  if (typeof value === 'string') return value
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return '—'
+  if (key === 'positive_reply_rate' || key === 'opt_out_rate' || key === 'delivery_rate') {
+    if (numeric < 0 || numeric > 100) return '—'
+    return `${Math.round(numeric)}%`
+  }
+  return `${Math.round(numeric)}`
 }
 
 const readString = (thread: InboxWorkflowThread, ...keys: string[]) => {
@@ -139,48 +121,6 @@ const readString = (thread: InboxWorkflowThread, ...keys: string[]) => {
     if (typeof value === 'string' && value.trim()) return value.trim()
   }
   return ''
-}
-
-const readNumber = (thread: InboxWorkflowThread, ...keys: string[]) => {
-  const row = thread as unknown as Record<string, unknown>
-  for (const key of keys) {
-    const value = row[key]
-    const num = Number(String(value ?? '').replace(/[^0-9.]/g, ''))
-    if (Number.isFinite(num) && num > 0) return Math.round(num)
-  }
-  return null
-}
-
-const getActivityTime = (thread: InboxWorkflowThread) => {
-  const iso = thread.lastMessageAt || thread.lastMessageIso || readString(thread, 'latest_message_at', 'latestMessageAt', 'updatedAt')
-  const ts = iso ? new Date(iso).getTime() : Number.NaN
-  return Number.isFinite(ts) ? ts : 0
-}
-
-const resolveQueuePreset = (thread: InboxWorkflowThread): QueuePreset => {
-  const category = readString(thread, 'inbox_category', 'inboxCategory', 'priorityBucket', 'priority_bucket').toLowerCase()
-  const inboundCount = readNumber(thread, 'inbound_count', 'inboundCount') ?? 0
-  
-  // 1. Exact matches for backend categories
-  if (category === 'hot_leads' || category === 'hot') return 'positive_hot'
-  if (category === 'needs_review' || category === 'review') return 'manual_review'
-  if (category === 'new_inbound' || category === 'unread') return 'needs_reply'
-  if (category === 'all_inbound' || category === 'inbound_all' || inboundCount > 0) return 'inbound_all'
-  if (category === 'automated' || category === 'auto') return 'auto_replied'
-  if (category === 'outbound_active' || category === 'outbound') return 'outbound_only'
-  if (category === 'dnc_opt_out' || category === 'suppressed' || category === 'dnc') return 'suppressed'
-  if (category === 'cold_no_response' || category === 'cold' || category === 'normal') return 'missing_context'
-
-  return 'missing_context'
-}
-
-const getQueueCount = (
-  preset: QueuePreset,
-  backendCount: number | null | undefined,
-  localCount: number,
-) => {
-  void preset
-  return numberOrNull(backendCount) ?? localCount
 }
 
 const matchesSearch = (thread: InboxWorkflowThread, query: string) => {
@@ -193,7 +133,6 @@ const matchesSearch = (thread: InboxWorkflowThread, query: string) => {
     readString(thread, 'latest_message_body', 'latestMessageBody', 'lastMessageBody', 'preview'),
     readString(thread, 'best_phone', 'canonical_e164', 'phone'),
     readString(thread, 'propertyType', 'property_type'),
-    readString(thread, 'threadWorkflowStage', 'workflowStage', 'queue_stage', 'detected_intent', 'conversationStage', 'inbox_category'),
   ]
   return values.some((value) => value.toLowerCase().includes(search))
 }
@@ -204,244 +143,96 @@ const getInitials = (value: string) =>
     .filter(Boolean)
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase() ?? '')
-    .join('') || '+('
+    .join('') || '??'
 
-const highlightMessage = (text: string) => {
-  if (!text) return null
-  
-  // High-performance regex split for pricing and urgency
-  const tokens = text.split(/(\$\d+(?:,\d+)*(?:\.\d+)?|\b(?:asap|urgent|quick|now|soon|immediately|priority|fast)\b)/gi)
-  
-  return (
-    <>
-      {tokens.map((token, i) => {
-        const lower = token.toLowerCase()
-        if (token.startsWith('$')) {
-          return <span key={i} className="nx-pricing-highlight">{token}</span>
-        }
-        if (['asap', 'urgent', 'quick', 'now', 'soon', 'immediately', 'priority', 'fast'].includes(lower)) {
-          return <span key={i} className="nx-urgency-highlight">{token}</span>
-        }
-        return token
-      })}
-    </>
-  )
+const renderTagList = (decision: ConversationDecision, thread: InboxWorkflowThread) => {
+  const tags = [
+    decision.conversation_status.replace(/_/g, ' '),
+    decision.conversation_stage.replace(/_/g, ' '),
+    decision.seller_intent.replace(/_/g, ' '),
+    decision.lead_temperature,
+    decision.next_action,
+    decision.automation_status,
+    ...(((thread as unknown as Record<string, unknown>).matched_keywords as string[] | undefined) ?? []).slice(0, 2),
+  ].filter(Boolean)
+  return Array.from(new Set(tags)).slice(0, 6)
 }
 
-const AcquisitionScoreRing = ({ score }: { score: number }) => {
-  const radius = 10
-  const circumference = 2 * Math.PI * radius
-  const offset = circumference - (score / 100) * circumference
-  const color = score >= 80 ? '#30d158' : score >= 50 ? '#ff9f0a' : '#5bb6ff'
-
-  return (
-    <div className="nx-thread-card__score-ring" title={`Acquisition Score: ${score}%`}>
-      <svg width="24" height="24" viewBox="0 0 24 24">
-        <circle cx="12" cy="12" r={radius} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="2" />
-        <circle
-          cx="12"
-          cy="12"
-          r={radius}
-          fill="none"
-          stroke={color}
-          strokeWidth="2"
-          strokeDasharray={circumference}
-          strokeDashoffset={offset}
-          strokeLinecap="round"
-          transform="rotate(-90 12 12)"
-          style={{ transition: 'stroke-dashoffset 0.8s ease' }}
-        />
-      </svg>
-    </div>
-  )
-}
-
-const resolveIntelligenceChips = (thread: InboxWorkflowThread) => {
-  const chips: { label: string; icon?: string; type?: string; active?: boolean }[] = []
-  
-  const score = readNumber(thread, 'finalAcquisitionScore', 'motivationScore', 'displayScore') ?? 0
-
-  if (thread.isHotLead || score >= 80) {
-    chips.push({ label: 'HOT LEAD', icon: '🔥', type: 'urgency', active: true })
-  }
-  
-  if (thread.automationState === 'active') {
-    chips.push({ label: 'AI ACTIVE', icon: '🤖', type: 'automated', active: true })
-  }
-  
-  if (thread.isTaxDelinquent || thread.property_tax_delinquent) {
-    chips.push({ label: 'TAX DELINQUENT', type: 'risk' })
-  }
-  
-  if (thread.isProbate || (thread as any).isProbate) {
-    chips.push({ label: 'PROBATE', type: 'event' })
-  }
-  
-  if (thread.hasLien || thread.property_active_lien) {
-    chips.push({ label: 'LIEN', type: 'risk' })
-  }
-
-  const units = readNumber(thread, 'units_count', 'Units', 'units')
-  if (units && units > 1) {
-    chips.push({ label: `${units} UNITS`, type: 'property' })
-  }
-
-  const equity = readNumber(thread, 'equityPercent', 'equity_percent', 'equityPercent')
-  if (equity && equity >= 40) {
-    chips.push({ label: `${Math.round(equity)}% EQUITY`, type: 'financial' })
-  }
-
-  const years = readNumber(thread, 'ownership_years', 'ownershipYears', 'ownership_years')
-  if (years && years >= 10) {
-    chips.push({ label: `${years}Y OWNED`, type: 'financial' })
-  }
-
-  return chips.slice(0, 4)
-}
-
-interface ConversationRowProps {
+const ConversationRow = memo(({
+  thread,
+  selected,
+  decision,
+  onSelect,
+}: {
   thread: InboxWorkflowThread
   selected: boolean
-  queuePreset: QueuePreset
+  decision: ConversationDecision
   onSelect: (id: string) => void
-  onThreadAction?: (id: string, action: string) => void
-}
-
-const ConversationRow = memo(({ thread, selected, queuePreset, onSelect, onThreadAction }: ConversationRowProps) => {
+}) => {
   const name = resolveThreadPrimaryName(thread) || readString(thread, 'best_phone', 'canonical_e164', 'phone') || 'Unknown Owner'
   const address = resolveThreadAddressLine(thread) || readString(thread, 'property_address_full', 'propertyAddressFull') || 'No Address'
-  const preview = readString(thread, 'latest_message_body', 'latestMessageBody', 'lastMessageBody', 'preview') || ''
-  const time = thread.lastMessageAt || (thread as any).lastMessageIso || thread.updatedAt
-  
-  const score = readNumber(thread, 'finalAcquisitionScore', 'motivationScore', 'displayScore') ?? 0
-  const chips = resolveIntelligenceChips(thread)
-  const isStarred = Boolean(thread.isStarred)
-  const isPinned = Boolean(thread.isPinned)
-  const isUnread = !thread.isRead
-  
+  const preview = readString(thread, 'latest_message_body', 'latestMessageBody', 'lastMessageBody', 'preview') || 'No recent message'
+  const timestamp = formatInboxThreadTimestamp(thread.lastMessageAt || (thread as any).lastMessageIso || thread.updatedAt)
   const market = readString(thread, 'market', 'marketName', 'displayMarket', 'routing_market')
-  const type = readString(thread, 'property_class', 'propertyType', 'property_type')
-// direction removed as it is currently unused in the 4-row layout
-
-  const handleAction = (action: string) => (e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    onThreadAction?.(thread.id, action)
-  }
-
-  // Visual Priority Mapping
-  const isHot = thread.isHotLead || score >= 80 || queuePreset === 'positive_hot'
-  const isDnc = thread.isSuppressed || thread.isOptOut || queuePreset === 'suppressed'
-  const isAutomated = thread.automationState === 'active' || queuePreset === 'auto_replied'
-  const needsReview = thread.inboxStatus === 'needs_review' || queuePreset === 'manual_review'
+  const statusTone =
+    decision.suppression_status === 'suppressed' ? 'critical'
+      : decision.review_reason ? 'warning'
+      : isHotLeadDecision(decision) ? 'good'
+      : 'neutral'
 
   return (
     <div
       role="button"
       tabIndex={0}
-      className={cls(
-        'nx-thread-card',
-        isHot && 'is-hot',
-        isDnc && 'is-dnc',
-        isAutomated && 'is-automated',
-        needsReview && 'needs-review',
-        selected && 'is-selected',
-        isPinned && 'is-pinned',
-        isUnread && 'is-unread',
-      )}
+      className={cls('nx-thread-card', 'nx-thread-card--deterministic', `is-${statusTone}`, selected && 'is-selected', decision.unread && 'is-unread')}
       data-thread-id={thread.id}
       onClick={() => onSelect(thread.id)}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelect(thread.id) }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onSelect(thread.id)
+        }
+      }}
     >
-      {/* ROW 1: Identity & Telemetry */}
       <div className="nx-thread-card__row nx-thread-card__row--1">
         <div className="nx-thread-card__identity">
-          <div className="nx-thread-card__avatar-lite">
-            {getInitials(name)}
-          </div>
+          <div className="nx-thread-card__avatar-lite">{getInitials(name)}</div>
           <div className="nx-thread-card__name-stack">
             <div className="nx-thread-card__name">{name}</div>
-            {isUnread && <div className="nx-live-indicator"><span className="nx-live-dot" /></div>}
+            <div className="nx-thread-card__decision-line">
+              <span className={cls('nx-thread-decision-pill', `is-${statusTone}`)}>{decision.conversation_status.replace(/_/g, ' ')}</span>
+              <span className="nx-thread-decision-pill is-stage">{decision.conversation_stage.replace(/_/g, ' ')}</span>
+              <span className="nx-thread-decision-pill is-temp">{decision.lead_temperature.replace(/_/g, ' ')}</span>
+            </div>
           </div>
         </div>
-        <div className="nx-thread-card__telemetry">
-          <AcquisitionScoreRing score={score} />
-          <time className="nx-thread-card__time">
-            {time ? formatCompactTime(time) : '—'}
-          </time>
-        </div>
+        <time className="nx-thread-card__time" aria-label={timestamp.fullLabel}>
+          <span className="nx-thread-card__time-day">{timestamp.dayLabel}</span>
+          {timestamp.timeLabel && <span className="nx-thread-card__time-clock">{timestamp.timeLabel}</span>}
+        </time>
       </div>
 
-      {/* ROW 2: Property Context */}
       <div className="nx-thread-card__row nx-thread-card__row--2">
         <div className="nx-thread-card__address">{address}</div>
         <div className="nx-thread-card__sub-info">
-          {market && (
-            <>
-              <span className="nx-thread-card__separator" />
-              <span>{market.toUpperCase()}</span>
-            </>
-          )}
-          {type && (
-            <>
-              <span className="nx-thread-card__separator" />
-              <span>{type.toUpperCase()}</span>
-            </>
-          )}
+          {market && <span>{market.toUpperCase()}</span>}
+          {decision.language === 'spanish' && <span>SPANISH</span>}
         </div>
       </div>
 
-      {/* ROW 3: AI-Highlighted Message Preview */}
       <div className="nx-thread-card__row nx-thread-card__row--3">
-        <div className="nx-thread-card__preview">
-          {highlightMessage(preview)}
-        </div>
+        <div className="nx-thread-card__preview">{preview}</div>
       </div>
 
-      {/* ROW 4: Intelligence Chips */}
-      <div className="nx-thread-card__row nx-thread-card__row--4">
-        {chips.map((chip, idx) => (
-          <div 
-            key={idx} 
-            className={cls(
-              'nx-intel-chip',
-              chip.active && 'is-active',
-              chip.type === 'automated' && 'is-automated',
-              chip.type === 'urgency' && 'is-urgency'
-            )}
-          >
-            {chip.icon && <span>{chip.icon}</span>}
-            {chip.label}
-          </div>
+      <div className="nx-thread-card__row nx-thread-card__row--4 nx-thread-card__row--decision">
+        <span className="nx-thread-card__next-action">{decision.next_action}</span>
+        <span className={cls('nx-thread-card__automation-status', `is-${statusTone}`)}>{decision.automation_status}</span>
+      </div>
+
+      <div className="nx-thread-card__row nx-thread-card__row--5 nx-thread-card__row--tags">
+        {renderTagList(decision, thread).map((tag) => (
+          <span key={tag} className="nx-intel-chip">{tag}</span>
         ))}
-      </div>
-
-      {/* QUICK ACTIONS: Floats on hover */}
-      <div className="nx-thread-card__quick-actions">
-        <button
-          type="button"
-          className={cls('nx-thread-quick-btn', isStarred && 'is-active')}
-          title={isStarred ? 'Remove star' : 'Star thread'}
-          onClick={handleAction(isStarred ? 'unstar' : 'star')}
-        >
-          ⭐
-        </button>
-        <button
-          type="button"
-          className={cls('nx-thread-quick-btn', isPinned && 'is-active')}
-          title={isPinned ? 'Unpin' : 'Pin thread'}
-          onClick={handleAction(isPinned ? 'unpin' : 'pin')}
-        >
-          📌
-        </button>
-        <button
-          type="button"
-          className="nx-thread-quick-btn"
-          title="Archive thread"
-          onClick={handleAction('archive')}
-        >
-          🗄
-        </button>
       </div>
     </div>
   )
@@ -454,66 +245,67 @@ export const InboxSidebar = ({
   selectedId,
   activeViewFilter,
   onSelect,
-  onThreadAction,
   savedPreset,
   onApplySavedPreset,
   viewCounts,
   onOpenAdvancedFilters,
   onClearFilters,
-  loadingError,
-  visibleThreadCount,
-  canLoadMore,
   onLoadMore,
+  canLoadMore,
   recentlyUpdatedThreadIds = new Set(),
   searchQuery = '',
   onSearchQueryChange,
+  visibleThreadCount = 1000,
+  loadingError,
+  densityMode = 'compact',
 }: InboxSidebarProps) => {
   const groupsRef = useRef<HTMLDivElement | null>(null)
+
   const searchableThreads = useMemo(
     () => threads.filter((thread) => !recentlyUpdatedThreadIds.has(`hidden:${thread.id}`) && matchesSearch(thread, searchQuery)),
     [threads, recentlyUpdatedThreadIds, searchQuery],
   )
 
-  const visibleThreads = useMemo(
-    () => searchableThreads.slice(0, visibleThreadCount),
-    [searchableThreads, visibleThreadCount],
+  const decisionMap = useMemo(() => {
+    const map = new Map<string, ConversationDecision>()
+    searchableThreads.forEach((thread) => {
+      map.set(thread.id, buildConversationDecision(thread))
+    })
+    return map
+  }, [searchableThreads])
+
+  const bucketedThreads = useMemo(() => {
+    const grouped = Object.fromEntries(BUCKETS.map((bucket) => [bucket.bucket, [] as InboxWorkflowThread[]])) as Record<InboxBucket, InboxWorkflowThread[]>
+    searchableThreads.forEach((thread) => {
+      const decision = decisionMap.get(thread.id)
+      if (!decision) return
+      BUCKETS.forEach((bucket) => {
+        if (matchesInboxBucket(thread, bucket.bucket, decision)) grouped[bucket.bucket].push(thread)
+      })
+    })
+    BUCKETS.forEach((bucket) => {
+      grouped[bucket.bucket] = sortThreadsByDecision(grouped[bucket.bucket], decisionMap).slice(0, visibleThreadCount)
+    })
+    return grouped
+  }, [decisionMap, searchableThreads, visibleThreadCount])
+
+  const activeBucketConfig = useMemo(
+    () => BUCKETS.find((bucket) => bucket.view === activeViewFilter) ?? BUCKETS.find((bucket) => bucket.bucket === 'priority') ?? BUCKETS[0],
+    [activeViewFilter],
   )
 
-  const groupedThreads = useMemo(() => {
-    const initial = Object.fromEntries(QUEUE_CONFIG.map((group) => [group.preset, [] as InboxWorkflowThread[]])) as Record<QueuePreset, InboxWorkflowThread[]>
-    visibleThreads.forEach((thread) => {
-      const preset = activeViewFilter === 'all_inbound' ? 'inbound_all' : resolveQueuePreset(thread)
-      initial[preset].push(thread)
-    })
-    return initial
-  }, [visibleThreads, activeViewFilter])
-
-  const firstPopulatedQueue = useMemo(
-    () => QUEUE_PRESETS.find((preset) => groupedThreads[preset].length > 0) ?? 'missing_context',
-    [groupedThreads],
-  )
-
-  const expandedQueue = useMemo(() => {
-    if (QUEUE_PRESETS.includes(savedPreset as QueuePreset)) return savedPreset as QueuePreset
-    return VIEW_TO_QUEUE_PRESET[activeViewFilter] ?? firstPopulatedQueue
-  }, [savedPreset, activeViewFilter, firstPopulatedQueue])
-
-  const totalCount = viewCounts.review_required ?? viewCounts.all ?? threads.length
-
-  useEffect(() => {
-    if (!import.meta.env.DEV) return
-    const categoryCounts = Object.fromEntries(QUEUE_PRESETS.map((preset) => [preset, groupedThreads[preset].length]))
-    const firstThread = visibleThreads[0]
-    console.log('[NEXUS Left Inbox Diagnostics]', {
-      rawHydratedRows: threads.length,
-      normalizedThreads: threads.length,
-      visibleRows: visibleThreads.length,
-      categoryCounts,
-      activeCategory: expandedQueue,
-      firstNormalizedThread: threads[0] ?? null,
-      firstVisibleThread: firstThread ?? null,
-    })
-  }, [threads, visibleThreads, groupedThreads, expandedQueue])
+  const kpiValues = useMemo(() => ({
+    new_replies: viewCounts.new_replies ?? viewCounts.needs_reply ?? bucketedThreads.new_replies.length,
+    needs_review: viewCounts.needs_review ?? viewCounts.manual_review ?? bucketedThreads.needs_review.length,
+    follow_up_due: viewCounts.follow_up_due ?? bucketedThreads.follow_up_due.length,
+    active: viewCounts.active ?? searchableThreads.filter((thread) => (decisionMap.get(thread.id)?.active)).length,
+    sent_today: numberOrNull(viewCounts.sent_today) ?? 0,
+    replies_today: numberOrNull(viewCounts.replies_today) ?? 0,
+    positive_reply_rate: numberOrNull(viewCounts.positive_reply_rate) ?? 0,
+    opt_out_rate: numberOrNull(viewCounts.opt_out_rate) ?? 0,
+    delivery_rate: numberOrNull(viewCounts.delivery_rate) ?? 0,
+    queue_health: viewCounts.queue_health ?? 'OK',
+  }), [bucketedThreads, decisionMap, searchableThreads, viewCounts])
 
   useEffect(() => {
     if (!selectedId) return
@@ -521,80 +313,21 @@ export const InboxSidebar = ({
     if (!root) return
     const selectedNode = root.querySelector<HTMLElement>(`[data-thread-id="${selectedId}"]`)
     selectedNode?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-  }, [selectedId, expandedQueue, visibleThreads.length])
-
-  const activeQueueConfig = QUEUE_CONFIG.find((g) => g.preset === expandedQueue)
-  const activeCount = activeQueueConfig
-    ? getQueueCount(activeQueueConfig.preset, viewCounts[activeQueueConfig.countKey], groupedThreads[activeQueueConfig.preset].length)
-    : numberOrNull(totalCount) ?? 0
-
-  const [manuallyClosed, setManuallyClosed] = useState<Set<QueuePreset>>(new Set())
-
-  type ModePerspective = 'priority' | 'active' | 'waiting' | 'all'
-  const [modePerspective, setModePerspective] = useState<ModePerspective>('all')
-
-  const modeCounts = useMemo(() => {
-    const queueThreads = activeQueueConfig ? groupedThreads[activeQueueConfig.preset] : visibleThreads
-    return {
-      priority: queueThreads.filter((t) => (readNumber(t, 'finalAcquisitionScore', 'final_acquisition_score', 'priorityScore', 'priority_score') ?? 0) >= 55).length,
-      active: queueThreads.filter((t) => {
-        const ts = getActivityTime(t)
-        return ts > 0 && (Date.now() - ts) < 48 * 36e5
-      }).length,
-      waiting: queueThreads.filter((t) => readString(t, 'latest_message_direction', 'latestDirection').toLowerCase() === 'outbound').length,
-      all: queueThreads.length,
-    }
-  }, [groupedThreads, activeQueueConfig, visibleThreads])
-
-  const heroMeta = modePerspective === 'all' && activeQueueConfig
-    ? {
-        label: activeQueueConfig.label,
-        tone: QUEUE_HERO_META[activeQueueConfig.preset]?.tone ?? 'default',
-        description: QUEUE_HERO_META[activeQueueConfig.preset]?.description ?? QUEUE_DESCRIPTIONS[activeQueueConfig.preset],
-        count: activeCount,
-      }
-    : {
-        label: HERO_MODE_META[modePerspective].label,
-        tone: HERO_MODE_META[modePerspective].tone,
-        description: HERO_MODE_META[modePerspective].description,
-        count: modeCounts[modePerspective],
-      }
-
-  const topBadges = [
-    { preset: 'positive_hot' as const, icon: '🔥', label: 'HOT LEADS' },
-    { preset: 'manual_review' as const, icon: '⚠', label: 'NEEDS REVIEW' },
-    { preset: 'needs_reply' as const, icon: '📨', label: 'NEW INBOUND' },
-  ]
-
-  const handleQueueClick = (preset: QueuePreset) => {
-    if (expandedQueue === preset) {
-      setManuallyClosed((prev) => {
-        const next = new Set(prev)
-        if (prev.has(preset)) { next.delete(preset) } else { next.add(preset) }
-        return next
-      })
-    } else {
-      setManuallyClosed((prev) => { const next = new Set(prev); next.delete(preset); return next })
-      onApplySavedPreset(preset)
-    }
-  }
+  }, [selectedId, activeBucketConfig, visibleThreadCount])
 
   return (
-    <aside className={cls('nx-sidebar nx-sidebar--premium', `nx-sidebar--active-${heroMeta.tone}`)}>
+    <aside className={cls('nx-sidebar', 'nx-sidebar--premium', 'nx-sidebar--deterministic', `nx-sidebar--density-${densityMode}`, `nx-sidebar--active-${activeBucketConfig.accentClass.replace('is-', '')}`, savedPreset && 'has-preset')}>
       <div className="nx-sidebar__top">
         <div className="nx-sidebar__title-row">
-          <span className="nx-sidebar__app-title">ACQUISITIONS INBOX</span>
+          <span className="nx-sidebar__app-title">ACQUISITIONS COMMAND CENTER</span>
         </div>
 
         <div className="nx-sidebar__label-row">
           <span className="nx-section-label">
-            {heroMeta.label}
-            <b className="nx-sidebar__label-count">{formatCount(numberOrNull(heroMeta.count) ?? 0)}</b>
+            {activeBucketConfig.label}
+            <b className="nx-sidebar__label-count">{formatCount(numberOrNull(viewCounts[activeBucketConfig.countKey]) ?? bucketedThreads[activeBucketConfig.bucket].length)}</b>
           </span>
           <div className="nx-sidebar__header-actions">
-            <button type="button" className="nx-sidebar__icon-button" title="Notifications">
-              <Icon name="alert" />
-            </button>
             <button type="button" className="nx-sidebar__icon-button" title="Advanced filters" onClick={onOpenAdvancedFilters}>
               <Icon name="filter" />
             </button>
@@ -604,53 +337,62 @@ export const InboxSidebar = ({
           </div>
         </div>
 
-        <div className="nx-sidebar__badge-row">
-          {topBadges.map((badge) => {
-            const badgeGroup = QUEUE_CONFIG.find((group) => group.preset === badge.preset)
-            const count = badgeGroup ? getQueueCount(badgeGroup.preset, viewCounts[badgeGroup.countKey], groupedThreads[badgeGroup.preset].length) : 0
-            const selected = expandedQueue === badge.preset
-            return (
-              <button
-                key={badge.preset}
-                type="button"
-                className={cls('nx-inbox-badge', badgeGroup?.accentClass, selected && 'is-selected')}
-                onClick={() => {
-                  setModePerspective('all')
-                  setManuallyClosed((prev) => { const next = new Set(prev); next.delete(badge.preset); return next })
-                  onApplySavedPreset(badge.preset)
-                }}
-              >
-                <span>{badge.icon}</span>
-                <strong>{formatCount(numberOrNull(count) ?? 0)}</strong>
-              </button>
-            )
-          })}
-          <span className="nx-sidebar__total-count">{formatCount(numberOrNull(totalCount) ?? threads.length)}</span>
-        </div>
-
-        <div className={cls('nx-sidebar__hero', `is-${heroMeta.tone}`)}>
-          <div className="nx-sidebar__hero__glow" aria-hidden="true" />
-          <div className="nx-sidebar__hero__inner">
-            <div className="nx-sidebar__hero__text">
-              <span className="nx-sidebar__hero__label">{heroMeta.label}</span>
-              <span className="nx-sidebar__hero__desc">{heroMeta.description}</span>
+        {densityMode === 'full' && (
+          <>
+            <div className="nx-sidebar__badge-row">
+              {BUCKETS.slice(0, 4).map((bucket) => {
+                const count = numberOrNull(viewCounts[bucket.countKey]) ?? bucketedThreads[bucket.bucket].length
+                return (
+                  <button
+                    key={bucket.bucket}
+                    type="button"
+                    className={cls('nx-inbox-badge', bucket.accentClass, activeBucketConfig.bucket === bucket.bucket && 'is-selected')}
+                    onClick={() => onApplySavedPreset(viewToPreset(bucket.view))}
+                  >
+                    <span>{bucket.icon}</span>
+                    <strong>{formatCount(count)}</strong>
+                  </button>
+                )
+              })}
+              <span className="nx-sidebar__total-count">{formatCount(numberOrNull(viewCounts.all) ?? searchableThreads.length)}</span>
             </div>
-            <span className="nx-sidebar__hero__count">{formatCount(numberOrNull(heroMeta.count) ?? 0)}</span>
+
+            <div className={cls('nx-sidebar__hero', `is-${activeBucketConfig.accentClass.replace('is-', '')}`)}>
+              <div className="nx-sidebar__hero__glow" aria-hidden="true" />
+              <div className="nx-sidebar__hero__inner">
+                <div className="nx-sidebar__hero__text">
+                  <span className="nx-sidebar__hero__label">{activeBucketConfig.label}</span>
+                  <span className="nx-sidebar__hero__desc">{activeBucketConfig.description}</span>
+                </div>
+                <span className="nx-sidebar__hero__count">{formatCount(numberOrNull(viewCounts[activeBucketConfig.countKey]) ?? bucketedThreads[activeBucketConfig.bucket].length)}</span>
+              </div>
+            </div>
+
+            <div className="nx-sidebar-kpi-strip">
+              {KPI_STRIP.map((item) => (
+                <div key={item.key} className="nx-sidebar-kpi-tile">
+                  <span>{item.label}</span>
+                  <strong>{formatMetric(item.key, kpiValues[item.key])}</strong>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {densityMode === 'compact' && (
+          <div className="nx-sidebar-stats-row" aria-label="Compact inbox stats">
+            {COMPACT_STATS.map((item) => {
+              const value = numberOrNull(viewCounts[item.key]) ?? bucketedThreads[item.key as InboxBucket]?.length ?? 0
+              return (
+                <button key={item.key} type="button" className="nx-sidebar-stat-pill" onClick={() => onApplySavedPreset(viewToPreset(item.key as InboxViewSelectValue))}>
+                  <span>{item.icon}</span>
+                  <b>{formatCount(value)}</b>
+                  <small>{item.label}</small>
+                </button>
+              )
+            })}
           </div>
-          <div className="nx-sidebar__hero__modes">
-            {(['priority', 'active', 'waiting', 'all'] as const).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                className={cls('nx-hero-mode-tab', modePerspective === mode && 'is-active')}
-                onClick={(e) => { e.stopPropagation(); setModePerspective(mode) }}
-              >
-                <span className="nx-hero-mode-tab__label">{mode.toUpperCase()}</span>
-                <span className="nx-hero-mode-tab__count">{modeCounts[mode]}</span>
-              </button>
-            ))}
-          </div>
-        </div>
+        )}
 
         <label className="nx-sidebar-search">
           <input
@@ -670,46 +412,40 @@ export const InboxSidebar = ({
       </div>
 
       <div className="nx-queue-groups" ref={groupsRef}>
-        {QUEUE_CONFIG.map((group) => {
-          const isActive = expandedQueue === group.preset
-          const expanded = isActive && !manuallyClosed.has(group.preset)
-          const groupThreads = groupedThreads[group.preset]
-          const displayThreads = groupThreads
-          const count = getQueueCount(group.preset, viewCounts[group.countKey], groupThreads.length)
+        {BUCKETS.map((bucket) => {
+          const groupThreads = bucketedThreads[bucket.bucket]
+          const count = numberOrNull(viewCounts[bucket.countKey]) ?? groupThreads.length
+          const expanded = activeBucketConfig.bucket === bucket.bucket
           return (
-            <section
-              key={group.preset}
-              className={cls('nx-queue-group', group.accentClass, expanded && 'is-expanded')}
-            >
+            <section key={bucket.bucket} className={cls('nx-queue-group', bucket.accentClass, expanded && 'is-expanded')}>
               <button
                 type="button"
-                className={cls('nx-queue-group__header', isActive && 'is-selected')}
-                onClick={() => handleQueueClick(group.preset)}
+                className={cls('nx-queue-group__header', expanded && 'is-selected')}
+                onClick={() => onApplySavedPreset(viewToPreset(bucket.view))}
               >
                 <span className="nx-queue-group__accent" />
-                <span className="nx-queue-group__icon">{group.icon}</span>
-                <span className="nx-queue-group__label">{group.label}</span>
-                <span className="nx-queue-group__count">{formatCount(numberOrNull(count) ?? 0)}</span>
+                <span className="nx-queue-group__icon">{bucket.icon}</span>
+                <span className="nx-queue-group__label">{bucket.label}</span>
+                <span className="nx-queue-group__count">{formatCount(count)}</span>
                 <Icon name={expanded ? 'chevron-down' : 'chevron-right'} />
               </button>
 
               {expanded && (
                 <div className="nx-queue-group__threads">
-                  {displayThreads.length > 0 ? (
-                    displayThreads.map((thread) => (
+                  {groupThreads.length > 0 ? groupThreads.map((thread) => {
+                    const decision = decisionMap.get(thread.id)
+                    if (!decision) return null
+                    return (
                       <ConversationRow
                         key={thread.threadKey || thread.id}
                         thread={thread}
                         selected={selectedId === thread.id}
-                        queuePreset={group.preset}
+                        decision={decision}
                         onSelect={onSelect}
-                        onThreadAction={onThreadAction}
                       />
-                    ))
-                  ) : (
-                    <div className="nx-sidebar-empty">
-                      {modePerspective !== 'all' ? `No ${modePerspective} threads in this queue.` : 'No conversations match this queue.'}
-                    </div>
+                    )
+                  }) : (
+                    <div className="nx-sidebar-empty">No conversations match this bucket.</div>
                   )}
                 </div>
               )}
@@ -727,4 +463,17 @@ export const InboxSidebar = ({
       )}
     </aside>
   )
+}
+
+const viewToPreset = (view: InboxViewSelectValue): InboxSavedFilterPreset => {
+  if (view === 'new_replies') return 'new_inbounds'
+  if (view === 'priority') return 'my_priority'
+  if (view === 'negotiating') return 'offer_needed'
+  if (view === 'follow_up_due') return 'offer_needed'
+  if (view === 'waiting_on_seller') return 'outbound_only'
+  if (view === 'automated') return 'auto_replied'
+  if (view === 'needs_review') return 'review_required'
+  if (view === 'cold_no_response') return 'missing_context'
+  if (view === 'dnc_opt_out') return 'suppressed'
+  return 'all_messages'
 }

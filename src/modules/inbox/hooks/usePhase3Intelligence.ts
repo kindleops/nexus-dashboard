@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { fetchThreadPhase3Intelligence, type Phase3Intelligence } from '../../../lib/data/inboxIntelligencePhase3'
 import { getSupabaseClient } from '../../../lib/supabaseClient'
 
@@ -6,6 +6,7 @@ export const usePhase3Intelligence = (threadKey: string | undefined) => {
   const [data, setData] = useState<Phase3Intelligence | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const channelInstanceIdRef = useRef(`phase3-${Math.random().toString(36).slice(2, 10)}`)
 
   const refresh = useCallback(async () => {
     if (!threadKey) {
@@ -38,7 +39,7 @@ export const usePhase3Intelligence = (threadKey: string | undefined) => {
     const threadId = data.thread.id
 
     const channel = supabase
-      .channel(`phase3-intel-${threadId}`)
+      .channel(`phase3-intel-${threadId}-${channelInstanceIdRef.current}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'seller_state_snapshots', filter: `thread_id=eq.${threadId}` }, () => {
         void refresh()
       })

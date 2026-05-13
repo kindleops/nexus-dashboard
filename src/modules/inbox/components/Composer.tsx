@@ -285,16 +285,14 @@ export const Composer = ({
         {tools.map(tool => {
           if (tool.id === 'ai-assist') {
             return (
-              <button
+              <CopilotOrbTrigger
                 key={tool.id}
-                type="button"
-                className="nx-composer-orb-trigger"
+                size="sm"
+                isReady={!!thread?.aiDraft}
                 onClick={tool.action}
-                disabled={tool.disabled}
               >
-                <CopilotOrbTrigger size="sm" isReady={!!thread?.aiDraft} />
                 {tool.label}
-              </button>
+              </CopilotOrbTrigger>
             )
           }
           return (

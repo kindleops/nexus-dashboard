@@ -2638,7 +2638,7 @@ export const getThreadIntelligence = async (thread: InboxWorkflowThread): Promis
 
   // 2. Try dossier view
   const { data, error } = await supabase
-    .from('inbox_thread_dossier_hydrated')
+    .from('inbox_threads_hydrated')
     .select('*')
     .eq('thread_key', threadKey)
     .limit(1)

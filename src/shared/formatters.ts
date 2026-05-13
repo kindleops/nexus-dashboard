@@ -107,6 +107,51 @@ export const formatCompactTime = (iso: string | null | undefined): string => {
   return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 }
 
+export const formatInboxThreadTimestamp = (iso: string | null | undefined): {
+  dayLabel: string
+  timeLabel: string
+  fullLabel: string
+} => {
+  if (!iso) {
+    return {
+      dayLabel: '—',
+      timeLabel: '',
+      fullLabel: 'Unknown time',
+    }
+  }
+
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) {
+    return {
+      dayLabel: '—',
+      timeLabel: '',
+      fullLabel: 'Invalid time',
+    }
+  }
+
+  const now = new Date()
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  const diffDays = Math.round((startOfToday.getTime() - startOfDate.getTime()) / 86400000)
+
+  let dayLabel = date.toLocaleDateString([], { month: 'short', day: 'numeric' })
+  if (date.getFullYear() !== now.getFullYear()) {
+    dayLabel = date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+  } else if (diffDays === 0) {
+    dayLabel = 'Today'
+  } else if (diffDays === 1) {
+    dayLabel = 'Yesterday'
+  }
+
+  const timeLabel = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+
+  return {
+    dayLabel,
+    timeLabel,
+    fullLabel: `${dayLabel} ${timeLabel}`.trim(),
+  }
+}
+
 export const formatMessageTime = (iso: string | null | undefined): string => {
   if (!iso) return ''
   const date = new Date(iso)

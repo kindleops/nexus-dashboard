@@ -90,11 +90,11 @@ export const fetchOperationalKpis = async (timeWindow: OperationalKpi['timeWindo
     }
 
     const messaging: OperationalKpi[] = [
-      { id: 'reply-rate', label: 'Reply Rate', value: currMsg.replyRate.toFixed(1), unit: '%', category: 'messaging', timeWindow, isAvailable: true, trend: getTrend(currMsg.replyRate, prevMsg.replyRate), status: currMsg.replyRate > 15 ? 'good' : 'warning' },
-      { id: 'pos-reply-rate', label: 'Positive Rate', value: currMsg.posRate.toFixed(1), unit: '%', category: 'messaging', timeWindow, isAvailable: true, trend: getTrend(currMsg.posRate, prevMsg.posRate), status: currMsg.posRate > 10 ? 'good' : 'neutral' },
-      { id: 'delivery-rate', label: 'Delivery Rate', value: currMsg.deliveryRate.toFixed(1), unit: '%', category: 'messaging', timeWindow, isAvailable: true, trend: getTrend(currMsg.deliveryRate, prevMsg.deliveryRate), status: currMsg.deliveryRate > 95 ? 'good' : 'critical' },
-      { id: 'failure-rate', label: 'Failure Rate', value: currMsg.failRate.toFixed(1), unit: '%', category: 'messaging', timeWindow, isAvailable: true, trend: getTrend(prevMsg.failRate, currMsg.failRate), status: currMsg.failRate < 5 ? 'good' : 'critical' },
-      { id: 'opt-out-rate', label: 'Opt-Out Rate', value: currMsg.optOutRate.toFixed(1), unit: '%', category: 'messaging', timeWindow, isAvailable: true, trend: getTrend(prevMsg.optOutRate, currMsg.optOutRate), status: currMsg.optOutRate < 3 ? 'good' : 'warning' }
+      { id: 'reply-rate', label: 'Reply Rate', value: currMsg.replyRate.toFixed(1), unit: '%', description: 'Delivered outbound to inbound replies', category: 'messaging', timeWindow, isAvailable: true, trend: getTrend(currMsg.replyRate, prevMsg.replyRate), status: currMsg.replyRate > 15 ? 'good' : 'warning' },
+      { id: 'pos-reply-rate', label: 'Positive Rate', value: currMsg.posRate.toFixed(1), unit: '%', description: 'Interested replies from inbound flow', category: 'messaging', timeWindow, isAvailable: true, trend: getTrend(currMsg.posRate, prevMsg.posRate), status: currMsg.posRate > 10 ? 'good' : 'neutral' },
+      { id: 'delivery-rate', label: 'Delivery Rate', value: currMsg.deliveryRate.toFixed(1), unit: '%', description: 'Outbound messages reaching carrier delivery', category: 'messaging', timeWindow, isAvailable: true, trend: getTrend(currMsg.deliveryRate, prevMsg.deliveryRate), status: currMsg.deliveryRate > 95 ? 'good' : 'critical' },
+      { id: 'failure-rate', label: 'Failure Rate', value: currMsg.failRate.toFixed(1), unit: '%', description: 'Outbound sends ending in final failure', category: 'messaging', timeWindow, isAvailable: true, trend: getTrend(prevMsg.failRate, currMsg.failRate), status: currMsg.failRate < 5 ? 'good' : 'critical' },
+      { id: 'opt-out-rate', label: 'Opt-Out Rate', value: currMsg.optOutRate.toFixed(1), unit: '%', description: 'Stops and opt-outs across delivered sends', category: 'messaging', timeWindow, isAvailable: true, trend: getTrend(prevMsg.optOutRate, currMsg.optOutRate), status: currMsg.optOutRate < 3 ? 'good' : 'warning' }
     ]
 
     // 2. Automation Health
@@ -107,8 +107,8 @@ export const fetchOperationalKpis = async (timeWindow: OperationalKpi['timeWindo
     const failedQueue = queueData?.filter(q => q.queue_status === 'failed').length || 0
     
     const automation: OperationalKpi[] = [
-      { id: 'queue-pending', label: 'In Queue', value: pending, category: 'automation', timeWindow, isAvailable: true, status: pending > 50 ? 'warning' : 'good' },
-      { id: 'queue-failed', label: 'Queue Failures', value: failedQueue, category: 'automation', timeWindow, isAvailable: true, status: failedQueue > 0 ? 'critical' : 'good' }
+      { id: 'queue-pending', label: 'In Queue', value: pending, description: 'Queued, scheduled, or waiting sends', category: 'automation', timeWindow, isAvailable: true, status: pending > 50 ? 'warning' : 'good' },
+      { id: 'queue-failed', label: 'Queue Failures', value: failedQueue, description: 'Automation items that hard failed', category: 'automation', timeWindow, isAvailable: true, status: failedQueue > 0 ? 'critical' : 'good' }
     ]
 
     // 3. Quality & Pipeline (from Command Center View)
@@ -122,13 +122,13 @@ export const fetchOperationalKpis = async (timeWindow: OperationalKpi['timeWindo
     const offersReady = pipelineData?.filter(p => asNumber(p.cash_offer, 0) > 0).length || 0
     
     const quality: OperationalKpi[] = [
-      { id: 'hot-leads', label: 'Hot Leads', value: hotLeads, category: 'quality', timeWindow, isAvailable: true, status: hotLeads > 5 ? 'good' : 'neutral' },
-      { id: 'avg-acq-score', label: 'Avg Acq Score', value: (pipelineData && pipelineData.length > 0 ? (pipelineData.reduce((sum, p) => sum + asNumber(p.final_acquisition_score, 0), 0) / pipelineData.length).toFixed(1) : '0'), category: 'quality', timeWindow, isAvailable: true }
+      { id: 'hot-leads', label: 'Hot Leads', value: hotLeads, description: 'Threads flagged with high intent', category: 'quality', timeWindow, isAvailable: true, status: hotLeads > 5 ? 'good' : 'neutral' },
+      { id: 'avg-acq-score', label: 'Avg Acq Score', value: (pipelineData && pipelineData.length > 0 ? (pipelineData.reduce((sum, p) => sum + asNumber(p.final_acquisition_score, 0), 0) / pipelineData.length).toFixed(1) : '0'), description: 'Mean acquisition score across inbox', category: 'quality', timeWindow, isAvailable: true, status: pipelineData && pipelineData.length > 0 ? 'neutral' : 'warning' }
     ]
 
     const pipeline: OperationalKpi[] = [
-      { id: 'underwrites', label: 'Total Underwrites', value: underwrites, category: 'pipeline', timeWindow, isAvailable: true },
-      { id: 'offers-ready', label: 'Offers Ready', value: offersReady, category: 'pipeline', timeWindow, isAvailable: true, status: offersReady > 0 ? 'good' : 'neutral' }
+      { id: 'underwrites', label: 'Total Underwrites', value: underwrites, description: 'Threads with a scoring pass complete', category: 'pipeline', timeWindow, isAvailable: true, status: underwrites > 0 ? 'good' : 'neutral' },
+      { id: 'offers-ready', label: 'Offers Ready', value: offersReady, description: 'Leads with cash offers staged', category: 'pipeline', timeWindow, isAvailable: true, status: offersReady > 0 ? 'good' : 'neutral' }
     ]
 
     // 4. Financial
@@ -137,8 +137,8 @@ export const fetchOperationalKpis = async (timeWindow: OperationalKpi['timeWindo
     const avgOffer = activeOffers.length > 0 ? activeOffers.reduce((sum, p) => sum + asNumber(p.cash_offer, 0), 0) / activeOffers.length : 0
 
     const financial: OperationalKpi[] = [
-      { id: 'avg-arv', label: 'Avg ARV', value: Math.round(avgArv).toLocaleString(), unit: '$', category: 'financial', timeWindow, isAvailable: true },
-      { id: 'avg-offer', label: 'Avg Offer', value: Math.round(avgOffer).toLocaleString(), unit: '$', category: 'financial', timeWindow, isAvailable: true }
+      { id: 'avg-arv', label: 'Avg ARV', value: Math.round(avgArv).toLocaleString(), unit: '$', description: 'Average estimated after-repair value', category: 'financial', timeWindow, isAvailable: true, status: avgArv > 0 ? 'good' : 'neutral' },
+      { id: 'avg-offer', label: 'Avg Offer', value: Math.round(avgOffer).toLocaleString(), unit: '$', description: 'Average active offer amount', category: 'financial', timeWindow, isAvailable: true, status: avgOffer > 0 ? 'good' : 'neutral' }
     ]
 
     return {
@@ -161,5 +161,4 @@ export const fetchOperationalKpis = async (timeWindow: OperationalKpi['timeWindo
     }
   }
 }
-
 

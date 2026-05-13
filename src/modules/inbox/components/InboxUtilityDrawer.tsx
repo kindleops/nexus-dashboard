@@ -2,6 +2,7 @@ import { Icon } from '../../../shared/icons'
 import { IntelligencePanel } from './IntelligencePanel'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { getStatusVisual, statusStyleVars } from '../status-visuals'
+import { InboxCommandMap } from '../InboxCommandMap'
 
 const fallback = (value: unknown, placeholder = 'Unknown') => {
   const text = String(value ?? '').trim()
@@ -45,20 +46,33 @@ export const MapDossierDrawer = ({
       </header>
 
       {mode === 'map' ? (
-        <div className="nx-map-placeholder">
-          <div className="nx-map-grid">
-            {hasCoordinates ? (
-              <span className="nx-map-pin nx-status-dot" style={statusStyleVars(statusVisual)}>
-                <Icon name="pin" />
-              </span>
+        <div className="nx-map-placeholder nx-map-placeholder--command">
+          <div className="nx-map-placeholder__map">
+            {thread ? (
+              <InboxCommandMap
+                threads={[thread]}
+                visibleThreads={[thread]}
+                selectedThread={thread}
+                zoomedIn
+                sourceMode="visible_threads"
+                onSelectThreadId={() => {}}
+              />
             ) : (
-              <span className="nx-map-pin nx-map-pin--empty"><Icon name="pin" /></span>
+              <div className="nx-map-grid">
+                {hasCoordinates ? (
+                  <span className="nx-map-pin nx-status-dot" style={statusStyleVars(statusVisual)}>
+                    <Icon name="pin" />
+                  </span>
+                ) : (
+                  <span className="nx-map-pin nx-map-pin--empty"><Icon name="pin" /></span>
+                )}
+              </div>
             )}
           </div>
           <aside>
             <strong>{address}</strong>
             <span>{fallback(thread?.market || thread?.marketId, 'Market Unknown')}</span>
-            <p>{hasCoordinates ? 'Selected lead pin is matched to the current status.' : 'No coordinates linked for this lead yet.'}</p>
+            <p>{hasCoordinates ? 'Mini command map is synchronized with deterministic inbox state.' : 'No coordinates linked for this lead yet.'}</p>
           </aside>
         </div>
       ) : thread ? (

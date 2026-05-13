@@ -30,9 +30,7 @@ interface CopilotShellProps {
 export function CopilotShell({ open, context, onClose, onAction, onToggle }: CopilotShellProps) {
   const [settings, setSettings] = useState<NexusSettings>(loadSettings)
   const [orbState, setOrbState] = useState<'idle' | 'listening' | 'greeting'>('idle')
-  const [orbAmplitude, setOrbAmplitude] = useState(0)
-  // @ts-ignore
-  setOrbAmplitude(orbAmplitude);
+  const [orbAmplitude] = useState(0)
 
   useEffect(() => subscribeSettings(() => setSettings(loadSettings())), [])
 
