@@ -1,7 +1,16 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
+const getEnv = (key: string): string | undefined => {
+  const runtimeProcess = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process
+  try {
+    return (import.meta.env?.[key] as string) || runtimeProcess?.env?.[key]
+  } catch {
+    return runtimeProcess?.env?.[key]
+  }
+}
+
+const supabaseUrl = getEnv('VITE_SUPABASE_URL')
+const supabaseAnonKey = getEnv('VITE_SUPABASE_ANON_KEY')
 
 export const hasSupabaseEnv = Boolean(supabaseUrl && supabaseAnonKey)
 export const supabaseUrlPresent = Boolean(supabaseUrl)

@@ -38,6 +38,7 @@ const StatusBadge = ({ status }: { status: QueueItemStatus }) => {
     delivered: 'Delivered',
     retry: 'Retrying',
     held: 'On Hold',
+    paused_invalid_queue_row: 'Routing Blocked',
   }
 
   return (
@@ -209,10 +210,11 @@ const QueueInspector = ({
           </div>
         </CollapsibleInspectorCard>
 
-        {item.status === 'failed' && (
+        {(item.status === 'failed' || (item.status as string) === 'paused_invalid_queue_row') && (
           <CollapsibleInspectorCard title="Error Diagnostic" icon="alert" className="is-error">
             <div className="nx-error-box">
-              <strong>{item.failureReason || 'Unknown Failure'}</strong>
+              <strong>{item.failureReason || (item as any).guard_reason === 'NO_VALID_LOCAL_TEXTGRID_NUMBER' ? 'Routing blocked: no sender number' : 'Unknown Failure'}</strong>
+              {(item as any).guard_reason && <p className="nx-guard-reason">Code: {(item as any).guard_reason}</p>}
               <p>Retry attempt {item.retryCount} of {item.maxRetries}</p>
             </div>
           </CollapsibleInspectorCard>
@@ -229,7 +231,7 @@ const QueueInspector = ({
           
           {showMetadata && (
             <pre className="nx-inspector-json">
-              {JSON.stringify(item.metadata || {}, null, 2)}
+              {JSON.stringify(item, null, 2)}
             </pre>
           )}
         </div>
@@ -246,7 +248,7 @@ const QueueInspector = ({
             <Icon name="shield" /> Hold Item
           </button>
         )}
-        {item.status === 'failed' && (
+        {(item.status === 'failed' || (item.status as string) === 'paused_invalid_queue_row') && (
           <button className="nx-btn nx-btn--primary" onClick={() => onAction('retry', item.id)}>
             <Icon name="zap" /> Retry Now
           </button>

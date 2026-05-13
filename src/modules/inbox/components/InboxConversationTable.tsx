@@ -18,6 +18,7 @@ interface InboxConversationTableProps {
   selectedId: string | null
   sort: ConversationTableSort
   density: 'comfortable' | 'compact' | 'ultra_compact'
+  statCounts: Array<{ label: string; value: number | string | null | undefined }>
   onSortChange: (sort: ConversationTableSort) => void
   onDensityChange: (density: 'comfortable' | 'compact' | 'ultra_compact') => void
   onSelect: (id: string) => void
@@ -49,11 +50,17 @@ const rankTemperature = (value: ConversationDecision['lead_temperature']) => {
   return 1
 }
 
+const formatStat = (value: number | string | null | undefined) => value === null || value === undefined ? '—' : String(value)
+
+const intentLabel = (decision: ConversationDecision) =>
+  decision.intent_tags[0] || decision.seller_intent.replace(/_/g, ' ') || 'Unknown'
+
 export const InboxConversationTable = memo(({
   threads,
   selectedId,
   sort,
   density,
+  statCounts,
   onSortChange,
   onDensityChange,
   onSelect,
@@ -101,18 +108,27 @@ export const InboxConversationTable = memo(({
         </div>
       </header>
 
+      <div className="nx-inbox-stat-strip" aria-label="List view stats">
+        {statCounts.map((item) => (
+          <div key={item.label} className="nx-inbox-stat-strip__item">
+            <span>{item.label}</span>
+            <strong>{formatStat(item.value)}</strong>
+          </div>
+        ))}
+      </div>
+
       <div className="nx-inbox-table-wrap">
         <table className="nx-inbox-table">
           <thead>
             <tr>
               <th>Seller</th>
               <th>Property</th>
-              <th>Last Message</th>
+              <th>Message</th>
+              <th>Intent</th>
               <th>Stage</th>
-              <th>Status</th>
               <th>Next Action</th>
               <th>Score</th>
-              <th>Last Activity</th>
+              <th>Last</th>
               <th>Auto</th>
             </tr>
           </thead>
@@ -134,8 +150,8 @@ export const InboxConversationTable = memo(({
                     <div className="nx-inbox-table__secondary">{(thread as any).propertyType || (thread as any).property_type || '—'}</div>
                   </td>
                   <td className="is-preview">{thread.lastMessageBody || thread.preview || 'No recent message'}</td>
+                  <td><span className="nx-table-pill is-intent">{intentLabel(decision)}</span></td>
                   <td><span className="nx-table-pill is-stage">{decision.conversation_stage.replace(/_/g, ' ')}</span></td>
-                  <td><span className="nx-table-pill">{decision.conversation_status.replace(/_/g, ' ')}</span></td>
                   <td className="is-preview">{decision.next_action}</td>
                   <td>{Number.isFinite(decision.priority_score) ? decision.priority_score : '—'}</td>
                   <td>{ts.fullLabel}</td>

@@ -329,6 +329,14 @@ export default function InboxPage() {
     }
   }, [decisions, threads])
 
+  const listStatCounts = useMemo(() => ([
+    { label: 'New Replies', value: viewCounts.new_replies },
+    { label: 'Priority', value: viewCounts.priority },
+    { label: 'Needs Review', value: viewCounts.needs_review },
+    { label: 'Follow-Up Due', value: viewCounts.follow_up_due },
+    { label: 'Auto-Eligible', value: viewCounts.automated },
+  ]), [viewCounts])
+
   const serverFilterOptions: ApplyInboxFiltersOptions = useMemo(() => ({
     skipViewFilter: false,
     skipStageFilter: false,
@@ -374,6 +382,23 @@ export default function InboxPage() {
   const selectedFilteredOut = useMemo(() => (
     Boolean(selected && !filtered.some((thread) => thread.id === selected.id))
   ), [filtered, selected])
+  const showSelectedInFilter = useCallback(() => {
+    if (!selected) return
+    const decision = decisions.get(selected.id)
+    setSearchQuery('')
+    setAdvancedFilters({ outOfStateOwner: 'all' })
+    setStageFilter('all_stages')
+    if (decision?.inbox_bucket === 'new_replies') setViewFilter('new_replies')
+    else if (decision?.inbox_bucket === 'priority') setViewFilter('priority')
+    else if (decision?.inbox_bucket === 'negotiating') setViewFilter('negotiating')
+    else if (decision?.inbox_bucket === 'follow_up_due') setViewFilter('follow_up_due')
+    else if (decision?.inbox_bucket === 'waiting_on_seller') setViewFilter('waiting_on_seller')
+    else if (decision?.inbox_bucket === 'automated') setViewFilter('automated')
+    else if (decision?.inbox_bucket === 'needs_review') setViewFilter('needs_review')
+    else if (decision?.inbox_bucket === 'cold_no_response') setViewFilter('cold_no_response')
+    else if (decision?.inbox_bucket === 'dnc_suppressed') setViewFilter('dnc_opt_out')
+    else setViewFilter('all_conversations')
+  }, [decisions, selected])
 
   useEffect(() => {
     if (!selected) return
@@ -1776,7 +1801,13 @@ export default function InboxPage() {
           )}
 
           {selectedFilteredOut && selected && (
-            <div className="nx-filtered-out-notice">Selected thread is not in the current filter; detail remains open.</div>
+            <div className="nx-filtered-out-notice">
+              <span>Selected thread is outside this filter.</span>
+              <div className="nx-filtered-out-notice__actions">
+                <button type="button" onClick={handleResetFilters}>Clear filters</button>
+                <button type="button" onClick={showSelectedInFilter}>Show selected</button>
+              </div>
+            </div>
           )}
 
           {commandViewMode === 'list' ? (
@@ -1785,6 +1816,7 @@ export default function InboxPage() {
               selectedId={selected?.id ?? null}
               sort={tableSort}
               density={tableDensity}
+              statCounts={listStatCounts}
               onSortChange={setTableSort}
               onDensityChange={setTableDensity}
               onSelect={handleSelect}

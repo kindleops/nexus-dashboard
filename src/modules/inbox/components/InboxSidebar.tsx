@@ -69,7 +69,7 @@ const BUCKETS: BucketConfig[] = [
   { bucket: 'negotiating', view: 'negotiating', label: 'NEGOTIATING', icon: '💬', description: 'Price discussion, underwriting, and offer motion', accentClass: 'is-review', countKey: 'negotiating' },
   { bucket: 'follow_up_due', view: 'follow_up_due', label: 'FOLLOW-UP DUE', icon: '⏰', description: 'System-owned follow-ups due now', accentClass: 'is-outbound', countKey: 'follow_up_due' },
   { bucket: 'waiting_on_seller', view: 'waiting_on_seller', label: 'WAITING ON SELLER', icon: '⌛', description: 'Outbound sent, waiting for seller response', accentClass: 'is-inbound-all', countKey: 'waiting_on_seller' },
-  { bucket: 'automated', view: 'automated', label: 'AUTOMATED', icon: '⚙️', description: 'Deterministic automation can safely act', accentClass: 'is-automated', countKey: 'automated' },
+  { bucket: 'automated', view: 'automated', label: 'AUTO-ELIGIBLE', icon: '⚙️', description: 'Deterministic automation is ready to act', accentClass: 'is-automated', countKey: 'automated' },
   { bucket: 'needs_review', view: 'needs_review', label: 'NEEDS REVIEW', icon: '🛡', description: 'Ambiguous, legal, hostile, or low-confidence threads', accentClass: 'is-review', countKey: 'needs_review' },
   { bucket: 'cold_no_response', view: 'cold_no_response', label: 'COLD / NO RESPONSE', icon: '🧊', description: 'Outbound with no inbound reply past threshold', accentClass: 'is-cold', countKey: 'cold_no_response' },
   { bucket: 'dnc_suppressed', view: 'dnc_opt_out', label: 'DNC / SUPPRESSED', icon: '🚫', description: 'Opt-out, wrong number, DNC, or legal suppression', accentClass: 'is-dnc', countKey: 'suppressed' },
@@ -94,6 +94,7 @@ const COMPACT_STATS = [
   { key: 'priority', label: 'Priority', icon: '⚡' },
   { key: 'needs_review', label: 'Needs Review', icon: '⚠' },
   { key: 'follow_up_due', label: 'Follow-Up Due', icon: '⏰' },
+  { key: 'automated', label: 'Auto-Eligible', icon: '⚙️' },
 ] as const
 
 const numberOrNull = (value: unknown): number | null => {
@@ -145,18 +146,11 @@ const getInitials = (value: string) =>
     .map((part) => part[0]?.toUpperCase() ?? '')
     .join('') || '??'
 
-const renderTagList = (decision: ConversationDecision, thread: InboxWorkflowThread) => {
-  const tags = [
-    decision.conversation_status.replace(/_/g, ' '),
-    decision.conversation_stage.replace(/_/g, ' '),
-    decision.seller_intent.replace(/_/g, ' '),
-    decision.lead_temperature,
-    decision.next_action,
-    decision.automation_status,
-    ...(((thread as unknown as Record<string, unknown>).matched_keywords as string[] | undefined) ?? []).slice(0, 2),
-  ].filter(Boolean)
-  return Array.from(new Set(tags)).slice(0, 6)
-}
+const primaryBadges = (decision: ConversationDecision) => [
+  decision.intent_tags[0] || decision.seller_intent.replace(/_/g, ' '),
+  decision.conversation_stage.replace(/_/g, ' '),
+  decision.lead_temperature.replace(/_/g, ' '),
+].filter(Boolean).slice(0, 3)
 
 const ConversationRow = memo(({
   thread,
@@ -173,9 +167,9 @@ const ConversationRow = memo(({
   const address = resolveThreadAddressLine(thread) || readString(thread, 'property_address_full', 'propertyAddressFull') || 'No Address'
   const preview = readString(thread, 'latest_message_body', 'latestMessageBody', 'lastMessageBody', 'preview') || 'No recent message'
   const timestamp = formatInboxThreadTimestamp(thread.lastMessageAt || (thread as any).lastMessageIso || thread.updatedAt)
-  const market = readString(thread, 'market', 'marketName', 'displayMarket', 'routing_market')
   const statusTone =
     decision.suppression_status === 'suppressed' ? 'critical'
+      : decision.automation_status === 'AUTO-BLOCKED' ? 'warning'
       : decision.review_reason ? 'warning'
       : isHotLeadDecision(decision) ? 'good'
       : 'neutral'
@@ -199,11 +193,7 @@ const ConversationRow = memo(({
           <div className="nx-thread-card__avatar-lite">{getInitials(name)}</div>
           <div className="nx-thread-card__name-stack">
             <div className="nx-thread-card__name">{name}</div>
-            <div className="nx-thread-card__decision-line">
-              <span className={cls('nx-thread-decision-pill', `is-${statusTone}`)}>{decision.conversation_status.replace(/_/g, ' ')}</span>
-              <span className="nx-thread-decision-pill is-stage">{decision.conversation_stage.replace(/_/g, ' ')}</span>
-              <span className="nx-thread-decision-pill is-temp">{decision.lead_temperature.replace(/_/g, ' ')}</span>
-            </div>
+            <div className="nx-thread-card__address">{address}</div>
           </div>
         </div>
         <time className="nx-thread-card__time" aria-label={timestamp.fullLabel}>
@@ -212,12 +202,10 @@ const ConversationRow = memo(({
         </time>
       </div>
 
-      <div className="nx-thread-card__row nx-thread-card__row--2">
-        <div className="nx-thread-card__address">{address}</div>
-        <div className="nx-thread-card__sub-info">
-          {market && <span>{market.toUpperCase()}</span>}
-          {decision.language === 'spanish' && <span>SPANISH</span>}
-        </div>
+      <div className="nx-thread-card__row nx-thread-card__row--2 nx-thread-card__row--badges">
+        {primaryBadges(decision).map((tag) => (
+          <span key={tag} className={cls('nx-thread-decision-pill', tag === primaryBadges(decision)[0] && `is-${statusTone}`)}>{tag}</span>
+        ))}
       </div>
 
       <div className="nx-thread-card__row nx-thread-card__row--3">
@@ -227,12 +215,6 @@ const ConversationRow = memo(({
       <div className="nx-thread-card__row nx-thread-card__row--4 nx-thread-card__row--decision">
         <span className="nx-thread-card__next-action">{decision.next_action}</span>
         <span className={cls('nx-thread-card__automation-status', `is-${statusTone}`)}>{decision.automation_status}</span>
-      </div>
-
-      <div className="nx-thread-card__row nx-thread-card__row--5 nx-thread-card__row--tags">
-        {renderTagList(decision, thread).map((tag) => (
-          <span key={tag} className="nx-intel-chip">{tag}</span>
-        ))}
       </div>
     </div>
   )

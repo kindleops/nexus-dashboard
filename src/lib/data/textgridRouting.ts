@@ -77,35 +77,120 @@ export const resolveOutboundTextgridNumber = async (
   thread: Pick<InboxThread, 'marketId' | 'ourNumber' | 'phoneNumber' | 'textgridNumberId' | 'property_address_state'>,
   _allowEnvFallback = false,
 ): Promise<RoutingResult> => {
-  const initialFromPhone = normalizePhone(thread.ourNumber ?? thread.phoneNumber ?? '') || null
-  if (!initialFromPhone) {
-    return { ok: false, from_phone_number: null, textgrid_number_id: null, market_id: null, error: 'Thread has no initial outbound number.' }
-  }
-
   const supabase = getSupabaseClient()
 
-  // Tier 1: Exact Market Match
-  if (thread.marketId) {
-    const marketConfig = MARKET_CONFIG[thread.marketId]
-    if (marketConfig) {
-      const { textgridNumberId, from_phone_number } = await resolveTextgridNumberId(initialFromPhone, supabase)
-      if (textgridNumberId && from_phone_number) {
-        return { ok: true, from_phone_number, textgrid_number_id: textgridNumberId, market_id: marketConfig.marketId, routing_tier: marketConfig.tier, routing_reason: marketConfig.reason }
+  // 1. If we already have a textgridNumberId, validate it
+  if (thread.textgridNumberId) {
+    const { data: tgRow } = await supabase
+      .from('textgrid_numbers')
+      .select('id, phone_number, market')
+      .eq('id', thread.textgridNumberId)
+      .eq('status', 'active')
+      .limit(1)
+      .single()
+
+    if (tgRow) {
+      return {
+        ok: true,
+        from_phone_number: normalizePhone(tgRow.phone_number),
+        textgrid_number_id: tgRow.id,
+        market_id: tgRow.market,
+        routing_tier: 0,
+        routing_reason: 'Direct assignment'
       }
     }
   }
 
-  // Tier 2: State Cluster Match
-  const threadState = thread.property_address_state
-  if (threadState) {
-    const stateConfig = STATE_CLUSTERS[threadState]
-    if (stateConfig) {
-      const { textgridNumberId, from_phone_number } = await resolveTextgridNumberId(initialFromPhone, supabase)
-      if (textgridNumberId && from_phone_number) {
-        return { ok: true, from_phone_number, textgrid_number_id: textgridNumberId, market_id: stateConfig.marketId, routing_tier: stateConfig.tier, routing_reason: stateConfig.reason }
+  // 2. If we have a from_phone_number (ourNumber), resolve its ID
+  if (thread.ourNumber) {
+    const { textgridNumberId, from_phone_number } = await resolveTextgridNumberId(thread.ourNumber, supabase)
+    if (textgridNumberId && from_phone_number) {
+      return {
+        ok: true,
+        from_phone_number,
+        textgrid_number_id: textgridNumberId,
+        market_id: null,
+        routing_tier: 1,
+        routing_reason: 'Resolved from existing number'
       }
     }
   }
 
-  return { ok: false, from_phone_number: null, textgrid_number_id: null, market_id: null, error: 'No valid local outbound number available for this lead.' }
+  // 3. Dynamic Resolution - Tier 1: Market Match
+  const rawMarket = thread.marketId
+  if (rawMarket) {
+    // Try exact match or fuzzy match (e.g. 'm-dallas' -> 'Dallas, TX')
+    // For now, let's assume the table has markets that might need mapping or direct match
+    const { data: marketNumbers } = await supabase
+      .from('textgrid_numbers')
+      .select('id, phone_number, market')
+      .ilike('market', `%${rawMarket.replace('m-', '')}%`)
+      .eq('status', 'active')
+      .lt('messages_sent_today', 150)
+      .order('messages_sent_today', { ascending: true })
+      .limit(1)
+
+    if (marketNumbers && marketNumbers.length > 0) {
+      return {
+        ok: true,
+        from_phone_number: normalizePhone(marketNumbers[0].phone_number),
+        textgrid_number_id: marketNumbers[0].id,
+        market_id: marketNumbers[0].market,
+        routing_tier: 2,
+        routing_reason: `Market match: ${rawMarket}`
+      }
+    }
+  }
+
+  // 4. Dynamic Resolution - Tier 2: State Match
+  const stateCode = thread.property_address_state
+  if (stateCode) {
+    const { data: stateNumbers } = await supabase
+      .from('textgrid_numbers')
+      .select('id, phone_number, market')
+      .ilike('market', `%${stateCode}%`) // Most markets are 'City, ST'
+      .eq('status', 'active')
+      .lt('messages_sent_today', 150)
+      .order('messages_sent_today', { ascending: true })
+      .limit(1)
+
+    if (stateNumbers && stateNumbers.length > 0) {
+      return {
+        ok: true,
+        from_phone_number: normalizePhone(stateNumbers[0].phone_number),
+        textgrid_number_id: stateNumbers[0].id,
+        market_id: stateNumbers[0].market,
+        routing_tier: 3,
+        routing_reason: `State match: ${stateCode}`
+      }
+    }
+  }
+
+  // 5. Fallback - General Inventory
+  const { data: fallbackNumbers } = await supabase
+    .from('textgrid_numbers')
+    .select('id, phone_number, market')
+    .eq('status', 'active')
+    .lt('messages_sent_today', 150)
+    .order('messages_sent_today', { ascending: true })
+    .limit(1)
+
+  if (fallbackNumbers && fallbackNumbers.length > 0) {
+    return {
+      ok: true,
+      from_phone_number: normalizePhone(fallbackNumbers[0].phone_number),
+      textgrid_number_id: fallbackNumbers[0].id,
+      market_id: fallbackNumbers[0].market,
+      routing_tier: 4,
+      routing_reason: 'Fallback from inventory'
+    }
+  }
+
+  return { 
+    ok: false, 
+    from_phone_number: null, 
+    textgrid_number_id: null, 
+    market_id: null, 
+    error: 'NO_VALID_LOCAL_TEXTGRID_NUMBER' 
+  }
 }

@@ -4,7 +4,7 @@ import { getInboxThreads, getThreadMessagesForThread, normalizeMessageDirection 
 import { asBoolean, asIso, asString, getSupabaseErrorMessage, mapErrorMessage, normalizeStatus, safeArray, type AnyRecord } from './shared'
 import { logInboxActivity } from './inboxActivityData'
 
-const DEV = Boolean(import.meta.env.DEV)
+const DEV = Boolean(import.meta.env?.DEV)
 const SENT_MESSAGES_PAGE_SIZE = 1000
 
 export type InboxStatus =

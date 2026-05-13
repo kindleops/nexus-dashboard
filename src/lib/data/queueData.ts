@@ -38,6 +38,7 @@ const toQueueStatus = (value: unknown): QueueItemStatus => {
   if (status === 'held') return 'held'
   if (status === 'approval' || status === 'awaiting_approval') return 'approval'
   if (status === 'retry' || status === 'retrying') return 'retry'
+  if (status === 'paused_invalid_queue_row') return 'paused_invalid_queue_row'
   return 'scheduled'
 }
 
@@ -142,7 +143,7 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
   const readyCount = items.filter((i) => i.status === 'ready').length
   const scheduledCount = items.filter((i) => i.status === 'scheduled').length
   const approvalCount = items.filter((i) => i.status === 'approval' || i.riskLevel === 'high').length
-  const failedCount = items.filter((i) => i.status === 'failed' || i.status === 'retry').length
+  const failedCount = items.filter((i) => i.status === 'failed' || i.status === 'retry' || i.status === 'paused_invalid_queue_row').length
   const retryCount = items.filter((i) => i.status === 'retry').length
   const heldCount = items.filter((i) => i.status === 'held').length
   

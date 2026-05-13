@@ -5,8 +5,55 @@ import type { FeatureCollection, Point } from 'geojson'
 import type { InboxWorkflowThread } from '../../lib/data/inboxWorkflowData'
 import type { MapSourceMode } from './inbox-layout-state'
 import { buildConversationDecision } from './inbox-decisioning'
+import { buildStreetViewUrl } from './inbox-normalization'
 
-const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+const DARK_MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+const SATELLITE_MAP_STYLE: maplibregl.StyleSpecification = {
+  version: 8,
+  sources: {
+    satellite: {
+      type: 'raster',
+      tiles: ['https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+      tileSize: 256,
+      attribution: 'Esri World Imagery',
+      maxzoom: 19,
+    },
+  },
+  layers: [
+    {
+      id: 'satellite',
+      type: 'raster',
+      source: 'satellite',
+    },
+  ],
+}
+
+const RAW_SOURCE_ID = 'command-pins-raw'
+const CLUSTER_SOURCE_ID = 'command-pins-clustered'
+const RAW_LAYER_IDS = [
+  'command-pin-glow-raw',
+  'command-pin-pulse-raw',
+  'command-pin-unread-ring-raw',
+  'command-pin-offer-ring-raw',
+  'command-pin-contract-ring-raw',
+  'command-pin-core-raw',
+  'command-pin-warning-badge-raw',
+] as const
+const CLUSTER_POINT_LAYER_IDS = [
+  'command-pin-glow-clustered',
+  'command-pin-pulse-clustered',
+  'command-pin-unread-ring-clustered',
+  'command-pin-offer-ring-clustered',
+  'command-pin-contract-ring-clustered',
+  'command-pin-core-clustered',
+  'command-pin-warning-badge-clustered',
+] as const
+const CLUSTER_LAYER_IDS = [
+  'command-pin-cluster-glow',
+  'command-pin-cluster-core',
+  'command-pin-cluster-count',
+] as const
+type MapStyleMode = 'dark' | 'satellite'
 
 export type InboxMapActivityMode = 'threads' | 'sends' | 'follow_ups'
 
@@ -54,9 +101,14 @@ type CommandMapPin = {
   lng: number
   market: string
   property_type: string
+  beds: number | null
+  baths: number | null
+  sqft: number | null
+  units: number | null
   estimated_value: number | null
   equity_percent: number | null
   repair_estimate: number | null
+  streetview_image: string | null
   last_message: string
   last_message_direction: 'inbound' | 'outbound' | 'unknown'
   last_activity_at: string
@@ -81,14 +133,6 @@ type CommandMapPin = {
   activity_mode: InboxMapActivityMode
   activity_state: PinActivityState
   activity_label: string
-}
-
-type MarketCluster = {
-  id: string
-  market: string
-  lat: number
-  lng: number
-  pins: CommandMapPin[]
 }
 
 type PinFeatureProps = CommandMapPin & {
@@ -141,8 +185,8 @@ const stageColor = (pin: CommandMapPin): string => {
   if (stage.includes('price_received')) return '#a855f7'
   if (stage.includes('price_discussion') || stage.includes('underwriting')) return '#a855f7'
   if (stage.includes('interest') || stage.includes('ownership')) return '#38bdf8'
-  if (stage.includes('new')) return '#7d8795'
-  return '#7d8795'
+  if (stage.includes('new')) return '#97a3b6'
+  return '#97a3b6'
 }
 
 const glowStrength = (priorityScore: number): number => {
@@ -200,12 +244,6 @@ const minutesBetween = (older: string | null, newer = new Date().toISOString()):
 const sameDay = (left: Date, right: Date): boolean =>
   left.getFullYear() === right.getFullYear() && left.getMonth() === right.getMonth() && left.getDate() === right.getDate()
 const dayKey = (value: Date): string => `${value.getFullYear()}-${value.getMonth()}-${value.getDate()}`
-const formatCompactTime = (value: string | null): string => {
-  if (!value) return 'Unknown'
-  const ts = new Date(value).getTime()
-  if (!Number.isFinite(ts)) return 'Unknown'
-  return new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-}
 const formatPercent = (value: number): string => {
   if (!Number.isFinite(value) || value < 0 || value > 100) return '—'
   return `${Math.round(value * 10) / 10}%`
@@ -219,6 +257,21 @@ const formatRelative = (value: string | null): string => {
   if (deltaMinutes < 1440) return `${Math.floor(deltaMinutes / 60)}h ago`
   return `${Math.floor(deltaMinutes / 1440)}d ago`
 }
+const formatCurrency = (value: number | null): string => {
+  if (!Number.isFinite(value ?? NaN)) return '—'
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value as number)
+}
+const formatInteger = (value: number | null): string => {
+  if (!Number.isFinite(value ?? NaN)) return '—'
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value as number)
+}
+const escapeHtml = (value: string): string =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 
 const getLat = (thread: InboxWorkflowThread): number => Number((thread as any).lat ?? (thread as any).latitude ?? 0)
 const getLng = (thread: InboxWorkflowThread): number => Number((thread as any).lng ?? (thread as any).longitude ?? 0)
@@ -249,9 +302,14 @@ const buildMapPin = (thread: InboxWorkflowThread): { pin: CommandMapPin | null; 
     lng,
     market: text(get(thread, 'market', 'marketName', 'marketId')) || 'Unknown',
     property_type: text(get(thread, 'propertyType', 'property_type', 'propertyClass')) || 'Unknown',
+    beds: num(get(thread, 'beds', 'bedrooms', 'total_bedrooms')),
+    baths: num(get(thread, 'baths', 'bathrooms', 'total_baths')),
+    sqft: num(get(thread, 'sqft', 'livingAreaSqft', 'building_square_feet')),
+    units: num(get(thread, 'units', 'unit_count', 'units_count', 'number_of_units')),
     estimated_value: num(get(thread, 'estimatedValue', 'estimated_value')),
     equity_percent: num(get(thread, 'equityPercent', 'equity_percent')),
     repair_estimate: num(get(thread, 'estimatedRepairCost', 'estimated_repair_cost')),
+    streetview_image: text(get(thread, 'streetview_image', 'streetviewImage')) || null,
     last_message: text(get(thread, 'lastMessageBody', 'latestMessageBody', 'preview')),
     last_message_direction: decision.last_message_direction,
     last_activity_at: thread.lastMessageAt || thread.lastMessageIso || new Date().toISOString(),
@@ -388,21 +446,6 @@ const toActivityPins = (pins: CommandMapPin[], activityMode: InboxMapActivityMod
   })
 }
 
-const buildMarketClusters = (pins: CommandMapPin[]): MarketCluster[] => {
-  const grouped = new Map<string, CommandMapPin[]>()
-  pins.forEach((pin) => {
-    const key = pin.market || 'Unknown'
-    grouped.set(key, [...(grouped.get(key) ?? []), pin])
-  })
-  return Array.from(grouped.entries()).map(([market, marketPins]) => ({
-    id: market,
-    market,
-    lat: marketPins.reduce((sum, pin) => sum + pin.lat, 0) / marketPins.length,
-    lng: marketPins.reduce((sum, pin) => sum + pin.lng, 0) / marketPins.length,
-    pins: marketPins,
-  }))
-}
-
 const matchesFilters = (pin: CommandMapPin, filters: MapFilterState): boolean => {
   if (filters.market && pin.market !== filters.market) return false
   if (filters.stage && pin.conversation_stage !== filters.stage) return false
@@ -427,55 +470,11 @@ const matchesFilters = (pin: CommandMapPin, filters: MapFilterState): boolean =>
   return true
 }
 
-const matchesMode = (pin: CommandMapPin, mode: CommandMapMode): boolean => {
-  if (mode === 'deal_flow') {
-    return ['price_received', 'price_discussion', 'seller_countered', 'offer_requested', 'underwriting_needed', 'offer_ready', 'contract_ready'].includes(pin.conversation_stage)
-  }
-  if (mode === 'campaign') {
-    return ['AUTO-QUEUED', 'AUTO-ELIGIBLE', 'WAITING', 'SUPPRESSED'].includes(pin.automation_status) || pin.last_message_direction === 'outbound'
-  }
-  return true
-}
-
 const featureCollectionForPins = (
   pins: CommandMapPin[],
   selectedConversationId: string | null,
-  mode: CommandMapMode,
 ): FeatureCollection<Point, PinFeatureProps> => {
   const features: FeatureCollection<Point, PinFeatureProps>['features'] = []
-
-  if (mode === 'national') {
-    buildMarketClusters(pins).forEach((cluster) => {
-      const priority = Math.max(...cluster.pins.map((pin) => pin.priority_score), 0)
-      features.push({
-        type: 'Feature',
-        geometry: { type: 'Point', coordinates: [cluster.lng, cluster.lat] },
-        properties: {
-          ...cluster.pins[0]!,
-          conversation_id: cluster.id,
-          seller_name: cluster.market,
-          address: `${cluster.pins.length} active properties`,
-          featureType: 'market_cluster',
-          selected: 0,
-          stageColor: '#5bb6ff',
-          pulseTier: cluster.pins.some((pin) => pulseTierFor(pin.last_activity_at) !== 'none') ? 'slow' : 'none',
-          pulseMode: 'none',
-          glowStrength: glowStrength(priority),
-          unreadRingColor: 'transparent',
-          offerRingColor: 'transparent',
-          contractRingColor: 'transparent',
-          badgeColor: '#5bb6ff',
-          pinCount: cluster.pins.length,
-          lockState: 0,
-          needsReviewBadge: cluster.pins.some((pin) => pin.inbox_bucket === 'needs_review') ? 1 : 0,
-          followUpDueBadge: cluster.pins.some((pin) => pin.inbox_bucket === 'follow_up_due') ? 1 : 0,
-          suppressedBadge: 0,
-          queueBlockedBadge: cluster.pins.some((pin) => pin.activity_state === 'queue_blocked') ? 1 : 0,
-        },
-      })
-    })
-    return { type: 'FeatureCollection', features }
-  }
 
   pins.forEach((pin) => {
     features.push({
@@ -570,18 +569,44 @@ const buildLiveTickerItems = (pins: CommandMapPin[]) => {
     .slice(0, 10)
 }
 
-const buildMarketKpis = (pins: CommandMapPin[]) => {
-  const active = pins.filter((pin) => pin.suppression_status === 'clear').length
-  const newReplies = pins.filter((pin) => pin.inbox_bucket === 'new_replies').length
-  const priority = pins.filter((pin) => pin.inbox_bucket === 'priority').length
-  const offerReady = pins.filter((pin) => pin.offer_status === 'ready').length
-  const optOut = pins.filter((pin) => pin.suppression_status !== 'clear').length
-  return { total: pins.length, active, newReplies, priority, offerReady, optOut }
+const resolveStyle = (styleMode: MapStyleMode) => {
+  const envStyle = (import.meta.env as Record<string, string>).VITE_MAP_STYLE_URL
+  if (styleMode === 'satellite') return SATELLITE_MAP_STYLE
+  return typeof envStyle === 'string' && envStyle.length > 0 ? envStyle : DARK_MAP_STYLE
 }
 
-const resolveStyle = (): string => {
-  const envStyle = (import.meta.env as Record<string, string>).VITE_MAP_STYLE_URL
-  return typeof envStyle === 'string' && envStyle.length > 0 ? envStyle : MAP_STYLE
+const buildHoverCardMarkup = (pin: CommandMapPin): string => {
+  const imageUrl = pin.streetview_image || buildStreetViewUrl(pin.address) || ''
+  const metric = (label: string, value: string) => `<div class="nx-icm-hover__metric"><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`
+  return `
+    <article class="nx-icm-hover">
+      ${imageUrl ? `<div class="nx-icm-hover__media"><img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(pin.address)} street view" loading="lazy" /></div>` : ''}
+      <div class="nx-icm-hover__body">
+        <div class="nx-icm-hover__head">
+          <div>
+            <p class="nx-icm-hover__eyebrow">${escapeHtml(pin.activity_label)}</p>
+            <h4>${escapeHtml(pin.seller_name)}</h4>
+          </div>
+          <span class="nx-icm-hover__stage">${escapeHtml(formatLabel(pin.conversation_stage))}</span>
+        </div>
+        <p class="nx-icm-hover__address">${escapeHtml(pin.address)}</p>
+        <div class="nx-icm-hover__stats">
+          ${metric('Beds', formatInteger(pin.beds))}
+          ${metric('Baths', formatInteger(pin.baths))}
+          ${metric('Sqft', formatInteger(pin.sqft))}
+          ${metric('Units', formatInteger(pin.units))}
+          ${metric('Value', formatCurrency(pin.estimated_value))}
+          ${metric('Repairs', formatCurrency(pin.repair_estimate))}
+          ${metric('Equity', formatPercent(pin.equity_percent ?? NaN))}
+          ${metric('Status', formatLabel(pin.conversation_status))}
+        </div>
+        <div class="nx-icm-hover__message">
+          <span>Last Message</span>
+          <p>${escapeHtml(pin.last_message || 'No recent message')}</p>
+        </div>
+      </div>
+    </article>
+  `
 }
 
 interface Props {
@@ -622,16 +647,43 @@ export function InboxCommandMap({
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const controlsRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
   const animationRef = useRef<number | null>(null)
+  const hoverPopupRef = useRef<maplibregl.Popup | null>(null)
+  const geojsonRef = useRef<FeatureCollection<Point, PinFeatureProps>>(featureCollectionForPins([], null))
+  const activityModeRef = useRef<InboxMapActivityMode>('threads')
   const [activityMode, setActivityMode] = useState<InboxMapActivityMode>('threads')
   const [filters, setFilters] = useState<MapFilterState>(defaultFilters)
   const [selectedPinId, setSelectedPinId] = useState<string | null>(selectedThread?.id ?? null)
   const [showSelectedHidden, setShowSelectedHidden] = useState(false)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [dockTier, setDockTier] = useState<'mini' | 'compact' | 'full'>('full')
+  const [mapStyleMode, setMapStyleMode] = useState<MapStyleMode>('dark')
+  const [mapDimension, setMapDimension] = useState<'2d' | '3d'>('2d')
 
-  const baseThreads = useMemo(() => sourceMode === 'visible_threads' ? visibleThreads : threads, [sourceMode, threads, visibleThreads])
+  const hydratedThreadsById = useMemo(
+    () => new Map(threads.map((thread) => [thread.id, thread])),
+    [threads],
+  )
+  const hydratedThreadsByKey = useMemo(
+    () => new Map(threads.map((thread) => [String((thread as any).threadKey || thread.id), thread])),
+    [threads],
+  )
+  const visibleHydratedThreads = useMemo(() => (
+    visibleThreads
+      .map((thread) => hydratedThreadsById.get(thread.id) || hydratedThreadsByKey.get(String((thread as any).threadKey || thread.id)) || thread)
+  ), [hydratedThreadsById, hydratedThreadsByKey, visibleThreads])
+  const selectedHydratedThread = useMemo(() => {
+    if (!selectedThread) return null
+    return hydratedThreadsById.get(selectedThread.id)
+      || hydratedThreadsByKey.get(String((selectedThread as any).threadKey || selectedThread.id))
+      || selectedThread
+  }, [hydratedThreadsById, hydratedThreadsByKey, selectedThread])
+  const baseThreads = useMemo(
+    () => sourceMode === 'visible_threads' ? visibleHydratedThreads : threads,
+    [sourceMode, threads, visibleHydratedThreads],
+  )
   const pinPipeline = useMemo(() => {
     const mapped: CommandMapPin[] = []
     const unmapped: UnmappedItem[] = []
@@ -648,9 +700,9 @@ export function InboxCommandMap({
     [allPins, filters],
   )
   const selectedBasePin = useMemo(() => {
-    if (!selectedThread) return null
-    return buildMapPin(selectedThread).pin
-  }, [selectedThread])
+    if (!selectedHydratedThread) return null
+    return buildMapPin(selectedHydratedThread).pin
+  }, [selectedHydratedThread])
   const selectedHiddenByFilters = useMemo(
     () => Boolean(selectedBasePin && !filteredPins.some((pin) => pin.conversation_id === selectedBasePin.conversation_id)),
     [filteredPins, selectedBasePin],
@@ -663,15 +715,15 @@ export function InboxCommandMap({
     return [...filteredPins, ...selectedActivityPins]
   }, [activityMode, filteredPins, selectedBasePin, selectedHiddenByFilters, showSelectedHidden])
   const selectedPin = useMemo(
-    () => visiblePins.find((pin) => pin.conversation_id === (selectedPinId || selectedThread?.id))
-      ?? filteredPins.find((pin) => pin.conversation_id === (selectedPinId || selectedThread?.id))
+    () => visiblePins.find((pin) => pin.conversation_id === (selectedPinId || selectedHydratedThread?.id))
+      ?? filteredPins.find((pin) => pin.conversation_id === (selectedPinId || selectedHydratedThread?.id))
       ?? visiblePins[0]
       ?? filteredPins[0]
       ?? selectedBasePin,
-    [filteredPins, selectedBasePin, selectedPinId, selectedThread?.id, visiblePins],
+    [filteredPins, selectedBasePin, selectedPinId, selectedHydratedThread?.id, visiblePins],
   )
   const geojson = useMemo(
-    () => featureCollectionForPins(visiblePins, selectedPin?.conversation_id ?? null, 'market'),
+    () => featureCollectionForPins(visiblePins, selectedPin?.conversation_id ?? null),
     [visiblePins, selectedPin?.conversation_id],
   )
   const threadModeKpis = useMemo(() => buildThreadModeKpis(visiblePins), [visiblePins])
@@ -687,9 +739,32 @@ export function InboxCommandMap({
     activeFilters: filters,
   }), [activityMode, allPins.length, filteredPins.length, filters, pinPipeline.unmapped.length, visiblePins.length])
 
+  geojsonRef.current = geojson
+  activityModeRef.current = activityMode
+
   useEffect(() => {
     setShowSelectedHidden(false)
   }, [selectedThread?.id, activityMode])
+
+  useEffect(() => {
+    setSelectedPinId(selectedThread?.id ?? null)
+  }, [selectedThread?.id])
+
+  useEffect(() => {
+    if (!filtersOpen) return
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!controlsRef.current?.contains(event.target as Node)) setFiltersOpen(false)
+    }
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setFiltersOpen(false)
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [filtersOpen])
 
   useEffect(() => {
     if (!rootRef.current || typeof ResizeObserver === 'undefined') return
@@ -710,10 +785,219 @@ export function InboxCommandMap({
     if (!containerRef.current) return
     if (mapRef.current) return
 
+    const setLayerVisibility = (map: maplibregl.Map, layerIds: readonly string[], visible: boolean) => {
+      layerIds.forEach((layerId) => {
+        if (map.getLayer(layerId)) {
+          map.setLayoutProperty(layerId, 'visibility', visible ? 'visible' : 'none')
+        }
+      })
+    }
+
+    const syncLayerVisibility = (map: maplibregl.Map, nextMode: InboxMapActivityMode) => {
+      const clusteredMode = nextMode !== 'sends'
+      setLayerVisibility(map, RAW_LAYER_IDS, !clusteredMode)
+      setLayerVisibility(map, CLUSTER_POINT_LAYER_IDS, clusteredMode)
+      setLayerVisibility(map, CLUSTER_LAYER_IDS, clusteredMode)
+    }
+
+    const addMapLayers = (map: maplibregl.Map) => {
+      const rawData = geojsonRef.current
+
+      if (!map.getSource(RAW_SOURCE_ID)) {
+        map.addSource(RAW_SOURCE_ID, {
+          type: 'geojson',
+          data: rawData,
+        })
+      }
+
+      if (!map.getSource(CLUSTER_SOURCE_ID)) {
+        map.addSource(CLUSTER_SOURCE_ID, {
+          type: 'geojson',
+          data: rawData,
+          cluster: true,
+          clusterRadius: 54,
+          clusterMaxZoom: 11,
+        })
+      }
+
+      if (!map.getLayer('command-pin-cluster-glow')) {
+        map.addLayer({
+          id: 'command-pin-cluster-glow',
+          type: 'circle',
+          source: CLUSTER_SOURCE_ID,
+          filter: ['has', 'point_count'],
+          paint: {
+            'circle-radius': ['step', ['get', 'point_count'], 20, 20, 28, 80, 36, 200, 46, 500, 56],
+            'circle-color': '#38bdf8',
+            'circle-opacity': 0.18,
+            'circle-blur': 0.9,
+          },
+        })
+      }
+
+      if (!map.getLayer('command-pin-cluster-core')) {
+        map.addLayer({
+          id: 'command-pin-cluster-core',
+          type: 'circle',
+          source: CLUSTER_SOURCE_ID,
+          filter: ['has', 'point_count'],
+          paint: {
+            'circle-radius': ['step', ['get', 'point_count'], 14, 20, 18, 80, 22, 200, 26, 500, 30],
+            'circle-color': '#0f1726',
+            'circle-stroke-color': 'rgba(91, 182, 255, 0.92)',
+            'circle-stroke-width': 1.8,
+            'circle-opacity': 0.96,
+          },
+        })
+      }
+
+      if (!map.getLayer('command-pin-cluster-count')) {
+        map.addLayer({
+          id: 'command-pin-cluster-count',
+          type: 'symbol',
+          source: CLUSTER_SOURCE_ID,
+          filter: ['has', 'point_count'],
+          layout: {
+            'text-field': ['get', 'point_count_abbreviated'],
+            'text-size': 12,
+            'text-font': ['Open Sans Bold'],
+            'text-allow-overlap': true,
+          },
+          paint: {
+            'text-color': '#f8fbff',
+            'text-halo-color': 'rgba(8,10,15,0.92)',
+            'text-halo-width': 1.2,
+          },
+        })
+      }
+
+      const addPointLayers = (suffix: 'raw' | 'clustered', sourceId: string, filter?: any) => {
+        const layerFilter = filter ?? true
+        if (!map.getLayer(`command-pin-glow-${suffix}`)) {
+          map.addLayer({
+            id: `command-pin-glow-${suffix}`,
+            type: 'circle',
+            source: sourceId,
+            ...(filter ? { filter: layerFilter } : {}),
+            paint: {
+              'circle-radius': ['+', 14, ['*', ['get', 'glowStrength'], 18]],
+              'circle-blur': 1,
+              'circle-opacity': ['case', ['==', ['get', 'glowStrength'], 1], 0.44, ['>=', ['get', 'glowStrength'], 0.8], 0.32, ['>=', ['get', 'glowStrength'], 0.52], 0.22, 0.12],
+              'circle-color': ['get', 'stageColor'],
+            },
+          })
+        }
+
+        if (!map.getLayer(`command-pin-pulse-${suffix}`)) {
+          map.addLayer({
+            id: `command-pin-pulse-${suffix}`,
+            type: 'circle',
+            source: sourceId,
+            ...(filter ? { filter: layerFilter } : {}),
+            paint: {
+              'circle-radius': ['match', ['get', 'pulseTier'], 'fast', 20, 'medium_fast', 18, 'medium', 16, 'slow', 14, 'very_slow', 12, 10],
+              'circle-opacity': ['case', ['==', ['get', 'pulseMode'], 'none'], 0, ['match', ['get', 'pulseTier'], 'fast', 0.28, 'medium_fast', 0.22, 'medium', 0.18, 'slow', 0.12, 'very_slow', 0, 0]],
+              'circle-color': ['get', 'stageColor'],
+              'circle-stroke-width': ['case', ['==', ['get', 'pulseMode'], 'none'], 0, ['match', ['get', 'pulseTier'], 'fast', 1.8, 'medium_fast', 1.5, 'medium', 1.3, 'slow', 1.1, 'very_slow', 0, 0]],
+              'circle-stroke-color': ['get', 'stageColor'],
+            },
+          })
+        }
+
+        if (!map.getLayer(`command-pin-unread-ring-${suffix}`)) {
+          map.addLayer({
+            id: `command-pin-unread-ring-${suffix}`,
+            type: 'circle',
+            source: sourceId,
+            ...(filter ? { filter: layerFilter } : {}),
+            paint: {
+              'circle-radius': 12.5,
+              'circle-color': 'transparent',
+              'circle-stroke-width': ['case', ['==', ['get', 'unreadRingColor'], 'transparent'], 0, 2.1],
+              'circle-stroke-color': ['get', 'unreadRingColor'],
+              'circle-stroke-opacity': 0.94,
+            },
+          })
+        }
+
+        if (!map.getLayer(`command-pin-offer-ring-${suffix}`)) {
+          map.addLayer({
+            id: `command-pin-offer-ring-${suffix}`,
+            type: 'circle',
+            source: sourceId,
+            ...(filter ? { filter: layerFilter } : {}),
+            paint: {
+              'circle-radius': 14.5,
+              'circle-color': 'transparent',
+              'circle-stroke-width': ['case', ['==', ['get', 'offerRingColor'], 'transparent'], 0, 2.2],
+              'circle-stroke-color': ['get', 'offerRingColor'],
+              'circle-stroke-opacity': 0.96,
+            },
+          })
+        }
+
+        if (!map.getLayer(`command-pin-contract-ring-${suffix}`)) {
+          map.addLayer({
+            id: `command-pin-contract-ring-${suffix}`,
+            type: 'circle',
+            source: sourceId,
+            ...(filter ? { filter: layerFilter } : {}),
+            paint: {
+              'circle-radius': 16.5,
+              'circle-color': 'transparent',
+              'circle-stroke-width': ['case', ['==', ['get', 'contractRingColor'], 'transparent'], 0, 2.2],
+              'circle-stroke-color': ['get', 'contractRingColor'],
+              'circle-stroke-opacity': 0.92,
+            },
+          })
+        }
+
+        if (!map.getLayer(`command-pin-core-${suffix}`)) {
+          map.addLayer({
+            id: `command-pin-core-${suffix}`,
+            type: 'circle',
+            source: sourceId,
+            ...(filter ? { filter: layerFilter } : {}),
+            paint: {
+              'circle-radius': ['case', ['==', ['get', 'selected'], 1], 7.8, 6.6],
+              'circle-color': ['get', 'stageColor'],
+              'circle-stroke-width': ['case', ['==', ['get', 'selected'], 1], 2.6, 1.3],
+              'circle-stroke-color': ['case', ['==', ['get', 'selected'], 1], '#ffffff', 'rgba(255,255,255,0.4)'],
+              'circle-opacity': ['case', ['==', ['get', 'lockState'], 1], 0.9, 0.98],
+            },
+          })
+        }
+
+        if (!map.getLayer(`command-pin-warning-badge-${suffix}`)) {
+          map.addLayer({
+            id: `command-pin-warning-badge-${suffix}`,
+            type: 'symbol',
+            source: sourceId,
+            ...(filter ? { filter: layerFilter } : {}),
+            layout: {
+              'text-field': ['case', ['==', ['get', 'queueBlockedBadge'], 1], '⛔', ['==', ['get', 'needsReviewBadge'], 1], '⚠', ['==', ['get', 'followUpDueBadge'], 1], '⏰', ['==', ['get', 'suppressedBadge'], 1], '🔒', ''],
+              'text-size': 11,
+              'text-offset': [1.05, -1.05],
+              'text-allow-overlap': true,
+            },
+            paint: {
+              'text-color': ['case', ['==', ['get', 'suppressedBadge'], 1], '#ff6b63', ['==', ['get', 'queueBlockedBadge'], 1], '#ff6b63', ['==', ['get', 'followUpDueBadge'], 1], '#ffd166', '#ffd166'],
+              'text-halo-color': 'rgba(8,10,15,0.92)',
+              'text-halo-width': 1.4,
+            },
+          })
+        }
+      }
+
+      addPointLayers('raw', RAW_SOURCE_ID)
+      addPointLayers('clustered', CLUSTER_SOURCE_ID, ['!', ['has', 'point_count']])
+      syncLayerVisibility(map, activityModeRef.current)
+    }
+
     const center: [number, number] = selectedPin ? [selectedPin.lng, selectedPin.lat] : [-96, 37.8]
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: resolveStyle(),
+      style: resolveStyle(mapStyleMode),
       center,
       zoom: zoomedIn ? 10.5 : 4.4,
       minZoom: 2,
@@ -726,117 +1010,67 @@ export function InboxCommandMap({
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right')
 
     map.on('load', () => {
-      map.addSource('command-pins', { type: 'geojson', data: geojson })
+      addMapLayers(map)
 
-      map.addLayer({
-        id: 'command-pin-glow',
-        type: 'circle',
-        source: 'command-pins',
-        paint: {
-          'circle-radius': ['+', 12, ['*', ['get', 'glowStrength'], 16]],
-          'circle-blur': 1,
-          'circle-opacity': ['case', ['==', ['get', 'glowStrength'], 1], 0.42, ['>=', ['get', 'glowStrength'], 0.8], 0.28, ['>=', ['get', 'glowStrength'], 0.52], 0.18, 0.08],
-          'circle-color': ['get', 'stageColor'],
-        },
-      })
-
-      map.addLayer({
-        id: 'command-pin-pulse',
-        type: 'circle',
-        source: 'command-pins',
-        paint: {
-          'circle-radius': ['match', ['get', 'pulseTier'], 'fast', 18, 'medium_fast', 16, 'medium', 14, 'slow', 12, 'very_slow', 10, 8],
-          'circle-opacity': ['case', ['==', ['get', 'pulseMode'], 'none'], 0, ['match', ['get', 'pulseTier'], 'fast', 0.26, 'medium_fast', 0.2, 'medium', 0.15, 'slow', 0.1, 'very_slow', 0, 0]],
-          'circle-color': ['get', 'stageColor'],
-          'circle-stroke-width': ['case', ['==', ['get', 'pulseMode'], 'none'], 0, ['match', ['get', 'pulseTier'], 'fast', 1.8, 'medium_fast', 1.4, 'medium', 1.2, 'slow', 1, 'very_slow', 0, 0]],
-          'circle-stroke-color': ['get', 'stageColor'],
-        },
-      })
-
-      map.addLayer({
-        id: 'command-pin-unread-ring',
-        type: 'circle',
-        source: 'command-pins',
-        paint: {
-          'circle-radius': ['case', ['==', ['get', 'featureType'], 'market_cluster'], 0, 11.5],
-          'circle-color': 'transparent',
-          'circle-stroke-width': ['case', ['==', ['get', 'unreadRingColor'], 'transparent'], 0, 1.8],
-          'circle-stroke-color': ['get', 'unreadRingColor'],
-          'circle-stroke-opacity': 0.92,
-        },
-      })
-
-      map.addLayer({
-        id: 'command-pin-offer-ring',
-        type: 'circle',
-        source: 'command-pins',
-        paint: {
-          'circle-radius': ['case', ['==', ['get', 'featureType'], 'market_cluster'], 0, 13.3],
-          'circle-color': 'transparent',
-          'circle-stroke-width': ['case', ['==', ['get', 'offerRingColor'], 'transparent'], 0, 2],
-          'circle-stroke-color': ['get', 'offerRingColor'],
-          'circle-stroke-opacity': 0.94,
-        },
-      })
-
-      map.addLayer({
-        id: 'command-pin-contract-ring',
-        type: 'circle',
-        source: 'command-pins',
-        paint: {
-          'circle-radius': ['case', ['==', ['get', 'featureType'], 'market_cluster'], 0, 15],
-          'circle-color': 'transparent',
-          'circle-stroke-width': ['case', ['==', ['get', 'contractRingColor'], 'transparent'], 0, 2.1],
-          'circle-stroke-color': ['get', 'contractRingColor'],
-          'circle-stroke-opacity': 0.9,
-        },
-      })
-
-      map.addLayer({
-        id: 'command-pin-core',
-        type: 'circle',
-        source: 'command-pins',
-        paint: {
-          'circle-radius': ['case', ['==', ['get', 'featureType'], 'market_cluster'], 10, 6.5],
-          'circle-color': ['get', 'stageColor'],
-          'circle-stroke-width': ['case', ['==', ['get', 'selected'], 1], 2.6, 1.1],
-          'circle-stroke-color': ['case', ['==', ['get', 'selected'], 1], '#ffffff', 'rgba(255,255,255,0.34)'],
-          'circle-opacity': ['case', ['==', ['get', 'lockState'], 1], 0.88, 0.97],
-        },
-      })
-
-      map.addLayer({
-        id: 'command-pin-warning-badge',
-        type: 'symbol',
-        source: 'command-pins',
-        layout: {
-          'text-field': ['case', ['==', ['get', 'queueBlockedBadge'], 1], '⛔', ['==', ['get', 'needsReviewBadge'], 1], '⚠', ['==', ['get', 'followUpDueBadge'], 1], '⏰', ['==', ['get', 'suppressedBadge'], 1], '🔒', ''],
-          'text-size': 11,
-          'text-offset': [1.05, -1.05],
-          'text-allow-overlap': true,
-        },
-        paint: {
-          'text-color': ['case', ['==', ['get', 'suppressedBadge'], 1], '#ff6b63', ['==', ['get', 'queueBlockedBadge'], 1], '#ff6b63', ['==', ['get', 'followUpDueBadge'], 1], '#ffd166', '#ffd166'],
-          'text-halo-color': 'rgba(8,10,15,0.92)',
-          'text-halo-width': 1.4,
-        },
-      })
-
-      map.on('click', 'command-pin-core', (event) => {
+      const handlePinClick = (event: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
         const feature = event.features?.[0]
         if (!feature) return
         const id = String(feature.properties?.conversation_id || '')
         if (!id) return
+        hoverPopupRef.current?.remove()
         setSelectedPinId(id)
-        const isMarketCluster = feature.properties?.featureType === 'market_cluster'
-        if (isMarketCluster) {
-          setFilters((current) => ({ ...current, market: String(feature.properties?.market || '') }))
-          map.easeTo({ center: (feature.geometry as Point).coordinates as [number, number], zoom: 8.5, duration: 700 })
-          return
-        }
         onSelectThreadId?.(id)
         map.easeTo({ center: (feature.geometry as Point).coordinates as [number, number], zoom: Math.max(map.getZoom(), 12), duration: 700 })
-      })
+      }
+
+      const handleClusterClick = (event: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+        const feature = event.features?.[0]
+        if (!feature) return
+        const clusterId = Number(feature.properties?.cluster_id)
+        const source = map.getSource(CLUSTER_SOURCE_ID) as (maplibregl.GeoJSONSource & {
+          getClusterExpansionZoom?: (id: number, cb: (error: Error | null, zoom: number) => void) => void
+        }) | undefined
+        if (!source?.getClusterExpansionZoom || !Number.isFinite(clusterId)) return
+        source.getClusterExpansionZoom(clusterId, (error, zoom) => {
+          if (error) return
+          map.easeTo({
+            center: (feature.geometry as Point).coordinates as [number, number],
+            zoom,
+            duration: 500,
+          })
+        })
+      }
+
+      const handlePinHover = (event: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+        const feature = event.features?.[0]
+        if (!feature?.properties) return
+        const props = feature.properties as unknown as CommandMapPin
+        const coordinates = (feature.geometry as Point).coordinates as [number, number]
+        const popup = hoverPopupRef.current ?? new maplibregl.Popup({
+          closeButton: false,
+          closeOnClick: false,
+          offset: 18,
+          className: 'nx-icm-hover-popup',
+          maxWidth: '360px',
+        })
+        popup
+          .setLngLat(coordinates)
+          .setHTML(buildHoverCardMarkup(props))
+          .addTo(map)
+        hoverPopupRef.current = popup
+      }
+
+      const clearPinHover = () => {
+        hoverPopupRef.current?.remove()
+      }
+
+      map.on('click', 'command-pin-core-raw', handlePinClick)
+      map.on('click', 'command-pin-core-clustered', handlePinClick)
+      map.on('click', 'command-pin-cluster-core', handleClusterClick)
+      map.on('mouseenter', 'command-pin-core-raw', handlePinHover)
+      map.on('mouseenter', 'command-pin-core-clustered', handlePinHover)
+      map.on('mouseleave', 'command-pin-core-raw', clearPinHover)
+      map.on('mouseleave', 'command-pin-core-clustered', clearPinHover)
 
       const pulseConfig: Record<PinFeatureProps['pulseTier'], { baseRadius: number; maxAdd: number; baseOpacity: number; speed: number }> = {
         fast: { baseRadius: 13, maxAdd: 8, baseOpacity: 0.26, speed: 1.65 },
@@ -874,34 +1108,37 @@ export function InboxCommandMap({
           return cfg.baseOpacity * (1 - wave * 0.55)
         }
         try {
-          map.setPaintProperty('command-pin-pulse', 'circle-radius', [
-            'case',
-            ['==', ['get', 'pulseMode'], 'none'], 8,
-            ['==', ['get', 'pulseMode'], 'ripple'], makeRadiusExpr('medium_fast', 'ripple'),
-            ['==', ['get', 'pulseMode'], 'triple'], makeRadiusExpr('fast', 'triple'),
-            ['match', ['get', 'pulseTier'],
-              'fast', makeRadiusExpr('fast', 'continuous'),
-              'medium_fast', makeRadiusExpr('medium_fast', 'continuous'),
-              'medium', makeRadiusExpr('medium', 'continuous'),
-              'slow', makeRadiusExpr('slow', 'continuous'),
-              'very_slow', makeRadiusExpr('very_slow', 'continuous'),
-              makeRadiusExpr('none', 'continuous'),
-            ],
-          ])
-          map.setPaintProperty('command-pin-pulse', 'circle-opacity', [
-            'case',
-            ['==', ['get', 'pulseMode'], 'none'], 0,
-            ['==', ['get', 'pulseMode'], 'ripple'], makeOpacityExpr('medium_fast', 'ripple'),
-            ['==', ['get', 'pulseMode'], 'triple'], makeOpacityExpr('fast', 'triple'),
-            ['match', ['get', 'pulseTier'],
-              'fast', makeOpacityExpr('fast', 'continuous'),
-              'medium_fast', makeOpacityExpr('medium_fast', 'continuous'),
-              'medium', makeOpacityExpr('medium', 'continuous'),
-              'slow', makeOpacityExpr('slow', 'continuous'),
-              'very_slow', 0,
-              0,
-            ],
-          ])
+          ;(['command-pin-pulse-raw', 'command-pin-pulse-clustered'] as const).forEach((layerId) => {
+            if (!map.getLayer(layerId)) return
+            map.setPaintProperty(layerId, 'circle-radius', [
+              'case',
+              ['==', ['get', 'pulseMode'], 'none'], 8,
+              ['==', ['get', 'pulseMode'], 'ripple'], makeRadiusExpr('medium_fast', 'ripple'),
+              ['==', ['get', 'pulseMode'], 'triple'], makeRadiusExpr('fast', 'triple'),
+              ['match', ['get', 'pulseTier'],
+                'fast', makeRadiusExpr('fast', 'continuous'),
+                'medium_fast', makeRadiusExpr('medium_fast', 'continuous'),
+                'medium', makeRadiusExpr('medium', 'continuous'),
+                'slow', makeRadiusExpr('slow', 'continuous'),
+                'very_slow', makeRadiusExpr('very_slow', 'continuous'),
+                makeRadiusExpr('none', 'continuous'),
+              ],
+            ])
+            map.setPaintProperty(layerId, 'circle-opacity', [
+              'case',
+              ['==', ['get', 'pulseMode'], 'none'], 0,
+              ['==', ['get', 'pulseMode'], 'ripple'], makeOpacityExpr('medium_fast', 'ripple'),
+              ['==', ['get', 'pulseMode'], 'triple'], makeOpacityExpr('fast', 'triple'),
+              ['match', ['get', 'pulseTier'],
+                'fast', makeOpacityExpr('fast', 'continuous'),
+                'medium_fast', makeOpacityExpr('medium_fast', 'continuous'),
+                'medium', makeOpacityExpr('medium', 'continuous'),
+                'slow', makeOpacityExpr('slow', 'continuous'),
+                'very_slow', 0,
+                0,
+              ],
+            ])
+          })
         } catch {
           return
         }
@@ -909,25 +1146,83 @@ export function InboxCommandMap({
       }
       animationRef.current = requestAnimationFrame(animate)
 
-      map.on('mouseenter', 'command-pin-core', () => { map.getCanvas().style.cursor = 'pointer' })
-      map.on('mouseleave', 'command-pin-core', () => { map.getCanvas().style.cursor = '' })
+      ;(['command-pin-core-raw', 'command-pin-core-clustered', 'command-pin-cluster-core'] as const).forEach((layerId) => {
+        map.on('mouseenter', layerId, () => { map.getCanvas().style.cursor = 'pointer' })
+        map.on('mouseleave', layerId, () => { map.getCanvas().style.cursor = '' })
+      })
+    })
+
+    map.on('style.load', () => {
+      addMapLayers(map)
     })
 
     return () => {
       if (animationRef.current !== null) cancelAnimationFrame(animationRef.current)
+      hoverPopupRef.current?.remove()
       map.remove()
       mapRef.current = null
     }
-  }, [geojson, onSelectThreadId, selectedPin, zoomedIn])
+  }, [onSelectThreadId, selectedPin, zoomedIn])
 
   useEffect(() => {
-    const source = mapRef.current?.getSource('command-pins') as maplibregl.GeoJSONSource | undefined
-    source?.setData(geojson)
+    const rawSource = mapRef.current?.getSource(RAW_SOURCE_ID) as maplibregl.GeoJSONSource | undefined
+    const clusterSource = mapRef.current?.getSource(CLUSTER_SOURCE_ID) as maplibregl.GeoJSONSource | undefined
+    rawSource?.setData(geojson)
+    clusterSource?.setData(geojson)
   }, [geojson])
 
   useEffect(() => {
+    if (!mapRef.current) return
+    mapRef.current.setStyle(resolveStyle(mapStyleMode))
+  }, [mapStyleMode])
+
+  useEffect(() => {
+    if (!mapRef.current) return
+    mapRef.current.easeTo({
+      pitch: mapDimension === '3d' ? 58 : 0,
+      bearing: mapDimension === '3d' ? -18 : 0,
+      duration: 550,
+    })
+  }, [mapDimension])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    const clusteredMode = activityMode !== 'sends'
+    RAW_LAYER_IDS.forEach((layerId) => {
+      if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', clusteredMode ? 'none' : 'visible')
+    })
+    CLUSTER_POINT_LAYER_IDS.forEach((layerId) => {
+      if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', clusteredMode ? 'visible' : 'none')
+    })
+    CLUSTER_LAYER_IDS.forEach((layerId) => {
+      if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', clusteredMode ? 'visible' : 'none')
+    })
+  }, [activityMode])
+
+  useEffect(() => {
     if (!mapRef.current || visiblePins.length === 0) return
-    const coords = visiblePins.map((pin) => [pin.lng, pin.lat] as [number, number])
+    if (selectedPin) {
+      mapRef.current.easeTo({
+        center: [selectedPin.lng, selectedPin.lat],
+        zoom: Math.max(mapRef.current.getZoom(), zoomedIn ? 13 : 11.25),
+        duration: 680,
+        offset: dockTier === 'full' ? [150, 0] : [0, 0],
+      })
+      return
+    }
+    const uniqueCoords = new Map<string, [number, number]>()
+    visiblePins.forEach((pin) => {
+      uniqueCoords.set(`${pin.lng}:${pin.lat}`, [pin.lng, pin.lat])
+    })
+    const coords = Array.from(uniqueCoords.values())
+    const padding =
+      dockTier === 'full'
+        ? { top: 120, right: 168, bottom: 108, left: 360 }
+        : dockTier === 'compact'
+          ? { top: 88, right: 116, bottom: 84, left: 70 }
+          : { top: 72, right: 24, bottom: 132, left: 24 }
+
     if (coords.length === 1) {
       mapRef.current.easeTo({ center: coords[0], zoom: zoomedIn ? 12 : 8, duration: 500 })
       return
@@ -941,8 +1236,12 @@ export function InboxCommandMap({
       }),
       { minLng: Infinity, maxLng: -Infinity, minLat: Infinity, maxLat: -Infinity },
     )
-    mapRef.current.fitBounds([[bounds.minLng, bounds.minLat], [bounds.maxLng, bounds.maxLat]], { padding: 70, duration: 550 })
-  }, [visiblePins, zoomedIn])
+    mapRef.current.fitBounds([[bounds.minLng, bounds.minLat], [bounds.maxLng, bounds.maxLat]], {
+      padding,
+      duration: 550,
+      maxZoom: zoomedIn ? 13 : 11,
+    })
+  }, [dockTier, selectedPin, visiblePins, zoomedIn])
 
   const markets = Array.from(new Set(allPins.map((pin) => pin.market).filter(Boolean))).sort()
   const stages = Array.from(new Set(allPins.map((pin) => pin.conversation_stage).filter(Boolean))).sort()
@@ -951,8 +1250,8 @@ export function InboxCommandMap({
   const automationStatuses = Array.from(new Set(allPins.map((pin) => pin.automation_status).filter(Boolean))).sort()
   const propertyTypes = Array.from(new Set(allPins.map((pin) => pin.property_type).filter(Boolean))).sort()
   const selectedUnmapped = useMemo(
-    () => selectedThread ? buildMapPin(selectedThread).unmapped : null,
-    [selectedThread],
+    () => selectedHydratedThread ? buildMapPin(selectedHydratedThread).unmapped : null,
+    [selectedHydratedThread],
   )
   const emptyStateMessage = useMemo(() => {
     if (visiblePins.length > 0) return null
@@ -983,28 +1282,46 @@ export function InboxCommandMap({
               </button>
             ))}
           </div>
-          {dockTier === 'mini' && (
-            <button type="button" className="nx-icm__mode-tab" onClick={() => setFiltersOpen((open) => !open)}>
-              Filters
+          <div ref={controlsRef} className="nx-icm__header-actions">
+            <button type="button" className={cls('nx-icm__mode-tab', filtersOpen && 'is-active')} onClick={() => setFiltersOpen((open) => !open)}>
+              Map Controls
             </button>
-          )}
+          </div>
         </div>
-        {(dockTier === 'full' || dockTier === 'compact' || filtersOpen) && (
-          <div className={cls('nx-icm__filter-row', dockTier === 'compact' && 'is-compact-filters', dockTier === 'mini' && 'is-popover')}>
-            <select value={filters.market} onChange={(e) => setFilters((current) => ({ ...current, market: e.target.value }))}>
-              <option value="">All Markets</option>
-              {markets.map((market) => <option key={market} value={market}>{market}</option>)}
-            </select>
-            <select value={filters.stage} onChange={(e) => setFilters((current) => ({ ...current, stage: e.target.value }))}>
-              <option value="">All Stages</option>
-              {stages.map((stage) => <option key={stage} value={stage}>{stage.replace(/_/g, ' ')}</option>)}
-            </select>
-            <select value={filters.status} onChange={(e) => setFilters((current) => ({ ...current, status: e.target.value }))}>
-              <option value="">All Statuses</option>
-              {statuses.map((status) => <option key={status} value={status}>{status.replace(/_/g, ' ')}</option>)}
-            </select>
-            {(dockTier !== 'compact' || filtersOpen) && (
-              <>
+        {filtersOpen && (
+          <div className="nx-icm__controls-popover">
+            <div className="nx-icm__controls-group">
+              <span className="nx-icm__controls-label">Map View</span>
+              <div className="nx-icm__controls-segment">
+                <button type="button" className={cls('nx-icm__mode-tab', mapStyleMode === 'dark' && 'is-active')} onClick={() => setMapStyleMode('dark')}>
+                  Dark
+                </button>
+                <button type="button" className={cls('nx-icm__mode-tab', mapStyleMode === 'satellite' && 'is-active')} onClick={() => setMapStyleMode('satellite')}>
+                  Satellite
+                </button>
+                <button type="button" className={cls('nx-icm__mode-tab', mapDimension === '2d' && 'is-active')} onClick={() => setMapDimension('2d')}>
+                  2D
+                </button>
+                <button type="button" className={cls('nx-icm__mode-tab', mapDimension === '3d' && 'is-active')} onClick={() => setMapDimension('3d')}>
+                  3D
+                </button>
+              </div>
+            </div>
+            <div className="nx-icm__controls-group">
+              <span className="nx-icm__controls-label">Filters</span>
+              <div className="nx-icm__filter-grid">
+                <select value={filters.market} onChange={(e) => setFilters((current) => ({ ...current, market: e.target.value }))}>
+                  <option value="">All Markets</option>
+                  {markets.map((market) => <option key={market} value={market}>{market}</option>)}
+                </select>
+                <select value={filters.stage} onChange={(e) => setFilters((current) => ({ ...current, stage: e.target.value }))}>
+                  <option value="">All Stages</option>
+                  {stages.map((stage) => <option key={stage} value={stage}>{stage.replace(/_/g, ' ')}</option>)}
+                </select>
+                <select value={filters.status} onChange={(e) => setFilters((current) => ({ ...current, status: e.target.value }))}>
+                  <option value="">All Statuses</option>
+                  {statuses.map((status) => <option key={status} value={status}>{status.replace(/_/g, ' ')}</option>)}
+                </select>
                 <select value={filters.leadTemperature} onChange={(e) => setFilters((current) => ({ ...current, leadTemperature: e.target.value }))}>
                   <option value="">All Temperatures</option>
                   {temperatures.map((temperature) => <option key={temperature} value={temperature}>{temperature.replace(/_/g, ' ')}</option>)}
@@ -1020,23 +1337,21 @@ export function InboxCommandMap({
                 <label className="nx-icm__checkbox"><input type="checkbox" checked={filters.unreadOnly} onChange={(e) => setFilters((current) => ({ ...current, unreadOnly: e.target.checked }))} />Unread</label>
                 <label className="nx-icm__checkbox"><input type="checkbox" checked={filters.followUpDue} onChange={(e) => setFilters((current) => ({ ...current, followUpDue: e.target.checked }))} />Follow-Up Due</label>
                 <label className="nx-icm__checkbox"><input type="checkbox" checked={filters.highEquity} onChange={(e) => setFilters((current) => ({ ...current, highEquity: e.target.checked }))} />High Equity</label>
-              </>
-            )}
+              </div>
+            </div>
+            <div className="nx-icm__controls-actions">
+              <button type="button" className="nx-icm__mode-tab" onClick={() => setFilters(defaultFilters)}>
+                Clear Filters
+              </button>
+              <button type="button" className="nx-icm__mode-tab is-active" onClick={() => setFiltersOpen(false)}>
+                Done
+              </button>
+            </div>
           </div>
         )}
       </div>
 
       <div ref={containerRef} className="nx-icm__canvas" />
-
-      {import.meta.env.DEV && (
-        <div className="nx-icm__empty" style={{ top: 'auto', left: '10px', bottom: selectedPin ? '168px' : '56px', transform: 'none', padding: '10px 12px', textAlign: 'left', maxWidth: '320px' }}>
-          <div className="nx-icm__empty-title">Map Debug</div>
-          <div className="nx-icm__empty-sub">
-            allPins: {debugStats.allPinsCount} • filtered: {debugStats.filteredPinsCount} • visible: {debugStats.visiblePinsCount} • unmapped: {debugStats.unmappedCount}
-          </div>
-          <div className="nx-icm__empty-sub">mode: {debugStats.activeMode}</div>
-        </div>
-      )}
 
       {emptyStateMessage && (
         <div className="nx-icm__empty" style={{ pointerEvents: 'auto' }}>
@@ -1102,24 +1417,6 @@ export function InboxCommandMap({
           </>
         )}
       </div>}
-
-      {mode === 'national' && false && (
-        <div className="nx-icm__market-strip">
-          {marketClusters.slice(0, 8).map((cluster) => {
-            const kpi = buildMarketKpis(cluster.pins)
-            return (
-              <button key={cluster.id} type="button" className="nx-icm__market-card" onClick={() => { setFilters((current) => ({ ...current, market: cluster.market })) }}>
-                <strong>{cluster.market}</strong>
-                <span>{kpi.total} pins</span>
-                <span>{activityMode === 'sends' ? `${cluster.pins.filter((pin) => pin.activity_state === 'replied').length} replies` : `${kpi.newReplies} new replies`}</span>
-                <span>{activityMode === 'follow_ups' ? `${cluster.pins.filter((pin) => pin.activity_state === 'overdue').length} overdue` : `${kpi.priority} priority`}</span>
-                <span>{activityMode === 'sends' ? `${cluster.pins.filter((pin) => pin.activity_state === 'delivered').length} delivered` : `${kpi.offerReady} offer-ready`}</span>
-              </button>
-            )
-          })}
-        </div>
-      )}
-
       {selectedPin && (
         <div className="nx-icm__card nx-icm__card--actionable">
           <div className="nx-icm__card-row nx-icm__card-row--head">

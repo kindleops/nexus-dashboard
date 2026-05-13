@@ -2,7 +2,7 @@ import { hasSupabaseEnv } from '../supabaseClient'
 
 export const shouldUseSupabase = () => hasSupabaseEnv
 
-export const isDev = Boolean(import.meta.env.DEV)
+export const isDev = Boolean(typeof import.meta !== 'undefined' && import.meta.env?.DEV)
 
 export type AnyRecord = Record<string, unknown>
 

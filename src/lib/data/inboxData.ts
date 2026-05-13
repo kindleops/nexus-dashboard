@@ -211,7 +211,7 @@ export interface QueueProcessorHealth {
 
 const QUEUE_PROCESSOR_LAG_MINUTES = 10
 
-const DEV = Boolean(import.meta.env.DEV)
+const DEV = Boolean(import.meta.env?.DEV)
 const MESSAGE_EVENTS_THREAD_PAGE_SIZE = 1000
 export const HYDRATED_INBOX_PAGE_SIZE = 200
 export const HYDRATED_INBOX_THREADS_VIEW = 'inbox_command_center_v'

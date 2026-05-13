@@ -45,6 +45,7 @@ export type AutomationStatus =
   | 'AUTO-QUEUED'
   | 'WAITING'
   | 'REVIEW REQUIRED'
+  | 'AUTO-BLOCKED'
   | 'FOLLOW-UP DUE'
   | 'SUPPRESSED'
   | 'UNDERWRITING'
@@ -69,6 +70,7 @@ export interface ConversationDecision {
   confidence: number
   language: string | null
   tags: string[]
+  intent_tags: string[]
   has_inbound_history: boolean
   last_message_direction: 'inbound' | 'outbound' | 'unknown'
   active: boolean
@@ -77,7 +79,7 @@ export interface ConversationDecision {
 const POSITIVE_TERMS = ['interested', 'yes', 'make offer', 'call me', 'how much', 'price', 'offer', 'sell']
 const SPANISH_TERMS = ['hola', 'si', 'sí', 'hablo', 'espanol', 'español', 'precio', 'oferta', 'casa']
 const HOSTILE_TERMS = ['fuck', 'fucking', 'idiot', 'harass', 'lawsuit', 'cease', 'attorney', 'legal', 'drop dead', 'go to hell', 'bitch', 'asshole', 'moron', 'stupid']
-const NEGATIVE_TERMS = ['not interested', 'not for sale', 'no thanks', 'no', 'nah', 'nope', 'pass', 'stop']
+const NEGATIVE_TERMS = ['not interested', 'not for sale', 'no thanks', 'no', 'nah', 'nope', 'pass', 'stop', "don't bother", 'do not bother', 'leave me alone']
 const UNDERWRITING_STAGES = new Set<DeterministicConversationStage>([
   'price_received',
   'price_discussion',
@@ -231,6 +233,28 @@ const getReviewReasons = (thread: InboxWorkflowThread, sellerIntent: string): st
   return Array.from(new Set(reasons))
 }
 
+const inferIntentTags = (
+  thread: InboxWorkflowThread,
+  sellerIntent: string,
+  language: string | null,
+  stage: DeterministicConversationStage,
+  reviewReasons: string[],
+): string[] => {
+  const blob = lower([thread.lastMessageBody, thread.preview, get(thread, 'latest_message_body')].filter(Boolean).join(' '))
+  const tags: string[] = []
+  if (sellerIntent === 'seller_interested' || stage === 'ownership_confirmed') tags.push('Seller Confirmed')
+  if (sellerIntent === 'price_interest' || stage === 'price_received' || stage === 'price_discussion') tags.push('Price Given')
+  if (sellerIntent === 'not_interested' || sellerIntent === 'negative') tags.push('Not Interested')
+  if (sellerIntent === 'identity_clarification') tags.push('Confused')
+  if (language === 'spanish') tags.push('Spanish Reply')
+  if (sellerIntent === 'hostile' || reviewReasons.some((reason) => reason.includes('hostile'))) tags.push('Hostile')
+  if (sellerIntent === 'wrong_number') tags.push('Wrong Number')
+  if (includesAny(blob, ['tenant', 'renter', 'renting'])) tags.push('Tenant')
+  if (includesAny(blob, ['listed', 'mls', 'agent'])) tags.push('Listed')
+  if (stage === 'offer_requested' || includesAny(blob, ['offer', 'how much'])) tags.push('Offer Requested')
+  return Array.from(new Set(tags))
+}
+
 const inferTemperature = (
   thread: InboxWorkflowThread,
   stage: DeterministicConversationStage,
@@ -288,6 +312,9 @@ const inferAutomationStatus = (
   conversationStatus: ConversationStatus,
   suppressionStatus: 'clear' | 'suppressed',
   reviewReasons: string[],
+  nextActionDeterministic: boolean,
+  confidence: number,
+  language: string | null,
 ): AutomationStatus => {
   if (suppressionStatus === 'suppressed') return 'SUPPRESSED'
   if (conversationStatus === 'contract_ready') return 'CONTRACT READY'
@@ -301,12 +328,14 @@ const inferAutomationStatus = (
   const humanTakeover = bool(get(thread, 'human_takeover', 'humanTakeover')) || lower(thread.automationState) === 'manual_control'
   const queued = includesAny(lower(get(thread, 'queueStatus', 'queue_status', 'status')), ['queued', 'scheduled', 'pending'])
   const sellerIntent = inferSellerIntent(thread)
-  const confidenceRaw = num(get(thread, 'confidence'), 0.76)
-  const confidence = confidenceRaw <= 1 ? confidenceRaw * 100 : confidenceRaw
-  const highConfidenceSpanish = inferLanguage(thread) === 'spanish' ? confidence >= 80 : true
+  const threshold = 80
+  const highConfidence = confidence >= threshold
+  const highConfidenceSpanish = language === 'spanish' ? confidence >= threshold : true
   const automationBlocked = includesAny(sellerIntent, ['hostile', 'negative', 'not_interested', 'wrong_number', 'opt_out']) || !highConfidenceSpanish
+  if (automationBlocked) return 'AUTO-BLOCKED'
+  if (!nextActionDeterministic || !highConfidence || humanTakeover) return 'REVIEW REQUIRED'
   if (queued && autopilotEnabled && !humanTakeover && !automationBlocked) return 'AUTO-QUEUED'
-  if (autopilotEnabled && !humanTakeover && !automationBlocked) return 'AUTO-ELIGIBLE'
+  if (autopilotEnabled && !humanTakeover && highConfidence && nextActionDeterministic && !automationBlocked) return 'AUTO-ELIGIBLE'
   return 'REVIEW REQUIRED'
 }
 
@@ -341,15 +370,18 @@ export const buildConversationDecision = (
   const reviewReasons = getReviewReasons(thread, sellerIntent)
   const hasInboundHistory = getHasInboundHistory(thread)
   const language = inferLanguage(thread)
+  const confidence = Math.max(0, Math.min(100, Math.round(num(get(thread, 'confidence'), 0.76) <= 1 ? num(get(thread, 'confidence'), 0.76) * 100 : num(get(thread, 'confidence'), 76))))
   const conversationStatus = inferConversationStatus(thread, conversationStage, suppressionStatus, lastMessageDirection, unread, nextFollowUpAt, now)
   const leadTemperature = inferTemperature(thread, conversationStage, suppressionStatus, sellerIntent, priorityScore)
-  const automationStatus = inferAutomationStatus(thread, conversationStatus, suppressionStatus, reviewReasons)
-  const confidence = Math.max(0, Math.min(100, Math.round(num(get(thread, 'confidence'), 0.76) <= 1 ? num(get(thread, 'confidence'), 0.76) * 100 : num(get(thread, 'confidence'), 76))))
+  const nextActionDeterministic = !includesAny(sellerIntent, ['hostile', 'negative', 'not_interested', 'wrong_number', 'opt_out']) && reviewReasons.length === 0
+  const automationStatus = inferAutomationStatus(thread, conversationStatus, suppressionStatus, reviewReasons, nextActionDeterministic, confidence, language)
+  const intentTags = inferIntentTags(thread, sellerIntent, language, conversationStage, reviewReasons)
   const tags = [
     leadTemperature,
     language === 'spanish' ? 'SPANISH' : '',
     priorityScore >= 70 ? 'HIGH PRIORITY' : '',
     sellerIntent === 'wrong_number' ? 'WRONG NUMBER' : '',
+    ...intentTags,
   ].filter(Boolean)
 
   const baseDecision: Omit<ConversationDecision, 'inbox_bucket'> = {
@@ -369,6 +401,7 @@ export const buildConversationDecision = (
     confidence,
     language,
     tags,
+    intent_tags: intentTags,
     has_inbound_history: hasInboundHistory,
     last_message_direction: lastMessageDirection,
     active: suppressionStatus === 'clear' && conversationStatus !== 'dead',
