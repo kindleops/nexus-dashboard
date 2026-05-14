@@ -24,6 +24,7 @@ const STATUS_DISTRIBUTION: Record<QueueItemStatus, number> = {
   held: 7,
   approval: 12,
   retry: 9,
+  paused_invalid_queue_row: 6,
 }
 
 const FAILURE_REASONS: FailureReason[] = [

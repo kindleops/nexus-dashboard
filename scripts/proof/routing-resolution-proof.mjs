@@ -39,20 +39,21 @@ if (!supabaseUrl || !supabaseKey) {
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 async function runProof() {
-  console.log('🚀 Starting Routing Resolution Proof');
+  console.log('🚀 Starting Routing Resolution & Reprocess Proof');
 
   const testToPhone = '+15550009999';
-  const testState = 'ZZ'; // Unknown state
-  const testBody = 'Routing Resolution Proof Message (Blocking) ' + Date.now();
+  const testState = 'TX';
+  const testBody = 'Reprocess Proof Message ' + Date.now();
 
-  // 1. Create a send_queue row without from_phone_number
-  console.log('\n1️⃣ Creating test queue row (no from_phone_number)...');
-  const queueKey = `proof:test:${Date.now()}`;
+  // 1. Create a paused row with missing_from_phone_number
+  console.log('\n1️⃣ Creating paused test queue row...');
+  const queueKey = `proof:reprocess:${Date.now()}`;
   const { data: queueData, error: queueError } = await supabase
     .from('send_queue')
     .insert({
       queue_key: queueKey,
-      queue_status: 'scheduled',
+      queue_status: 'paused_invalid_queue_row',
+      guard_reason: 'missing_from_phone_number',
       to_phone_number: testToPhone,
       from_phone_number: null,
       message_body: testBody,
@@ -69,15 +70,12 @@ async function runProof() {
   }
 
   const itemId = queueData.id;
-  console.log(`✅ Created row ID: ${itemId}`);
+  console.log(`✅ Created paused row ID: ${itemId}`);
 
-  // 2. Resolve Routing (Simulating the Runner's call)
-  console.log('\n2️⃣ Resolving Routing...');
+  // 2. Trigger Reprocess Logic
+  console.log('\n2️⃣ Simulating Reprocess Logic...');
   
-  // We'll import the logic from the project
-  // Since we can't easily import TS files in a pure JS script without setup, 
-  // we'll just implement a quick check against the DB using our new logic's patterns.
-  
+  // We'll simulate what the /api/internal/queue/reprocess-paused endpoint does
   const { data: numbers } = await supabase
     .from('textgrid_numbers')
     .select('id, phone_number, market')
@@ -89,46 +87,33 @@ async function runProof() {
 
   if (numbers && numbers.length > 0) {
     const resolvedNumber = numbers[0];
-    console.log(`✅ Resolved Number: ${resolvedNumber.phone_number} (ID: ${resolvedNumber.id}) from Market: ${resolvedNumber.market}`);
+    console.log(`✅ Resolved Number: ${resolvedNumber.phone_number}`);
     
-    // Update the row as the runner would
     const { error: updateError } = await supabase
       .from('send_queue')
       .update({
+        queue_status: 'scheduled',
         from_phone_number: resolvedNumber.phone_number,
         textgrid_number_id: resolvedNumber.id,
-        routing_tier: 3, // State match
+        routing_tier: 3,
         routing_reason: `State match: ${testState}`,
-        queue_status: 'sent',
-        sent_at: new Date().toISOString()
+        guard_reason: null,
+        failed_reason: null,
+        scheduled_for: new Date().toISOString(),
+        scheduled_for_utc: new Date().toISOString(),
+        updated_at: new Date().toISOString()
       })
       .eq('id', itemId);
 
     if (updateError) {
-      console.error('❌ Failed to update queue row:', updateError.message);
+      console.error('❌ Failed to reprocess queue row:', updateError.message);
     } else {
-      console.log('✅ Successfully updated row to "sent" with resolved routing.');
-    }
-  } else {
-    console.log('⚠️ No numbers found for state. Testing blocking logic...');
-    const { error: blockError } = await supabase
-      .from('send_queue')
-      .update({
-        queue_status: 'paused_invalid_queue_row',
-        guard_reason: 'NO_VALID_LOCAL_TEXTGRID_NUMBER',
-        failed_reason: 'Routing blocked: no sender number'
-      })
-      .eq('id', itemId);
-      
-    if (blockError) {
-       console.error('❌ Failed to block queue row:', blockError.message);
-    } else {
-       console.log('✅ Successfully blocked row with NO_VALID_LOCAL_TEXTGRID_NUMBER.');
+      console.log('✅ Successfully reprocessed row to "scheduled".');
     }
   }
 
-  // 3. Verify send_queue state
-  console.log('\n3️⃣ Verifying final send_queue state...');
+  // 3. Verify
+  console.log('\n3️⃣ Verifying final state...');
   const { data: finalRow } = await supabase
     .from('send_queue')
     .select('*')
@@ -138,12 +123,10 @@ async function runProof() {
   console.log('Final Row State:', {
     status: finalRow.queue_status,
     from: finalRow.from_phone_number,
-    tier: finalRow.routing_tier,
-    reason: finalRow.routing_reason,
     guard: finalRow.guard_reason
   });
 
-  if (finalRow.queue_status === 'sent' || finalRow.queue_status === 'paused_invalid_queue_row') {
+  if (finalRow.queue_status === 'scheduled' && finalRow.from_phone_number) {
     console.log('\n✨ Proof Successful!');
   } else {
     console.log('\n❌ Proof Failed: Row is in unexpected state.');

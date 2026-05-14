@@ -20,10 +20,19 @@ export interface OperationalKpis {
   automation: OperationalKpi[]
   pipeline: OperationalKpi[]
   financial: OperationalKpi[]
+  volume: Array<{
+    id: string
+    label: string
+    value: number
+    tone: 'good' | 'warning' | 'critical' | 'neutral'
+  }>
   lastUpdated: string
 }
 
+type OperationalVolumeTone = OperationalKpis['volume'][number]['tone']
+
 const POSITIVE_INTENTS = ['seller_interested', 'asking_price_provided', 'asks_offer', 'ownership_confirmed', 'price_anchor']
+const NEGATIVE_INTENTS = ['negative', 'not_interested', 'opt_out', 'wrong_number', 'hostile', 'hostile_or_legal']
 
 export const fetchOperationalKpis = async (timeWindow: OperationalKpi['timeWindow'] = '24h'): Promise<OperationalKpis> => {
   const supabase = getSupabaseClient()
@@ -63,17 +72,23 @@ export const fetchOperationalKpis = async (timeWindow: OperationalKpi['timeWindo
       .lt('created_at', startIso)
 
     const calcMsgKpis = (data: { direction: string; delivery_status?: string; detected_intent?: string; is_opt_out?: boolean; is_final_failure?: boolean; }[] | null) => {
-      if (!data) return { replyRate: 0, posRate: 0, optOutRate: 0, deliveryRate: 0, failRate: 0 }
+      if (!data) return { sent: 0, delivered: 0, failedCount: 0, received: 0, replyRate: 0, posRate: 0, negativeRate: 0, optOutRate: 0, deliveryRate: 0, failRate: 0 }
       const inbound = data.filter(m => m.direction === 'inbound')
       const outbound = data.filter(m => m.direction === 'outbound')
       const delivered = outbound.filter(m => m.delivery_status === 'delivered')
       const failed = outbound.filter(m => m.delivery_status === 'failed' || m.is_final_failure)
       const positive = inbound.filter(m => POSITIVE_INTENTS.includes(String(m.detected_intent)))
+      const negative = inbound.filter(m => NEGATIVE_INTENTS.includes(String(m.detected_intent)))
       const optOuts = data.filter(m => m.is_opt_out || String(m.detected_intent) === 'opt_out')
 
       return {
+        sent: outbound.length,
+        delivered: delivered.length,
+        failedCount: failed.length,
+        received: inbound.length,
         replyRate: delivered.length > 0 ? (inbound.length / delivered.length) * 100 : 0,
         posRate: inbound.length > 0 ? (positive.length / inbound.length) * 100 : 0,
+        negativeRate: inbound.length > 0 ? (negative.length / inbound.length) * 100 : 0,
         optOutRate: delivered.length > 0 ? (optOuts.length / delivered.length) * 100 : 0,
         deliveryRate: outbound.length > 0 ? (delivered.length / outbound.length) * 100 : 0,
         failRate: outbound.length > 0 ? (failed.length / outbound.length) * 100 : 0
@@ -92,9 +107,17 @@ export const fetchOperationalKpis = async (timeWindow: OperationalKpi['timeWindo
     const messaging: OperationalKpi[] = [
       { id: 'reply-rate', label: 'Reply Rate', value: currMsg.replyRate.toFixed(1), unit: '%', description: 'Delivered outbound to inbound replies', category: 'messaging', timeWindow, isAvailable: true, trend: getTrend(currMsg.replyRate, prevMsg.replyRate), status: currMsg.replyRate > 15 ? 'good' : 'warning' },
       { id: 'pos-reply-rate', label: 'Positive Rate', value: currMsg.posRate.toFixed(1), unit: '%', description: 'Interested replies from inbound flow', category: 'messaging', timeWindow, isAvailable: true, trend: getTrend(currMsg.posRate, prevMsg.posRate), status: currMsg.posRate > 10 ? 'good' : 'neutral' },
+      { id: 'negative-rate', label: 'Negative Rate', value: currMsg.negativeRate.toFixed(1), unit: '%', description: 'Negative or blocking replies from inbound flow', category: 'messaging', timeWindow, isAvailable: true, trend: getTrend(prevMsg.negativeRate, currMsg.negativeRate), status: currMsg.negativeRate < 8 ? 'good' : currMsg.negativeRate < 18 ? 'warning' : 'critical' },
       { id: 'delivery-rate', label: 'Delivery Rate', value: currMsg.deliveryRate.toFixed(1), unit: '%', description: 'Outbound messages reaching carrier delivery', category: 'messaging', timeWindow, isAvailable: true, trend: getTrend(currMsg.deliveryRate, prevMsg.deliveryRate), status: currMsg.deliveryRate > 95 ? 'good' : 'critical' },
       { id: 'failure-rate', label: 'Failure Rate', value: currMsg.failRate.toFixed(1), unit: '%', description: 'Outbound sends ending in final failure', category: 'messaging', timeWindow, isAvailable: true, trend: getTrend(prevMsg.failRate, currMsg.failRate), status: currMsg.failRate < 5 ? 'good' : 'critical' },
       { id: 'opt-out-rate', label: 'Opt-Out Rate', value: currMsg.optOutRate.toFixed(1), unit: '%', description: 'Stops and opt-outs across delivered sends', category: 'messaging', timeWindow, isAvailable: true, trend: getTrend(prevMsg.optOutRate, currMsg.optOutRate), status: currMsg.optOutRate < 3 ? 'good' : 'warning' }
+    ]
+
+    const volume: Array<{ id: string; label: string; value: number; tone: OperationalVolumeTone }> = [
+      { id: 'sent', label: 'Sent', value: currMsg.sent, tone: currMsg.sent > 0 ? 'neutral' : 'warning' },
+      { id: 'delivered', label: 'Delivered', value: currMsg.delivered, tone: currMsg.deliveryRate > 95 ? 'good' : currMsg.delivered > 0 ? 'warning' : 'critical' },
+      { id: 'failed', label: 'Failed', value: currMsg.failedCount, tone: currMsg.failedCount === 0 ? 'good' : currMsg.failedCount < 5 ? 'warning' : 'critical' },
+      { id: 'received', label: 'Received', value: currMsg.received, tone: currMsg.received > 0 ? 'good' : 'neutral' },
     ]
 
     // 2. Automation Health
@@ -147,6 +170,7 @@ export const fetchOperationalKpis = async (timeWindow: OperationalKpi['timeWindo
       automation,
       pipeline,
       financial,
+      volume,
       lastUpdated: new Date().toISOString()
     }
   } catch (err) {
@@ -157,8 +181,8 @@ export const fetchOperationalKpis = async (timeWindow: OperationalKpi['timeWindo
       automation: [],
       pipeline: [],
       financial: [],
+      volume: [],
       lastUpdated: new Date().toISOString()
     }
   }
 }
-

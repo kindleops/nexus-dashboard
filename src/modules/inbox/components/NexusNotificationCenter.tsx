@@ -126,14 +126,14 @@ export const buildInboxNotifications = ({
     })
   }
 
-  if (queueProcessorHealth?.status === 'lagging') {
+  if (queueProcessorHealth?.status === 'warning' || queueProcessorHealth?.status === 'critical') {
     notifications.push({
-      id: 'queue-delayed',
+      id: queueProcessorHealth.status === 'critical' ? 'queue-critical' : 'queue-delayed',
       command_space: 'Queue',
       type: 'queue_delayed',
-      title: 'Queue processor delayed',
+      title: queueProcessorHealth.status === 'critical' ? 'Queue health critical' : 'Queue processor delayed',
       body: queueProcessorHealth.summary,
-      severity: 'warning',
+      severity: queueProcessorHealth.status === 'critical' ? 'critical' : 'warning',
       status: 'unread',
       created_at: queueProcessorHealth.checkedAt,
       read_at: null,

@@ -7,6 +7,7 @@ import {
   rescheduleQueueItem,
   retryQueueItem,
   cancelQueueItem,
+  retryRoutingForItem,
   type QueueModel,
   type QueueItem,
 } from '../../lib/data/queueData'
@@ -249,8 +250,8 @@ const QueueInspector = ({
           </button>
         )}
         {(item.status === 'failed' || (item.status as string) === 'paused_invalid_queue_row') && (
-          <button className="nx-btn nx-btn--primary" onClick={() => onAction('retry', item.id)}>
-            <Icon name="zap" /> Retry Now
+          <button className="nx-btn nx-btn--primary" onClick={() => onAction((item as any).guard_reason === 'NO_VALID_LOCAL_TEXTGRID_NUMBER' ? 'retry-routing' : 'retry', item.id)}>
+            <Icon name="zap" /> {(item as any).guard_reason === 'NO_VALID_LOCAL_TEXTGRID_NUMBER' ? 'Retry Routing' : 'Retry Now'}
           </button>
         )}
         <button className="nx-btn nx-btn--secondary" onClick={() => onAction('reschedule', item.id)}>
@@ -356,6 +357,10 @@ export const QueuePage = ({ data: initialData }: QueuePageProps = {}) => {
       case 'retry':
         successMessage = `Retrying send to ${item.sellerName}`
         resultPromise = retryQueueItem(item)
+        break
+      case 'retry-routing':
+        successMessage = `Retrying routing for ${item.sellerName}`
+        resultPromise = retryRoutingForItem(item)
         break
       case 'reschedule':
         // Simplified for now - in production would open a date picker

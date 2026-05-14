@@ -2,11 +2,11 @@ import { useEffect, useRef } from 'react'
 import type { QueueProcessorHealth } from '../../../lib/data/inboxData'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
-import { formatRelativeTime } from '../../../shared/formatters'
 import type { ActiveOverlay, NexusTheme } from '../inbox-layout-state'
 import { buildInboxNotifications, NexusNotificationCenter, type NexusNotification } from './NexusNotificationCenter'
 import type { AutonomousEngineModel } from '../autonomy-engine'
 import { InboxKpiOrb } from './InboxKpiOrb'
+import { QueueCommandCenter, type QueueCommandCaps, type QueueCommandMode } from './QueueCommandCenter'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
@@ -22,6 +22,17 @@ interface NexusTopBarProps {
   queueProcessorHealth: QueueProcessorHealth | null
   queueProcessorHealthLoading: boolean
   onRefreshQueueHealth?: () => void
+  queueCommandMode: QueueCommandMode
+  queueCommandCaps: QueueCommandCaps
+  queueCommandActionLoading: string | null
+  onQueueCommandModeChange: (mode: QueueCommandMode) => void
+  onQueueCommandCapsChange: (patch: Partial<QueueCommandCaps>) => void
+  onRunSafeBatch: () => void
+  onRunQueueNow: () => void
+  onReprocessPaused: (ids?: string[]) => void
+  onRetryFailed: () => void
+  onReconcileDelivery: () => void
+  onCancelStaleFollowUps: () => void
   autonomyModel: AutonomousEngineModel
   theme: NexusTheme
   viewCounts?: any
@@ -59,6 +70,17 @@ export const NexusTopBar = ({
   queueProcessorHealth,
   queueProcessorHealthLoading,
   onRefreshQueueHealth,
+  queueCommandMode,
+  queueCommandCaps,
+  queueCommandActionLoading,
+  onQueueCommandModeChange,
+  onQueueCommandCapsChange,
+  onRunSafeBatch,
+  onRunQueueNow,
+  onReprocessPaused,
+  onRetryFailed,
+  onReconcileDelivery,
+  onCancelStaleFollowUps,
   autonomyModel,
   theme,
   onToggleTheme,
@@ -95,7 +117,11 @@ export const NexusTopBar = ({
 
   const showSearchResults = searchQuery.trim().length > 0
   const processorStatus = queueProcessorHealth?.status ?? 'unknown'
-  const processorLabel = processorStatus === 'healthy' ? 'Healthy' : processorStatus === 'lagging' ? 'Delayed' : 'Unknown'
+  const processorHealthLabel =
+    processorStatus === 'healthy' ? 'Healthy'
+      : processorStatus === 'warning' ? 'Warning'
+        : processorStatus === 'critical' ? 'Critical'
+          : 'Unknown'
   
   const notifications = buildInboxNotifications({ unreadCount: notificationCount, selectedThread, queueProcessorHealth, autonomyModel })
   const unreadNotifications = notifications.filter((item) => item.status !== 'read').length
@@ -190,60 +216,30 @@ export const NexusTopBar = ({
             aria-expanded={activeOverlay === 'queue'}
             title="Queue processor health"
           >
-            <Icon name={processorStatus === 'healthy' ? 'check' : processorStatus === 'lagging' ? 'alert' : 'activity'} />
+            <Icon name={processorStatus === 'healthy' ? 'check' : processorStatus === 'warning' || processorStatus === 'critical' ? 'alert' : 'activity'} />
+            <div className="nx-processor-button__meta">
+              <small>{queueCommandMode === 'off' ? 'Off' : queueCommandMode === 'safe' ? 'Safe' : 'Live'}</small>
+              <span>{processorHealthLabel}</span>
+            </div>
           </button>
           {activeOverlay === 'queue' && (
             <div className="nx-liquid-popover nx-liquid-popover--processor" role="status">
-              <div className="nx-processor-pop-header">
-                <div className="nx-processor-pop-header__title">
-                  <Icon name="activity" />
-                  <span>Queue Processor</span>
-                </div>
-                <div className={cls('nx-processor-status-indicator', `is-${processorStatus}`)}>
-                  {processorLabel}
-                </div>
-              </div>
-
-              <div className="nx-processor-pop-body">
-                <div className="nx-processor-summary-text">
-                  {queueProcessorHealthLoading ? 'Synchronizing health data...' : (queueProcessorHealth?.summary ?? 'No processor data available.')}
-                </div>
-                
-                <div className="nx-processor-stats-grid">
-                  <div className="nx-processor-stat-card">
-                    <label>Queued</label>
-                    <b>{queueProcessorHealth?.queuedCount ?? 0}</b>
-                  </div>
-                  <div className="nx-processor-stat-card">
-                    <label>Lagging</label>
-                    <b>{queueProcessorHealth?.queuedOlderThanLagWindow ?? 0}</b>
-                  </div>
-                  <div className="nx-processor-stat-card" style={{ gridColumn: 'span 2' }}>
-                    <label>Latest Sent</label>
-                    <b>{queueProcessorHealth?.latestSentAt ? formatRelativeTime(queueProcessorHealth.latestSentAt) : 'None'}</b>
-                  </div>
-                </div>
-              </div>
-
-              <div className="nx-processor-pop-footer">
-                <div className="nx-processor-last-check">
-                  Updated {queueProcessorHealth?.checkedAt ? formatRelativeTime(queueProcessorHealth.checkedAt) : 'just now'}
-                </div>
-                {onRefreshQueueHealth && (
-                  <button 
-                    type="button" 
-                    className="nx-processor-refresh-btn"
-                    onClick={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      onRefreshQueueHealth()
-                    }}
-                    disabled={queueProcessorHealthLoading}
-                  >
-                    {queueProcessorHealthLoading ? 'Checking...' : 'Refresh'}
-                  </button>
-                )}
-              </div>
+              <QueueCommandCenter
+                health={queueProcessorHealth}
+                loading={queueProcessorHealthLoading}
+                mode={queueCommandMode}
+                caps={queueCommandCaps}
+                actionLoading={queueCommandActionLoading}
+                onModeChange={onQueueCommandModeChange}
+                onCapsChange={onQueueCommandCapsChange}
+                onRefresh={() => onRefreshQueueHealth?.()}
+                onRunSafeBatch={onRunSafeBatch}
+                onRunQueueNow={onRunQueueNow}
+                onReprocessPaused={onReprocessPaused}
+                onRetryFailed={onRetryFailed}
+                onReconcileDelivery={onReconcileDelivery}
+                onCancelStaleFollowUps={onCancelStaleFollowUps}
+              />
             </div>
           )}
         </div>

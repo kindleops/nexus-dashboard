@@ -1,15 +1,23 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import type { FeatureCollection, Point } from 'geojson'
+import type { ThreadMessage } from '../../lib/data/inboxData'
 import type { InboxWorkflowThread } from '../../lib/data/inboxWorkflowData'
 import type { MapSourceMode } from './inbox-layout-state'
 import { buildConversationDecision } from './inbox-decisioning'
 import { buildStreetViewUrl } from './inbox-normalization'
+import { formatRelativeTime } from '../../shared/formatters'
+import { Icon } from '../../shared/icons'
 
 const DARK_MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+const CARTO_GLYPHS_URL = 'https://basemaps.cartocdn.com/gl/positron-gl-style/fonts/{fontstack}/{range}.pbf'
+const CARTO_SPRITE_URL = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/sprite'
 const SATELLITE_MAP_STYLE: maplibregl.StyleSpecification = {
   version: 8,
+  glyphs: CARTO_GLYPHS_URL,
+  sprite: CARTO_SPRITE_URL,
   sources: {
     satellite: {
       type: 'raster',
@@ -53,7 +61,22 @@ const CLUSTER_LAYER_IDS = [
   'command-pin-cluster-core',
   'command-pin-cluster-count',
 ] as const
-type MapStyleMode = 'dark' | 'satellite'
+export type MapStyleMode = 'dark' | 'satellite' | 'red'
+export type MapOverlayToggles = {
+  roads: boolean
+  cities: boolean
+  poi: boolean
+  zip: boolean
+}
+
+type StyleLayerLike = maplibregl.LayerSpecification & {
+  id: string
+  type: string
+  source?: string
+  'source-layer'?: string
+  layout?: Record<string, unknown>
+  paint?: Record<string, unknown>
+}
 
 export type InboxMapActivityMode = 'threads' | 'sends' | 'follow_ups'
 
@@ -62,7 +85,7 @@ type SendMapState = 'queued' | 'sending' | 'sent' | 'delivered' | 'failed' | 're
 type FollowUpMapState = 'due_now' | 'due_later_today' | 'due_tomorrow' | 'overdue' | 'stale_no_response'
 type PinActivityState = ThreadMapState | SendMapState | FollowUpMapState
 
-type MapFilterState = {
+export type MapFilterState = {
   market: string
   stage: string
   status: string
@@ -261,6 +284,94 @@ const formatCurrency = (value: number | null): string => {
   if (!Number.isFinite(value ?? NaN)) return '—'
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value as number)
 }
+
+const defaultMapOverlays: MapOverlayToggles = {
+  roads: true,
+  cities: true,
+  poi: true,
+  zip: true,
+}
+
+let darkStyleSpecPromise: Promise<maplibregl.StyleSpecification | null> | null = null
+
+const fetchDarkStyleSpec = async (): Promise<maplibregl.StyleSpecification | null> => {
+  if (!darkStyleSpecPromise) {
+    darkStyleSpecPromise = fetch(DARK_MAP_STYLE)
+      .then(async (response) => {
+        if (!response.ok) return null
+        return await response.json() as maplibregl.StyleSpecification
+      })
+      .catch(() => null)
+  }
+  return darkStyleSpecPromise
+}
+
+const ownLayerPrefix = 'command-pin-'
+const hybridLayerPrefix = 'nx-icm-hybrid-'
+
+const classifyBaseLayer = (layer: StyleLayerLike): Array<keyof MapOverlayToggles> => {
+  const id = lower(layer.id)
+  const sourceLayer = lower(layer['source-layer'])
+  const token = `${id} ${sourceLayer}`
+  const matches: Array<keyof MapOverlayToggles> = []
+
+  const isRoad =
+    layer.type === 'line'
+    || token.includes('road')
+    || token.includes('street')
+    || token.includes('highway')
+    || token.includes('transport')
+    || token.includes('bridge')
+    || token.includes('tunnel')
+  if (isRoad) matches.push('roads')
+
+  const isCity =
+    layer.type === 'symbol'
+    && (
+      token.includes('place')
+      || token.includes('settlement')
+      || token.includes('city')
+      || token.includes('town')
+      || token.includes('village')
+      || token.includes('state_label')
+      || token.includes('country_label')
+    )
+  if (isCity) matches.push('cities')
+
+  const isPoi =
+    layer.type === 'symbol'
+    && (
+      token.includes('poi')
+      || token.includes('landmark')
+      || token.includes('attraction')
+      || token.includes('transit_stop')
+      || token.includes('airport')
+      || token.includes('railway')
+    )
+  if (isPoi) matches.push('poi')
+
+  const isZip =
+    layer.type === 'symbol'
+    && (
+      token.includes('postal')
+      || token.includes('postcode')
+      || token.includes('zip')
+    )
+  if (isZip) matches.push('zip')
+
+  return matches
+}
+
+const cloneLayerWithId = (layer: StyleLayerLike, id: string): StyleLayerLike => {
+  return {
+    ...layer,
+    id,
+    layout: layer.layout ? { ...layer.layout } : undefined,
+    paint: layer.paint ? { ...layer.paint } : undefined,
+  }
+}
+
+const hybridOverlayLayerId = (layerId: string) => `${hybridLayerPrefix}${layerId}`
 const formatInteger = (value: number | null): string => {
   if (!Number.isFinite(value ?? NaN)) return '—'
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value as number)
@@ -609,14 +720,98 @@ const buildHoverCardMarkup = (pin: CommandMapPin): string => {
   `
 }
 
+const MiniThreadPopup = ({
+  thread,
+  messages,
+  loading,
+  draftText,
+  disabled,
+  onDraftChange,
+  onSend,
+  onClose,
+}: {
+  thread: InboxWorkflowThread | null
+  messages: ThreadMessage[]
+  loading: boolean
+  draftText: string
+  disabled: boolean
+  onDraftChange: (value: string) => void
+  onSend: () => void
+  onClose: () => void
+}) => (
+  <article className="nx-icm-thread" onClick={(event) => event.stopPropagation()}>
+    <div className="nx-icm-thread__flip-shell">
+      <header className="nx-icm-thread__header">
+        <div>
+          <p className="nx-icm-thread__eyebrow">Live SMS</p>
+          <h4>{thread?.ownerName || thread?.propertyAddress || 'Conversation'}</h4>
+        </div>
+        <button type="button" onClick={onClose} aria-label="Close mini SMS view">
+          <Icon name="close" />
+        </button>
+      </header>
+      <div className="nx-icm-thread__meta">
+        <span>{thread?.propertyAddress || thread?.subject || 'Property Unknown'}</span>
+        <small>{String(thread?.conversationStage || '').replace(/_/g, ' ') || 'Unknown stage'}</small>
+      </div>
+      <div className="nx-icm-thread__messages">
+        {loading && <div className="nx-icm-thread__empty">Syncing conversation…</div>}
+        {!loading && messages.length === 0 && <div className="nx-icm-thread__empty">No messages yet.</div>}
+        {messages.map((message) => (
+          <article key={message.id} className={cls('nx-icm-thread__bubble', message.direction === 'outbound' && 'is-outbound')}>
+            <p>{message.body}</p>
+            <small>{formatRelativeTime(message.createdAt || message.timelineAt || '')}</small>
+          </article>
+        ))}
+      </div>
+      <form
+        className="nx-icm-thread__composer"
+        onSubmit={(event) => {
+          event.preventDefault()
+          if (!draftText.trim() || disabled) return
+          onSend()
+        }}
+      >
+        <input
+          value={draftText}
+          onChange={(event) => onDraftChange(event.target.value)}
+          placeholder={disabled ? 'Messaging disabled' : 'Quick reply...'}
+          disabled={disabled}
+        />
+        <button type="submit" disabled={!draftText.trim() || disabled} aria-label="Send quick reply">
+          <Icon name="send" />
+        </button>
+      </form>
+    </div>
+  </article>
+)
+
 interface Props {
   threads: InboxWorkflowThread[]
   visibleThreads: InboxWorkflowThread[]
   selectedThread: InboxWorkflowThread | null
+  selectedThreadMessages?: ThreadMessage[]
+  selectedThreadMessagesLoading?: boolean
+  quickReplyDraft?: string
+  onQuickReplyDraftChange?: (value: string) => void
+  onQuickReplySend?: (value: string) => void | Promise<void>
+  quickReplyDisabled?: boolean
   zoomedIn: boolean
   sourceMode: MapSourceMode
   onSelectThreadId?: (threadId: string) => void
+  onBackgroundClick?: () => void
   fullHeight?: boolean
+  commandMode?: boolean
+  initialActivityMode?: InboxMapActivityMode
+  initialMapStyleMode?: MapStyleMode
+  initialFilters?: Partial<MapFilterState>
+  initialMapOverlays?: Partial<MapOverlayToggles>
+  onStateChange?: (state: {
+    activityMode: InboxMapActivityMode
+    mapStyleMode: MapStyleMode
+    filters: MapFilterState
+    mapOverlays: MapOverlayToggles
+  }) => void
 }
 
 const defaultFilters: MapFilterState = {
@@ -640,10 +835,23 @@ export function InboxCommandMap({
   threads,
   visibleThreads,
   selectedThread,
+  selectedThreadMessages = [],
+  selectedThreadMessagesLoading = false,
+  quickReplyDraft = '',
+  onQuickReplyDraftChange,
+  onQuickReplySend,
+  quickReplyDisabled = false,
   zoomedIn,
   sourceMode,
   onSelectThreadId,
+  onBackgroundClick,
   fullHeight = false,
+  commandMode = false,
+  initialActivityMode = 'threads',
+  initialMapStyleMode = 'dark',
+  initialFilters,
+  initialMapOverlays,
+  onStateChange,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -651,16 +859,21 @@ export function InboxCommandMap({
   const mapRef = useRef<maplibregl.Map | null>(null)
   const animationRef = useRef<number | null>(null)
   const hoverPopupRef = useRef<maplibregl.Popup | null>(null)
+  const threadPopupRef = useRef<maplibregl.Popup | null>(null)
+  const threadPopupRootRef = useRef<Root | null>(null)
+  const threadPopupHostRef = useRef<HTMLDivElement | null>(null)
   const geojsonRef = useRef<FeatureCollection<Point, PinFeatureProps>>(featureCollectionForPins([], null))
   const activityModeRef = useRef<InboxMapActivityMode>('threads')
-  const [activityMode, setActivityMode] = useState<InboxMapActivityMode>('threads')
-  const [filters, setFilters] = useState<MapFilterState>(defaultFilters)
+  const [activityMode, setActivityMode] = useState<InboxMapActivityMode>(initialActivityMode)
+  const [filters, setFilters] = useState<MapFilterState>({ ...defaultFilters, ...initialFilters })
   const [selectedPinId, setSelectedPinId] = useState<string | null>(selectedThread?.id ?? null)
   const [showSelectedHidden, setShowSelectedHidden] = useState(false)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [dockTier, setDockTier] = useState<'mini' | 'compact' | 'full'>('full')
-  const [mapStyleMode, setMapStyleMode] = useState<MapStyleMode>('dark')
+  const [mapStyleMode, setMapStyleMode] = useState<MapStyleMode>(initialMapStyleMode)
   const [mapDimension, setMapDimension] = useState<'2d' | '3d'>('2d')
+  const [mapOverlays, setMapOverlays] = useState<MapOverlayToggles>({ ...defaultMapOverlays, ...initialMapOverlays })
+  const [activeThreadPopup, setActiveThreadPopup] = useState<{ id: string; coordinates: [number, number] } | null>(null)
 
   const hydratedThreadsById = useMemo(
     () => new Map(threads.map((thread) => [thread.id, thread])),
@@ -722,6 +935,13 @@ export function InboxCommandMap({
       ?? selectedBasePin,
     [filteredPins, selectedBasePin, selectedPinId, selectedHydratedThread?.id, visiblePins],
   )
+  const popupThread = useMemo(() => {
+    if (!activeThreadPopup?.id) return null
+    return hydratedThreadsById.get(activeThreadPopup.id)
+      || hydratedThreadsByKey.get(activeThreadPopup.id)
+      || threads.find((thread) => thread.id === activeThreadPopup.id || String((thread as any).threadKey || '') === activeThreadPopup.id)
+      || null
+  }, [activeThreadPopup?.id, hydratedThreadsById, hydratedThreadsByKey, threads])
   const geojson = useMemo(
     () => featureCollectionForPins(visiblePins, selectedPin?.conversation_id ?? null),
     [visiblePins, selectedPin?.conversation_id],
@@ -749,6 +969,119 @@ export function InboxCommandMap({
   useEffect(() => {
     setSelectedPinId(selectedThread?.id ?? null)
   }, [selectedThread?.id])
+
+  useEffect(() => {
+    if (!selectedThread || activeThreadPopup?.id !== selectedThread.id) return
+    const pin = visiblePins.find((item) => item.conversation_id === selectedThread.id)
+      || filteredPins.find((item) => item.conversation_id === selectedThread.id)
+      || selectedBasePin
+    if (!pin) return
+    setActiveThreadPopup((current) => (
+      current?.id === selectedThread.id
+        ? { ...current, coordinates: [pin.lng, pin.lat] }
+        : current
+    ))
+  }, [activeThreadPopup?.id, filteredPins, selectedBasePin, selectedThread, visiblePins])
+
+  useEffect(() => {
+    setActivityMode(initialActivityMode)
+  }, [initialActivityMode])
+
+  useEffect(() => {
+    setMapStyleMode(initialMapStyleMode)
+  }, [initialMapStyleMode])
+
+  useEffect(() => {
+    setFilters({ ...defaultFilters, ...initialFilters })
+  }, [initialFilters])
+
+  useEffect(() => {
+    setMapOverlays({ ...defaultMapOverlays, ...initialMapOverlays })
+  }, [initialMapOverlays])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !activeThreadPopup) {
+      threadPopupRootRef.current?.unmount()
+      threadPopupRootRef.current = null
+      threadPopupHostRef.current = null
+      threadPopupRef.current?.remove()
+      threadPopupRef.current = null
+      return
+    }
+
+    if (!threadPopupHostRef.current) {
+      threadPopupHostRef.current = document.createElement('div')
+      threadPopupHostRef.current.className = 'nx-icm-thread-popup-host'
+    }
+    if (!threadPopupRootRef.current && threadPopupHostRef.current) {
+      const host = threadPopupHostRef.current
+      threadPopupRootRef.current = createRoot(host)
+    }
+    if (!threadPopupRootRef.current || !threadPopupHostRef.current) return
+
+    const isSelectedThreadActive = selectedThread?.id === activeThreadPopup.id
+    const popupMessages = isSelectedThreadActive ? selectedThreadMessages : []
+    const popupLoading = isSelectedThreadActive ? selectedThreadMessagesLoading : true
+    const popupDraft = isSelectedThreadActive ? quickReplyDraft : ''
+    const popupDisabled = !isSelectedThreadActive || quickReplyDisabled
+
+    if (!threadPopupRootRef.current) return
+    threadPopupRootRef.current.render(
+      <MiniThreadPopup
+        thread={popupThread}
+        messages={popupMessages}
+        loading={popupLoading}
+        draftText={popupDraft}
+        disabled={popupDisabled}
+        onDraftChange={(value) => {
+          if (!isSelectedThreadActive) return
+          onQuickReplyDraftChange?.(value)
+        }}
+        onSend={() => {
+          if (!isSelectedThreadActive || !popupDraft.trim()) return
+          void onQuickReplySend?.(popupDraft)
+        }}
+        onClose={() => setActiveThreadPopup(null)}
+      />,
+    )
+
+    const popup = threadPopupRef.current ?? new maplibregl.Popup({
+      closeButton: false,
+      closeOnClick: false,
+      closeOnMove: false,
+      offset: 18,
+      className: 'nx-icm-thread-popup',
+      maxWidth: '360px',
+      focusAfterOpen: false,
+    })
+
+    popup
+      .setLngLat(activeThreadPopup.coordinates)
+      .setDOMContent(threadPopupHostRef.current)
+      .addTo(map)
+
+    threadPopupRef.current = popup
+  }, [
+    activeThreadPopup,
+    onQuickReplyDraftChange,
+    onQuickReplySend,
+    popupThread,
+    quickReplyDisabled,
+    quickReplyDraft,
+    selectedThread?.id,
+    selectedThreadMessages,
+    selectedThreadMessagesLoading,
+  ])
+
+  useEffect(() => {
+    onStateChange?.({
+      activityMode,
+      mapStyleMode,
+      filters,
+      mapOverlays,
+    })
+  }, [activityMode, filters, mapOverlays, mapStyleMode, onStateChange])
 
   useEffect(() => {
     if (!filtersOpen) return
@@ -798,6 +1131,109 @@ export function InboxCommandMap({
       setLayerVisibility(map, RAW_LAYER_IDS, !clusteredMode)
       setLayerVisibility(map, CLUSTER_POINT_LAYER_IDS, clusteredMode)
       setLayerVisibility(map, CLUSTER_LAYER_IDS, clusteredMode)
+    }
+
+    const applyOverlayVisibility = (map: maplibregl.Map) => {
+      const layers = map.getStyle()?.layers ?? []
+      layers.forEach((layer) => {
+        const typedLayer = layer as StyleLayerLike
+        if (!typedLayer.id || typedLayer.id.startsWith(ownLayerPrefix)) return
+        const categories = classifyBaseLayer(typedLayer)
+        if (categories.length === 0) return
+        const visible = categories.every((category) => mapOverlays[category])
+        if (map.getLayer(typedLayer.id)) {
+          map.setLayoutProperty(typedLayer.id, 'visibility', visible ? 'visible' : 'none')
+        }
+      })
+    }
+
+    const applyRedOpsTheme = (map: maplibregl.Map) => {
+      const layers = map.getStyle()?.layers ?? []
+      layers.forEach((layer) => {
+        const typedLayer = layer as StyleLayerLike
+        if (!typedLayer.id || typedLayer.id.startsWith(ownLayerPrefix)) return
+        const id = lower(typedLayer.id)
+        const sourceLayer = lower(typedLayer['source-layer'])
+        const token = `${id} ${sourceLayer}`
+
+        try {
+          if (typedLayer.type === 'background') {
+            map.setPaintProperty(typedLayer.id, 'background-color', '#14080a')
+          }
+          if (typedLayer.type === 'fill') {
+            if (token.includes('water')) map.setPaintProperty(typedLayer.id, 'fill-color', '#24090d')
+            else if (token.includes('park') || token.includes('landcover') || token.includes('landuse')) map.setPaintProperty(typedLayer.id, 'fill-color', '#1b0d10')
+            else map.setPaintProperty(typedLayer.id, 'fill-color', '#18090b')
+            map.setPaintProperty(typedLayer.id, 'fill-opacity', 0.92)
+          }
+          if (typedLayer.type === 'line') {
+            const roadColor = token.includes('road') || token.includes('transport') || token.includes('highway') ? '#8f2e34' : '#5a1d22'
+            map.setPaintProperty(typedLayer.id, 'line-color', roadColor)
+            if (token.includes('road') || token.includes('highway')) {
+              map.setPaintProperty(typedLayer.id, 'line-opacity', 0.94)
+            }
+          }
+          if (typedLayer.type === 'symbol') {
+            const textColor =
+              token.includes('postal') || token.includes('zip') ? '#ffb7a8'
+                : token.includes('poi') ? '#f28f82'
+                  : token.includes('place') || token.includes('city') || token.includes('town') ? '#ffd4c9'
+                    : '#d8898d'
+            if (typedLayer.paint && 'text-color' in typedLayer.paint) map.setPaintProperty(typedLayer.id, 'text-color', textColor)
+            if (typedLayer.paint && 'text-halo-color' in typedLayer.paint) map.setPaintProperty(typedLayer.id, 'text-halo-color', 'rgba(20,8,10,0.92)')
+            if (typedLayer.paint && 'icon-color' in typedLayer.paint) map.setPaintProperty(typedLayer.id, 'icon-color', '#ff7a72')
+          }
+          if (typedLayer.type === 'raster') {
+            map.setPaintProperty(typedLayer.id, 'raster-saturation', -0.42)
+            map.setPaintProperty(typedLayer.id, 'raster-contrast', 0.18)
+            map.setPaintProperty(typedLayer.id, 'raster-brightness-max', 0.88)
+            map.setPaintProperty(typedLayer.id, 'raster-hue-rotate', 325)
+          }
+        } catch {
+          // Keep map resilient when a style layer lacks a property.
+        }
+      })
+    }
+
+    const ensureSatelliteHybridOverlay = async (map: maplibregl.Map) => {
+      if (mapStyleMode !== 'satellite') return
+      const darkStyle = await fetchDarkStyleSpec()
+      if (!darkStyle) return
+
+      if (darkStyle.glyphs && !map.getStyle().glyphs) {
+        // No runtime setter exists; retained through the base style spec above.
+      }
+
+      Object.entries(darkStyle.sources ?? {}).forEach(([sourceId, source]) => {
+        if (sourceId === 'satellite') return
+        if (!map.getSource(sourceId)) {
+          map.addSource(sourceId, source as any)
+        }
+      })
+
+      const candidateLayers = (darkStyle.layers ?? [])
+        .map((layer) => layer as StyleLayerLike)
+        .filter((layer) => !layer.id.startsWith(ownLayerPrefix))
+        .filter((layer) => classifyBaseLayer(layer).length > 0)
+
+      candidateLayers.forEach((layer) => {
+        const nextId = hybridOverlayLayerId(layer.id)
+        if (map.getLayer(nextId)) return
+        try {
+          map.addLayer(
+            cloneLayerWithId(layer, nextId) as maplibregl.AddLayerObject,
+            map.getLayer('command-pin-cluster-glow') ? 'command-pin-cluster-glow' : undefined,
+          )
+        } catch {
+          // Skip incompatible overlay layers but keep the hybrid map alive.
+        }
+      })
+    }
+
+    const syncBasemapPresentation = async (map: maplibregl.Map) => {
+      await ensureSatelliteHybridOverlay(map)
+      applyOverlayVisibility(map)
+      if (mapStyleMode === 'red') applyRedOpsTheme(map)
     }
 
     const addMapLayers = (map: maplibregl.Map) => {
@@ -1011,6 +1447,7 @@ export function InboxCommandMap({
 
     map.on('load', () => {
       addMapLayers(map)
+      void syncBasemapPresentation(map)
 
       const handlePinClick = (event: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
         const feature = event.features?.[0]
@@ -1018,9 +1455,12 @@ export function InboxCommandMap({
         const id = String(feature.properties?.conversation_id || '')
         if (!id) return
         hoverPopupRef.current?.remove()
+        threadPopupRef.current?.remove()
         setSelectedPinId(id)
         onSelectThreadId?.(id)
-        map.easeTo({ center: (feature.geometry as Point).coordinates as [number, number], zoom: Math.max(map.getZoom(), 12), duration: 700 })
+        const coordinates = (feature.geometry as Point).coordinates as [number, number]
+        setActiveThreadPopup({ id, coordinates })
+        map.easeTo({ center: coordinates, zoom: Math.max(map.getZoom(), 12), duration: 700 })
       }
 
       const handleClusterClick = (event: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
@@ -1042,6 +1482,7 @@ export function InboxCommandMap({
       }
 
       const handlePinHover = (event: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+        if (activeThreadPopup) return
         const feature = event.features?.[0]
         if (!feature?.properties) return
         const props = feature.properties as unknown as CommandMapPin
@@ -1061,12 +1502,22 @@ export function InboxCommandMap({
       }
 
       const clearPinHover = () => {
+        if (activeThreadPopup) return
         hoverPopupRef.current?.remove()
       }
 
       map.on('click', 'command-pin-core-raw', handlePinClick)
       map.on('click', 'command-pin-core-clustered', handlePinClick)
       map.on('click', 'command-pin-cluster-core', handleClusterClick)
+      map.on('click', (event) => {
+        const rendered = map.queryRenderedFeatures(event.point, {
+          layers: ['command-pin-core-raw', 'command-pin-core-clustered', 'command-pin-cluster-core'],
+        })
+        if (rendered.length === 0) {
+          setActiveThreadPopup(null)
+          onBackgroundClick?.()
+        }
+      })
       map.on('mouseenter', 'command-pin-core-raw', handlePinHover)
       map.on('mouseenter', 'command-pin-core-clustered', handlePinHover)
       map.on('mouseleave', 'command-pin-core-raw', clearPinHover)
@@ -1154,15 +1605,21 @@ export function InboxCommandMap({
 
     map.on('style.load', () => {
       addMapLayers(map)
+      void syncBasemapPresentation(map)
     })
 
     return () => {
       if (animationRef.current !== null) cancelAnimationFrame(animationRef.current)
       hoverPopupRef.current?.remove()
+      threadPopupRootRef.current?.unmount()
+      threadPopupRootRef.current = null
+      threadPopupHostRef.current = null
+      threadPopupRef.current?.remove()
+      threadPopupRef.current = null
       map.remove()
       mapRef.current = null
     }
-  }, [onSelectThreadId, selectedPin, zoomedIn])
+  }, [activeThreadPopup, mapOverlays, mapStyleMode, onBackgroundClick, onSelectThreadId, selectedPin, zoomedIn])
 
   useEffect(() => {
     const rawSource = mapRef.current?.getSource(RAW_SOURCE_ID) as maplibregl.GeoJSONSource | undefined
@@ -1175,6 +1632,21 @@ export function InboxCommandMap({
     if (!mapRef.current) return
     mapRef.current.setStyle(resolveStyle(mapStyleMode))
   }, [mapStyleMode])
+
+  useEffect(() => {
+    if (!mapRef.current?.isStyleLoaded()) return
+    const layers = mapRef.current.getStyle()?.layers ?? []
+    layers.forEach((layer) => {
+      const typedLayer = layer as StyleLayerLike
+      if (!typedLayer.id || typedLayer.id.startsWith(ownLayerPrefix)) return
+      const categories = classifyBaseLayer(typedLayer)
+      if (categories.length === 0) return
+      const visible = categories.every((category) => mapOverlays[category])
+      if (mapRef.current?.getLayer(typedLayer.id)) {
+        mapRef.current.setLayoutProperty(typedLayer.id, 'visibility', visible ? 'visible' : 'none')
+      }
+    })
+  }, [mapOverlays])
 
   useEffect(() => {
     if (!mapRef.current) return
@@ -1269,7 +1741,7 @@ export function InboxCommandMap({
 
   return (
     <div ref={rootRef} className={cls('nx-icm', `nx-icm--${dockTier}`, fullHeight && 'nx-icm--full')}>
-      <div className="nx-icm__toolbar">
+      {!commandMode && <div ref={controlsRef} className="nx-icm__toolbar">
         <div className="nx-icm__header">
           <div className="nx-icm__activity-tabs">
             {([
@@ -1282,7 +1754,7 @@ export function InboxCommandMap({
               </button>
             ))}
           </div>
-          <div ref={controlsRef} className="nx-icm__header-actions">
+          <div className="nx-icm__header-actions">
             <button type="button" className={cls('nx-icm__mode-tab', filtersOpen && 'is-active')} onClick={() => setFiltersOpen((open) => !open)}>
               Map Controls
             </button>
@@ -1296,6 +1768,9 @@ export function InboxCommandMap({
                 <button type="button" className={cls('nx-icm__mode-tab', mapStyleMode === 'dark' && 'is-active')} onClick={() => setMapStyleMode('dark')}>
                   Dark
                 </button>
+                <button type="button" className={cls('nx-icm__mode-tab', mapStyleMode === 'red' && 'is-active')} onClick={() => setMapStyleMode('red')}>
+                  Red Ops
+                </button>
                 <button type="button" className={cls('nx-icm__mode-tab', mapStyleMode === 'satellite' && 'is-active')} onClick={() => setMapStyleMode('satellite')}>
                   Satellite
                 </button>
@@ -1305,6 +1780,15 @@ export function InboxCommandMap({
                 <button type="button" className={cls('nx-icm__mode-tab', mapDimension === '3d' && 'is-active')} onClick={() => setMapDimension('3d')}>
                   3D
                 </button>
+              </div>
+            </div>
+            <div className="nx-icm__controls-group">
+              <span className="nx-icm__controls-label">Map Layers</span>
+              <div className="nx-icm__controls-segment">
+                <label className="nx-icm__checkbox"><input type="checkbox" checked={mapOverlays.roads} onChange={(e) => setMapOverlays((current) => ({ ...current, roads: e.target.checked }))} />Roads</label>
+                <label className="nx-icm__checkbox"><input type="checkbox" checked={mapOverlays.cities} onChange={(e) => setMapOverlays((current) => ({ ...current, cities: e.target.checked }))} />Cities</label>
+                <label className="nx-icm__checkbox"><input type="checkbox" checked={mapOverlays.poi} onChange={(e) => setMapOverlays((current) => ({ ...current, poi: e.target.checked }))} />POI</label>
+                <label className="nx-icm__checkbox"><input type="checkbox" checked={mapOverlays.zip} onChange={(e) => setMapOverlays((current) => ({ ...current, zip: e.target.checked }))} />ZIP</label>
               </div>
             </div>
             <div className="nx-icm__controls-group">
@@ -1349,7 +1833,7 @@ export function InboxCommandMap({
             </div>
           </div>
         )}
-      </div>
+      </div>}
 
       <div ref={containerRef} className="nx-icm__canvas" />
 
@@ -1382,7 +1866,7 @@ export function InboxCommandMap({
         </div>
       )}
 
-      {dockTier === 'full' && <div className="nx-icm__overlay-kpis" aria-label="Map mode KPIs">
+      {dockTier === 'full' && !filtersOpen && !commandMode && <div className="nx-icm__overlay-kpis" aria-label="Map mode KPIs">
         {activityMode === 'threads' && (
           <>
             <div className="nx-icm__overlay-kpi"><span>New Replies</span><strong>{threadModeKpis.newReplies}</strong></div>
@@ -1417,7 +1901,7 @@ export function InboxCommandMap({
           </>
         )}
       </div>}
-      {selectedPin && (
+      {selectedPin && !commandMode && (
         <div className="nx-icm__card nx-icm__card--actionable">
           <div className="nx-icm__card-row nx-icm__card-row--head">
             <span className="nx-icm__card-subject">{selectedPin.seller_name}</span>
@@ -1437,7 +1921,7 @@ export function InboxCommandMap({
         </div>
       )}
 
-      {(dockTier === 'full' || dockTier === 'compact') && <div className="nx-icm__legend" aria-label="Command Map Legend">
+      {(dockTier === 'full' || dockTier === 'compact') && !commandMode && <div className="nx-icm__legend" aria-label="Command Map Legend">
         <div className="nx-icm__legend-title">{activityMode === 'threads' ? 'Thread States' : activityMode === 'sends' ? 'Send States' : 'Follow-Up States'}</div>
         {(activityMode === 'threads'
           ? [
@@ -1471,7 +1955,7 @@ export function InboxCommandMap({
         ))}
       </div>}
 
-      {dockTier === 'mini' && (
+      {dockTier === 'mini' && !commandMode && (
         <div className="nx-icm__legend nx-icm__legend--mini" aria-label="Mini map legend">
           <div className="nx-icm__legend-title">{activityMode === 'threads' ? 'Threads' : activityMode === 'sends' ? 'Sends' : 'Follow-Ups'}</div>
           <div className="nx-icm__legend-row">
@@ -1481,7 +1965,7 @@ export function InboxCommandMap({
         </div>
       )}
 
-      {dockTier === 'full' && activityMode === 'sends' && liveTickerItems.length > 0 && (
+      {dockTier === 'full' && activityMode === 'sends' && liveTickerItems.length > 0 && !commandMode && (
         <div className="nx-icm__ticker" aria-label="Outbound live ticker">
           {liveTickerItems.map((item) => (
             <div key={item.id} className="nx-icm__ticker-item">
@@ -1493,7 +1977,7 @@ export function InboxCommandMap({
         </div>
       )}
 
-      <div className="nx-icm__attribution">Deterministic command map</div>
+      {!commandMode && <div className="nx-icm__attribution">Deterministic command map</div>}
     </div>
   )
 }

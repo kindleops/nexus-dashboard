@@ -133,6 +133,8 @@ export const InboxKpiOrb = () => {
     )
   }
 
+  const volumeCards = kpis?.volume ?? []
+
   return (
     <div 
       className={cls('nx-kpi-orb-container', (isOpen || isPinned) && 'is-open')}
@@ -194,6 +196,21 @@ export const InboxKpiOrb = () => {
 
           <div className="nx-orb-dashboard__content">
             <div className="nx-orb-dashboard__scroll-area">
+              {volumeCards.length > 0 && (
+                <section className="nx-orb-dashboard__section">
+                  <label>Message Flow</label>
+                  <div className="nx-orb-dashboard__flow-strip">
+                    {volumeCards.map((item) => (
+                      <div key={item.id} className={cls('nx-orb-dashboard__flow-card', `is-${item.tone}`)}>
+                        <span className="nx-orb-dashboard__flow-label">{item.label}</span>
+                        <strong className="nx-orb-dashboard__flow-value">{item.value.toLocaleString()}</strong>
+                        <span className="nx-orb-dashboard__flow-meta">{timeWindow.toUpperCase()}</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
               <section className="nx-orb-dashboard__section">
                 <label>Messaging & Response</label>
                 <div className="nx-orb-dashboard__grid">

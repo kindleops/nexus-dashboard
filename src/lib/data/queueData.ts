@@ -284,6 +284,59 @@ export const cancelQueueItem = async (item: QueueItem): Promise<QueueActionResul
   return { ok: true, errorMessage: null, updatedItem: { ...item, status: 'held' } }
 }
 
+export const retryRoutingForItem = async (item: QueueItem): Promise<QueueActionResult> => {
+  const supabase = getSupabaseClient()
+  const now = new Date().toISOString()
+
+  // 1. Fetch current row state
+  const { data: row } = await supabase
+    .from('send_queue')
+    .select('*')
+    .eq('id', item.id)
+    .single()
+
+  if (!row) return { ok: false, errorMessage: 'Item not found' }
+
+  // 2. Resolve Routing
+  const { resolveOutboundTextgridNumber } = await import('./textgridRouting')
+  const routingResult = await resolveOutboundTextgridNumber({
+    marketId: row.market || row.market_id,
+    ourNumber: row.from_phone_number,
+    phoneNumber: row.to_phone_number,
+    textgridNumberId: row.textgrid_number_id,
+    property_address_state: row.property_address_state
+  })
+
+  if (!routingResult.ok) {
+    return { ok: false, errorMessage: routingResult.error || 'Routing still blocked: no sender number' }
+  }
+
+  // 3. Update row to scheduled
+  // Use a simple 5-min delay for UI-triggered retries to allow for immediate runner pickup
+  const scheduledAt = new Date(Date.now() + 1000 * 60 * 5).toISOString() 
+
+  const patch: AnyRecord = {
+    queue_status: 'scheduled',
+    from_phone_number: routingResult.from_phone_number,
+    textgrid_number_id: routingResult.textgrid_number_id,
+    routing_tier: routingResult.routing_tier,
+    routing_reason: routingResult.routing_reason,
+    guard_reason: null,
+    failed_reason: null,
+    scheduled_for: scheduledAt,
+    scheduled_for_utc: scheduledAt,
+    updated_at: now
+  }
+
+  const { error } = await supabase
+    .from('send_queue')
+    .update(patch)
+    .eq('id', item.id)
+
+  if (error) return { ok: false, errorMessage: mapErrorMessage(error) }
+  return { ok: true, errorMessage: null, updatedItem: { ...item, status: 'scheduled' } }
+}
+
 export const retryQueueItem = async (item: QueueItem): Promise<QueueActionResult> => {
   const supabase = getSupabaseClient()
   const now = new Date().toISOString()

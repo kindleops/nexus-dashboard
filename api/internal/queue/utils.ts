@@ -206,3 +206,94 @@ export async function cleanupBlankQueueRows(): Promise<number> {
   }
   return data?.length || 0
 }
+
+const toAnyRecord = (value: unknown): Record<string, unknown> => {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+}
+
+const normalizeState = (value: unknown): string => {
+  const raw = asString(value, '').trim()
+  if (!raw) return ''
+  const upper = raw.toUpperCase()
+  if (upper === 'NORTH CAROLINA') return 'NC'
+  return upper
+}
+
+export async function hydrateQueueRoutingContext(row: Record<string, any>): Promise<Record<string, unknown>> {
+  const supabase = getSupabaseClient()
+  const metadata = toAnyRecord(row.metadata)
+  const hydrated: Record<string, unknown> = {
+    seller_name: asString(row.seller_name || metadata['seller_name'], ''),
+    property_address: asString(row.property_address || metadata['property_address'], ''),
+    property_id: asString(row.property_id || metadata['property_id'], ''),
+    master_owner_id: asString(row.master_owner_id, ''),
+    prospect_id: asString(row.prospect_id, ''),
+    market: asString(row.market || metadata['market'], ''),
+    market_id: asString(row.market_id, ''),
+    property_address_state: normalizeState(row.property_address_state || metadata['property_address_state']),
+    thread_key: asString(row.thread_key || metadata['thread_key'], ''),
+  }
+
+  const applyRecord = (source: Record<string, any> | null | undefined) => {
+    if (!source) return
+    if (!hydrated.seller_name) hydrated.seller_name = asString(source.owner_name || source.seller_name || source.full_name || source.display_name, '')
+    if (!hydrated.property_address) hydrated.property_address = asString(source.property_address || source.address, '')
+    if (!hydrated.property_id) hydrated.property_id = asString(source.property_id, '')
+    if (!hydrated.master_owner_id) hydrated.master_owner_id = asString(source.master_owner_id || source.owner_id, '')
+    if (!hydrated.prospect_id) hydrated.prospect_id = asString(source.prospect_id, '')
+    if (!hydrated.market) hydrated.market = asString(source.market, '')
+    if (!hydrated.market_id) hydrated.market_id = asString(source.market_id, '')
+    if (!hydrated.property_address_state) hydrated.property_address_state = normalizeState(source.property_address_state || source.state)
+  }
+
+  if (hydrated.thread_key) {
+    const { data: threadState } = await supabase
+      .from('inbox_thread_state')
+      .select('*')
+      .eq('thread_key', hydrated.thread_key)
+      .limit(1)
+      .maybeSingle()
+    applyRecord(threadState as Record<string, any> | null)
+  }
+
+  if (hydrated.property_id) {
+    const { data: property } = await supabase
+      .from('properties')
+      .select('*')
+      .eq('property_id', hydrated.property_id)
+      .limit(1)
+      .maybeSingle()
+    applyRecord(property as Record<string, any> | null)
+  }
+
+  if (hydrated.prospect_id) {
+    const { data: prospect } = await supabase
+      .from('prospects')
+      .select('*')
+      .eq('prospect_id', hydrated.prospect_id)
+      .limit(1)
+      .maybeSingle()
+    applyRecord(prospect as Record<string, any> | null)
+  }
+
+  const phone = asString(row.to_phone_number, '')
+  if (phone) {
+    const phoneVariants = [phone, phone.replace(/^\+1/, ''), phone.replace(/^\+/, '')]
+    const { data: recentPropertyEvent } = await supabase
+      .from('message_events')
+      .select('*')
+      .or(phoneVariants.map((value) => `from_phone_number.eq.${value},to_phone_number.eq.${value}`).join(','))
+      .order('created_at', { ascending: false })
+      .limit(10)
+
+    const eventRow = Array.isArray(recentPropertyEvent)
+      ? recentPropertyEvent.find((item) => item.property_id || item.market || item.master_owner_id)
+      : null
+    applyRecord((eventRow as Record<string, any> | null) ?? null)
+  }
+
+  if (!hydrated.market) hydrated.market = asString(metadata['market'], '')
+  if (!hydrated.property_address_state) hydrated.property_address_state = normalizeState(metadata['property_address_state'])
+
+  return hydrated
+}

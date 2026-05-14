@@ -51,6 +51,7 @@ import { getSupabaseClient } from '../../lib/supabaseClient'
 import { emitNotification } from '../../shared/NotificationToast'
 import { Icon } from '../../shared/icons'
 import { NexusTopBar } from './components/NexusTopBar'
+import { type QueueCommandCaps, type QueueCommandMode } from './components/QueueCommandCenter'
 import { InboxSidebar } from './components/InboxSidebar'
 import { InboxConversationTable, type ConversationTableSort } from './components/InboxConversationTable'
 import { ChatThread } from './components/ChatThread'
@@ -61,6 +62,7 @@ import type { TemplateActionPayload } from './components/TemplatePopover'
 import { InboxActivityPanel } from './components/InboxActivityPanel'
 import { InboxCommandMap } from './InboxCommandMap'
 import { InboxUtilityDrawer, MapDossierDrawer } from './components/InboxUtilityDrawer'
+import { CommandView } from './components/CommandView'
 import { LiveCopilotChat } from '../copilot/components/LiveCopilotChat'
 import { AdvancedFiltersPopover } from './components/AdvancedFiltersPopover'
 import { InboxCommandPalette, type InboxCmd } from './InboxCommandPalette'
@@ -119,8 +121,16 @@ const LANGUAGE_LABELS: Record<string, string> = {
 }
 
 type ThreadTranslateViewMode = 'original' | 'translated'
-type CommandCenterViewMode = 'split' | 'list' | 'dossier'
+type CommandCenterViewMode = 'split' | 'list' | 'dossier' | 'command'
 type TableDensityMode = 'comfortable' | 'compact' | 'ultra_compact'
+const DEFAULT_QUEUE_COMMAND_CAPS: QueueCommandCaps = {
+  sends_per_run: 10,
+  auto_replies_per_run: 10,
+  followups_per_run: 25,
+  first_touches_per_run: 25,
+  max_per_number_per_day: 40,
+  max_per_market_per_hour: 75,
+}
 
 const normalizeLanguageCode = (value: unknown): string | null => {
   if (typeof value !== 'string') return null
@@ -168,6 +178,9 @@ export default function InboxPage() {
   const [threadIntelligence, setThreadIntelligence] = useState<ThreadIntelligenceRecord | null>(null)
   const [queueProcessorHealth, setQueueProcessorHealth] = useState<QueueProcessorHealth | null>(null)
   const [queueProcessorHealthLoading, setQueueProcessorHealthLoading] = useState(false)
+  const [queueCommandMode, setQueueCommandMode] = useState<QueueCommandMode>('off')
+  const [queueCommandCaps, setQueueCommandCaps] = useState<QueueCommandCaps>(DEFAULT_QUEUE_COMMAND_CAPS)
+  const [queueCommandActionLoading, setQueueCommandActionLoading] = useState<string | null>(null)
   const [contextLoading, setContextLoading] = useState(false)
   const [threadViewMode, setThreadViewMode] = useState<ThreadTranslateViewMode>('original')
   const [threadTranslations, setThreadTranslations] = useState<Record<string, string>>({})
@@ -883,14 +896,88 @@ export default function InboxPage() {
   }, [originalDraftBeforeTranslation])
 
   useEffect(() => {
+    try {
+      const savedViewMode = window.localStorage.getItem('nx.command-view.mode') as CommandCenterViewMode | null
+      if (savedViewMode === 'split' || savedViewMode === 'list' || savedViewMode === 'dossier' || savedViewMode === 'command') {
+        setCommandViewMode(savedViewMode)
+      }
+      const savedMode = window.localStorage.getItem('nx.queue.mode') as QueueCommandMode | null
+      const savedCaps = window.localStorage.getItem('nx.queue.caps')
+      if (savedMode === 'off' || savedMode === 'safe' || savedMode === 'live') setQueueCommandMode(savedMode)
+      if (savedCaps) {
+        const parsed = JSON.parse(savedCaps) as Partial<QueueCommandCaps>
+        setQueueCommandCaps((current) => ({ ...current, ...parsed }))
+      }
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('nx.queue.mode', queueCommandMode)
+      window.localStorage.setItem('nx.queue.caps', JSON.stringify(queueCommandCaps))
+    } catch {}
+  }, [queueCommandCaps, queueCommandMode])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('nx.command-view.mode', commandViewMode)
+    } catch {}
+  }, [commandViewMode])
+
+  const refreshQueueHealth = useCallback(async () => {
+    setQueueProcessorHealthLoading(true)
+    const snapshot = await getQueueProcessorHealth()
+    setQueueProcessorHealth(snapshot)
+    setQueueProcessorHealthLoading(false)
+    return snapshot
+  }, [])
+
+  const runQueueCommand = useCallback(async (
+    actionKey: string,
+    endpoint: string,
+    options?: {
+      body?: Record<string, unknown>
+      successTitle?: string
+      successDetail?: (payload: any) => string
+    },
+  ) => {
+    setQueueCommandActionLoading(actionKey)
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(options?.body ?? {}),
+      })
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok || payload?.ok === false) {
+        throw new Error(String(payload?.error || 'Queue action failed'))
+      }
+      await refreshQueueHealth()
+      emitNotification({
+        title: options?.successTitle || 'Queue Updated',
+        detail: options?.successDetail ? options.successDetail(payload) : 'Queue action completed successfully.',
+        severity: 'success',
+      })
+      return payload
+    } catch (error) {
+      emitNotification({
+        title: 'Queue Action Failed',
+        detail: error instanceof Error ? error.message : 'Unknown queue action error',
+        severity: 'critical',
+      })
+      throw error
+    } finally {
+      setQueueCommandActionLoading(null)
+    }
+  }, [refreshQueueHealth])
+
+  useEffect(() => {
     let active = true
 
     const refreshHealth = async () => {
-      setQueueProcessorHealthLoading(true)
-      const snapshot = await getQueueProcessorHealth()
+      const snapshot = await refreshQueueHealth()
       if (!active) return
       setQueueProcessorHealth(snapshot)
-      setQueueProcessorHealthLoading(false)
     }
 
     void refreshHealth()
@@ -902,7 +989,88 @@ export default function InboxPage() {
       active = false
       window.clearInterval(interval)
     }
+  }, [refreshQueueHealth])
+
+  const handleQueueCommandModeChange = useCallback((mode: QueueCommandMode) => {
+    if (mode === 'live') {
+      if (queueProcessorHealth?.liveAutopilotAllowed === false) {
+        emitNotification({
+          title: 'Live Autopilot Blocked',
+          detail: 'Queue health is Critical. Resolve blank rows, duplicate collisions, routing blocks, or stale webhooks first.',
+          severity: 'warning',
+        })
+        return
+      }
+      if (!window.confirm('Enable Live Autopilot? This allows normal scheduled processing with production caps.')) return
+    }
+    setQueueCommandMode(mode)
+    emitNotification({
+      title: 'Queue Mode Updated',
+      detail: mode === 'off' ? 'Automatic queue processing is off.' : mode === 'safe' ? 'Safe Autopilot enabled with strict caps.' : 'Live Autopilot enabled.',
+      severity: mode === 'live' ? 'warning' : 'success',
+    })
+  }, [queueProcessorHealth?.liveAutopilotAllowed])
+
+  const handleQueueCapsChange = useCallback((patch: Partial<QueueCommandCaps>) => {
+    setQueueCommandCaps((current) => ({ ...current, ...patch }))
   }, [])
+
+  const handleRunSafeBatch = useCallback(() => (
+    runQueueCommand('safe_batch', '/api/internal/queue/run-safe-batch', {
+      body: { caps: queueCommandCaps },
+      successTitle: 'Safe Batch Completed',
+      successDetail: (payload) => {
+        const summary = payload?.summary ?? {}
+        return `${summary.sent ?? 0} sent • ${summary.blocked ?? 0} blocked • ${summary.routing_blocked ?? 0} routing blocked • ${summary.replied_before_send ?? 0} replied before send.`
+      },
+    })
+  ), [queueCommandCaps, runQueueCommand])
+
+  const handleRunQueueNow = useCallback(() => (
+    runQueueCommand('run_now', '/api/internal/queue/run', {
+      body: { caps: queueCommandCaps, mode: queueCommandMode },
+      successTitle: 'Queue Run Completed',
+      successDetail: (payload) => {
+        const summary = payload?.summary ?? {}
+        return `${summary.sent ?? 0} sent • ${summary.failed ?? 0} failed • ${summary.blocked ?? 0} blocked.`
+      },
+    })
+  ), [queueCommandCaps, queueCommandMode, runQueueCommand])
+
+  const handleReprocessPaused = useCallback((ids?: string[]) => (
+    runQueueCommand(ids?.length ? `retry_routing:${ids[0]}` : 'reprocess_paused', '/api/internal/queue/reprocess-paused', {
+      body: ids?.length ? { ids } : {},
+      successTitle: ids?.length ? 'Routing Retry Completed' : 'Paused Rows Reprocessed',
+      successDetail: (payload) => {
+        const summary = payload?.summary ?? {}
+        return `${summary.resolved ?? 0} resolved • ${summary.still_blocked ?? 0} still blocked • ${summary.skipped ?? 0} skipped.`
+      },
+    })
+  ), [runQueueCommand])
+
+  const handleRetryFailedQueue = useCallback(() => (
+    runQueueCommand('retry_failed', '/api/internal/queue/retry-failed', {
+      successTitle: 'Failed Sends Retried',
+      successDetail: (payload) => {
+        const summary = payload?.summary ?? {}
+        return `${summary.resolved ?? 0} rescheduled • ${summary.blocked ?? 0} blocked • ${summary.failed ?? 0} still failed.`
+      },
+    })
+  ), [runQueueCommand])
+
+  const handleReconcileDelivery = useCallback(() => (
+    runQueueCommand('reconcile_delivery', '/api/internal/queue/reconcile', {
+      successTitle: 'Delivery Reconciled',
+      successDetail: (payload) => `${payload?.reconciled ?? 0} delivery records reconciled.`,
+    })
+  ), [runQueueCommand])
+
+  const handleCancelStaleFollowUps = useCallback(() => (
+    runQueueCommand('cancel_stale_followups', '/api/internal/queue/cancel-stale-followups', {
+      successTitle: 'Stale Follow-Ups Cancelled',
+      successDetail: (payload) => `${payload?.cancelled ?? 0} stale follow-up rows cancelled.`,
+    })
+  ), [runQueueCommand])
 
   useEffect(() => {
     let active = true
@@ -1671,10 +1839,11 @@ export default function InboxPage() {
   const showLeftPanel = leftPanelMode !== 'hidden'
   const showRightPanel = rightPanelMode !== 'hidden'
   const isDoubleSided = inboxMode === 'full_double'
+  const isCommandView = commandViewMode === 'command'
 
   return (
-    <div id="nx-inbox-root" className={cls('nx-premium-inbox nx-inbox', ...layoutClasses)}>
-      <NexusTopBar
+    <div id="nx-inbox-root" className={cls('nx-premium-inbox nx-inbox', ...layoutClasses, isCommandView && 'is-command-view-active')}>
+      {!isCommandView && <NexusTopBar
         searchQuery={searchQuery}
         onSearchQueryChange={setSearchQuery}
         searchResults={searchResults}
@@ -1684,6 +1853,18 @@ export default function InboxPage() {
         notificationCount={data.unreadCount}
         queueProcessorHealth={queueProcessorHealth}
         queueProcessorHealthLoading={queueProcessorHealthLoading}
+        onRefreshQueueHealth={refreshQueueHealth}
+        queueCommandMode={queueCommandMode}
+        queueCommandCaps={queueCommandCaps}
+        queueCommandActionLoading={queueCommandActionLoading}
+        onQueueCommandModeChange={handleQueueCommandModeChange}
+        onQueueCommandCapsChange={handleQueueCapsChange}
+        onRunSafeBatch={handleRunSafeBatch}
+        onRunQueueNow={handleRunQueueNow}
+        onReprocessPaused={handleReprocessPaused}
+        onRetryFailed={handleRetryFailedQueue}
+        onReconcileDelivery={handleReconcileDelivery}
+        onCancelStaleFollowUps={handleCancelStaleFollowUps}
         autonomyModel={autonomyModel}
         theme={theme}
         onToggleTheme={() => setLayoutState((current) => ({
@@ -1702,18 +1883,18 @@ export default function InboxPage() {
         onResetLayout={() => setLayoutState(resetLayoutMode)}
         dryRun={autonomyControls.dryRun}
         onToggleDryRun={() => setAutonomyControls(prev => ({ ...prev, dryRun: !prev.dryRun }))}
-      />
+      />}
 
-      <div className="nx-command-viewbar">
+      {!isCommandView && <div className="nx-command-viewbar">
         <div className="nx-command-viewbar__modes">
-          {(['split', 'list', 'dossier'] as CommandCenterViewMode[]).map((mode) => (
+          {(['split', 'list', 'dossier', 'command'] as CommandCenterViewMode[]).map((mode) => (
             <button
               key={mode}
               type="button"
               className={cls('nx-command-viewbar__mode', commandViewMode === mode && 'is-active')}
               onClick={() => setCommandViewMode(mode)}
             >
-              {mode === 'split' ? 'Split View' : mode === 'list' ? 'List View' : 'Dossier View'}
+              {mode === 'split' ? 'Split View' : mode === 'list' ? 'List View' : mode === 'dossier' ? 'Dossier View' : 'Command View'}
             </button>
           ))}
         </div>
@@ -1739,8 +1920,51 @@ export default function InboxPage() {
           <button type="button" className="nx-command-viewbar__chip" onClick={() => setViewFilter('automated')}>Auto-Eligible</button>
           <button type="button" className="nx-command-viewbar__chip" onClick={() => setViewFilter('needs_review')}>Needs Review</button>
         </div>
-      </div>
+      </div>}
 
+      {isCommandView ? (
+        <CommandView
+          threads={threads}
+          visibleThreads={filtered}
+          selectedThread={selected}
+          selectedSuppressed={selectedSuppressed}
+          selectedMessages={displayedMessages}
+          messagesLoading={messagesLoading}
+          searchQuery={searchQuery}
+          tableSort={tableSort}
+          tableDensity={tableDensity}
+          listStatCounts={listStatCounts}
+          activityFeed={activityFeed}
+          queueProcessorHealth={queueProcessorHealth}
+          viewFilter={viewFilter}
+          savedPreset={savedPreset}
+          viewCounts={viewCounts}
+          recentlyUpdatedThreadIds={recentlyUpdatedThreadIds}
+          visibleThreadCount={visibleThreadCount}
+          canLoadMore={Boolean(data.pagination?.hasMore)}
+          liveFetchError={data.liveFetchError}
+          draftText={draftText}
+          isSending={isSending}
+          commandSuggestions={commandIntel?.suggestions ?? []}
+          onSelectThreadId={handleSelect}
+          onClearSelection={() => {
+            setSelectedId(null)
+            setSelectedThreadKey(null)
+          }}
+          onExitCommandView={() => setCommandViewMode('split')}
+          onSwitchViewMode={setCommandViewMode}
+          onSearchQueryChange={setSearchQuery}
+          onApplySavedPreset={applySavedPreset}
+          onSetViewFilter={setViewFilter}
+          onThreadAction={handleThreadAction}
+          onLoadMore={handleLoadMore}
+          onSetTableSort={setTableSort}
+          onSetTableDensity={setTableDensity}
+          onSetDraftText={setDraftText}
+          onSend={handleSend}
+          onOpenAi={() => setActiveOverlay('ai')}
+        />
+      ) : (
       <div className="nx-inbox-shell">
         {showLeftPanel && commandViewMode !== 'dossier' && (
           <InboxSidebar
@@ -1926,9 +2150,16 @@ export default function InboxPage() {
                 threads={mapThreads}
                 visibleThreads={filtered}
                 selectedThread={selected}
+                selectedThreadMessages={displayedMessages}
+                selectedThreadMessagesLoading={messagesLoading}
+                quickReplyDraft={draftText}
+                onQuickReplyDraftChange={setDraftText}
+                onQuickReplySend={(text) => handleSend(text)}
+                quickReplyDisabled={selectedSuppressed || isSending}
                 zoomedIn={mapMode !== 'side'}
                 sourceMode={mapSourceMode}
                 onSelectThreadId={handleSelect}
+                onBackgroundClick={() => {}}
               />
             </div>
             {selected && (
@@ -1951,6 +2182,7 @@ export default function InboxPage() {
           />
         ) : null}
       </div>
+      )}
 
       <AdvancedFiltersPopover
         open={activeOverlay === 'filters'}
