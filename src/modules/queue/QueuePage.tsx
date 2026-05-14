@@ -7,6 +7,7 @@ import {
   rescheduleQueueItem,
   retryQueueItem,
   cancelQueueItem,
+  retryRoutingForItem,
   type QueueModel,
   type QueueItem,
 } from '../../lib/data/queueData'
@@ -38,6 +39,7 @@ const StatusBadge = ({ status }: { status: QueueItemStatus }) => {
     delivered: 'Delivered',
     retry: 'Retrying',
     held: 'On Hold',
+    paused_invalid_queue_row: 'Routing Blocked',
   }
 
   return (
@@ -270,7 +272,7 @@ const TacticalIntelligenceStack = ({
           
           {showMetadata && (
             <pre className="nx-inspector-json">
-              {JSON.stringify(item.metadata || {}, null, 2)}
+              {JSON.stringify(item, null, 2)}
             </pre>
           )}
         </div>
@@ -396,6 +398,10 @@ export const QueuePage = ({ data: initialData }: QueuePageProps = {}) => {
       case 'retry':
         successMessage = `Retrying send to ${item.sellerName}`
         resultPromise = retryQueueItem(item)
+        break
+      case 'retry-routing':
+        successMessage = `Retrying routing for ${item.sellerName}`
+        resultPromise = retryRoutingForItem(item)
         break
       case 'reschedule':
         // Simplified for now - in production would open a date picker

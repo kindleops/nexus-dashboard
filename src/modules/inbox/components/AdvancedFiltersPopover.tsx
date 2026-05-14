@@ -4,8 +4,8 @@ import { Icon } from '../../../shared/icons'
 import type {
   InboxAdvancedFilters,
 } from '../inbox-ui-helpers'
-import { type InboxViewSelectValue, type InboxStageSelectValue } from '../inbox-ui-helpers'
-import { inboxStatusOptions, sellerStageOptions } from '../status-visuals'
+import { type InboxViewSelectValue, type InboxStageSelectValue, viewOptions } from '../inbox-ui-helpers'
+import { sellerStageOptions } from '../status-visuals'
 import type { AdvancedFilterOptions } from './InboxSidebar'
 
 interface AdvancedFiltersPopoverProps {
@@ -17,7 +17,7 @@ interface AdvancedFiltersPopoverProps {
   advancedFilters: InboxAdvancedFilters
   onAdvancedFiltersChange: (patch: Partial<InboxAdvancedFilters>) => void
   advancedFilterOptions: AdvancedFilterOptions
-  viewCounts: Record<string, number | null | undefined>
+  viewCounts: Record<string, number | string | null | undefined>
   onReset: () => void
   onClose: () => void
   onApply?: () => void
@@ -103,14 +103,13 @@ export const AdvancedFiltersPopover = ({
             <label>
               <span>Inbox Status</span>
               <select value={viewFilter} onChange={(event) => setViewFilter(event.target.value as InboxViewSelectValue)}>
-                {inboxStatusOptions.map((option) => {
+                {viewOptions.map((option) => {
                   const c = viewCounts[option.value]
                   const label = c === null || c === undefined ? '—' : String(c)
                   return (
                     <option key={option.value} value={option.value}>{option.label} ({label})</option>
                   )
                 })}
-                <option value="all">All (—)</option>
               </select>
             </label>
             <label>

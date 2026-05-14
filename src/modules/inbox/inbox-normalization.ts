@@ -199,7 +199,7 @@ export const normalizePropertySnapshot = (
     taxAmount: get('tax_amount'),
     
     // Owner & Prospect
-    ownerName: get('owner_full_name', ['owner_name']),
+    ownerName: get('owner_full_name', ['owner_name', 'ownerName']),
     ownerDisplayName: get('owner_display_name', ['ownerDisplayName']),
     ownerType: get('owner_type_guess', ['owner_type', 'ownerType']),
     priorityTier: get('owner_priority_tier', ['priority_tier']),

@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { CopilotOrb } from '../../../shared/copilot/CopilotOrb'
 
 const cls = (...t: Array<string | false | null | undefined>) => t.filter(Boolean).join(' ')
@@ -7,16 +8,16 @@ export const CopilotOrbTrigger = ({
   active = false,
   isReady = true,
   size = 'md',
+  children,
 }: {
   onClick?: any
   active?: boolean
   isReady?: boolean
   size?: string
+  children?: ReactNode
 }) => (
-  <button
-    type="button"
+  <div
     className={cls('nx-copilot-orb-trigger', active && 'is-active', !isReady && 'is-disabled', `is-${size}`)}
-    onClick={(event) => onClick?.(event)}
   >
     <CopilotOrb
       state={active ? 'listening' : 'idle'}
@@ -25,5 +26,6 @@ export const CopilotOrbTrigger = ({
       onPushToTalk={() => {}}
       onPushToTalkRelease={() => {}}
     />
-  </button>
+    {children ? <span>{children}</span> : null}
+  </div>
 )

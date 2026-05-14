@@ -35,7 +35,7 @@ const titleCase = (value: string) =>
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 const highlightText = (text: string, terms: string[]) => {
-  const cleanTerms = terms.map((term) => term.trim()).filter((term) => term.length > 1).slice(0, 8)
+  const cleanTerms = (terms || []).map((term) => String(term || '').trim()).filter((term) => term.length > 1).slice(0, 8)
   if (cleanTerms.length === 0) return text
   const re = new RegExp(`(${cleanTerms.map(escapeRegExp).join('|')})`, 'ig')
   return text.split(re).map((part, index) => (
@@ -159,7 +159,7 @@ export const ChatThread = ({
   const stageVisual = getSellerStageVisual(thread.conversationStage)
   const matchedKeywords = getThreadMatchedKeywords(thread, searchQuery)
 
-  const isAutoPaused = thread.status?.toLowerCase().includes('pause') || (thread as any).automationStatus === 'paused'
+  const isAutoPaused = String(thread.status || '').toLowerCase().includes('pause') || (thread as any).automationStatus === 'paused'
 
   return (
     <div className="nx-chat-container">
@@ -259,7 +259,7 @@ export const ChatThread = ({
                 
                 {/* Phase 3 Turn Intelligence */}
                 {(() => {
-                  const turn = phase3?.recentTurns.find(t => 
+                  const turn = phase3?.recentTurns?.find(t => 
                     t.metadata?.inbound_message_id === msg.id || 
                     t.metadata?.outbound_message_id === msg.id ||
                     t.metadata?.message_event_id === msg.id
@@ -271,7 +271,7 @@ export const ChatThread = ({
                       <div className="nx-turn-intel__row">
                         {turn.intent_detected && (
                           <span className="nx-turn-intent">
-                            {turn.intent_detected.replace(/_/g, ' ')}
+                            {String(turn.intent_detected || '').replace(/_/g, ' ')}
                           </span>
                         )}
                         {turn.confidence_score && (

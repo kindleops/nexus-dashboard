@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon, type IconName } from '../../../shared/icons'
 import { type OperationalKpi } from '../../../lib/data/inboxKpis'
 import { useOperationalKpis } from '../../../lib/data/operationalKpis'
@@ -7,11 +7,21 @@ import { usePerformanceIntelligence, type TimeWindow } from '../../../lib/data/p
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
 
+type KpiTone = 'good' | 'warning' | 'critical' | 'neutral'
+
+const resolveKpiTone = (kpi: OperationalKpi): KpiTone => {
+  if (kpi.status === 'good' || kpi.status === 'warning' || kpi.status === 'critical') return kpi.status
+  return 'neutral'
+}
+
 export const InboxKpiOrb = () => {
   const [isOpen, setIsOpen] = useState(false)
   const [isPinned, setIsPinned] = useState(false)
   const [timeWindow, setTimeWindow] = useState<OperationalKpi['timeWindow']>('24h')
   const [pinnedKpiId, setPinnedKpiId] = useState<string>(() => localStorage.getItem('nexus.pinnedInboxKpi') || 'reply-rate')
+  const [updatedKpiIds, setUpdatedKpiIds] = useState<Record<string, number>>({})
+  const previousKpiSnapshotRef = useRef<Record<string, string>>({})
+  const updateTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
   const { kpis, isLive, recommendations } = useOperationalKpis(timeWindow)
   const { outliers, coverage } = usePerformanceIntelligence(timeWindow as TimeWindow)
@@ -31,12 +41,52 @@ export const InboxKpiOrb = () => {
     return allKpisList.find(k => k.id === pinnedKpiId) || allKpisList[0]
   }, [allKpisList, pinnedKpiId])
 
+  useEffect(() => {
+    if (typeof window === 'undefined' || !kpis) return
+
+    const nextSnapshot: Record<string, string> = {}
+    const nextUpdated: Record<string, number> = {}
+
+    allKpisList.forEach((kpi) => {
+      const signature = `${kpi.value}|${kpi.unit ?? ''}|${kpi.status ?? ''}|${kpi.trend ?? ''}`
+      nextSnapshot[kpi.id] = signature
+      const previous = previousKpiSnapshotRef.current[kpi.id]
+      if (previous && previous !== signature) {
+        nextUpdated[kpi.id] = Date.now()
+        const existingTimer = updateTimersRef.current[kpi.id]
+        if (existingTimer) window.clearTimeout(existingTimer)
+        updateTimersRef.current[kpi.id] = window.setTimeout(() => {
+          setUpdatedKpiIds((current) => {
+            if (!(kpi.id in current)) return current
+            const copy = { ...current }
+            delete copy[kpi.id]
+            return copy
+          })
+          delete updateTimersRef.current[kpi.id]
+        }, 2200)
+      }
+    })
+
+    previousKpiSnapshotRef.current = nextSnapshot
+    if (Object.keys(nextUpdated).length > 0) {
+      setUpdatedKpiIds((current) => ({ ...current, ...nextUpdated }))
+    }
+  }, [allKpisList, kpis])
+
+  useEffect(() => {
+    return () => {
+      if (typeof window === 'undefined') return
+      Object.values(updateTimersRef.current).forEach((timer) => window.clearTimeout(timer))
+    }
+  }, [])
+
   const handlePinKpi = (id: string) => {
     setPinnedKpiId(id)
     localStorage.setItem('nexus.pinnedInboxKpi', id)
   }
 
   const renderKpiCard = (kpi: OperationalKpi) => {
+    const tone = resolveKpiTone(kpi)
     let trendIcon: IconName | null = null
     if (kpi.trend === 'up') trendIcon = 'trending-up'
     if (kpi.trend === 'down') trendIcon = 'chevron-down'
@@ -45,27 +95,45 @@ export const InboxKpiOrb = () => {
       <div 
         key={kpi.id} 
         className={cls(
-          'nx-orb-dashboard__card', 
+          'nx-orb-dashboard__card',
+          `is-${tone}`,
           kpi.id === pinnedKpiId && 'is-pinned',
+          Boolean(updatedKpiIds[kpi.id]) && 'is-updated',
           !kpi.isAvailable && 'is-unavailable'
         )}
         onClick={() => kpi.isAvailable && handlePinKpi(kpi.id)}
       >
+        <div className="nx-orb-dashboard__card-tint" />
         <div className="nx-orb-dashboard__card-top">
-          <span className="nx-orb-dashboard__card-label">{kpi.label}</span>
-          {kpi.status && <div className={cls('nx-orb-dashboard__status-dot', `is-${kpi.status}`)} />}
-        </div>
-        <div className="nx-orb-dashboard__card-value">
-          {kpi.value}{kpi.unit}
-        </div>
-        {trendIcon && (
-          <div className={cls('nx-orb-dashboard__card-trend', `is-${kpi.trend}`)}>
-            <Icon name={trendIcon} />
+          <div className="nx-orb-dashboard__card-label-stack">
+            <span className="nx-orb-dashboard__card-label">{kpi.label}</span>
+            {kpi.description && <span className="nx-orb-dashboard__card-meta">{kpi.description}</span>}
           </div>
-        )}
+          <div className="nx-orb-dashboard__card-signals">
+            {kpi.status && <div className={cls('nx-orb-dashboard__status-dot', `is-${kpi.status}`)} />}
+            <span className={cls('nx-orb-dashboard__status-pill', `is-${tone}`)}>{tone}</span>
+          </div>
+        </div>
+        <div className="nx-orb-dashboard__card-main">
+          <div className="nx-orb-dashboard__card-value">
+            {kpi.value}{kpi.unit}
+          </div>
+          {trendIcon && (
+            <div className={cls('nx-orb-dashboard__card-trend', `is-${kpi.trend}`)}>
+              <Icon name={trendIcon} />
+              <span>{kpi.trend === 'up' ? 'Rising' : 'Falling'}</span>
+            </div>
+          )}
+        </div>
+        <div className="nx-orb-dashboard__card-footer">
+          <span>{kpi.category}</span>
+          <span>{updatedKpiIds[kpi.id] ? 'Updated now' : `Window ${kpi.timeWindow.toUpperCase()}`}</span>
+        </div>
       </div>
     )
   }
+
+  const volumeCards = kpis?.volume ?? []
 
   return (
     <div 
@@ -78,7 +146,8 @@ export const InboxKpiOrb = () => {
         className={cls(
           'nx-kpi-orb', 
           isPinned && 'is-pinned-active',
-          isLive && 'is-live-pulsing'
+          isLive && 'is-live-pulsing',
+          pinnedKpi && `is-${resolveKpiTone(pinnedKpi)}`
         )}
         onClick={() => setIsPinned(!isPinned)}
       >
@@ -103,6 +172,11 @@ export const InboxKpiOrb = () => {
             <div className="nx-orb-dashboard__title-stack">
               <div className="nx-orb-dashboard__title">Operational Intelligence</div>
               <div className="nx-orb-dashboard__subtitle">System Telemetry v2.0</div>
+              {pinnedKpi && (
+                <div className={cls('nx-orb-dashboard__hero-pill', `is-${resolveKpiTone(pinnedKpi)}`)}>
+                  Focus: {pinnedKpi.label} {pinnedKpi.value}{pinnedKpi.unit}
+                </div>
+              )}
             </div>
             <div className="nx-orb-dashboard__windows">
               {(['today', '24h', '7d', '30d'] as const).map(w => (
@@ -122,6 +196,21 @@ export const InboxKpiOrb = () => {
 
           <div className="nx-orb-dashboard__content">
             <div className="nx-orb-dashboard__scroll-area">
+              {volumeCards.length > 0 && (
+                <section className="nx-orb-dashboard__section">
+                  <label>Message Flow</label>
+                  <div className="nx-orb-dashboard__flow-strip">
+                    {volumeCards.map((item) => (
+                      <div key={item.id} className={cls('nx-orb-dashboard__flow-card', `is-${item.tone}`)}>
+                        <span className="nx-orb-dashboard__flow-label">{item.label}</span>
+                        <strong className="nx-orb-dashboard__flow-value">{item.value.toLocaleString()}</strong>
+                        <span className="nx-orb-dashboard__flow-meta">{timeWindow.toUpperCase()}</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
               <section className="nx-orb-dashboard__section">
                 <label>Messaging & Response</label>
                 <div className="nx-orb-dashboard__grid">

@@ -12,7 +12,7 @@ export type FailureReason =
   | 'sync_error'
   | 'unknown'
 export type RiskLevel = 'low' | 'medium' | 'high'
-export type QueueBucket = 'ready' | 'scheduled' | 'approval' | 'failed' | 'retry' | 'held' | 'sent' | 'delivered'
+export type QueueBucket = 'ready' | 'scheduled' | 'approval' | 'failed' | 'retry' | 'held' | 'sent' | 'delivered' | 'paused_invalid_queue_row'
 export type QueueView = 'today' | 'week' | 'month' | 'list' | 'approval' | 'failed'
 
 export interface QueueItem {

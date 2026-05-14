@@ -363,12 +363,6 @@ const LinkedRecordButton = ({
   )
 }
 
-const StatusPill = ({ label, color }: { label: string; color: string }) => (
-  <span className="nx-dossier-status-pill" style={{ background: `${color}22`, color, borderColor: `${color}44` }}>
-    <i className="nx-dossier-status-pill__dot" style={{ background: color }} />
-    {label}
-  </span>
-)
 
 const IntelField = ({ 
   label, 
@@ -399,24 +393,16 @@ const SectionEmptyState = ({ text }: { text: string }) => (
   </div>
 )
 
-const MemoryActiveBadge = ({ active }: { active: boolean }) => (
-  <div className={cls('nx-memory-badge', active && 'is-active')}>
-    <div className="nx-memory-badge__orb" />
-    <span>{active ? 'MEMORY ACTIVE' : 'COLD MEMORY'}</span>
-  </div>
-)
+
 
 const SellerTemperatureIndicator = ({ interest }: { interest: string }) => {
-  const label = interest?.toUpperCase() || 'UNKNOWN'
-  // tone is currently unused but kept for future semantic coloring
-  // let tone: any = 'accent'
-  // if (interest === 'high') tone = 'danger'
-  // if (interest === 'medium') tone = 'warning'
+  const isNone = String(interest || '').toLowerCase() === 'none'
+  const label = isNone ? 'No Active Interest' : (interest?.toUpperCase() || 'UNKNOWN')
   
   return (
-    <div className={cls('nx-temp-indicator', `is-${interest}`)}>
-      <Icon name="zap" />
-      <span>{label} INTEREST</span>
+    <div className={cls('nx-header-interest-v3', `is-${interest}`)}>
+      <Icon name="zap" style={{ fontSize: '10px' }} />
+      <span>{label}</span>
     </div>
   )
 }
@@ -509,65 +495,7 @@ const getNextBestAction = (thread: WorkflowThread): NextActionResult => {
 
 // ── 1. Deal Command Header ────────────────────────────────────────────────
 
-export const DealCommandHeader = ({ thread }: { thread: WorkflowThread }) => {
-  const stageVisual = getSellerStageVisual(thread.conversationStage)
-  const statusVisual = getStatusVisual(thread.inboxStatus)
-  const finalScore = thread.finalAcquisitionScore || (thread as any).ai_score || thread.motivationScore
-  const lastReply = thread.latestMessageBody || thread.lastMessageBody
-  const lastContact = thread.lastOutboundAt || thread.lastMessageAt
-  const sellerName = thread.displayName || 'Seller Unknown'
-  const address = thread.displayAddress || 'Property Unknown'
-  const market = thread.displayMarket || 'Market Unknown'
-  const ownerType = asStr(thread.ownerType || thread.owner_type_guess)
-  const priorityScore = formatScore(finalScore)
 
-  return (
-    <div className="nx-dossier-header">
-      <div className="nx-dossier-header__executive">
-        <div className="nx-dossier-header__identity">
-          <div className="nx-dossier-header__avatar">
-            {sellerName.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
-          </div>
-          <div className="nx-dossier-header__info">
-            <div className="nx-dossier-header__identity-row">
-              <strong className="nx-dossier-header__name">{sellerName}</strong>
-              {isPresent(ownerType) && <QuietBadge label={ownerType} />}
-            </div>
-            <span className="nx-dossier-header__address">{address}</span>
-            <span className="nx-dossier-header__market">{market}</span>
-          </div>
-        </div>
-
-        <div className="nx-dossier-header__message">
-          <span className="nx-dossier-header__message-label">Latest seller signal</span>
-          <div className="nx-dossier-header__preview">
-            <Icon name="message" />
-            <span>{lastReply ? `"${lastReply.slice(0, 180)}${lastReply.length > 180 ? '...' : ''}"` : 'No recent seller reply captured.'}</span>
-          </div>
-        </div>
-
-        <div className="nx-dossier-header__status-stack">
-          <div className="nx-dossier-header__status-row">
-            <span className="nx-dossier-header__status-label">Inbox Status</span>
-            <StatusPill label={statusVisual.label} color={statusVisual.color} />
-          </div>
-          <div className="nx-dossier-header__status-row">
-            <span className="nx-dossier-header__status-label">Seller Stage</span>
-            <StatusPill label={stageVisual.label} color={stageVisual.color} />
-          </div>
-          <div className="nx-dossier-header__status-row">
-            <span className="nx-dossier-header__status-label">Priority Score</span>
-            <span className="nx-dossier-score">{priorityScore || 'Unscored'}</span>
-          </div>
-          <div className="nx-dossier-header__status-row">
-            <span className="nx-dossier-header__status-label">Last Contact</span>
-            <span className="nx-dossier-header__status-value">{lastContact ? formatRelativeTime(lastContact) : 'No contact'}</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 // ── 2. Workflow Control ───────────────────────────────────────────────────
 
@@ -659,7 +587,7 @@ export const OfferMemoCard = ({ thread }: { thread: WorkflowThread }) => {
   const cashOffer = Number(thread.cashOffer || thread.mao || 0)
   const walkaway = Number(thread.walkaway_price || thread.walkaway_internal || 0)
   
-  const confidence = thread.offer_confidence || (hasArv ? 'Review internally' : 'Hold internal')
+  const confidence = asStr(thread.offer_confidence || (hasArv ? 'Review internally' : 'Hold internal'))
   const isConfidenceHigh = confidence.toLowerCase().includes('high') || confidence.toLowerCase().includes('ready')
   const isConfidenceLow = confidence.toLowerCase().includes('low') || confidence.toLowerCase().includes('hold')
 
@@ -1181,7 +1109,7 @@ const buildMatchBadges = (thread: WorkflowThread, limit = 3) => {
     .split(/[;,|]/)
     .map((tag) => tag.trim())
     .filter(Boolean)
-  const ownerType = normalizeText(thread.ownerType || thread.owner_type_guess).toLowerCase()
+  const ownerType = asStr(thread.ownerType || thread.owner_type_guess).toLowerCase()
   const confidence = Number(thread.prospect_phone_score || thread.prospect_contact_score || 0)
   const out = new Map<string, 'green' | 'yellow' | 'red'>()
 
@@ -1665,7 +1593,7 @@ export const TimelinePanel = ({ thread, messages, phase3 }: { thread: WorkflowTh
     }
 
     if (phase3) {
-      phase3.recentTurns.forEach(turn => {
+      phase3?.recentTurns?.forEach(turn => {
         if (turn.intent_detected) {
           rawEvents.push({
             label: `Memory Intent: ${turn.intent_detected}`,
@@ -1677,7 +1605,7 @@ export const TimelinePanel = ({ thread, messages, phase3 }: { thread: WorkflowTh
         }
       })
 
-      phase3.routingDecisions.forEach(rd => {
+      phase3?.routingDecisions?.forEach(rd => {
         rawEvents.push({
           label: `AI Routing: ${rd.decision_type.replace(/_/g, ' ')}`,
           time: rd.created_at,
@@ -1689,7 +1617,7 @@ export const TimelinePanel = ({ thread, messages, phase3 }: { thread: WorkflowTh
         })
       })
 
-      phase3.aiDecisions.forEach(ad => {
+      phase3?.aiDecisions?.forEach(ad => {
         rawEvents.push({
           label: `AI Decision: ${ad.decision_category.replace(/_/g, ' ')}`,
           time: ad.created_at,
@@ -1700,7 +1628,7 @@ export const TimelinePanel = ({ thread, messages, phase3 }: { thread: WorkflowTh
         })
       })
 
-      phase3.negotiationEvents.forEach(ne => {
+      phase3?.negotiationEvents?.forEach(ne => {
         const type = ne.event_type.replace(/_/g, ' ')
         rawEvents.push({
           label: `Milestone: ${type}`,
@@ -1772,7 +1700,7 @@ const PropertyBadge = ({ label, icon, accent = 'neutral' }: { label: string; ico
 
 export const PropertyHeroCard = ({ thread, snapshot, panelMode }: { thread: WorkflowThread; snapshot: NormalizedPropertySnapshot; panelMode?: PanelMode }) => {
   const address = snapshot.fullAddress || thread.displayAddress || thread.propertyAddress || thread.subject
-  const isMultifamily = (thread.propertyType || '').toLowerCase().includes('multi') || (snapshot.propertyType || '').toLowerCase().includes('multi')
+  const isMultifamily = asStr(thread.propertyType || '').toLowerCase().includes('multi') || asStr(snapshot.propertyType || '').toLowerCase().includes('multi')
   const unitCount = Number(snapshot.unitCount || thread.units_count || 0)
   const rawMarket = snapshot.market || thread.displayMarket || thread.market || thread.marketId
   const displayMarket = isPresent(rawMarket) && !/^\d+$/.test(String(rawMarket))
@@ -2097,95 +2025,112 @@ const SellerCommandCard = ({
 }) => {
   const [statusOpen, setStatusOpen] = useState(false)
   const [stageOpen, setStageOpen] = useState(false)
-  const sellerName = thread.displayName || thread.ownerDisplayName || thread.ownerName || 'Unknown seller'
-  const initials = sellerName.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()
-  const ownerType = asStr(thread.ownerType || thread.owner_type_guess) || 'Individual'
-  const market = thread.displayMarket || thread.market || thread.marketId || 'Unknown market'
-  const finalScore = formatScore(thread.finalAcquisitionScore || thread.priorityScore || thread.motivationScore)
-  const lastContact = thread.lastInboundAt || thread.lastOutboundAt || thread.lastMessageAt
-  const statusVisual = getStatusVisual(thread.inboxStatus, {
-    latestDirection: thread.latestDirection || thread.directionUsed || null,
-    lastOutboundAt: thread.lastOutboundAt ?? null,
-    lastInboundAt: thread.lastInboundAt ?? null,
-  })
-  const stageVisual = getSellerStageVisual(thread.conversationStage)
-  const automationLabel = thread.automationState === 'active' ? 'AUTOMATION ACTIVE' : 'AUTOMATION READY'
 
-  const memoryActive = Boolean(phase3?.thread)
+  const stageVisual = getSellerStageVisual(thread.conversationStage)
+  const statusVisual = getStatusVisual(thread.inboxStatus)
+  const finalScore = thread.finalAcquisitionScore || (thread as any).ai_score || thread.motivationScore
+  const lastContact = thread.lastOutboundAt || thread.lastMessageAt
+  const sellerName = thread.displayName || 'Unknown Seller'
+  const rawMarket = thread.displayMarket || thread.market
+  const marketLabel = isPresent(rawMarket) ? asStr(rawMarket) : 'Market Pending'
+  
+  const ownerType = asStr(thread.ownerType || thread.owner_type_guess)
+  const priorityScore = formatScore(finalScore)
+  const automationActive = thread.automationState === 'active'
+  const memoryActive = Boolean(phase3?.thread || (thread as any).is_memory_active)
   const sellerInterest = phase3?.latestSnapshot?.state_data?.seller_interest || 'none'
 
+  // Metadata grouping: Individual • Absentee • Market Pending
+  const metadataParts = [
+    ownerType,
+    thread.isAbsentee ? 'Absentee' : null,
+    marketLabel
+  ].filter(Boolean).join(' • ')
+
   return (
-    <DossierCard className="nx-seller-command-card">
-      <div className="nx-seller-command-card__header">
-        <div className="nx-seller-command-card__identity">
-          <div className="nx-dossier-header__avatar is-command">{initials}</div>
-          <div className="nx-seller-command-card__info">
-            <strong>{sellerName}</strong>
-            <span className="nx-seller-sub-telemetry">
-              {[ownerType, thread.isAbsentee ? 'ABSENTEE' : null, market].filter(Boolean).join(' • ')}
-            </span>
+    <DossierCard className="nx-seller-command-card-v3">
+      <div className="nx-dossier-header-v3">
+        <div className="nx-header-identity-row-v3">
+          <div className="nx-header-avatar-v3">
+            {sellerName.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
+          </div>
+          <div className="nx-header-main-v3">
+            <h2 className="nx-header-name-v3">{sellerName}</h2>
+            <div className="nx-header-meta-v3">
+              {metadataParts}
+            </div>
+          </div>
+          <SellerTemperatureIndicator interest={sellerInterest} />
+        </div>
+
+        <div className="nx-header-actions-v3">
+          <div className="nx-header-dropdown-v3">
+            <button type="button" onClick={() => setStatusOpen(!statusOpen)}>
+              <div style={{ display: 'flex', alignItems: 'center' }}>
+                <i className="nx-dot" style={{ background: statusVisual.color }} />
+                {statusVisual.label}
+              </div>
+              <Icon name="chevron-down" />
+            </button>
+            {statusOpen && (
+              <div className="nx-workflow-menu-v3" style={{ top: 'calc(100% + 4px)', left: 0, right: 0 }}>
+                {inboxStatusOptions.map((opt) => (
+                  <button type="button" key={opt.value} className={cls('nx-workflow-menu-item-v3', opt.value === thread.inboxStatus && 'is-selected')} onClick={() => { onStatusChange(opt.value as InboxStatus); setStatusOpen(false) }}>
+                    <strong>{opt.label}</strong>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="nx-header-dropdown-v3">
+            <button type="button" onClick={() => setStageOpen(!stageOpen)}>
+              <div style={{ display: 'flex', alignItems: 'center' }}>
+                <i className="nx-dot" style={{ background: stageVisual.color }} />
+                {stageVisual.label}
+              </div>
+              <Icon name="chevron-down" />
+            </button>
+            {stageOpen && (
+              <div className="nx-workflow-menu-v3" style={{ top: 'calc(100% + 4px)', left: 0, right: 0 }}>
+                {sellerStageOptions.map((opt) => (
+                  <button type="button" key={opt.value} className={cls('nx-workflow-menu-item-v3', opt.value === thread.conversationStage && 'is-selected')} onClick={() => { onStageChange(opt.value as SellerStage); setStageOpen(false) }}>
+                    <strong>{opt.label}</strong>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
-        <SellerTemperatureIndicator interest={sellerInterest} />
-      </div>
 
-      <div className="nx-seller-command-card__controls">
-        <div className="nx-seller-command-card__select">
-          <button type="button" className="nx-workflow-btn" style={statusStyleVars(statusVisual)} onClick={() => setStatusOpen((open) => !open)}>
-            <i className="nx-workflow-dot" style={{ background: statusVisual.color }} />
-            {statusVisual.label}
-            <Icon name="chevron-down" />
-          </button>
-          {statusOpen && (
-            <div className="nx-workflow-menu nx-liquid-panel">
-              {inboxStatusOptions.map((opt) => (
-                <button type="button" key={opt.value} className={cls('nx-workflow-menu-item', opt.value === thread.inboxStatus && 'is-selected')} style={statusStyleVars(opt)} onClick={() => {
-                  onStatusChange(opt.value as InboxStatus | 'sent_message')
-                  setStatusOpen(false)
-                }}>
-                  <i className="nx-workflow-dot" style={{ background: opt.color }} />
-                  <div><strong>{opt.label}</strong><small>{opt.description}</small></div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="nx-seller-command-card__select">
-          <button type="button" className="nx-workflow-btn" style={statusStyleVars(stageVisual)} onClick={() => setStageOpen((open) => !open)}>
-            <i className="nx-workflow-dot" style={{ background: stageVisual.color }} />
-            {stageVisual.label}
-            <Icon name="chevron-down" />
-          </button>
-          {stageOpen && (
-            <div className="nx-workflow-menu nx-liquid-panel">
-              {sellerStageOptions.map((opt) => (
-                <button type="button" key={opt.value} className={cls('nx-workflow-menu-item', opt.value === thread.conversationStage && 'is-selected')} style={statusStyleVars(opt)} onClick={() => {
-                  onStageChange(opt.value as SellerStage)
-                  setStageOpen(false)
-                }}>
-                  <i className="nx-workflow-dot" style={{ background: opt.color }} />
-                  <div><strong>{opt.label}</strong><small>{opt.description}</small></div>
-                </button>
-              ))}
-            </div>
-          )}
+        <div className="nx-header-telemetry-rail-v3">
+          <div className={cls('nx-telemetry-item-v3', automationActive && 'is-active')}>
+            <div className="nx-dot" />
+            {automationActive ? 'Automation Active' : 'Automation Paused'}
+          </div>
+          <div className={cls('nx-telemetry-item-v3', memoryActive && 'is-active')}>
+            <div className="nx-dot" />
+            {memoryActive ? 'Memory Synced' : 'Cold Memory'}
+          </div>
+          <div className="nx-telemetry-item-v3 is-active">
+            <div className="nx-dot" />
+            Score <span className="nx-header-score-v3">{priorityScore || '—'}</span>
+          </div>
+          <div className="nx-telemetry-item-v3">
+            <div className="nx-dot" />
+            Last Contact {lastContact ? formatRelativeTime(lastContact) : 'None'}
+          </div>
         </div>
       </div>
 
-      <div className="nx-seller-command-card__chips">
-        <QuietBadge label={automationLabel} tone="accent" />
-        <MemoryActiveBadge active={memoryActive} />
-        {isPresent(finalScore) && <QuietBadge label={`SCORE ${finalScore}`} />}
-        {lastContact && <QuietBadge label={`LAST CONTACT ${formatRelativeTime(lastContact).toUpperCase()}`} />}
-      </div>
-      
       {phase3?.latestSnapshot?.state_data?.next_best_action && (
-        <NextBestActionChip 
-          action={phase3.latestSnapshot.state_data.next_best_action} 
-          confidence={phase3.latestSnapshot.state_data.confidence} 
-          reasoning={phase3.latestSnapshot.state_data.reasoning || phase3.latestSnapshot.capture_reason}
-        />
+        <div style={{ marginTop: '12px' }}>
+          <NextBestActionChip 
+            action={phase3.latestSnapshot.state_data.next_best_action} 
+            confidence={phase3.latestSnapshot.state_data.confidence} 
+            reasoning={phase3.latestSnapshot.state_data.reasoning || phase3.latestSnapshot.capture_reason}
+          />
+        </div>
       )}
     </DossierCard>
   )

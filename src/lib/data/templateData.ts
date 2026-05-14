@@ -53,7 +53,7 @@ export interface TemplateRenderResult {
   variableMap: Record<string, string>
 }
 
-const DEV = Boolean(import.meta.env.DEV)
+const DEV = Boolean(import.meta.env?.DEV)
 
 const USE_CASE_LABELS: Record<string, string> = {
   ownership_check: 'Ownership Check',

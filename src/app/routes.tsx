@@ -189,6 +189,13 @@ const acquisitionMapRoute = defineRoute<AcquisitionWorkspaceModel>({
   render: (data) => <AcquisitionMapApp data={data} />,
 })
 
+const acquisitionsMapRoute = defineRoute<AcquisitionWorkspaceModel>({
+  path: '/acquisitions/map',
+  title: 'NEXUS | Acquisitions Command Map',
+  loader: loadAcquisitionWorkspace,
+  render: (data) => <AcquisitionMapApp data={data} />,
+})
+
 const acquisitionAutomationsRoute = defineRoute<AcquisitionWorkspaceModel>({
   path: '/acquisition/automations',
   title: 'NEXUS | Automation Monitor',
@@ -302,6 +309,7 @@ const routes = [
   acquisitionUnderwritingRoute,
   acquisitionAIBrainRoute,
   acquisitionMapRoute,
+  acquisitionsMapRoute,
   acquisitionAutomationsRoute,
   commandStoreRoute,
   liveDashboardRoute,

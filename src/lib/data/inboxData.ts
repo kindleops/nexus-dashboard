@@ -201,17 +201,44 @@ interface InboxSendOptions extends InboxTemplateSendOptions {
 export interface QueueProcessorHealth {
   checkedAt: string
   queuedCount: number
+  scheduledCount: number
+  sendingCount: number
+  sentTodayCount: number
+  deliveredTodayCount: number
+  failedTodayCount: number
+  blockedCount: number
+  pausedInvalidCount: number
+  duplicateSkippedCount: number
+  suppressionBlockedCount: number
+  blankBodyBlockedCount: number
+  routingBlockedCount: number
+  repliedBeforeSendCount: number
   queuedOlderThanLagWindow: number
   oldestQueuedAt: string | null
   latestSentAt: string | null
+  latestWebhookAt: string | null
+  webhookHealthy: boolean
   processorHealthy: boolean
-  status: 'healthy' | 'lagging' | 'unknown'
+  status: 'healthy' | 'warning' | 'critical' | 'unknown'
+  failedRate: number | null
+  duplicateActiveCount: number
+  activeBlankRowCount: number
+  routingBlockedSpike: boolean
+  liveAutopilotAllowed: boolean
+  routingBlockedRows: Array<{
+    id: string
+    sellerName: string
+    propertyAddress: string
+    market: string
+    reason: string
+    queueStatus: string
+  }>
   summary: string
 }
 
 const QUEUE_PROCESSOR_LAG_MINUTES = 10
 
-const DEV = Boolean(import.meta.env.DEV)
+const DEV = Boolean(import.meta.env?.DEV)
 const MESSAGE_EVENTS_THREAD_PAGE_SIZE = 1000
 export const HYDRATED_INBOX_PAGE_SIZE = 200
 export const HYDRATED_INBOX_THREADS_VIEW = 'inbox_command_center_v'
@@ -497,13 +524,37 @@ export const getQueueProcessorHealth = async (): Promise<QueueProcessorHealth> =
   const supabase = getSupabaseClient()
   const checkedAt = new Date().toISOString()
   const lagCutoffIso = new Date(Date.now() - QUEUE_PROCESSOR_LAG_MINUTES * 60 * 1000).toISOString()
+  const startOfDay = new Date()
+  startOfDay.setHours(0, 0, 0, 0)
+  const startOfDayIso = startOfDay.toISOString()
+  const webhookStaleCutoffIso = new Date(Date.now() - 90 * 60 * 1000).toISOString()
 
   try {
-    const [queuedProbe, lagProbe, oldestQueuedProbe, latestSentProbe] = await Promise.all([
+    const [
+      queuedProbe,
+      scheduledProbe,
+      sendingProbe,
+      lagProbe,
+      oldestQueuedProbe,
+      latestSentProbe,
+      sentTodayProbe,
+      deliveredTodayProbe,
+      failedTodayProbe,
+      issueRowsProbe,
+      latestWebhookProbe,
+    ] = await Promise.all([
       supabase
         .from('send_queue')
         .select('id', { count: 'exact', head: true })
         .eq('queue_status', 'queued'),
+      supabase
+        .from('send_queue')
+        .select('id', { count: 'exact', head: true })
+        .eq('queue_status', 'scheduled'),
+      supabase
+        .from('send_queue')
+        .select('id', { count: 'exact', head: true })
+        .eq('queue_status', 'sending'),
       supabase
         .from('send_queue')
         .select('id', { count: 'exact', head: true })
@@ -518,67 +569,249 @@ export const getQueueProcessorHealth = async (): Promise<QueueProcessorHealth> =
       supabase
         .from('send_queue')
         .select('sent_at,updated_at,created_at')
-        .eq('queue_status', 'sent')
+        .in('queue_status', ['sent', 'delivered'])
         .order('sent_at', { ascending: false, nullsFirst: false })
         .order('updated_at', { ascending: false, nullsFirst: false })
         .order('created_at', { ascending: false })
         .limit(1),
+      supabase
+        .from('send_queue')
+        .select('id', { count: 'exact', head: true })
+        .gte('sent_at', startOfDayIso),
+      supabase
+        .from('send_queue')
+        .select('id', { count: 'exact', head: true })
+        .eq('queue_status', 'delivered')
+        .gte('delivered_at', startOfDayIso),
+      supabase
+        .from('send_queue')
+        .select('id', { count: 'exact', head: true })
+        .eq('queue_status', 'failed')
+        .gte('updated_at', startOfDayIso),
+      supabase
+        .from('send_queue')
+        .select('id,queue_status,created_at,updated_at,scheduled_for_utc,sent_at,delivered_at,guard_reason,blocked_reason,failed_reason,paused_reason,dedupe_key,market,property_address,message_body,message_text,to_phone_number,master_owner_id,property_id,metadata')
+        .order('updated_at', { ascending: false })
+        .limit(4000),
+      supabase
+        .from('webhook_log')
+        .select('created_at')
+        .order('created_at', { ascending: false })
+        .limit(1),
     ])
 
-    if (queuedProbe.error || lagProbe.error || oldestQueuedProbe.error || latestSentProbe.error) {
-      const err = queuedProbe.error ?? lagProbe.error ?? oldestQueuedProbe.error ?? latestSentProbe.error
+    if (
+      queuedProbe.error ||
+      scheduledProbe.error ||
+      sendingProbe.error ||
+      lagProbe.error ||
+      oldestQueuedProbe.error ||
+      latestSentProbe.error ||
+      sentTodayProbe.error ||
+      deliveredTodayProbe.error ||
+      failedTodayProbe.error ||
+      issueRowsProbe.error
+    ) {
+      const err =
+        queuedProbe.error ??
+        scheduledProbe.error ??
+        sendingProbe.error ??
+        lagProbe.error ??
+        oldestQueuedProbe.error ??
+        latestSentProbe.error ??
+        sentTodayProbe.error ??
+        deliveredTodayProbe.error ??
+        failedTodayProbe.error ??
+        issueRowsProbe.error
       return {
         checkedAt,
         queuedCount: queuedProbe.count ?? 0,
+        scheduledCount: scheduledProbe.count ?? 0,
+        sendingCount: sendingProbe.count ?? 0,
+        sentTodayCount: sentTodayProbe.count ?? 0,
+        deliveredTodayCount: deliveredTodayProbe.count ?? 0,
+        failedTodayCount: failedTodayProbe.count ?? 0,
+        blockedCount: 0,
+        pausedInvalidCount: 0,
+        duplicateSkippedCount: 0,
+        suppressionBlockedCount: 0,
+        blankBodyBlockedCount: 0,
+        routingBlockedCount: 0,
+        repliedBeforeSendCount: 0,
         queuedOlderThanLagWindow: lagProbe.count ?? 0,
         oldestQueuedAt: null,
         latestSentAt: null,
+        latestWebhookAt: null,
+        webhookHealthy: false,
         processorHealthy: false,
         status: 'unknown',
+        failedRate: null,
+        duplicateActiveCount: 0,
+        activeBlankRowCount: 0,
+        routingBlockedSpike: false,
+        liveAutopilotAllowed: false,
+        routingBlockedRows: [],
         summary: mapErrorMessage(err) || 'Unable to read queue processor status',
       }
     }
 
     const queuedCount = queuedProbe.count ?? 0
+    const scheduledCount = scheduledProbe.count ?? 0
+    const sendingCount = sendingProbe.count ?? 0
+    const sentTodayCount = sentTodayProbe.count ?? 0
+    const deliveredTodayCount = deliveredTodayProbe.count ?? 0
+    const failedTodayCount = failedTodayProbe.count ?? 0
     const queuedOlderThanLagWindow = lagProbe.count ?? 0
     const oldestQueuedRow = safeArray(oldestQueuedProbe.data as AnyRecord[])[0] ?? null
     const latestSentRow = safeArray(latestSentProbe.data as AnyRecord[])[0] ?? null
+    const latestWebhookRow = safeArray(latestWebhookProbe.data as AnyRecord[])[0] ?? null
+    const issueRows = safeArray(issueRowsProbe.data as AnyRecord[])
 
     const oldestQueuedAt = asIso(getFirst(oldestQueuedRow ?? {}, ['created_at'])) ?? null
     const latestSentAt = asIso(getFirst(latestSentRow ?? {}, ['sent_at', 'updated_at', 'created_at'])) ?? null
+    const latestWebhookAt = asIso(getFirst(latestWebhookRow ?? {}, ['created_at'])) ?? null
 
-    if (queuedOlderThanLagWindow > 0) {
-      return {
-        checkedAt,
-        queuedCount,
-        queuedOlderThanLagWindow,
-        oldestQueuedAt,
-        latestSentAt,
-        processorHealthy: false,
-        status: 'lagging',
-        summary: `${queuedOlderThanLagWindow} queued older than ${QUEUE_PROCESSOR_LAG_MINUTES}m`,
-      }
-    }
+    const activeRows = issueRows.filter((row) => ['queued', 'scheduled', 'sending'].includes(normalizeStatus(row.queue_status)))
+    const blockedRows = issueRows.filter((row) => normalizeStatus(row.queue_status) === 'blocked')
+    const pausedRows = issueRows.filter((row) => normalizeStatus(row.queue_status) === 'paused_invalid_queue_row')
+    const duplicateSkippedCount = issueRows.filter((row) => {
+      const reason = `${asString(row.blocked_reason)} ${asString(row.failed_reason)}`.toLowerCase()
+      return reason.includes('duplicate')
+    }).length
+    const suppressionBlockedCount = issueRows.filter((row) => {
+      const reason = `${asString(row.blocked_reason)} ${asString(row.failed_reason)} ${asString(row.guard_reason)}`.toLowerCase()
+      return ['suppressed', 'opt_out', 'dnc', 'wrong_number', 'hostile', 'legal'].some((token) => reason.includes(token))
+    }).length
+    const blankBodyBlockedCount = issueRows.filter((row) => {
+      const reason = `${asString(row.blocked_reason)} ${asString(row.failed_reason)} ${asString(row.guard_reason)}`.toLowerCase()
+      const body = asString(row.message_body || row.message_text).trim()
+      return !body || reason.includes('blank_message_body') || reason.includes('missing_message_body')
+    }).length
+    const routingBlockedRows = issueRows.filter((row) => {
+      const reason = `${asString(row.guard_reason)} ${asString(row.failed_reason)}`.toLowerCase()
+      return reason.includes('no_valid_local_textgrid_number') || reason.includes('routing blocked')
+    })
+    const routingBlockedCount = routingBlockedRows.length
+    const repliedBeforeSendCount = issueRows.filter((row) => {
+      const reason = `${asString(row.paused_reason)} ${asString(row.failed_reason)}`.toLowerCase()
+      return reason.includes('replied_before_send')
+    }).length
+    const blockedCount = blockedRows.length
+    const pausedInvalidCount = pausedRows.length
+    const dedupeCounts = new Map<string, number>()
+    activeRows.forEach((row) => {
+      const key = asString(row.dedupe_key)
+      if (!key) return
+      dedupeCounts.set(key, (dedupeCounts.get(key) ?? 0) + 1)
+    })
+    const duplicateActiveCount = Array.from(dedupeCounts.values()).filter((count) => count > 1).length
+    const activeBlankRowCount = activeRows.filter((row) => !asString(row.message_body || row.message_text).trim()).length
+    const latestSentTs = latestSentAt ? new Date(latestSentAt).getTime() : NaN
+    const latestWebhookTs = latestWebhookAt ? new Date(latestWebhookAt).getTime() : NaN
+    const webhookHealthy = !Number.isFinite(latestSentTs) || latestSentTs < new Date(webhookStaleCutoffIso).getTime()
+      ? true
+      : Number.isFinite(latestWebhookTs) && latestWebhookTs >= new Date(webhookStaleCutoffIso).getTime()
+    const failedRate = sentTodayCount > 0 ? (failedTodayCount / sentTodayCount) * 100 : null
+    const routingBlockedSpike = routingBlockedCount >= 5
+    const critical =
+      activeBlankRowCount > 0 ||
+      duplicateActiveCount > 0 ||
+      routingBlockedSpike ||
+      (failedRate !== null && failedRate > 12) ||
+      !webhookHealthy
+    const warning =
+      !critical &&
+      (queuedOlderThanLagWindow > 0 ||
+        pausedInvalidCount > 0 ||
+        routingBlockedCount > 0 ||
+        (failedRate !== null && failedRate > 5) ||
+        blockedCount > 0)
+    const status: QueueProcessorHealth['status'] = critical ? 'critical' : warning ? 'warning' : 'healthy'
+    const processorHealthy = status === 'healthy'
+    const summary = critical
+      ? activeBlankRowCount > 0
+        ? `${activeBlankRowCount} active blank queue rows require intervention`
+        : duplicateActiveCount > 0
+          ? `${duplicateActiveCount} active duplicate dedupe collisions detected`
+          : !webhookHealthy
+            ? 'Delivery webhook appears stale'
+            : routingBlockedSpike
+              ? `${routingBlockedCount} routing blocked rows need sender coverage`
+              : `${failedTodayCount} failed today exceeded threshold`
+      : warning
+        ? queuedOlderThanLagWindow > 0
+          ? `${queuedOlderThanLagWindow} queued older than ${QUEUE_PROCESSOR_LAG_MINUTES}m`
+          : `${pausedInvalidCount + routingBlockedCount} queue rows need review`
+        : queuedCount + scheduledCount + sendingCount > 0
+          ? `${queuedCount + scheduledCount + sendingCount} queue rows active and inside guardrails`
+          : 'Queue clear'
 
     return {
       checkedAt,
       queuedCount,
+      scheduledCount,
+      sendingCount,
+      sentTodayCount,
+      deliveredTodayCount,
+      failedTodayCount,
+      blockedCount,
+      pausedInvalidCount,
+      duplicateSkippedCount,
+      suppressionBlockedCount,
+      blankBodyBlockedCount,
+      routingBlockedCount,
+      repliedBeforeSendCount,
       queuedOlderThanLagWindow,
       oldestQueuedAt,
       latestSentAt,
-      processorHealthy: true,
-      status: 'healthy',
-      summary: queuedCount > 0 ? `${queuedCount} queued and within normal window` : 'Queue clear',
+      latestWebhookAt,
+      webhookHealthy,
+      processorHealthy,
+      status,
+      failedRate,
+      duplicateActiveCount,
+      activeBlankRowCount,
+      routingBlockedSpike,
+      liveAutopilotAllowed: !critical,
+      routingBlockedRows: routingBlockedRows.slice(0, 8).map((row) => ({
+        id: asString(row.id, ''),
+        sellerName: asString(((row.metadata as AnyRecord | null)?.seller_name) || ((row.metadata as AnyRecord | null)?.owner_name) || row.master_owner_id, 'Unknown Seller'),
+        propertyAddress: asString(row.property_address, 'Property Unknown'),
+        market: asString(row.market, 'Unknown'),
+        reason: asString(row.failed_reason || row.guard_reason || row.blocked_reason, 'Routing blocked'),
+        queueStatus: asString(row.queue_status, 'paused_invalid_queue_row'),
+      })),
+      summary,
     }
   } catch (error) {
     return {
       checkedAt,
       queuedCount: 0,
+      scheduledCount: 0,
+      sendingCount: 0,
+      sentTodayCount: 0,
+      deliveredTodayCount: 0,
+      failedTodayCount: 0,
+      blockedCount: 0,
+      pausedInvalidCount: 0,
+      duplicateSkippedCount: 0,
+      suppressionBlockedCount: 0,
+      blankBodyBlockedCount: 0,
+      routingBlockedCount: 0,
+      repliedBeforeSendCount: 0,
       queuedOlderThanLagWindow: 0,
       oldestQueuedAt: null,
       latestSentAt: null,
+      latestWebhookAt: null,
+      webhookHealthy: false,
       processorHealthy: false,
       status: 'unknown',
+      failedRate: null,
+      duplicateActiveCount: 0,
+      activeBlankRowCount: 0,
+      routingBlockedSpike: false,
+      liveAutopilotAllowed: false,
+      routingBlockedRows: [],
       summary: mapErrorMessage(error) || 'Unable to read queue processor status',
     }
   }
@@ -2638,7 +2871,7 @@ export const getThreadIntelligence = async (thread: InboxWorkflowThread): Promis
 
   // 2. Try dossier view
   const { data, error } = await supabase
-    .from('inbox_thread_dossier_hydrated')
+    .from('inbox_threads_hydrated')
     .select('*')
     .eq('thread_key', threadKey)
     .limit(1)
@@ -3027,10 +3260,13 @@ export const queueReplyFromInbox = async (
 
   const routingResult = await resolveOutboundTextgridNumber({
     marketId: thread.marketId,
+    market: thread.market || thread.marketName,
     ourNumber: thread.ourNumber,
     phoneNumber: thread.phoneNumber,
     textgridNumberId: thread.textgridNumberId,
-    property_address_state: thread.property_address_state
+    property_address_state: thread.property_address_state,
+    propertyId: thread.propertyId,
+    threadKey: thread.threadKey,
   }, false)
 
   if (!routingResult.ok) {
@@ -3072,6 +3308,7 @@ export const queueReplyFromInbox = async (
       created_from: 'leadcommand_inbox',
       our_number: thread.ourNumber,
       seller_phone: thread.phoneNumber,
+      ...buildQueueRoutingMetadata(thread),
       template_variables: personalization.renderVariables,
       candidate_snapshot: personalization.candidateSnapshot,
       personalization: personalization.personalizationMeta,
@@ -3090,11 +3327,7 @@ export const queueReplyFromInbox = async (
   }
   if (isValidUUID(asString(thread.phoneNumberId, ''))) payload.phone_number_id = thread.phoneNumberId
   if (isValidUUID(asString(textgridNumberId, ''))) payload.textgrid_number_id = textgridNumberId
-  if (thread.propertyAddress) payload.property_address = thread.propertyAddress
-  if (isValidUUID(asString(thread.ownerId, ''))) payload.master_owner_id = thread.ownerId
-  if (isValidUUID(asString(thread.prospectId, ''))) payload.prospect_id = thread.prospectId
-  if (isValidUUID(asString(thread.propertyId, ''))) payload.property_id = thread.propertyId
-  if (thread.marketId) payload.market_id = thread.marketId
+  Object.assign(payload, buildQueueRoutingColumns(thread))
 
   const insertPayloadKeys = Object.keys(payload)
 
@@ -3209,6 +3442,41 @@ export interface InboxThreadStateMutationResult {
   threadKey: string
   mutationPayload: AnyRecord
   errorMessage: string | null
+}
+
+const buildQueueRoutingColumns = (thread: InboxThread): Record<string, unknown> => {
+  const sellerName = asString(thread.ownerName || thread.sellerName || thread.ownerDisplayName, '').trim()
+  const market = asString(thread.market || thread.marketName || thread.marketId, '').trim()
+  const state = asString(thread.property_address_state, '').trim().toUpperCase()
+
+  const payload: Record<string, unknown> = {}
+
+  if (sellerName) payload.seller_name = sellerName
+  if (thread.propertyAddress) payload.property_address = thread.propertyAddress
+  if (state) payload.property_address_state = state
+  if (market) payload.market = market
+  if (thread.threadKey) payload.thread_key = thread.threadKey
+  if (isValidUUID(asString(thread.ownerId, ''))) payload.master_owner_id = thread.ownerId
+  if (isValidUUID(asString(thread.prospectId, ''))) payload.prospect_id = thread.prospectId
+  if (isValidUUID(asString(thread.propertyId, ''))) payload.property_id = thread.propertyId
+  if (isValidUUID(asString(thread.marketId, ''))) payload.market_id = thread.marketId
+
+  return payload
+}
+
+const buildQueueRoutingMetadata = (thread: InboxThread): Record<string, unknown> => {
+  const sellerName = asString(thread.ownerName || thread.sellerName || thread.ownerDisplayName, '').trim()
+  const market = asString(thread.market || thread.marketName || thread.marketId, '').trim()
+  const state = asString(thread.property_address_state, '').trim().toUpperCase()
+
+  return {
+    seller_name: sellerName || null,
+    property_address: thread.propertyAddress || null,
+    property_id: thread.propertyId || null,
+    market: market || null,
+    property_address_state: state || null,
+    thread_key: thread.threadKey || null,
+  }
 }
 
 const writeInboxThreadState = async (
@@ -3413,20 +3681,34 @@ export const sendInboxMessageNow = async (
   }
 
   // ── Resolve from number ────────────────────────────────────────────────────
-  // Try all possible sources for from_phone_number; empty strings are treated as falsy
-  const fromPhone = [
-    normalizePhone(options?.fromPhoneNumber ?? ''),
-    normalizePhone(thread.ourNumber ?? ''),
-    normalizePhone(import.meta.env.VITE_TEXTGRID_FROM_NUMBER ?? ''),
-    normalizePhone(import.meta.env.VITE_TEXTGRID_NUMBER ?? ''),
-  ].find((phone) => phone && phone.length > 0) || null
+  const routingResult = await resolveOutboundTextgridNumber({
+    marketId: thread.marketId,
+    market: thread.market || thread.marketName,
+    ourNumber: options?.fromPhoneNumber || thread.ourNumber,
+    phoneNumber: thread.phoneNumber,
+    textgridNumberId: thread.textgridNumberId,
+    property_address_state: thread.property_address_state,
+    propertyId: thread.propertyId,
+    threadKey: thread.threadKey,
+  }, false)
+
+  const fromPhone = routingResult.ok
+    ? routingResult.from_phone_number
+    : [
+        normalizePhone(options?.fromPhoneNumber ?? ''),
+        normalizePhone(thread.ourNumber ?? ''),
+        normalizePhone(import.meta.env.VITE_TEXTGRID_FROM_NUMBER ?? ''),
+        normalizePhone(import.meta.env.VITE_TEXTGRID_NUMBER ?? ''),
+      ].find((phone) => phone && phone.length > 0) || null
 
   if (!fromPhone) {
     if (DEV) console.warn('[sendInboxMessageNow] no from_phone_number available — send will likely fail', { threadOurNumber: thread.ourNumber, envVars: { VITE_TEXTGRID_FROM_NUMBER: !!import.meta.env.VITE_TEXTGRID_FROM_NUMBER, VITE_TEXTGRID_NUMBER: !!import.meta.env.VITE_TEXTGRID_NUMBER } })
   }
 
   // If from number known, try to resolve textgrid_numbers table for the number id
-  let textgridNumberId = asString(thread.textgridNumberId, '') || null
+  let textgridNumberId = routingResult.ok
+    ? asString(routingResult.textgrid_number_id, '') || null
+    : asString(thread.textgridNumberId, '') || null
 
   if (!textgridNumberId && fromPhone) {
     const supabase = getSupabaseClient()
@@ -3480,6 +3762,7 @@ export const sendInboxMessageNow = async (
       our_number: thread.ourNumber,
       seller_phone: thread.phoneNumber,
       note: 'queued_ready_for_processor',
+      ...buildQueueRoutingMetadata(thread),
       template_variables: personalization.renderVariables,
       candidate_snapshot: personalization.candidateSnapshot,
       personalization: personalization.personalizationMeta,
@@ -3498,11 +3781,7 @@ export const sendInboxMessageNow = async (
   }
   if (isValidUUID(asString(textgridNumberId, ''))) insertPayload.textgrid_number_id = textgridNumberId
   if (isValidUUID(asString(thread.phoneNumberId, ''))) insertPayload.phone_number_id = thread.phoneNumberId
-  if (thread.propertyAddress) insertPayload.property_address = thread.propertyAddress
-  if (isValidUUID(asString(thread.ownerId, ''))) insertPayload.master_owner_id = thread.ownerId
-  if (isValidUUID(asString(thread.prospectId, ''))) insertPayload.prospect_id = thread.prospectId
-  if (isValidUUID(asString(thread.propertyId, ''))) insertPayload.property_id = thread.propertyId
-  if (thread.marketId) insertPayload.market_id = thread.marketId
+  Object.assign(insertPayload, buildQueueRoutingColumns(thread))
 
   const insertPayloadKeys = Object.keys(insertPayload)
 
@@ -3647,10 +3926,13 @@ export const scheduleReplyFromInbox = async (
 
   const routingResult = await resolveOutboundTextgridNumber({
     marketId: thread.marketId,
+    market: thread.market || thread.marketName,
     ourNumber: thread.ourNumber,
     phoneNumber: thread.phoneNumber,
     textgridNumberId: thread.textgridNumberId,
-    property_address_state: thread.property_address_state
+    property_address_state: thread.property_address_state,
+    propertyId: thread.propertyId,
+    threadKey: thread.threadKey,
   }, false)
 
   if (!routingResult.ok) {
@@ -3693,6 +3975,7 @@ export const scheduleReplyFromInbox = async (
       created_from: 'leadcommand_inbox',
       our_number: thread.ourNumber,
       seller_phone: thread.phoneNumber,
+      ...buildQueueRoutingMetadata(thread),
       template_variables: personalization.renderVariables,
       candidate_snapshot: personalization.candidateSnapshot,
       personalization: personalization.personalizationMeta,
@@ -3711,11 +3994,7 @@ export const scheduleReplyFromInbox = async (
   }
   if (isValidUUID(asString(thread.phoneNumberId, ''))) payload.phone_number_id = thread.phoneNumberId
   if (isValidUUID(asString(textgridNumberId, ''))) payload.textgrid_number_id = textgridNumberId
-  if (thread.propertyAddress) payload.property_address = thread.propertyAddress
-  if (isValidUUID(asString(thread.ownerId, ''))) payload.master_owner_id = thread.ownerId
-  if (isValidUUID(asString(thread.prospectId, ''))) payload.prospect_id = thread.prospectId
-  if (isValidUUID(asString(thread.propertyId, ''))) payload.property_id = thread.propertyId
-  if (thread.marketId) payload.market_id = thread.marketId
+  Object.assign(payload, buildQueueRoutingColumns(thread))
 
   const insertPayloadKeys = Object.keys(payload)
   if (DEV) console.log('[scheduleReplyFromInbox] inserting queue_status=scheduled', { toPhone, scheduledAt: scheduledIso, queueKey })

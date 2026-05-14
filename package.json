@@ -31,7 +31,13 @@
     "proof:kpi-ui": "node scripts/proof/kpi-ui.mjs",
     "proof:inbox-phase3-intelligence": "node scripts/proof/inbox-phase3-intelligence.mjs",
     "proof:no-dossier-regression": "node scripts/proof/no-dossier-regression.mjs",
-    "proof:timeline-intelligence-events": "node scripts/proof/timeline-intelligence-events.mjs"
+    "proof:timeline-intelligence-events": "node scripts/proof/timeline-intelligence-events.mjs",
+    "proof:deal-header-v2-polish": "node scripts/proof/deal-header-v2-polish.mjs",
+    "proof:deal-header-telemetry-rail": "node scripts/proof/deal-header-telemetry-rail.mjs",
+    "proof:deal-header-mobile-wrap": "node scripts/proof/deal-header-mobile-wrap.mjs",
+    "proof:deal-command-header-layout": "node scripts/proof/deal-command-header-layout.mjs",
+    "proof:deal-command-header-mobile": "node scripts/proof/deal-command-header-mobile.mjs",
+    "proof:deal-command-header-no-overflow": "node scripts/proof/deal-command-header-no-overflow.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.104.1",

@@ -16,7 +16,7 @@ import { extractCopilotContext, generateBigPickleDraft } from '../../modules/inb
 import { logInboxActivity } from './inboxActivityData'
 import { asString, normalizeStatus, mapErrorMessage, type AnyRecord } from './shared'
 
-const DEV = Boolean(import.meta.env.DEV)
+const DEV = Boolean(import.meta.env?.DEV)
 
 export interface AutoReplyResult {
   ok: boolean
