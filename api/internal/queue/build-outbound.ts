@@ -1,7 +1,7 @@
 import { getSupabaseClient } from '../../../src/lib/supabaseClient'
 import { checkSuppression, generateDedupeKey, scheduleWithWindow, checkExistingQueue, renderMessage } from './utils'
 import { asString, normalizeStatus, asNumber } from '../../../src/lib/data/shared'
-import { fetchSmsTemplates } from '../../../src/lib/data/templateData'
+import { selectWeightedTemplate } from './templateSelection'
 
 type ApiRequest = {
   method?: string
@@ -32,20 +32,23 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
     if (fetchError) throw fetchError
 
-    // 2. Fetch templates for first touch
-    const templates = await fetchSmsTemplates({ useCase: 'ownership_check', limit: 10 })
-    const template = templates.find(t => t.active) || templates[0]
-
-    if (!template) {
-      res.status(500).json({ error: 'No active first-touch template found' })
-      return
-    }
-
     for (const contact of (contacts || [])) {
       const phone = asString(contact.canonical_e164 || contact.phone || '')
       const prospectId = asString(contact.canonical_prospect_id || contact.prospect_id || '')
       const propertyId = asString(contact.property_id || '')
+      const market = asString(contact.market || '')
       const threadKey = `new:${prospectId}:${propertyId}`
+
+      // 2. Weighted Template Selection
+      const selected = await selectWeightedTemplate({
+        market,
+        language: asString(contact.language || 'English')
+      })
+
+      if (!selected) {
+        results.push({ prospectId, status: 'blocked', reason: 'No suitable ownership_check template found' })
+        continue
+      }
 
       // 3. Suppression Gate
       const suppression = await checkSuppression({
@@ -77,10 +80,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       const context = {
         seller_first_name: asString(contact.prospect_first_name || contact.display_name?.split(' ')[0] || 'there'),
         property_address: asString(contact.property_address_full || ''),
-        market: asString(contact.market || ''),
+        market,
         agent_name: 'Nexus'
       }
-      const rendered = renderMessage(template, context)
+      
+      // Creating a mock template object for rendering
+      const mockTemplate = { templateText: selected.template_text } as any
+      const rendered = renderMessage(mockTemplate, context)
       
       if (!rendered.ok) {
         results.push({ prospectId, status: 'blocked', reason: rendered.reason })
@@ -90,13 +96,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       // 6. Scheduling
       const scheduledAt = scheduleWithWindow(new Date(), contact.timezone || 'America/Chicago')
 
-      // 7. Queue the Outbound
+      // 7. Queue the Outbound with selection metadata
       const payload = {
         queue_key: `outbound:${prospectId}:${Date.now()}`,
         dedupe_key: dedupeKey,
         queue_status: 'scheduled',
         to_phone_number: phone,
-        from_phone_number: null, // Runner will resolve this via textgridRouting
+        from_phone_number: null,
         message_body: rendered.text,
         message_text: rendered.text,
         scheduled_for: scheduledAt.toISOString(),
@@ -110,9 +116,16 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         prospect_id: prospectId,
         market: contact.market,
         property_address_state: asString(contact.property_address_state || ''),
+        // Metadata for observability
+        selected_template_score: selected.score,
+        selected_template_recommendation: selected.recommendation,
+        template_selection_reason: selected.reason,
+        template_selection_bucket: selected.bucket,
         metadata: {
-          template_id: template.id,
-          source: 'outbound_builder'
+          template_id: selected.template_id,
+          source: 'weighted_outbound_builder',
+          selection_score: selected.score,
+          selection_bucket: selected.bucket
         }
       }
 
@@ -120,7 +133,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       if (insertError) {
         results.push({ prospectId, status: 'failed', reason: insertError.message })
       } else {
-        results.push({ prospectId, status: 'queued', dedupeKey, scheduledAt: scheduledAt.toISOString() })
+        results.push({ prospectId, status: 'queued', dedupeKey, template_id: selected.template_id })
       }
     }
 
@@ -130,3 +143,4 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to build outbound' })
   }
 }
+

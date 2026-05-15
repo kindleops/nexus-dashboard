@@ -32,13 +32,18 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     const min_sent = asNumber(params?.min_sent, 1)
     const include_raw = params?.include_raw === 'true' || params?.include_raw === true
 
-    const { data, error } = await supabase.rpc('get_ownership_check_template_stats', {
-      start_date,
-      end_date,
-      p_market_id: market,
+    const recommendation = asString(params?.recommendation, null)
+    const risk_level = asString(params?.risk_level, null)
+
+    const { data, error } = await supabase.rpc('get_ownership_check_template_stats_v2', {
+      p_start_date: start_date,
+      p_end_date: end_date,
+      p_market: market,
       p_agent_id: agent_id,
       p_language: language,
-      p_min_sent: min_sent
+      p_min_sent: min_sent,
+      p_recommendation: recommendation,
+      p_risk_level: risk_level
     })
 
     if (error) {
@@ -56,7 +61,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         market,
         agent_id,
         language,
-        min_sent
+        min_sent,
+        recommendation,
+        risk_level
       },
       data: data || []
     })

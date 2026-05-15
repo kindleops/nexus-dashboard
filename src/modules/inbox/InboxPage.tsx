@@ -2124,13 +2124,6 @@ export default function InboxPage() {
               <div className="nx-map-right-header__actions">
                 <button
                   type="button"
-                  title={mapSourceMode === 'visible_threads' ? 'Show all pins' : 'Show filtered pins only'}
-                  onClick={() => setMapSourceMode((mode) => mode === 'visible_threads' ? 'all_active_coordinate_threads' : 'visible_threads')}
-                >
-                  {mapSourceMode === 'visible_threads' ? 'Show All Pins' : 'Filtered Pins'}
-                </button>
-                <button
-                  type="button"
                   title="Expand map (\\)"
                   onClick={() => setLayoutState(cycleMapMode)}
                 >
@@ -2158,16 +2151,11 @@ export default function InboxPage() {
                 quickReplyDisabled={selectedSuppressed || isSending}
                 zoomedIn={mapMode !== 'side'}
                 sourceMode={mapSourceMode}
+                onSourceModeChange={setMapSourceMode}
                 onSelectThreadId={handleSelect}
                 onBackgroundClick={() => {}}
               />
             </div>
-            {selected && (
-              <div className="nx-map-right-footer">
-                <strong>{selected.propertyAddress || selected.subject || 'Property Unknown'}</strong>
-                <span>{selected.market || selected.marketId || 'Market Unknown'}</span>
-              </div>
-            )}
           </aside>
         ) : (showRightPanel && !isDoubleSided) || commandViewMode === 'dossier' ? (
           <IntelligencePanel

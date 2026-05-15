@@ -78,7 +78,7 @@ type StyleLayerLike = maplibregl.LayerSpecification & {
   paint?: Record<string, unknown>
 }
 
-export type InboxMapActivityMode = 'threads' | 'sends' | 'follow_ups'
+export type InboxMapActivityMode = 'all' | 'threads' | 'sends' | 'follow_ups'
 
 type ThreadMapState = 'new_replies' | 'needs_review' | 'waiting_on_seller' | 'negotiating' | 'follow_up_due' | 'suppressed'
 type SendMapState = 'queued' | 'sending' | 'sent' | 'delivered' | 'failed' | 'replied' | 'opted_out' | 'queue_blocked'
@@ -161,6 +161,7 @@ type CommandMapPin = {
 type PinFeatureProps = CommandMapPin & {
   featureType: 'pin' | 'market_cluster'
   selected: 0 | 1
+  focusOpacity: number
   stageColor: string
   pulseTier: 'fast' | 'medium_fast' | 'medium' | 'slow' | 'very_slow' | 'none'
   pulseMode: 'none' | 'continuous' | 'ripple' | 'triple'
@@ -177,6 +178,56 @@ type PinFeatureProps = CommandMapPin & {
   queueBlockedBadge: 0 | 1
 }
 
+type MapKpiFilterKey =
+  | ThreadMapState
+  | SendMapState
+  | FollowUpMapState
+  | 'contract_active'
+  | 'offer_ready'
+
+type MapKpiChip = {
+  key: MapKpiFilterKey
+  label: string
+  count: number
+  tone: string
+}
+
+type TickerDensity = 'minimal' | 'compact' | 'expanded'
+
+type LiveTickerItem = {
+  id: string
+  threadId: string
+  lng: number
+  lat: number
+  eventType:
+    | 'new_reply'
+    | 'hot_lead'
+    | 'needs_review'
+    | 'send_queued'
+    | 'send_sent'
+    | 'send_delivered'
+    | 'send_failed'
+    | 'follow_up_due'
+    | 'follow_up_scheduled'
+    | 'suppressed'
+    | 'opt_out'
+    | 'price_given'
+    | 'offer_requested'
+    | 'underwriting_complete'
+  badge: string
+  sellerName: string
+  location: string
+  timeAgo: string
+  timestamp: string
+  preview?: string
+  address?: string
+  statusLabel?: string
+  stageLabel?: string
+  tone: 'accent' | 'danger' | 'success' | 'warning' | 'neutral' | 'premium'
+  disabledReply?: boolean
+  detailLabel?: string
+}
+
 const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
 const text = (value: unknown): string => String(value ?? '').trim()
 const lower = (value: unknown): string => text(value).toLowerCase()
@@ -186,20 +237,16 @@ const num = (value: unknown): number | null => {
 }
 
 const stageColor = (pin: CommandMapPin): string => {
-  if (pin.activity_mode === 'sends') {
-    if (pin.activity_state === 'queued') return '#5d6a7b'
-    if (pin.activity_state === 'sending' || pin.activity_state === 'sent') return '#3b82f6'
-    if (pin.activity_state === 'delivered') return '#30d158'
-    if (pin.activity_state === 'failed' || pin.activity_state === 'opted_out' || pin.activity_state === 'queue_blocked') return '#ff453a'
-    if (pin.activity_state === 'replied') return '#38bdf8'
-  }
-  if (pin.activity_mode === 'follow_ups') {
-    if (pin.activity_state === 'overdue') return '#ff453a'
-    if (pin.activity_state === 'due_now') return '#ffb000'
-    if (pin.activity_state === 'due_later_today') return '#5bb6ff'
-    if (pin.activity_state === 'due_tomorrow') return '#14b8a6'
-    if (pin.activity_state === 'stale_no_response') return '#7d8795'
-  }
+  if (pin.activity_state === 'queued') return '#5d6a7b'
+  if (pin.activity_state === 'sending' || pin.activity_state === 'sent') return '#3b82f6'
+  if (pin.activity_state === 'delivered') return '#30d158'
+  if (pin.activity_state === 'failed' || pin.activity_state === 'opted_out' || pin.activity_state === 'queue_blocked') return '#ff453a'
+  if (pin.activity_state === 'replied') return '#38bdf8'
+  if (pin.activity_state === 'overdue') return '#ff453a'
+  if (pin.activity_state === 'due_now') return '#ffb000'
+  if (pin.activity_state === 'due_later_today') return '#5bb6ff'
+  if (pin.activity_state === 'due_tomorrow') return '#14b8a6'
+  if (pin.activity_state === 'stale_no_response') return '#7d8795'
   if (pin.suppression_status !== 'clear') return '#ff453a'
   const stage = lower(pin.conversation_stage)
   if (stage.includes('contract')) return '#14b8a6'
@@ -227,17 +274,12 @@ const badgeColor = (pin: CommandMapPin): string => {
 }
 
 const pulseModeFor = (pin: CommandMapPin): PinFeatureProps['pulseMode'] => {
-  if (pin.activity_mode === 'sends') {
-    if (pin.activity_state === 'sending') return 'continuous'
-    if (pin.activity_state === 'sent' || pin.activity_state === 'delivered' || pin.activity_state === 'replied' || pin.activity_state === 'opted_out') return 'ripple'
-    if (pin.activity_state === 'failed') return 'triple'
-    return 'none'
-  }
-  if (pin.activity_mode === 'follow_ups') {
-    if (pin.activity_state === 'overdue') return 'continuous'
-    if (pin.activity_state === 'due_now') return 'continuous'
-    return 'none'
-  }
+  if (pin.activity_state === 'sending') return 'continuous'
+  if (pin.activity_state === 'sent' || pin.activity_state === 'delivered' || pin.activity_state === 'replied' || pin.activity_state === 'opted_out') return 'ripple'
+  if (pin.activity_state === 'failed') return 'triple'
+  if (pin.activity_state === 'overdue' || pin.activity_state === 'due_now') return 'continuous'
+  if (pin.activity_state === 'due_later_today' || pin.activity_state === 'due_tomorrow') return 'ripple'
+  if (pin.activity_mode === 'follow_ups' || pin.activity_mode === 'sends') return 'none'
   return pulseTierFor(pin.last_activity_at) === 'none' ? 'none' : 'continuous'
 }
 
@@ -525,6 +567,26 @@ const deriveFollowUpState = (pin: CommandMapPin): FollowUpMapState | null => {
   return null
 }
 
+const deriveAllState = (pin: CommandMapPin): PinActivityState => {
+  if (pin.suppression_status !== 'clear') return 'suppressed'
+  const threadState = deriveThreadState(pin)
+  if (threadState === 'new_replies' || threadState === 'needs_review' || threadState === 'negotiating') return threadState
+
+  const sendState = deriveSendState(pin)
+  if (sendState === 'queue_blocked' || sendState === 'failed' || sendState === 'replied' || sendState === 'sending' || sendState === 'queued') {
+    return sendState
+  }
+
+  const followUpState = deriveFollowUpState(pin)
+  if (followUpState === 'overdue' || followUpState === 'due_now' || followUpState === 'due_later_today' || followUpState === 'due_tomorrow') {
+    return followUpState
+  }
+
+  if (sendState) return sendState
+  if (followUpState) return followUpState
+  return threadState
+}
+
 const activityLabelFor = (activityState: PinActivityState): string => {
   if (activityState === 'new_replies') return 'New Replies'
   if (activityState === 'needs_review') return 'Needs Review'
@@ -542,7 +604,9 @@ const activityLabelFor = (activityState: PinActivityState): string => {
 const toActivityPins = (pins: CommandMapPin[], activityMode: InboxMapActivityMode): CommandMapPin[] => {
   return pins.flatMap((pin) => {
     const activityState =
-      activityMode === 'threads'
+      activityMode === 'all'
+        ? deriveAllState(pin)
+        : activityMode === 'threads'
         ? deriveThreadState(pin)
         : activityMode === 'sends'
           ? deriveSendState(pin)
@@ -584,17 +648,22 @@ const matchesFilters = (pin: CommandMapPin, filters: MapFilterState): boolean =>
 const featureCollectionForPins = (
   pins: CommandMapPin[],
   selectedConversationId: string | null,
+  activeKpiFilter: MapKpiFilterKey | null,
 ): FeatureCollection<Point, PinFeatureProps> => {
   const features: FeatureCollection<Point, PinFeatureProps>['features'] = []
 
   pins.forEach((pin) => {
+    const selected = pin.conversation_id === selectedConversationId ? 1 : 0
+    const focusMatch = matchesKpiFilter(pin, activeKpiFilter)
+    const focusOpacity = selected ? 1 : activeKpiFilter ? (focusMatch ? 1 : 0.16) : 1
     features.push({
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [pin.lng, pin.lat] },
       properties: {
         ...pin,
         featureType: 'pin',
-        selected: pin.conversation_id === selectedConversationId ? 1 : 0,
+        selected,
+        focusOpacity,
         stageColor: stageColor(pin),
         pulseTier:
           pin.activity_mode === 'sends'
@@ -630,54 +699,206 @@ const featureCollectionForPins = (
   return { type: 'FeatureCollection', features }
 }
 
-const buildThreadModeKpis = (pins: CommandMapPin[]) => ({
-  newReplies: pins.filter((pin) => pin.activity_state === 'new_replies').length,
-  review: pins.filter((pin) => pin.activity_state === 'needs_review').length,
-  waiting: pins.filter((pin) => pin.activity_state === 'waiting_on_seller').length,
-  negotiating: pins.filter((pin) => pin.activity_state === 'negotiating').length,
-  due: pins.filter((pin) => pin.activity_state === 'follow_up_due').length,
-  suppressed: pins.filter((pin) => pin.activity_state === 'suppressed').length,
-})
-
-const buildSendModeKpis = (pins: CommandMapPin[]) => {
-  const queued = pins.filter((pin) => pin.activity_state === 'queued').length
-  const sending = pins.filter((pin) => pin.activity_state === 'sending').length
-  const sentToday = pins.filter((pin) => ['sent', 'delivered', 'replied', 'failed'].includes(pin.activity_state) && (minutesBetween(pin.last_outbound_at) ?? Infinity) <= 1440).length
-  const deliveredToday = pins.filter((pin) => pin.activity_state === 'delivered' && (minutesBetween(pin.last_outbound_at) ?? Infinity) <= 1440).length
-  const failedToday = pins.filter((pin) => pin.activity_state === 'failed' && (minutesBetween(pin.last_outbound_at) ?? Infinity) <= 1440).length
-  const repliesToday = pins.filter((pin) => pin.activity_state === 'replied' && (minutesBetween(pin.last_inbound_at) ?? Infinity) <= 1440).length
-  const optOutsToday = pins.filter((pin) => pin.activity_state === 'opted_out' && (minutesBetween(pin.last_activity_at) ?? Infinity) <= 1440).length
-  const deliveryRate = sentToday > 0 ? (deliveredToday / sentToday) * 100 : 0
-  const replyRate = sentToday > 0 ? (repliesToday / sentToday) * 100 : 0
-  const optOutRate = sentToday > 0 ? (optOutsToday / sentToday) * 100 : 0
-  return { queued, sending, sentToday, deliveredToday, failedToday, repliesToday, optOutsToday, deliveryRate, replyRate, optOutRate }
+const matchesKpiFilter = (pin: CommandMapPin, filter: MapKpiFilterKey | null): boolean => {
+  if (!filter) return true
+  if (filter === 'contract_active') return lower(pin.contract_status).includes('active')
+  if (filter === 'offer_ready') return lower(pin.offer_status).includes('ready') || lower(pin.offer_status).includes('sent')
+  return pin.activity_state === filter
 }
 
-const buildFollowUpModeKpis = (pins: CommandMapPin[]) => ({
-  dueNow: pins.filter((pin) => pin.activity_state === 'due_now').length,
-  laterToday: pins.filter((pin) => pin.activity_state === 'due_later_today').length,
-  tomorrow: pins.filter((pin) => pin.activity_state === 'due_tomorrow').length,
-  overdue: pins.filter((pin) => pin.activity_state === 'overdue').length,
-  stale: pins.filter((pin) => pin.activity_state === 'stale_no_response').length,
-})
+const buildKpiChips = (pins: CommandMapPin[], activityMode: InboxMapActivityMode): MapKpiChip[] => {
+  const build = (key: MapKpiFilterKey, label: string, tone: string) => ({
+    key,
+    label,
+    tone,
+    count: pins.filter((pin) => matchesKpiFilter(pin, key)).length,
+  })
 
-const buildLiveTickerItems = (pins: CommandMapPin[]) => {
+  if (activityMode === 'threads') {
+    return [
+      build('new_replies', 'New Replies', '#5bb6ff'),
+      build('needs_review', 'Needs Review', '#f5b94c'),
+      build('waiting_on_seller', 'Waiting', '#9ec3ff'),
+      build('negotiating', 'Negotiating', '#b188ff'),
+      build('follow_up_due', 'Follow-Up Due', '#3ed8a5'),
+      build('suppressed', 'Suppressed', '#ff6b63'),
+    ]
+  }
+  if (activityMode === 'sends') {
+    return [
+      build('queued', 'Queued', '#8f9bad'),
+      build('sending', 'Sending', '#4d8fff'),
+      build('delivered', 'Delivered', '#4fe18a'),
+      build('replied', 'Replies', '#62d3ff'),
+      build('failed', 'Failed', '#ff6b63'),
+      build('queue_blocked', 'Routing Blocked', '#ff9d57'),
+    ]
+  }
+  if (activityMode === 'follow_ups') {
+    return [
+      build('due_now', 'Due Now', '#ffb44d'),
+      build('due_later_today', 'Later Today', '#5bb6ff'),
+      build('due_tomorrow', 'Tomorrow', '#4fe18a'),
+      build('overdue', 'Overdue', '#ff6b63'),
+      build('stale_no_response', 'Stale', '#97a3b6'),
+    ]
+  }
+  return [
+    build('new_replies', 'New Replies', '#5bb6ff'),
+    build('needs_review', 'Needs Review', '#f5b94c'),
+    build('waiting_on_seller', 'Waiting', '#9ec3ff'),
+    build('queued', 'Queued', '#8f9bad'),
+    build('offer_ready', 'Offer Ready', '#4fe18a'),
+    build('contract_active', 'Contracts', '#30d5c8'),
+  ]
+}
+
+const buildLiveTickerItems = (pins: CommandMapPin[], threadsById: Map<string, InboxWorkflowThread>): LiveTickerItem[] => {
   return pins
     .map((pin) => {
-      const label =
-        pin.activity_state === 'sent' ? 'sent'
-          : pin.activity_state === 'delivered' ? 'delivered'
-            : pin.activity_state === 'failed' ? 'failed'
-              : pin.activity_state === 'replied' ? 'reply received'
-                : pin.activity_state === 'opted_out' ? 'opt-out'
-                  : pin.activity_state === 'queue_blocked' ? 'queue blocked'
-                    : pin.activity_state === 'queued' && pin.next_follow_up_at ? 'follow-up scheduled'
-                      : pin.activity_state
-      const timestamp = pin.activity_state === 'replied' ? pin.last_inbound_at : pin.last_outbound_at || pin.last_activity_at
-      return { id: `${pin.conversation_id}:${pin.activity_state}`, label, subject: pin.seller_name, market: pin.market, timestamp }
+      const thread = threadsById.get(pin.conversation_id) || null
+      const sellerName = [
+        text((thread as any)?.seller_name),
+        text((thread as any)?.ownerDisplayName),
+        text((thread as any)?.owner_display_name),
+        text((thread as any)?.ownerName),
+        text((thread as any)?.owner_name),
+        text((thread as any)?.prospect_name),
+        text((thread as any)?.contact_name),
+        text(pin.seller_name),
+      ].find((value) => value && lower(value) !== 'unknown seller') || 'Property Thread'
+      const hydratedAddress = [
+        text((thread as any)?.propertyAddress),
+        text((thread as any)?.propertyAddressFull),
+        text((thread as any)?.property_address),
+        text((thread as any)?.property_address_full),
+        text((thread as any)?.address),
+        text((thread as any)?.situs_address),
+        text(pin.address),
+      ].find(Boolean) || 'Property Unknown'
+      const marketLine = [
+        text((thread as any)?.market),
+        text((thread as any)?.marketName),
+        [text((thread as any)?.city || (thread as any)?.property_address_city || pin.city), text((thread as any)?.state || (thread as any)?.property_address_state || pin.state)].filter(Boolean).join(', '),
+        [text(pin.city), text(pin.state)].filter(Boolean).join(', '),
+      ].find(Boolean) || 'Market Unknown'
+      const lastMessage = [
+        text((thread as any)?.message_body),
+        text((thread as any)?.latestMessageBody),
+        text((thread as any)?.latest_message_body),
+        text((thread as any)?.lastMessageBody),
+        text((thread as any)?.preview),
+        text(pin.last_message),
+      ].find(Boolean) || ''
+      const lowerStage = lower(pin.conversation_stage)
+      const lowerStatus = lower(pin.conversation_status)
+      const lowerMessage = lower(lastMessage)
+
+      let eventType: LiveTickerItem['eventType'] = 'new_reply'
+      let badge = 'New Reply'
+      let tone: LiveTickerItem['tone'] = 'accent'
+      let detailLabel = 'Message'
+
+      if (pin.suppression_status !== 'clear') {
+        eventType = lowerMessage.includes('stop') || lowerMessage.includes('opt out') ? 'opt_out' : 'suppressed'
+        badge = eventType === 'opt_out' ? 'Opt-Out' : 'Suppressed'
+        tone = 'danger'
+        detailLabel = 'Reason'
+      } else if (pin.inbox_bucket === 'needs_review' || pin.activity_state === 'needs_review') {
+        eventType = 'needs_review'
+        badge = 'Needs Review'
+        tone = 'warning'
+        detailLabel = 'Review'
+      } else if ((pin.priority_score ?? 0) >= 92) {
+        eventType = 'hot_lead'
+        badge = 'Hot Lead'
+        tone = 'premium'
+        detailLabel = 'Signal'
+      } else if (lowerStage.includes('price') || lowerStatus.includes('price') || /\$\d/.test(lastMessage)) {
+        eventType = 'price_given'
+        badge = 'Price Given'
+        tone = 'premium'
+        detailLabel = 'Price'
+      } else if (lowerStage.includes('offer') || lowerStatus.includes('offer') || lower(pin.offer_status).includes('ready') || lower(pin.offer_status).includes('sent')) {
+        eventType = 'offer_requested'
+        badge = 'Offer Requested'
+        tone = 'premium'
+        detailLabel = 'Offer'
+      } else if (lowerStatus.includes('underwriting')) {
+        eventType = 'underwriting_complete'
+        badge = 'Underwriting'
+        tone = 'success'
+        detailLabel = 'Summary'
+      } else if (pin.activity_state === 'queued') {
+        eventType = pin.next_follow_up_at ? 'follow_up_scheduled' : 'send_queued'
+        badge = pin.next_follow_up_at ? 'Follow-Up Scheduled' : 'Send Queued'
+        tone = 'neutral'
+        detailLabel = pin.next_follow_up_at ? 'Next Follow-Up' : 'Queued'
+      } else if (pin.activity_state === 'sending' || pin.activity_state === 'sent') {
+        eventType = 'send_sent'
+        badge = 'Send Sent'
+        tone = 'accent'
+        detailLabel = 'Outbound'
+      } else if (pin.activity_state === 'delivered') {
+        eventType = 'send_delivered'
+        badge = 'Delivered'
+        tone = 'success'
+        detailLabel = 'Delivery'
+      } else if (pin.activity_state === 'failed' || pin.activity_state === 'queue_blocked') {
+        eventType = 'send_failed'
+        badge = pin.activity_state === 'queue_blocked' ? 'Routing Blocked' : 'Send Failed'
+        tone = 'danger'
+        detailLabel = 'Failure'
+      } else if (pin.activity_state === 'due_now' || pin.activity_state === 'overdue' || pin.activity_state === 'follow_up_due') {
+        eventType = 'follow_up_due'
+        badge = 'Follow-Up Due'
+        tone = 'warning'
+        detailLabel = 'Follow-Up'
+      } else if (pin.activity_state === 'new_replies' || pin.activity_state === 'replied') {
+        eventType = 'new_reply'
+        badge = 'New Reply'
+        tone = 'accent'
+        detailLabel = 'Inbound'
+      }
+
+      const timestamp =
+        eventType === 'new_reply' || eventType === 'price_given'
+          ? (pin.last_inbound_at || pin.last_activity_at)
+          : (pin.last_outbound_at || pin.next_follow_up_at || pin.last_activity_at)
+
+      const preview =
+        eventType === 'send_failed'
+          ? pin.next_action || pin.conversation_status || 'Message send blocked.'
+          : eventType === 'follow_up_scheduled'
+            ? pin.next_follow_up_at ? `Scheduled ${formatRelative(pin.next_follow_up_at)}` : pin.next_action || ''
+            : eventType === 'underwriting_complete'
+              ? `Value ${formatCurrency(pin.estimated_value)} • Repairs ${formatCurrency(pin.repair_estimate)} • Equity ${formatPercent(pin.equity_percent ?? NaN)}`
+              : eventType === 'price_given'
+                ? `${lastMessage || 'Seller price shared.'}${Number.isFinite(pin.estimated_value ?? NaN) ? ` • Value ${formatCurrency(pin.estimated_value)}` : ''}`
+                : lastMessage || undefined
+
+      return {
+        id: `${pin.conversation_id}:${eventType}:${timestamp}`,
+        threadId: pin.conversation_id,
+        lng: pin.lng,
+        lat: pin.lat,
+        eventType,
+        badge,
+        sellerName,
+        location: marketLine,
+        timeAgo: formatRelative(timestamp),
+        timestamp: timestamp || pin.last_activity_at,
+        preview,
+        address: hydratedAddress,
+        statusLabel: formatLabel(pin.conversation_status || 'Unknown'),
+        stageLabel: formatLabel(pin.conversation_stage || 'Unknown'),
+        tone,
+        disabledReply: eventType === 'suppressed' || eventType === 'opt_out',
+        detailLabel,
+      }
     })
     .sort((left, right) => new Date(right.timestamp || 0).getTime() - new Date(left.timestamp || 0).getTime())
-    .slice(0, 10)
+    .slice(0, 20)
 }
 
 const resolveStyle = (styleMode: MapStyleMode) => {
@@ -686,33 +907,135 @@ const resolveStyle = (styleMode: MapStyleMode) => {
   return typeof envStyle === 'string' && envStyle.length > 0 ? envStyle : DARK_MAP_STYLE
 }
 
-const buildHoverCardMarkup = (pin: CommandMapPin): string => {
+const mapCardThemeVariants: Record<MapStyleMode, Record<string, string>> = {
+  dark: {
+    '--nx-card-accent': '#63d7ff',
+    '--nx-card-accent-rgb': '99, 215, 255',
+    '--nx-card-accent-soft': 'rgba(99, 215, 255, 0.18)',
+    '--nx-card-shell-top': 'rgba(8, 14, 24, 0.96)',
+    '--nx-card-shell-bottom': 'rgba(5, 10, 18, 0.94)',
+    '--nx-card-border': 'rgba(132, 191, 255, 0.18)',
+    '--nx-card-glow': 'rgba(42, 118, 255, 0.22)',
+    '--nx-card-shadow': 'rgba(4, 12, 28, 0.58)',
+    '--nx-card-tile': 'rgba(255, 255, 255, 0.045)',
+    '--nx-card-tile-border': 'rgba(167, 204, 255, 0.08)',
+    '--nx-card-message': 'rgba(255, 255, 255, 0.038)',
+    '--nx-card-live': '#68d9ff',
+    '--nx-card-input': 'rgba(10, 16, 28, 0.82)',
+  },
+  red: {
+    '--nx-card-accent': '#ff6b63',
+    '--nx-card-accent-rgb': '255, 107, 99',
+    '--nx-card-accent-soft': 'rgba(255, 107, 99, 0.16)',
+    '--nx-card-shell-top': 'rgba(15, 8, 10, 0.97)',
+    '--nx-card-shell-bottom': 'rgba(10, 5, 8, 0.95)',
+    '--nx-card-border': 'rgba(255, 118, 118, 0.2)',
+    '--nx-card-glow': 'rgba(191, 29, 29, 0.28)',
+    '--nx-card-shadow': 'rgba(24, 3, 5, 0.62)',
+    '--nx-card-tile': 'rgba(255, 107, 99, 0.045)',
+    '--nx-card-tile-border': 'rgba(255, 137, 128, 0.1)',
+    '--nx-card-message': 'rgba(255, 255, 255, 0.03)',
+    '--nx-card-live': '#ff6b63',
+    '--nx-card-input': 'rgba(18, 10, 14, 0.84)',
+  },
+  satellite: {
+    '--nx-card-accent': '#e5edf8',
+    '--nx-card-accent-rgb': '229, 237, 248',
+    '--nx-card-accent-soft': 'rgba(229, 237, 248, 0.12)',
+    '--nx-card-shell-top': 'rgba(14, 16, 18, 0.9)',
+    '--nx-card-shell-bottom': 'rgba(10, 12, 14, 0.84)',
+    '--nx-card-border': 'rgba(218, 230, 244, 0.12)',
+    '--nx-card-glow': 'rgba(16, 18, 20, 0.2)',
+    '--nx-card-shadow': 'rgba(0, 0, 0, 0.52)',
+    '--nx-card-tile': 'rgba(255, 255, 255, 0.03)',
+    '--nx-card-tile-border': 'rgba(255, 255, 255, 0.07)',
+    '--nx-card-message': 'rgba(255, 255, 255, 0.026)',
+    '--nx-card-live': '#f4f7fb',
+    '--nx-card-input': 'rgba(18, 20, 22, 0.8)',
+  },
+}
+
+const cardThemeVars = (styleMode: MapStyleMode): CSSProperties => mapCardThemeVariants[styleMode] as CSSProperties
+const cardThemeStyleAttr = (styleMode: MapStyleMode): string => Object.entries(mapCardThemeVariants[styleMode]).map(([key, value]) => `${key}:${value}`).join(';')
+
+const statusToneForPin = (pin: Pick<CommandMapPin, 'suppression_status' | 'inbox_bucket' | 'conversation_status' | 'contract_status' | 'offer_status'>): 'danger' | 'warning' | 'success' | 'accent' | 'neutral' => {
+  if (pin.suppression_status !== 'clear') return 'danger'
+  if (pin.inbox_bucket === 'needs_review') return 'warning'
+  if (lower(pin.contract_status).includes('active')) return 'success'
+  if (lower(pin.offer_status).includes('ready') || lower(pin.offer_status).includes('sent')) return 'success'
+  if (pin.inbox_bucket === 'new_replies') return 'accent'
+  if (pin.inbox_bucket === 'waiting_on_seller') return 'neutral'
+  return 'accent'
+}
+
+const statusLabelForPin = (pin: Pick<CommandMapPin, 'suppression_status' | 'inbox_bucket' | 'conversation_status' | 'conversation_stage' | 'contract_status' | 'offer_status'>): string => {
+  if (pin.suppression_status !== 'clear') return 'Suppressed'
+  if (pin.inbox_bucket === 'new_replies') return 'New Reply'
+  if (pin.inbox_bucket === 'needs_review') return 'Needs Review'
+  if (pin.inbox_bucket === 'waiting_on_seller') return 'Waiting'
+  if (lower(pin.contract_status).includes('active')) return 'Contract Active'
+  if (lower(pin.offer_status).includes('ready') || lower(pin.offer_status).includes('sent')) return 'Offer Ready'
+  return formatLabel(pin.conversation_stage || pin.conversation_status || 'Unknown')
+}
+
+const statIconMarkup = (icon: 'beds' | 'baths' | 'sqft' | 'units' | 'value' | 'repairs' | 'equity' | 'status') => {
+  const icons: Record<string, string> = {
+    beds: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12.5h16v6H4zM6 10V7.5A1.5 1.5 0 0 1 7.5 6h3A1.5 1.5 0 0 1 12 7.5V10m1 0V8.2A1.2 1.2 0 0 1 14.2 7h2.6A1.2 1.2 0 0 1 18 8.2V10" /></svg>',
+    baths: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6.5a2.5 2.5 0 1 1 5 0v6.5m-6 0h10m-8.5 0v2.2a3.5 3.5 0 0 0 7 0V13" /><path d="M5 13h14" /></svg>',
+    sqft: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10v16H7z" /><path d="M9.5 7.5h5m-5 4h5m-5 4h5" /></svg>',
+    units: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V6.2L12 3l7 3.2V20" /><path d="M9 20v-4h6v4M8 8h.01M12 8h.01M16 8h.01M8 12h.01M12 12h.01M16 12h.01" /></svg>',
+    value: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5v17M16 7.2c0-1.6-1.8-2.7-4-2.7s-4 1.1-4 2.7 1.4 2.4 4 2.9 4 1.2 4 3-1.8 3.1-4 3.1-4-1.2-4-2.8" /></svg>',
+    repairs: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 7 4 4m-2 2-3.5 3.5a1.4 1.4 0 0 0 2 2L10 15m4.6-8.6a3 3 0 0 0 3.8 3.8L13 15.6l-4.6-4.6z" /></svg>',
+    equity: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.2 19 8v8l-7 3.8L5 16V8z" /><path d="m9 12 2 2 4-4" /></svg>',
+    status: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7.5" /><path d="M12 8v4l2.8 2.2" /></svg>',
+  }
+  return icons[icon]
+}
+
+const buildHoverCardMarkup = (pin: CommandMapPin, styleMode: MapStyleMode): string => {
   const imageUrl = pin.streetview_image || buildStreetViewUrl(pin.address) || ''
-  const metric = (label: string, value: string) => `<div class="nx-icm-hover__metric"><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`
+  const statusTone = statusToneForPin(pin)
+  const statusLabel = statusLabelForPin(pin)
+  const metric = (label: string, icon: string, value: string) => `
+    <div class="nx-icm-hover__metric ${statusTone === 'danger' ? 'is-danger' : statusTone === 'accent' ? 'is-accent' : ''}">
+      <span class="nx-icm-hover__metric-icon">${statIconMarkup(icon as any)}</span>
+      <div class="nx-icm-hover__metric-copy">
+        <span>${label}</span>
+        <strong>${escapeHtml(value)}</strong>
+      </div>
+    </div>
+  `
   return `
-    <article class="nx-icm-hover">
-      ${imageUrl ? `<div class="nx-icm-hover__media"><img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(pin.address)} street view" loading="lazy" /></div>` : ''}
+    <article class="nx-icm-hover nx-icm-hover--${styleMode}" style="${cardThemeStyleAttr(styleMode)}">
+      ${imageUrl ? `<div class="nx-icm-hover__media">
+        <img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(pin.address)} street view" loading="lazy" />
+        <div class="nx-icm-hover__media-scrim"></div>
+        <span class="nx-icm-hover__media-badge">Owner</span>
+      </div>` : '<div class="nx-icm-hover__media nx-icm-hover__media--empty"><span>No image available</span></div>'}
       <div class="nx-icm-hover__body">
         <div class="nx-icm-hover__head">
           <div>
-            <p class="nx-icm-hover__eyebrow">${escapeHtml(pin.activity_label)}</p>
+            <p class="nx-icm-hover__eyebrow">${escapeHtml(pin.activity_label || 'Lead')}</p>
             <h4>${escapeHtml(pin.seller_name)}</h4>
           </div>
-          <span class="nx-icm-hover__stage">${escapeHtml(formatLabel(pin.conversation_stage))}</span>
+          <span class="nx-icm-hover__status nx-icm-hover__status--${statusTone}">${escapeHtml(statusLabel)}</span>
         </div>
-        <p class="nx-icm-hover__address">${escapeHtml(pin.address)}</p>
+        <p class="nx-icm-hover__address"><span class="nx-icm-hover__address-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s6-5 6-10a6 6 0 0 0-12 0c0 5 6 10 6 10Z" /><circle cx="12" cy="10" r="2.2" /></svg></span>${escapeHtml(pin.address || 'Property Unknown')}</p>
         <div class="nx-icm-hover__stats">
-          ${metric('Beds', formatInteger(pin.beds))}
-          ${metric('Baths', formatInteger(pin.baths))}
-          ${metric('Sqft', formatInteger(pin.sqft))}
-          ${metric('Units', formatInteger(pin.units))}
-          ${metric('Value', formatCurrency(pin.estimated_value))}
-          ${metric('Repairs', formatCurrency(pin.repair_estimate))}
-          ${metric('Equity', formatPercent(pin.equity_percent ?? NaN))}
-          ${metric('Status', formatLabel(pin.conversation_status))}
+          ${metric('Beds', 'beds', formatInteger(pin.beds))}
+          ${metric('Baths', 'baths', formatInteger(pin.baths))}
+          ${metric('Sqft', 'sqft', formatInteger(pin.sqft))}
+          ${metric('Units', 'units', formatInteger(pin.units))}
+          ${metric('Value', 'value', formatCurrency(pin.estimated_value))}
+          ${metric('Repairs', 'repairs', formatCurrency(pin.repair_estimate))}
+          ${metric('Equity', 'equity', formatPercent(pin.equity_percent ?? NaN))}
+          ${metric('Status', 'status', formatLabel(pin.conversation_status || 'Unknown'))}
         </div>
         <div class="nx-icm-hover__message">
-          <span>Last Message</span>
+          <div class="nx-icm-hover__message-head">
+            <span>Last Message</span>
+            <small>${escapeHtml(formatRelative(pin.last_activity_at))}</small>
+          </div>
           <p>${escapeHtml(pin.last_message || 'No recent message')}</p>
         </div>
       </div>
@@ -729,6 +1052,7 @@ const MiniThreadPopup = ({
   onDraftChange,
   onSend,
   onClose,
+  styleMode,
 }: {
   thread: InboxWorkflowThread | null
   messages: ThreadMessage[]
@@ -738,31 +1062,72 @@ const MiniThreadPopup = ({
   onDraftChange: (value: string) => void
   onSend: () => void
   onClose: () => void
+  styleMode: MapStyleMode
 }) => (
-  <article className="nx-icm-thread" onClick={(event) => event.stopPropagation()}>
+  <article className={cls('nx-icm-thread', `nx-icm-thread--${styleMode}`)} style={cardThemeVars(styleMode)} onClick={(event) => event.stopPropagation()}>
     <div className="nx-icm-thread__flip-shell">
       <header className="nx-icm-thread__header">
-        <div>
-          <p className="nx-icm-thread__eyebrow">Live SMS</p>
-          <h4>{thread?.ownerName || thread?.propertyAddress || 'Conversation'}</h4>
+        <div className="nx-icm-thread__header-main">
+          <p className="nx-icm-thread__eyebrow"><span className="nx-icm-thread__live-dot" />Live SMS</p>
+          <div className="nx-icm-thread__identity">
+            <div className="nx-icm-thread__thumb">
+              {thread?.propertyAddress ? <img src={buildStreetViewUrl(thread.propertyAddress) || ''} alt={thread.propertyAddress} loading="lazy" /> : <span>SMS</span>}
+            </div>
+            <div className="nx-icm-thread__identity-copy">
+              <h4>{thread?.ownerName || 'Unknown Seller'}</h4>
+              <span>{thread?.propertyAddress || thread?.subject || 'Property Unknown'}</span>
+            </div>
+          </div>
         </div>
         <button type="button" onClick={onClose} aria-label="Close mini SMS view">
           <Icon name="close" />
         </button>
       </header>
       <div className="nx-icm-thread__meta">
-        <span>{thread?.propertyAddress || thread?.subject || 'Property Unknown'}</span>
+        <span className={cls('nx-icm-thread__status-pill', `is-${statusToneForPin({
+          suppression_status: String((thread as any)?.suppressionStatus || 'clear'),
+          inbox_bucket: String((thread as any)?.inboxBucket || ''),
+          conversation_status: String((thread as any)?.conversationStatus || ''),
+          contract_status: String((thread as any)?.contractStatus || ''),
+          offer_status: String((thread as any)?.offerStatus || ''),
+        })}`)}>
+          {statusLabelForPin({
+            suppression_status: String((thread as any)?.suppressionStatus || 'clear'),
+            inbox_bucket: String((thread as any)?.inboxBucket || ''),
+            conversation_status: String((thread as any)?.conversationStatus || ''),
+            conversation_stage: String((thread as any)?.conversationStage || ''),
+            contract_status: String((thread as any)?.contractStatus || ''),
+            offer_status: String((thread as any)?.offerStatus || ''),
+          })}
+        </span>
         <small>{String(thread?.conversationStage || '').replace(/_/g, ' ') || 'Unknown stage'}</small>
       </div>
       <div className="nx-icm-thread__messages">
         {loading && <div className="nx-icm-thread__empty">Syncing conversation…</div>}
         {!loading && messages.length === 0 && <div className="nx-icm-thread__empty">No messages yet.</div>}
-        {messages.map((message) => (
-          <article key={message.id} className={cls('nx-icm-thread__bubble', message.direction === 'outbound' && 'is-outbound')}>
-            <p>{message.body}</p>
-            <small>{formatRelativeTime(message.createdAt || message.timelineAt || '')}</small>
-          </article>
-        ))}
+        {messages.map((message, index) => {
+          const currentDate = new Date(message.createdAt || message.timelineAt || '')
+          const previous = messages[index - 1]
+          const previousDate = previous ? new Date(previous.createdAt || previous.timelineAt || '') : null
+          const showTodayDivider = index === 0 || !previousDate || currentDate.toDateString() !== previousDate.toDateString()
+          const isToday = currentDate.toDateString() === new Date().toDateString()
+          return (
+            <div key={message.id} className="nx-icm-thread__message-group">
+              {showTodayDivider && (
+                <div className="nx-icm-thread__day-divider">
+                  <span>{isToday ? 'Today' : currentDate.toLocaleDateString()}</span>
+                </div>
+              )}
+              <article className={cls('nx-icm-thread__bubble', message.direction === 'outbound' && 'is-outbound')}>
+                <p>{message.body || 'Not available'}</p>
+                <small>
+                  {formatRelativeTime(message.createdAt || message.timelineAt || '')}
+                  {message.direction === 'outbound' && message.deliveryStatus ? ` · ${message.deliveryStatus}` : ''}
+                </small>
+              </article>
+            </div>
+          )
+        })}
       </div>
       <form
         className="nx-icm-thread__composer"
@@ -775,7 +1140,7 @@ const MiniThreadPopup = ({
         <input
           value={draftText}
           onChange={(event) => onDraftChange(event.target.value)}
-          placeholder={disabled ? 'Messaging disabled' : 'Quick reply...'}
+          placeholder={disabled ? 'Messaging disabled' : 'Type your message…'}
           disabled={disabled}
         />
         <button type="submit" disabled={!draftText.trim() || disabled} aria-label="Send quick reply">
@@ -798,6 +1163,7 @@ interface Props {
   quickReplyDisabled?: boolean
   zoomedIn: boolean
   sourceMode: MapSourceMode
+  onSourceModeChange?: (mode: MapSourceMode) => void
   onSelectThreadId?: (threadId: string) => void
   onBackgroundClick?: () => void
   fullHeight?: boolean
@@ -843,6 +1209,7 @@ export function InboxCommandMap({
   quickReplyDisabled = false,
   zoomedIn,
   sourceMode,
+  onSourceModeChange,
   onSelectThreadId,
   onBackgroundClick,
   fullHeight = false,
@@ -862,7 +1229,13 @@ export function InboxCommandMap({
   const threadPopupRef = useRef<maplibregl.Popup | null>(null)
   const threadPopupRootRef = useRef<Root | null>(null)
   const threadPopupHostRef = useRef<HTMLDivElement | null>(null)
-  const geojsonRef = useRef<FeatureCollection<Point, PinFeatureProps>>(featureCollectionForPins([], null))
+  const activeThreadPopupRef = useRef<{ id: string; coordinates: [number, number] } | null>(null)
+  const activeKpiFilterRef = useRef<MapKpiFilterKey | null>(null)
+  const onSelectThreadIdRef = useRef<Props['onSelectThreadId']>(onSelectThreadId)
+  const onBackgroundClickRef = useRef<Props['onBackgroundClick']>(onBackgroundClick)
+  const mapStyleModeRef = useRef<MapStyleMode>(initialMapStyleMode)
+  const mapOverlaysRef = useRef<MapOverlayToggles>({ ...defaultMapOverlays, ...initialMapOverlays })
+  const geojsonRef = useRef<FeatureCollection<Point, PinFeatureProps>>(featureCollectionForPins([], null, null))
   const activityModeRef = useRef<InboxMapActivityMode>('threads')
   const [activityMode, setActivityMode] = useState<InboxMapActivityMode>(initialActivityMode)
   const [filters, setFilters] = useState<MapFilterState>({ ...defaultFilters, ...initialFilters })
@@ -874,6 +1247,9 @@ export function InboxCommandMap({
   const [mapDimension, setMapDimension] = useState<'2d' | '3d'>('2d')
   const [mapOverlays, setMapOverlays] = useState<MapOverlayToggles>({ ...defaultMapOverlays, ...initialMapOverlays })
   const [activeThreadPopup, setActiveThreadPopup] = useState<{ id: string; coordinates: [number, number] } | null>(null)
+  const [showKpiBadges, setShowKpiBadges] = useState(true)
+  const [activeKpiFilter, setActiveKpiFilter] = useState<MapKpiFilterKey | null>(null)
+  const [tickerDensity, setTickerDensity] = useState<TickerDensity>('compact')
 
   const hydratedThreadsById = useMemo(
     () => new Map(threads.map((thread) => [thread.id, thread])),
@@ -935,6 +1311,7 @@ export function InboxCommandMap({
       ?? selectedBasePin,
     [filteredPins, selectedBasePin, selectedPinId, selectedHydratedThread?.id, visiblePins],
   )
+  const kpiChips = useMemo(() => buildKpiChips(visiblePins, activityMode), [activityMode, visiblePins])
   const popupThread = useMemo(() => {
     if (!activeThreadPopup?.id) return null
     return hydratedThreadsById.get(activeThreadPopup.id)
@@ -943,12 +1320,9 @@ export function InboxCommandMap({
       || null
   }, [activeThreadPopup?.id, hydratedThreadsById, hydratedThreadsByKey, threads])
   const geojson = useMemo(
-    () => featureCollectionForPins(visiblePins, selectedPin?.conversation_id ?? null),
-    [visiblePins, selectedPin?.conversation_id],
+    () => featureCollectionForPins(visiblePins, selectedPin?.conversation_id ?? null, activeKpiFilter),
+    [activeKpiFilter, visiblePins, selectedPin?.conversation_id],
   )
-  const threadModeKpis = useMemo(() => buildThreadModeKpis(visiblePins), [visiblePins])
-  const sendModeKpis = useMemo(() => buildSendModeKpis(visiblePins), [visiblePins])
-  const followUpModeKpis = useMemo(() => buildFollowUpModeKpis(visiblePins), [visiblePins])
   const liveTickerItems = useMemo(() => buildLiveTickerItems(visiblePins), [visiblePins])
   const debugStats = useMemo(() => ({
     allPinsCount: allPins.length,
@@ -961,10 +1335,23 @@ export function InboxCommandMap({
 
   geojsonRef.current = geojson
   activityModeRef.current = activityMode
+  activeThreadPopupRef.current = activeThreadPopup
+  activeKpiFilterRef.current = activeKpiFilter
+  onSelectThreadIdRef.current = onSelectThreadId
+  onBackgroundClickRef.current = onBackgroundClick
+  mapStyleModeRef.current = mapStyleMode
+  mapOverlaysRef.current = mapOverlays
 
   useEffect(() => {
     setShowSelectedHidden(false)
   }, [selectedThread?.id, activityMode])
+
+  useEffect(() => {
+    if (!activeKpiFilter) return
+    if (!kpiChips.some((chip) => chip.key === activeKpiFilter)) {
+      setActiveKpiFilter(null)
+    }
+  }, [activeKpiFilter, kpiChips])
 
   useEffect(() => {
     setSelectedPinId(selectedThread?.id ?? null)
@@ -1034,6 +1421,7 @@ export function InboxCommandMap({
         loading={popupLoading}
         draftText={popupDraft}
         disabled={popupDisabled}
+        styleMode={mapStyleMode}
         onDraftChange={(value) => {
           if (!isSelectedThreadActive) return
           onQuickReplyDraftChange?.(value)
@@ -1127,20 +1515,21 @@ export function InboxCommandMap({
     }
 
     const syncLayerVisibility = (map: maplibregl.Map, nextMode: InboxMapActivityMode) => {
-      const clusteredMode = nextMode !== 'sends'
+      const clusteredMode = nextMode !== 'sends' && !activeKpiFilterRef.current
       setLayerVisibility(map, RAW_LAYER_IDS, !clusteredMode)
       setLayerVisibility(map, CLUSTER_POINT_LAYER_IDS, clusteredMode)
       setLayerVisibility(map, CLUSTER_LAYER_IDS, clusteredMode)
     }
 
     const applyOverlayVisibility = (map: maplibregl.Map) => {
+      const overlayState = mapOverlaysRef.current
       const layers = map.getStyle()?.layers ?? []
       layers.forEach((layer) => {
         const typedLayer = layer as StyleLayerLike
         if (!typedLayer.id || typedLayer.id.startsWith(ownLayerPrefix)) return
         const categories = classifyBaseLayer(typedLayer)
         if (categories.length === 0) return
-        const visible = categories.every((category) => mapOverlays[category])
+        const visible = categories.every((category) => overlayState[category])
         if (map.getLayer(typedLayer.id)) {
           map.setLayoutProperty(typedLayer.id, 'visibility', visible ? 'visible' : 'none')
         }
@@ -1196,7 +1585,7 @@ export function InboxCommandMap({
     }
 
     const ensureSatelliteHybridOverlay = async (map: maplibregl.Map) => {
-      if (mapStyleMode !== 'satellite') return
+      if (mapStyleModeRef.current !== 'satellite') return
       const darkStyle = await fetchDarkStyleSpec()
       if (!darkStyle) return
 
@@ -1233,7 +1622,7 @@ export function InboxCommandMap({
     const syncBasemapPresentation = async (map: maplibregl.Map) => {
       await ensureSatelliteHybridOverlay(map)
       applyOverlayVisibility(map)
-      if (mapStyleMode === 'red') applyRedOpsTheme(map)
+      if (mapStyleModeRef.current === 'red') applyRedOpsTheme(map)
     }
 
     const addMapLayers = (map: maplibregl.Map) => {
@@ -1318,7 +1707,7 @@ export function InboxCommandMap({
             paint: {
               'circle-radius': ['+', 14, ['*', ['get', 'glowStrength'], 18]],
               'circle-blur': 1,
-              'circle-opacity': ['case', ['==', ['get', 'glowStrength'], 1], 0.44, ['>=', ['get', 'glowStrength'], 0.8], 0.32, ['>=', ['get', 'glowStrength'], 0.52], 0.22, 0.12],
+              'circle-opacity': ['*', ['case', ['==', ['get', 'glowStrength'], 1], 0.44, ['>=', ['get', 'glowStrength'], 0.8], 0.32, ['>=', ['get', 'glowStrength'], 0.52], 0.22, 0.12], ['get', 'focusOpacity']],
               'circle-color': ['get', 'stageColor'],
             },
           })
@@ -1332,7 +1721,7 @@ export function InboxCommandMap({
             ...(filter ? { filter: layerFilter } : {}),
             paint: {
               'circle-radius': ['match', ['get', 'pulseTier'], 'fast', 20, 'medium_fast', 18, 'medium', 16, 'slow', 14, 'very_slow', 12, 10],
-              'circle-opacity': ['case', ['==', ['get', 'pulseMode'], 'none'], 0, ['match', ['get', 'pulseTier'], 'fast', 0.28, 'medium_fast', 0.22, 'medium', 0.18, 'slow', 0.12, 'very_slow', 0, 0]],
+              'circle-opacity': ['*', ['case', ['==', ['get', 'pulseMode'], 'none'], 0, ['match', ['get', 'pulseTier'], 'fast', 0.28, 'medium_fast', 0.22, 'medium', 0.18, 'slow', 0.12, 'very_slow', 0, 0]], ['get', 'focusOpacity']],
               'circle-color': ['get', 'stageColor'],
               'circle-stroke-width': ['case', ['==', ['get', 'pulseMode'], 'none'], 0, ['match', ['get', 'pulseTier'], 'fast', 1.8, 'medium_fast', 1.5, 'medium', 1.3, 'slow', 1.1, 'very_slow', 0, 0]],
               'circle-stroke-color': ['get', 'stageColor'],
@@ -1351,7 +1740,7 @@ export function InboxCommandMap({
               'circle-color': 'transparent',
               'circle-stroke-width': ['case', ['==', ['get', 'unreadRingColor'], 'transparent'], 0, 2.1],
               'circle-stroke-color': ['get', 'unreadRingColor'],
-              'circle-stroke-opacity': 0.94,
+              'circle-stroke-opacity': ['*', 0.94, ['get', 'focusOpacity']],
             },
           })
         }
@@ -1367,7 +1756,7 @@ export function InboxCommandMap({
               'circle-color': 'transparent',
               'circle-stroke-width': ['case', ['==', ['get', 'offerRingColor'], 'transparent'], 0, 2.2],
               'circle-stroke-color': ['get', 'offerRingColor'],
-              'circle-stroke-opacity': 0.96,
+              'circle-stroke-opacity': ['*', 0.96, ['get', 'focusOpacity']],
             },
           })
         }
@@ -1383,7 +1772,7 @@ export function InboxCommandMap({
               'circle-color': 'transparent',
               'circle-stroke-width': ['case', ['==', ['get', 'contractRingColor'], 'transparent'], 0, 2.2],
               'circle-stroke-color': ['get', 'contractRingColor'],
-              'circle-stroke-opacity': 0.92,
+              'circle-stroke-opacity': ['*', 0.92, ['get', 'focusOpacity']],
             },
           })
         }
@@ -1399,7 +1788,7 @@ export function InboxCommandMap({
               'circle-color': ['get', 'stageColor'],
               'circle-stroke-width': ['case', ['==', ['get', 'selected'], 1], 2.6, 1.3],
               'circle-stroke-color': ['case', ['==', ['get', 'selected'], 1], '#ffffff', 'rgba(255,255,255,0.4)'],
-              'circle-opacity': ['case', ['==', ['get', 'lockState'], 1], 0.9, 0.98],
+              'circle-opacity': ['*', ['case', ['==', ['get', 'lockState'], 1], 0.9, 0.98], ['get', 'focusOpacity']],
             },
           })
         }
@@ -1420,6 +1809,7 @@ export function InboxCommandMap({
               'text-color': ['case', ['==', ['get', 'suppressedBadge'], 1], '#ff6b63', ['==', ['get', 'queueBlockedBadge'], 1], '#ff6b63', ['==', ['get', 'followUpDueBadge'], 1], '#ffd166', '#ffd166'],
               'text-halo-color': 'rgba(8,10,15,0.92)',
               'text-halo-width': 1.4,
+              'text-opacity': ['get', 'focusOpacity'],
             },
           })
         }
@@ -1433,7 +1823,7 @@ export function InboxCommandMap({
     const center: [number, number] = selectedPin ? [selectedPin.lng, selectedPin.lat] : [-96, 37.8]
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: resolveStyle(mapStyleMode),
+      style: resolveStyle(mapStyleModeRef.current),
       center,
       zoom: zoomedIn ? 10.5 : 4.4,
       minZoom: 2,
@@ -1457,7 +1847,7 @@ export function InboxCommandMap({
         hoverPopupRef.current?.remove()
         threadPopupRef.current?.remove()
         setSelectedPinId(id)
-        onSelectThreadId?.(id)
+        onSelectThreadIdRef.current?.(id)
         const coordinates = (feature.geometry as Point).coordinates as [number, number]
         setActiveThreadPopup({ id, coordinates })
         map.easeTo({ center: coordinates, zoom: Math.max(map.getZoom(), 12), duration: 700 })
@@ -1482,7 +1872,7 @@ export function InboxCommandMap({
       }
 
       const handlePinHover = (event: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
-        if (activeThreadPopup) return
+        if (activeThreadPopupRef.current) return
         const feature = event.features?.[0]
         if (!feature?.properties) return
         const props = feature.properties as unknown as CommandMapPin
@@ -1496,13 +1886,13 @@ export function InboxCommandMap({
         })
         popup
           .setLngLat(coordinates)
-          .setHTML(buildHoverCardMarkup(props))
+          .setHTML(buildHoverCardMarkup(props, mapStyleModeRef.current))
           .addTo(map)
         hoverPopupRef.current = popup
       }
 
       const clearPinHover = () => {
-        if (activeThreadPopup) return
+        if (activeThreadPopupRef.current) return
         hoverPopupRef.current?.remove()
       }
 
@@ -1515,7 +1905,7 @@ export function InboxCommandMap({
         })
         if (rendered.length === 0) {
           setActiveThreadPopup(null)
-          onBackgroundClick?.()
+          onBackgroundClickRef.current?.()
         }
       })
       map.on('mouseenter', 'command-pin-core-raw', handlePinHover)
@@ -1576,18 +1966,21 @@ export function InboxCommandMap({
               ],
             ])
             map.setPaintProperty(layerId, 'circle-opacity', [
-              'case',
-              ['==', ['get', 'pulseMode'], 'none'], 0,
-              ['==', ['get', 'pulseMode'], 'ripple'], makeOpacityExpr('medium_fast', 'ripple'),
-              ['==', ['get', 'pulseMode'], 'triple'], makeOpacityExpr('fast', 'triple'),
-              ['match', ['get', 'pulseTier'],
-                'fast', makeOpacityExpr('fast', 'continuous'),
-                'medium_fast', makeOpacityExpr('medium_fast', 'continuous'),
-                'medium', makeOpacityExpr('medium', 'continuous'),
-                'slow', makeOpacityExpr('slow', 'continuous'),
-                'very_slow', 0,
-                0,
+              '*',
+              ['case',
+                ['==', ['get', 'pulseMode'], 'none'], 0,
+                ['==', ['get', 'pulseMode'], 'ripple'], makeOpacityExpr('medium_fast', 'ripple'),
+                ['==', ['get', 'pulseMode'], 'triple'], makeOpacityExpr('fast', 'triple'),
+                ['match', ['get', 'pulseTier'],
+                  'fast', makeOpacityExpr('fast', 'continuous'),
+                  'medium_fast', makeOpacityExpr('medium_fast', 'continuous'),
+                  'medium', makeOpacityExpr('medium', 'continuous'),
+                  'slow', makeOpacityExpr('slow', 'continuous'),
+                  'very_slow', 0,
+                  0,
+                ],
               ],
+              ['get', 'focusOpacity'],
             ])
           })
         } catch {
@@ -1619,7 +2012,7 @@ export function InboxCommandMap({
       map.remove()
       mapRef.current = null
     }
-  }, [activeThreadPopup, mapOverlays, mapStyleMode, onBackgroundClick, onSelectThreadId, selectedPin, zoomedIn])
+  }, [])
 
   useEffect(() => {
     const rawSource = mapRef.current?.getSource(RAW_SOURCE_ID) as maplibregl.GeoJSONSource | undefined
@@ -1660,7 +2053,7 @@ export function InboxCommandMap({
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
-    const clusteredMode = activityMode !== 'sends'
+    const clusteredMode = activityMode !== 'sends' && !activeKpiFilter
     RAW_LAYER_IDS.forEach((layerId) => {
       if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', clusteredMode ? 'none' : 'visible')
     })
@@ -1670,7 +2063,7 @@ export function InboxCommandMap({
     CLUSTER_LAYER_IDS.forEach((layerId) => {
       if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', clusteredMode ? 'visible' : 'none')
     })
-  }, [activityMode])
+  }, [activeKpiFilter, activityMode])
 
   useEffect(() => {
     if (!mapRef.current || visiblePins.length === 0) return
@@ -1690,9 +2083,9 @@ export function InboxCommandMap({
     const coords = Array.from(uniqueCoords.values())
     const padding =
       dockTier === 'full'
-        ? { top: 120, right: 168, bottom: 108, left: 360 }
+        ? { top: 116, right: 72, bottom: 118, left: 36 }
         : dockTier === 'compact'
-          ? { top: 88, right: 116, bottom: 84, left: 70 }
+          ? { top: 92, right: 64, bottom: 90, left: 24 }
           : { top: 72, right: 24, bottom: 132, left: 24 }
 
     if (coords.length === 1) {
@@ -1739,20 +2132,24 @@ export function InboxCommandMap({
     return 'No visible pins found.'
   }, [allPins.length, filteredPins.length, pinPipeline.unmapped.length, visiblePins.length])
 
+  const handleTickerSelect = (item: LiveTickerItem) => {
+    setSelectedPinId(item.threadId)
+    onSelectThreadId?.(item.threadId)
+    setActiveThreadPopup({ id: item.threadId, coordinates: [item.lng, item.lat] })
+    mapRef.current?.easeTo({
+      center: [item.lng, item.lat],
+      zoom: Math.max(mapRef.current.getZoom(), 12.4),
+      duration: 620,
+    })
+  }
+
   return (
     <div ref={rootRef} className={cls('nx-icm', `nx-icm--${dockTier}`, fullHeight && 'nx-icm--full')}>
       {!commandMode && <div ref={controlsRef} className="nx-icm__toolbar">
         <div className="nx-icm__header">
-          <div className="nx-icm__activity-tabs">
-            {([
-              ['threads', 'Threads'],
-              ['sends', 'Sends'],
-              ['follow_ups', 'Follow-Ups'],
-            ] as Array<[InboxMapActivityMode, string]>).map(([value, label]) => (
-              <button key={value} type="button" className={cls('nx-icm__mode-tab', activityMode === value && 'is-active')} onClick={() => setActivityMode(value)}>
-                {label}
-              </button>
-            ))}
+          <div className="nx-icm__header-badge">
+            <span>Live Map</span>
+            <strong>{visiblePins.length}</strong>
           </div>
           <div className="nx-icm__header-actions">
             <button type="button" className={cls('nx-icm__mode-tab', filtersOpen && 'is-active')} onClick={() => setFiltersOpen((open) => !open)}>
@@ -1762,6 +2159,55 @@ export function InboxCommandMap({
         </div>
         {filtersOpen && (
           <div className="nx-icm__controls-popover">
+            <div className="nx-icm__controls-group">
+              <span className="nx-icm__controls-label">View Mode</span>
+              <div className="nx-icm__controls-segment">
+                {([
+                  ['all', 'All'],
+                  ['threads', 'Threads'],
+                  ['sends', 'Sends'],
+                  ['follow_ups', 'Follow-Ups'],
+                ] as Array<[InboxMapActivityMode, string]>).map(([value, label]) => (
+                  <button key={value} type="button" className={cls('nx-icm__mode-tab', activityMode === value && 'is-active')} onClick={() => setActivityMode(value)}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="nx-icm__controls-group">
+              <span className="nx-icm__controls-label">Pin Scope</span>
+              <div className="nx-icm__controls-segment">
+                <button type="button" className={cls('nx-icm__mode-tab', sourceMode === 'all_active_coordinate_threads' && 'is-active')} onClick={() => onSourceModeChange?.('all_active_coordinate_threads')}>
+                  All Pins
+                </button>
+                <button type="button" className={cls('nx-icm__mode-tab', sourceMode === 'visible_threads' && 'is-active')} onClick={() => onSourceModeChange?.('visible_threads')}>
+                  Filtered Pins
+                </button>
+              </div>
+            </div>
+            <div className="nx-icm__controls-group">
+              <div className="nx-icm__controls-headerline">
+                <span className="nx-icm__controls-label">KPI Focus</span>
+                <label className="nx-icm__checkbox">
+                  <input type="checkbox" checked={showKpiBadges} onChange={(event) => setShowKpiBadges(event.target.checked)} />
+                  KPI Badges
+                </label>
+              </div>
+              <div className="nx-icm__controls-segment">
+                {kpiChips.map((chip) => (
+                  <button
+                    key={chip.key}
+                    type="button"
+                    className={cls('nx-icm__kpi-chip', activeKpiFilter === chip.key && 'is-active')}
+                    onClick={() => setActiveKpiFilter((current) => current === chip.key ? null : chip.key)}
+                    style={{ '--icm-kpi-tone': chip.tone } as CSSProperties}
+                  >
+                    <span>{chip.label}</span>
+                    <strong>{chip.count}</strong>
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="nx-icm__controls-group">
               <span className="nx-icm__controls-label">Map View</span>
               <div className="nx-icm__controls-segment">
@@ -1823,8 +2269,55 @@ export function InboxCommandMap({
                 <label className="nx-icm__checkbox"><input type="checkbox" checked={filters.highEquity} onChange={(e) => setFilters((current) => ({ ...current, highEquity: e.target.checked }))} />High Equity</label>
               </div>
             </div>
+            <div className="nx-icm__controls-group">
+              <span className="nx-icm__controls-label">Map Key</span>
+              <div className="nx-icm__legend-grid">
+                {(activityMode === 'threads'
+                  ? [
+                      ['New', '#97a3b6'],
+                      ['Interest', '#38bdf8'],
+                      ['Price', '#a855f7'],
+                      ['Offer', '#30d158'],
+                      ['Negotiation', '#ff9f0a'],
+                      ['Contract', '#14b8a6'],
+                      ['Suppressed', '#ff453a'],
+                    ]
+                  : activityMode === 'sends'
+                    ? [
+                        ['Queued', '#5d6a7b'],
+                        ['Sending', '#3b82f6'],
+                        ['Delivered', '#30d158'],
+                        ['Replied', '#38bdf8'],
+                        ['Failed', '#ff453a'],
+                      ]
+                    : activityMode === 'follow_ups'
+                      ? [
+                          ['Due Now', '#ffb000'],
+                          ['Later Today', '#5bb6ff'],
+                          ['Tomorrow', '#14b8a6'],
+                          ['Overdue', '#ff453a'],
+                          ['Stale', '#7d8795'],
+                        ]
+                      : [
+                          ['Replies', '#38bdf8'],
+                          ['Review', '#ffb000'],
+                          ['Queued', '#5d6a7b'],
+                          ['Offers', '#30d158'],
+                          ['Contracts', '#14b8a6'],
+                          ['Blocked', '#ff453a'],
+                        ]).map(([label, color]) => (
+                  <div key={label} className="nx-icm__legend-row">
+                    <span className="nx-icm__legend-chip" style={{ backgroundColor: color }} />
+                    <span className="nx-icm__legend-label">{label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
             <div className="nx-icm__controls-actions">
-              <button type="button" className="nx-icm__mode-tab" onClick={() => setFilters(defaultFilters)}>
+              <button type="button" className="nx-icm__mode-tab" onClick={() => {
+                setFilters(defaultFilters)
+                setActiveKpiFilter(null)
+              }}>
                 Clear Filters
               </button>
               <button type="button" className="nx-icm__mode-tab is-active" onClick={() => setFiltersOpen(false)}>
@@ -1866,118 +2359,96 @@ export function InboxCommandMap({
         </div>
       )}
 
-      {dockTier === 'full' && !filtersOpen && !commandMode && <div className="nx-icm__overlay-kpis" aria-label="Map mode KPIs">
-        {activityMode === 'threads' && (
-          <>
-            <div className="nx-icm__overlay-kpi"><span>New Replies</span><strong>{threadModeKpis.newReplies}</strong></div>
-            <div className="nx-icm__overlay-kpi"><span>Needs Review</span><strong>{threadModeKpis.review}</strong></div>
-            <div className="nx-icm__overlay-kpi"><span>Waiting</span><strong>{threadModeKpis.waiting}</strong></div>
-            <div className="nx-icm__overlay-kpi"><span>Negotiating</span><strong>{threadModeKpis.negotiating}</strong></div>
-            <div className="nx-icm__overlay-kpi"><span>Follow-Up Due</span><strong>{threadModeKpis.due}</strong></div>
-            <div className="nx-icm__overlay-kpi"><span>Suppressed</span><strong>{threadModeKpis.suppressed}</strong></div>
-          </>
-        )}
-        {activityMode === 'sends' && (
-          <>
-            <div className="nx-icm__overlay-kpi"><span>Queued</span><strong>{sendModeKpis.queued}</strong></div>
-            <div className="nx-icm__overlay-kpi"><span>Sending</span><strong>{sendModeKpis.sending}</strong></div>
-            <div className="nx-icm__overlay-kpi"><span>Sent Today</span><strong>{sendModeKpis.sentToday}</strong></div>
-            <div className="nx-icm__overlay-kpi"><span>Delivered</span><strong>{sendModeKpis.deliveredToday}</strong></div>
-            <div className="nx-icm__overlay-kpi"><span>Failed</span><strong>{sendModeKpis.failedToday}</strong></div>
-            <div className="nx-icm__overlay-kpi"><span>Replies</span><strong>{sendModeKpis.repliesToday}</strong></div>
-            <div className="nx-icm__overlay-kpi"><span>Opt-Outs</span><strong>{sendModeKpis.optOutsToday}</strong></div>
-            <div className="nx-icm__overlay-kpi"><span>Delivery Rate</span><strong>{formatPercent(sendModeKpis.deliveryRate)}</strong></div>
-            <div className="nx-icm__overlay-kpi"><span>Reply Rate</span><strong>{formatPercent(sendModeKpis.replyRate)}</strong></div>
-            <div className="nx-icm__overlay-kpi"><span>Opt-Out Rate</span><strong>{formatPercent(sendModeKpis.optOutRate)}</strong></div>
-          </>
-        )}
-        {activityMode === 'follow_ups' && (
-          <>
-            <div className="nx-icm__overlay-kpi"><span>Due Now</span><strong>{followUpModeKpis.dueNow}</strong></div>
-            <div className="nx-icm__overlay-kpi"><span>Later Today</span><strong>{followUpModeKpis.laterToday}</strong></div>
-            <div className="nx-icm__overlay-kpi"><span>Tomorrow</span><strong>{followUpModeKpis.tomorrow}</strong></div>
-            <div className="nx-icm__overlay-kpi"><span>Overdue</span><strong>{followUpModeKpis.overdue}</strong></div>
-            <div className="nx-icm__overlay-kpi"><span>Stale</span><strong>{followUpModeKpis.stale}</strong></div>
-          </>
-        )}
-      </div>}
-      {selectedPin && !commandMode && (
-        <div className="nx-icm__card nx-icm__card--actionable">
-          <div className="nx-icm__card-row nx-icm__card-row--head">
-            <span className="nx-icm__card-subject">{selectedPin.seller_name}</span>
-            <span className="nx-icm__card-badge" style={{ '--icm-badge-color': badgeColor(selectedPin) } as CSSProperties}>{selectedPin.activity_label}</span>
-          </div>
-          <div className="nx-icm__card-row"><span className="nx-icm__card-label">Address</span><span className="nx-icm__card-value">{selectedPin.address}</span></div>
-          <div className="nx-icm__card-row"><span className="nx-icm__card-label">Stage</span><span className="nx-icm__card-value">{formatLabel(selectedPin.conversation_stage)}</span></div>
-          <div className="nx-icm__card-row"><span className="nx-icm__card-label">Status</span><span className="nx-icm__card-value">{formatLabel(selectedPin.conversation_status)}</span></div>
-          <div className="nx-icm__card-row"><span className="nx-icm__card-label">Last Message</span><span className="nx-icm__card-value">{selectedPin.last_message || 'No recent message'}</span></div>
-          <div className="nx-icm__card-row"><span className="nx-icm__card-label">Next Action</span><span className="nx-icm__card-value">{selectedPin.next_action}</span></div>
-          <div className="nx-icm__actions">
-            <button type="button" onClick={() => onSelectThreadId?.(selectedPin.conversation_id)}>Open Thread</button>
-            <button type="button">Open Dossier</button>
-            <button type="button">Snooze</button>
-            <button type="button">Suppress</button>
-          </div>
-        </div>
-      )}
-
-      {(dockTier === 'full' || dockTier === 'compact') && !commandMode && <div className="nx-icm__legend" aria-label="Command Map Legend">
-        <div className="nx-icm__legend-title">{activityMode === 'threads' ? 'Thread States' : activityMode === 'sends' ? 'Send States' : 'Follow-Up States'}</div>
-        {(activityMode === 'threads'
-          ? [
-              ['New', '#7d8795'],
-              ['Interest', '#38bdf8'],
-              ['Price', '#a855f7'],
-              ['Offer', '#30d158'],
-              ['Negotiation', '#ff9f0a'],
-              ['Contract', '#14b8a6'],
-              ['Suppressed', '#ff453a'],
-            ]
-          : activityMode === 'sends'
-            ? [
-                ['Queued', '#5d6a7b'],
-                ['Sending', '#3b82f6'],
-                ['Delivered', '#30d158'],
-                ['Replied', '#38bdf8'],
-                ['Failed', '#ff453a'],
-              ]
-            : [
-                ['Due Now', '#ffb000'],
-                ['Later Today', '#5bb6ff'],
-                ['Tomorrow', '#14b8a6'],
-                ['Overdue', '#ff453a'],
-                ['Stale', '#7d8795'],
-              ]).map(([label, color]) => (
-          <div key={label} className="nx-icm__legend-row">
-            <span className="nx-icm__legend-chip" style={{ backgroundColor: color }} />
-            <span className="nx-icm__legend-label">{label}</span>
-          </div>
+      {dockTier === 'full' && showKpiBadges && !filtersOpen && !commandMode && <div className="nx-icm__overlay-kpis" aria-label="Map mode KPIs">
+        {kpiChips.map((chip) => (
+          <button
+            key={chip.key}
+            type="button"
+            className={cls('nx-icm__overlay-kpi', activeKpiFilter === chip.key && 'is-active')}
+            onClick={() => setActiveKpiFilter((current) => current === chip.key ? null : chip.key)}
+            style={{ '--icm-kpi-tone': chip.tone } as CSSProperties}
+          >
+            <span>{chip.label}</span>
+            <strong>{chip.count}</strong>
+          </button>
         ))}
       </div>}
 
-      {dockTier === 'mini' && !commandMode && (
-        <div className="nx-icm__legend nx-icm__legend--mini" aria-label="Mini map legend">
-          <div className="nx-icm__legend-title">{activityMode === 'threads' ? 'Threads' : activityMode === 'sends' ? 'Sends' : 'Follow-Ups'}</div>
-          <div className="nx-icm__legend-row">
-            <span className="nx-icm__legend-chip" style={{ backgroundColor: selectedPin ? stageColor(selectedPin) : '#7d8795' }} />
-            <span className="nx-icm__legend-label">{selectedPin?.activity_label || 'No selection'}</span>
+      {dockTier === 'full' && liveTickerItems.length > 0 && !commandMode && (
+        <div className={cls('nx-icm__ticker', `is-${mapStyleMode}`, `is-${tickerDensity}`)} style={cardThemeVars(mapStyleMode)} aria-label="Live activity ticker">
+          <div className="nx-icm__ticker-toolbar">
+            <div className="nx-icm__ticker-heading">
+              <span className="nx-icm__ticker-heading-dot" />
+              <strong>Live Activity</strong>
+            </div>
+            <div className="nx-icm__ticker-density" role="group" aria-label="Ticker density">
+              {(['minimal', 'compact', 'expanded'] as TickerDensity[]).map((density) => (
+                <button
+                  key={density}
+                  type="button"
+                  className={cls('nx-icm__ticker-density-btn', tickerDensity === density && 'is-active')}
+                  onClick={() => setTickerDensity(density)}
+                >
+                  {density}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="nx-icm__ticker-viewport">
+          <div className="nx-icm__ticker-track">
+            {[...liveTickerItems, ...liveTickerItems].map((item, index) => (
+              <article
+                key={`${item.id}:${index}`}
+                className={cls('nx-icm__ticker-item', `is-${item.tone}`)}
+                role="button"
+                tabIndex={0}
+                onClick={() => handleTickerSelect(item)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    handleTickerSelect(item)
+                  }
+                }}
+              >
+                <div className="nx-icm__ticker-item-head">
+                  <span className="nx-icm__ticker-label">{item.badge}</span>
+                  <span className="nx-icm__ticker-meta">{item.timeAgo}</span>
+                </div>
+                <strong className="nx-icm__ticker-subject">{item.sellerName}</strong>
+                <span className="nx-icm__ticker-locale">{item.location}</span>
+                <div className="nx-icm__ticker-reveal">
+                  {item.preview && (
+                    <div className="nx-icm__ticker-detail-block">
+                      <span className="nx-icm__ticker-detail-label">{item.detailLabel || 'Detail'}</span>
+                      <p className="nx-icm__ticker-detail">{item.preview}</p>
+                    </div>
+                  )}
+                  {item.address && <p className="nx-icm__ticker-address">{item.address}</p>}
+                  <div className="nx-icm__ticker-pills">
+                    {item.stageLabel && <span className="nx-icm__ticker-pill">{item.stageLabel}</span>}
+                    {item.statusLabel && <span className="nx-icm__ticker-pill is-muted">{item.statusLabel}</span>}
+                  </div>
+                  {!item.disabledReply && (
+                    <div className="nx-icm__ticker-actions">
+                      <button
+                        type="button"
+                        className="nx-icm__ticker-action"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          handleTickerSelect(item)
+                        }}
+                      >
+                        Open Thread
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
           </div>
         </div>
       )}
-
-      {dockTier === 'full' && activityMode === 'sends' && liveTickerItems.length > 0 && !commandMode && (
-        <div className="nx-icm__ticker" aria-label="Outbound live ticker">
-          {liveTickerItems.map((item) => (
-            <div key={item.id} className="nx-icm__ticker-item">
-              <span className="nx-icm__ticker-label">{item.label}</span>
-              <span className="nx-icm__ticker-subject">{item.subject}</span>
-              <span className="nx-icm__ticker-meta">{item.market} • {formatRelative(item.timestamp)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {!commandMode && <div className="nx-icm__attribution">Deterministic command map</div>}
     </div>
   )
 }
