@@ -1323,7 +1323,7 @@ export function InboxCommandMap({
     () => featureCollectionForPins(visiblePins, selectedPin?.conversation_id ?? null, activeKpiFilter),
     [activeKpiFilter, visiblePins, selectedPin?.conversation_id],
   )
-  const liveTickerItems = useMemo(() => buildLiveTickerItems(visiblePins), [visiblePins])
+  const liveTickerItems = useMemo(() => buildLiveTickerItems(visiblePins, hydratedThreadsById), [hydratedThreadsById, visiblePins])
   const debugStats = useMemo(() => ({
     allPinsCount: allPins.length,
     filteredPinsCount: filteredPins.length,
@@ -2415,6 +2415,7 @@ export function InboxCommandMap({
                   <span className="nx-icm__ticker-meta">{item.timeAgo}</span>
                 </div>
                 <strong className="nx-icm__ticker-subject">{item.sellerName}</strong>
+                {item.preview && <p className="nx-icm__ticker-preview">{item.preview}</p>}
                 <span className="nx-icm__ticker-locale">{item.location}</span>
                 <div className="nx-icm__ticker-reveal">
                   {item.preview && (

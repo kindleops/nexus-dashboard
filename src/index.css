@@ -6607,6 +6607,7 @@ h3 { font-size: 0.8125rem; }
   box-shadow:
     0 20px 44px rgba(0, 0, 0, 0.34),
     0 0 28px rgba(var(--nx-card-accent-rgb, 99, 215, 255), 0.08);
+  max-height: 19%;
 }
 
 .nx-icm__ticker::before,
@@ -6646,7 +6647,7 @@ h3 { font-size: 0.8125rem; }
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 12px 8px;
+  padding: 8px 12px 7px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
@@ -6702,7 +6703,7 @@ h3 { font-size: 0.8125rem; }
 .nx-icm__ticker-viewport {
   position: relative;
   overflow: hidden;
-  padding: 10px 0 10px;
+  padding: 8px 0 8px;
 }
 
 .nx-icm__ticker-track {
@@ -6727,8 +6728,8 @@ h3 { font-size: 0.8125rem; }
   min-width: 220px;
   max-width: 220px;
   display: grid;
-  gap: 4px;
-  padding: 10px 12px;
+  gap: 3px;
+  padding: 8px 10px;
   border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background:
@@ -6746,24 +6747,30 @@ h3 { font-size: 0.8125rem; }
   z-index: 1;
   cursor: pointer;
   outline: none;
+  min-height: 92px;
 }
 
 .nx-icm__ticker.is-minimal .nx-icm__ticker-item {
   min-width: 176px;
   max-width: 176px;
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .nx-icm__ticker.is-expanded .nx-icm__ticker-item {
-  min-width: 256px;
-  max-width: 256px;
+  min-width: 248px;
+  max-width: 248px;
+  min-height: 126px;
 }
 
 .nx-icm__ticker-item:hover,
 .nx-icm__ticker-item:focus-visible {
   opacity: 1 !important;
   transform: translateY(-3px) scale(1.01) !important;
-  max-width: 308px;
-  min-width: 308px;
+  max-width: 292px;
+  min-width: 292px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.024)),
     rgba(9, 13, 20, 0.9);
@@ -6846,6 +6853,21 @@ h3 { font-size: 0.8125rem; }
   line-height: 1.35;
 }
 
+.nx-icm__ticker-preview {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.42;
+  color: rgba(222, 231, 242, 0.74);
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.nx-icm__ticker.is-expanded .nx-icm__ticker-preview {
+  -webkit-line-clamp: 2;
+}
+
 .nx-icm__ticker-locale,
 .nx-icm__ticker-meta {
   font-size: 10px;
@@ -6864,9 +6886,9 @@ h3 { font-size: 0.8125rem; }
 .nx-icm__ticker-item:hover .nx-icm__ticker-reveal,
 .nx-icm__ticker-item:focus-visible .nx-icm__ticker-reveal,
 .nx-icm__ticker.is-expanded .nx-icm__ticker-reveal {
-  max-height: 180px;
+  max-height: 98px;
   opacity: 1;
-  margin-top: 4px;
+  margin-top: 3px;
 }
 
 .nx-icm__ticker-detail-block {
@@ -6940,6 +6962,26 @@ h3 { font-size: 0.8125rem; }
 
 .nx-icm__ticker.is-minimal .nx-icm__ticker-reveal {
   display: none;
+}
+
+.nx-icm__ticker.is-minimal .nx-icm__ticker-subject,
+.nx-icm__ticker.is-minimal .nx-icm__ticker-locale,
+.nx-icm__ticker.is-minimal .nx-icm__ticker-meta {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nx-icm__ticker.is-minimal .nx-icm__ticker-preview {
+  display: none;
+}
+
+.nx-icm__ticker.is-minimal .nx-icm__ticker-item-head {
+  flex: 0 0 auto;
+}
+
+.nx-icm__ticker.is-minimal .nx-icm__ticker-label {
+  min-height: 20px;
 }
 
 .nx-icm__ticker.is-satellite .nx-icm__ticker-item {
