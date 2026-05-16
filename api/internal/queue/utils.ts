@@ -1,6 +1,80 @@
 import { getSupabaseClient } from '../../../src/lib/supabaseClient'
 import { asBoolean, asString, normalizeStatus } from '../../../src/lib/data/shared'
 
+export interface FailureTaxonomy {
+  category: string
+  reason_normalized: string
+  is_true_delivery_failure: boolean
+  is_data_hygiene: boolean
+  is_repeat_contact_risk: boolean
+}
+
+export function classifyQueueFailureReason(row: Record<string, any>): FailureTaxonomy {
+  const status = asString(row.queue_status, '')
+  const failed = asString(row.failed_reason, '').toLowerCase()
+  const guard = asString(row.guard_reason, '').toLowerCase()
+  const paused = asString(row.paused_reason, '').toLowerCase()
+  const blocked = asString(row.blocked_reason, '').toLowerCase()
+  const metaRouting = asString(row.metadata?.routing_block_reason, '').toLowerCase()
+  const metaSkip = asString(row.metadata?.skip_reason, '').toLowerCase()
+  const metaPaused = asString(row.metadata?.paused_reason, '').toLowerCase()
+  const metaCancel = asString(row.metadata?.cancel_reason, '').toLowerCase()
+  
+  const allReasons = `${failed} ${guard} ${paused} ${blocked} ${metaRouting} ${metaSkip} ${metaPaused} ${metaCancel} ${status}`
+
+  let category = 'unknown'
+  let reasonNormalized = 'unknown_error'
+  let isTrueDelivery = false
+  let isDataHygiene = false
+  let isRepeatRisk = false
+
+  if (allReasons.includes('delivery_failed') || status === 'delivery_failed') {
+    category = 'delivery_failure'
+    reasonNormalized = 'delivery_failed'
+    isTrueDelivery = true
+  } else if (allReasons.includes('blacklist') || allReasons.includes('21610')) {
+    category = 'textgrid_blacklist'
+    reasonNormalized = 'textgrid_blacklist'
+    isTrueDelivery = true
+  } else if (allReasons.includes('blank_message') || allReasons.includes('missing_template_text') || allReasons.includes('blank_greeting') || allReasons.includes('retired_before_send')) {
+    category = 'blank_message'
+    reasonNormalized = 'blank_message_body'
+    isDataHygiene = true
+  } else if (allReasons.includes('missing_seller_first_name') || allReasons.includes('missing_name') || allReasons.includes('missing_variables')) {
+    category = 'missing_name'
+    reasonNormalized = 'missing_variables'
+    isDataHygiene = true
+  } else if (allReasons.includes('routing blocked') || allReasons.includes('no_valid_local') || allReasons.includes('missing_from_phone_number')) {
+    category = 'routing_missing_sender'
+    reasonNormalized = 'missing_from_phone_number'
+  } else if (allReasons.includes('duplicate_dedupe_key') || allReasons.includes('duplicate')) {
+    category = 'duplicate'
+    reasonNormalized = 'duplicate_dedupe_key'
+    isRepeatRisk = true
+  } else if (allReasons.includes('manual hold') || allReasons.includes('after hours') || allReasons.includes('safety_net')) {
+    category = 'safety_hold'
+    reasonNormalized = 'safety_net_hold'
+  } else if (allReasons.includes('manual_cancel') || allReasons.includes('replied_before_send')) {
+    category = 'manual_cancel'
+    reasonNormalized = 'manual_cancel'
+  } else if (allReasons.includes('max_per_number_per_day') || allReasons.includes('max_per_market_per_hour')) {
+    category = 'scheduler_overflow'
+    reasonNormalized = 'scheduler_overflow'
+  } else if (allReasons.includes('opt_out') || allReasons.includes('dnc') || allReasons.includes('wrong_number') || allReasons.includes('suppressed')) {
+    category = 'data_hygiene'
+    reasonNormalized = 'suppression_list'
+    isDataHygiene = true
+  }
+
+  return {
+    category,
+    reason_normalized: reasonNormalized,
+    is_true_delivery_failure: isTrueDelivery,
+    is_data_hygiene: isDataHygiene,
+    is_repeat_contact_risk: isRepeatRisk
+  }
+}
+
 export interface SuppressionResult {
   safe: boolean
   blocked: boolean
@@ -80,6 +154,47 @@ export async function checkSuppression(params: {
     reason: blocked ? `Suppressed by: ${codes.join(', ')}` : null,
     codes
   }
+}
+
+export async function checkRepeatContactAndBlacklist(params: {
+  phone: string
+  prospectId: string
+  masterOwnerId: string
+  stageCode: string
+}): Promise<{ safe: boolean, reason: string | null }> {
+  const supabase = getSupabaseClient()
+  const phoneE164 = params.phone.replace(/\D/g, '')
+  const formattedPhone = phoneE164.length === 10 ? `+1${phoneE164}` : `+${phoneE164}`
+
+  // 1. Check for recent contact (45 days)
+  const fortyFiveDaysAgo = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString()
+  
+  // We can just check message_events for any outbound to this prospect or owner
+  const { data: recentEvents } = await supabase
+    .from('message_events')
+    .select('id')
+    .eq('direction', 'outbound')
+    .gte('created_at', fortyFiveDaysAgo)
+    .or(`prospect_id.eq."${params.prospectId}",master_owner_id.eq."${params.masterOwnerId}",phone.eq."${formattedPhone}"`)
+    .limit(1)
+
+  if (recentEvents && recentEvents.length > 0) {
+    return { safe: false, reason: 'recent_ownership_check_contact' }
+  }
+
+  // 2. Check for TextGrid 21610 blacklist metadata for this phone
+  const { data: blacklistEvents } = await supabase
+    .from('send_queue')
+    .select('id')
+    .eq('to_phone_number', formattedPhone)
+    .or('failed_reason.ilike.%21610%,failed_reason.ilike.%blacklist%,blocked_reason.ilike.%blacklist%,metadata->>failure_reason_normalized.eq.textgrid_blacklist')
+    .limit(1)
+
+  if (blacklistEvents && blacklistEvents.length > 0) {
+    return { safe: false, reason: 'prior_textgrid_blacklist_pair' }
+  }
+
+  return { safe: true, reason: null }
 }
 
 /**

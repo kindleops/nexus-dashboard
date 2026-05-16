@@ -17,6 +17,8 @@ import type {
   BuyerProfilePoint,
   BuyerRecentPurchase,
 } from '../buyer/buyerCommandData'
+import { loadCensusLayerPoints, type CensusMetric, type CensusLayerPoint } from '../../lib/data/censusMapData'
+import { loadBuyerDemandLayerPoints, type BuyerDemandMetric, type BuyerDemandLayerPoint, formatShortPrice } from '../../lib/data/buyerActivityMapData'
 
 const DARK_MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
 const CARTO_GLYPHS_URL = 'https://basemaps.cartocdn.com/gl/positron-gl-style/fonts/{fontstack}/{range}.pbf'
@@ -84,6 +86,27 @@ const BUYER_PROFILE_LAYER_IDS = [
   'command-buyer-profile-core',
   'command-buyer-profile-label',
 ] as const
+
+// Census + Buyer Demand overlay layer IDs
+const CENSUS_SOURCE_ID = 'census-geo-source'
+const BUYER_DEMAND_SOURCE_ID = 'buyer-demand-source'
+const CENSUS_LAYER_IDS = {
+  incomeHeat: 'census-income-heat',
+  vacancyHeat: 'census-vacancy-heat',
+  renterDensity: 'census-renter-density',
+  housingAge: 'census-housing-age',
+  acquisitionPressure: 'census-acquisition-pressure',
+} as const
+const BUYER_DEMAND_LAYER_IDS = {
+  activity6mo: 'buyer-demand-activity-6mo',
+  investorDemand: 'buyer-demand-investor',
+  buyerHeat: 'buyer-demand-heat',
+  soldPrice: 'buyer-demand-sold-price',
+  soldPriceLabel: 'buyer-demand-sold-price-label',
+} as const
+const ALL_CENSUS_LAYER_IDS = Object.values(CENSUS_LAYER_IDS)
+const ALL_BUYER_DEMAND_LAYER_IDS = Object.values(BUYER_DEMAND_LAYER_IDS)
+
 export type MapStyleMode = 'dark' | 'satellite' | 'red'
 export type MapOverlayToggles = {
   roads: boolean
@@ -308,6 +331,38 @@ const defaultBuyerLayerToggles: BuyerLayerToggles = {
   flippers: false,
   builders: false,
 }
+
+type CensusLayerToggles = {
+  incomeHeat: boolean
+  vacancyHeat: boolean
+  renterDensity: boolean
+  housingAge: boolean
+  acquisitionPressure: boolean
+}
+
+type BuyerDemandLayerToggles = {
+  activity6mo: boolean
+  investorDemand: boolean
+  buyerHeat: boolean
+  soldPrice: boolean
+}
+
+const defaultCensusLayers: CensusLayerToggles = {
+  incomeHeat: false,
+  vacancyHeat: false,
+  renterDensity: false,
+  housingAge: false,
+  acquisitionPressure: false,
+}
+
+const defaultBuyerDemandLayers: BuyerDemandLayerToggles = {
+  activity6mo: false,
+  investorDemand: false,
+  buyerHeat: false,
+  soldPrice: false,
+}
+
+const EMPTY_GEOJSON: FeatureCollection<Point, Record<string, unknown>> = { type: 'FeatureCollection', features: [] }
 
 const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
 const text = (value: unknown): string => String(value ?? '').trim()
@@ -1502,6 +1557,10 @@ export function InboxCommandMap({
   const [selectedPinId, setSelectedPinId] = useState<string | null>(selectedThread?.id ?? null)
   const [showSelectedHidden, setShowSelectedHidden] = useState(false)
   const [buyerLayers, setBuyerLayers] = useState<BuyerLayerToggles>(defaultBuyerLayerToggles)
+  const [censusLayers, setCensusLayers] = useState<CensusLayerToggles>(defaultCensusLayers)
+  const [buyerDemandLayers, setBuyerDemandLayers] = useState<BuyerDemandLayerToggles>(defaultBuyerDemandLayers)
+  const [censusGeojson, setCensusGeojson] = useState<FeatureCollection<Point, Record<string, unknown>>>(EMPTY_GEOJSON)
+  const [buyerDemandGeojson, setBuyerDemandGeojson] = useState<FeatureCollection<Point, Record<string, unknown>>>(EMPTY_GEOJSON)
   const [selectedBuyerPurchase, setSelectedBuyerPurchase] = useState<BuyerRecentPurchase | null>(null)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [dockTier, setDockTier] = useState<'mini' | 'compact' | 'full'>('full')
@@ -2002,6 +2061,146 @@ export function InboxCommandMap({
         map.addSource(BUYER_PROFILE_SOURCE_ID, {
           type: 'geojson',
           data: buyerProfilesGeojson,
+        })
+      }
+
+      // ── Census geo overlay source ──────────────────────────────────
+      if (!map.getSource(CENSUS_SOURCE_ID)) {
+        map.addSource(CENSUS_SOURCE_ID, { type: 'geojson', data: EMPTY_GEOJSON })
+      }
+
+      if (!map.getLayer(CENSUS_LAYER_IDS.incomeHeat)) {
+        map.addLayer({
+          id: CENSUS_LAYER_IDS.incomeHeat, type: 'circle', source: CENSUS_SOURCE_ID,
+          filter: ['==', ['get', 'metric'], 'income_heat'],
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['get', 'score'], 0, 4, 100, 22],
+            'circle-color': '#f59e0b', 'circle-opacity': 0.55, 'circle-blur': 0.3,
+            'circle-stroke-width': 1, 'circle-stroke-color': 'rgba(245,158,11,0.4)',
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+      if (!map.getLayer(CENSUS_LAYER_IDS.vacancyHeat)) {
+        map.addLayer({
+          id: CENSUS_LAYER_IDS.vacancyHeat, type: 'circle', source: CENSUS_SOURCE_ID,
+          filter: ['==', ['get', 'metric'], 'vacancy_heat'],
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['get', 'score'], 0, 4, 100, 22],
+            'circle-color': '#ef4444', 'circle-opacity': 0.52, 'circle-blur': 0.3,
+            'circle-stroke-width': 1, 'circle-stroke-color': 'rgba(239,68,68,0.35)',
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+      if (!map.getLayer(CENSUS_LAYER_IDS.renterDensity)) {
+        map.addLayer({
+          id: CENSUS_LAYER_IDS.renterDensity, type: 'circle', source: CENSUS_SOURCE_ID,
+          filter: ['==', ['get', 'metric'], 'renter_density'],
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['get', 'score'], 0, 4, 100, 22],
+            'circle-color': '#3b82f6', 'circle-opacity': 0.52, 'circle-blur': 0.3,
+            'circle-stroke-width': 1, 'circle-stroke-color': 'rgba(59,130,246,0.35)',
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+      if (!map.getLayer(CENSUS_LAYER_IDS.housingAge)) {
+        map.addLayer({
+          id: CENSUS_LAYER_IDS.housingAge, type: 'circle', source: CENSUS_SOURCE_ID,
+          filter: ['==', ['get', 'metric'], 'housing_age'],
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['get', 'score'], 0, 4, 100, 22],
+            'circle-color': '#94a3b8', 'circle-opacity': 0.50, 'circle-blur': 0.3,
+            'circle-stroke-width': 1, 'circle-stroke-color': 'rgba(148,163,184,0.3)',
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+      if (!map.getLayer(CENSUS_LAYER_IDS.acquisitionPressure)) {
+        map.addLayer({
+          id: CENSUS_LAYER_IDS.acquisitionPressure, type: 'circle', source: CENSUS_SOURCE_ID,
+          filter: ['==', ['get', 'metric'], 'acquisition_pressure'],
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['get', 'score'], 0, 5, 100, 24],
+            'circle-color': '#a855f7', 'circle-opacity': 0.56, 'circle-blur': 0.25,
+            'circle-stroke-width': 1, 'circle-stroke-color': 'rgba(168,85,247,0.4)',
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+
+      // ── Buyer Demand overlay source ────────────────────────────────
+      if (!map.getSource(BUYER_DEMAND_SOURCE_ID)) {
+        map.addSource(BUYER_DEMAND_SOURCE_ID, { type: 'geojson', data: EMPTY_GEOJSON })
+      }
+
+      if (!map.getLayer(BUYER_DEMAND_LAYER_IDS.activity6mo)) {
+        map.addLayer({
+          id: BUYER_DEMAND_LAYER_IDS.activity6mo, type: 'circle', source: BUYER_DEMAND_SOURCE_ID,
+          filter: ['==', ['get', 'metric'], 'buyer_activity_6mo'],
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['get', 'score'], 0, 5, 100, 22],
+            'circle-color': '#14b8a6', 'circle-opacity': 0.56, 'circle-blur': 0.25,
+            'circle-stroke-width': 1, 'circle-stroke-color': 'rgba(20,184,166,0.4)',
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+      if (!map.getLayer(BUYER_DEMAND_LAYER_IDS.investorDemand)) {
+        map.addLayer({
+          id: BUYER_DEMAND_LAYER_IDS.investorDemand, type: 'circle', source: BUYER_DEMAND_SOURCE_ID,
+          filter: ['==', ['get', 'metric'], 'investor_demand'],
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['get', 'score'], 0, 5, 100, 22],
+            'circle-color': '#f97316', 'circle-opacity': 0.56, 'circle-blur': 0.25,
+            'circle-stroke-width': 1, 'circle-stroke-color': 'rgba(249,115,22,0.4)',
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+      if (!map.getLayer(BUYER_DEMAND_LAYER_IDS.buyerHeat)) {
+        map.addLayer({
+          id: BUYER_DEMAND_LAYER_IDS.buyerHeat, type: 'circle', source: BUYER_DEMAND_SOURCE_ID,
+          filter: ['==', ['get', 'metric'], 'buyer_heat'],
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['get', 'score'], 0, 5, 100, 24],
+            'circle-color': '#22c55e', 'circle-opacity': 0.56, 'circle-blur': 0.2,
+            'circle-stroke-width': 1, 'circle-stroke-color': 'rgba(34,197,94,0.4)',
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+      if (!map.getLayer(BUYER_DEMAND_LAYER_IDS.soldPrice)) {
+        map.addLayer({
+          id: BUYER_DEMAND_LAYER_IDS.soldPrice, type: 'circle', source: BUYER_DEMAND_SOURCE_ID,
+          filter: ['==', ['get', 'metric'], 'sold_price'],
+          paint: {
+            'circle-radius': 8,
+            'circle-color': '#eab308', 'circle-opacity': 0.52, 'circle-blur': 0.2,
+            'circle-stroke-width': 1, 'circle-stroke-color': 'rgba(234,179,8,0.4)',
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+      if (!map.getLayer(BUYER_DEMAND_LAYER_IDS.soldPriceLabel)) {
+        map.addLayer({
+          id: BUYER_DEMAND_LAYER_IDS.soldPriceLabel, type: 'symbol', source: BUYER_DEMAND_SOURCE_ID,
+          filter: ['==', ['get', 'metric'], 'sold_price'],
+          layout: {
+            'text-field': ['get', 'priceLabel'],
+            'text-size': 10,
+            'text-font': ['Open Sans Semibold'],
+            'text-offset': [0, 1.2],
+            'text-allow-overlap': false,
+            visibility: 'none',
+          },
+          paint: {
+            'text-color': '#eab308',
+            'text-halo-color': 'rgba(8,10,15,0.88)',
+            'text-halo-width': 1.2,
+          },
+          minzoom: 8,
         })
       }
 
@@ -2651,6 +2850,128 @@ export function InboxCommandMap({
     }
   }, [buyerLayers])
 
+  // ── Census layer data loading ──────────────────────────────────────────────
+  useEffect(() => {
+    const activeMetrics = (Object.entries(censusLayers) as Array<[keyof CensusLayerToggles, boolean]>)
+      .filter(([, on]) => on)
+      .map(([key]) => {
+        const metricMap: Record<keyof CensusLayerToggles, CensusMetric> = {
+          incomeHeat: 'income_heat',
+          vacancyHeat: 'vacancy_heat',
+          renterDensity: 'renter_density',
+          housingAge: 'housing_age',
+          acquisitionPressure: 'acquisition_pressure',
+        }
+        return metricMap[key]
+      })
+
+    if (activeMetrics.length === 0) {
+      setCensusGeojson(EMPTY_GEOJSON)
+      return
+    }
+
+    let cancelled = false
+    Promise.all(activeMetrics.map((m) => loadCensusLayerPoints(m))).then((results) => {
+      if (cancelled) return
+      const allPoints: CensusLayerPoint[] = results.flat()
+      const features = allPoints.map((pt) => ({
+        type: 'Feature' as const,
+        geometry: { type: 'Point' as const, coordinates: [pt.lng, pt.lat] as [number, number] },
+        properties: { id: pt.id, metric: pt.metric, score: pt.score, value: pt.value, label: pt.label, geo_key: pt.geo_key, geo_level: pt.geo_level },
+      }))
+      setCensusGeojson({ type: 'FeatureCollection', features })
+    }).catch(() => { /* silent — map just shows no census bubbles */ })
+    return () => { cancelled = true }
+  }, [censusLayers])
+
+  // ── Buyer demand layer data loading ───────────────────────────────────────
+  useEffect(() => {
+    const activeMetrics = (Object.entries(buyerDemandLayers) as Array<[keyof BuyerDemandLayerToggles, boolean]>)
+      .filter(([, on]) => on)
+      .map(([key]) => {
+        const metricMap: Record<keyof BuyerDemandLayerToggles, BuyerDemandMetric> = {
+          activity6mo: 'buyer_activity_6mo',
+          investorDemand: 'investor_demand',
+          buyerHeat: 'buyer_heat',
+          soldPrice: 'sold_price',
+        }
+        return metricMap[key]
+      })
+
+    if (activeMetrics.length === 0) {
+      setBuyerDemandGeojson(EMPTY_GEOJSON)
+      return
+    }
+
+    let cancelled = false
+    Promise.all(activeMetrics.map((m) => loadBuyerDemandLayerPoints(m))).then((results) => {
+      if (cancelled) return
+      const allPoints: BuyerDemandLayerPoint[] = results.flat()
+      const features = allPoints.map((pt) => ({
+        type: 'Feature' as const,
+        geometry: { type: 'Point' as const, coordinates: [pt.lng, pt.lat] as [number, number] },
+        properties: {
+          id: pt.id, metric: pt.metric, score: pt.score, value: pt.value,
+          label: pt.label, geo_key: pt.geo_key, geo_level: pt.geo_level,
+          priceLabel: pt.metric === 'sold_price' ? formatShortPrice(pt.value) : '',
+        },
+      }))
+      setBuyerDemandGeojson({ type: 'FeatureCollection', features })
+    }).catch(() => { /* silent */ })
+    return () => { cancelled = true }
+  }, [buyerDemandLayers])
+
+  // ── Push census + buyer demand GeoJSON to map sources ─────────────────────
+  useEffect(() => {
+    const censusSource = mapRef.current?.getSource(CENSUS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined
+    censusSource?.setData(censusGeojson as Parameters<maplibregl.GeoJSONSource['setData']>[0])
+  }, [censusGeojson])
+
+  useEffect(() => {
+    const bdSource = mapRef.current?.getSource(BUYER_DEMAND_SOURCE_ID) as maplibregl.GeoJSONSource | undefined
+    bdSource?.setData(buyerDemandGeojson as Parameters<maplibregl.GeoJSONSource['setData']>[0])
+  }, [buyerDemandGeojson])
+
+  // ── Census layer visibility ────────────────────────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    ALL_CENSUS_LAYER_IDS.forEach((layerId) => {
+      if (map.getLayer(layerId)) {
+        const metricMap: Record<string, keyof CensusLayerToggles> = {
+          [CENSUS_LAYER_IDS.incomeHeat]: 'incomeHeat',
+          [CENSUS_LAYER_IDS.vacancyHeat]: 'vacancyHeat',
+          [CENSUS_LAYER_IDS.renterDensity]: 'renterDensity',
+          [CENSUS_LAYER_IDS.housingAge]: 'housingAge',
+          [CENSUS_LAYER_IDS.acquisitionPressure]: 'acquisitionPressure',
+        }
+        const key = metricMap[layerId]
+        const visible = key ? censusLayers[key] : false
+        map.setLayoutProperty(layerId, 'visibility', visible ? 'visible' : 'none')
+      }
+    })
+  }, [censusLayers])
+
+  // ── Buyer demand layer visibility ─────────────────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    ALL_BUYER_DEMAND_LAYER_IDS.forEach((layerId) => {
+      if (map.getLayer(layerId)) {
+        const metricMap: Record<string, keyof BuyerDemandLayerToggles> = {
+          [BUYER_DEMAND_LAYER_IDS.activity6mo]: 'activity6mo',
+          [BUYER_DEMAND_LAYER_IDS.investorDemand]: 'investorDemand',
+          [BUYER_DEMAND_LAYER_IDS.buyerHeat]: 'buyerHeat',
+          [BUYER_DEMAND_LAYER_IDS.soldPrice]: 'soldPrice',
+          [BUYER_DEMAND_LAYER_IDS.soldPriceLabel]: 'soldPrice',
+        }
+        const key = metricMap[layerId]
+        const visible = key ? buyerDemandLayers[key] : false
+        map.setLayoutProperty(layerId, 'visibility', visible ? 'visible' : 'none')
+      }
+    })
+  }, [buyerDemandLayers])
+
   useEffect(() => {
     if (!mapRef.current || visiblePins.length === 0) return
     if (selectedPin) {
@@ -2821,6 +3142,25 @@ export function InboxCommandMap({
                 <label className="nx-icm__checkbox"><input type="checkbox" checked={mapOverlays.cities} onChange={(e) => setMapOverlays((current) => ({ ...current, cities: e.target.checked }))} />Cities</label>
                 <label className="nx-icm__checkbox"><input type="checkbox" checked={mapOverlays.poi} onChange={(e) => setMapOverlays((current) => ({ ...current, poi: e.target.checked }))} />POI</label>
                 <label className="nx-icm__checkbox"><input type="checkbox" checked={mapOverlays.zip} onChange={(e) => setMapOverlays((current) => ({ ...current, zip: e.target.checked }))} />ZIP</label>
+              </div>
+            </div>
+            <div className="nx-icm__controls-group">
+              <span className="nx-icm__controls-label">Census Intelligence</span>
+              <div className="nx-icm__controls-segment">
+                <label className="nx-icm__checkbox"><input type="checkbox" checked={censusLayers.incomeHeat} onChange={(e) => setCensusLayers((c) => ({ ...c, incomeHeat: e.target.checked }))} />Income Heat</label>
+                <label className="nx-icm__checkbox"><input type="checkbox" checked={censusLayers.vacancyHeat} onChange={(e) => setCensusLayers((c) => ({ ...c, vacancyHeat: e.target.checked }))} />Vacancy Heat</label>
+                <label className="nx-icm__checkbox"><input type="checkbox" checked={censusLayers.renterDensity} onChange={(e) => setCensusLayers((c) => ({ ...c, renterDensity: e.target.checked }))} />Renter Density</label>
+                <label className="nx-icm__checkbox"><input type="checkbox" checked={censusLayers.housingAge} onChange={(e) => setCensusLayers((c) => ({ ...c, housingAge: e.target.checked }))} />Housing Age</label>
+                <label className="nx-icm__checkbox"><input type="checkbox" checked={censusLayers.acquisitionPressure} onChange={(e) => setCensusLayers((c) => ({ ...c, acquisitionPressure: e.target.checked }))} />Acquisition Pressure</label>
+              </div>
+            </div>
+            <div className="nx-icm__controls-group">
+              <span className="nx-icm__controls-label">Buyer Demand</span>
+              <div className="nx-icm__controls-segment">
+                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerDemandLayers.activity6mo} onChange={(e) => setBuyerDemandLayers((c) => ({ ...c, activity6mo: e.target.checked }))} />Buyer Activity 6mo</label>
+                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerDemandLayers.investorDemand} onChange={(e) => setBuyerDemandLayers((c) => ({ ...c, investorDemand: e.target.checked }))} />Investor Demand</label>
+                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerDemandLayers.buyerHeat} onChange={(e) => setBuyerDemandLayers((c) => ({ ...c, buyerHeat: e.target.checked }))} />Buyer Heat</label>
+                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerDemandLayers.soldPrice} onChange={(e) => setBuyerDemandLayers((c) => ({ ...c, soldPrice: e.target.checked }))} />Sold Price Labels</label>
               </div>
             </div>
             <div className="nx-icm__controls-group">

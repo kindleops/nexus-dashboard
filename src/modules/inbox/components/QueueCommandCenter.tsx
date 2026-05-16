@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { QueueProcessorHealth } from '../../../lib/data/inboxData'
 
 const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
@@ -30,35 +31,41 @@ interface QueueCommandCenterProps {
   onCancelStaleFollowUps: () => void
 }
 
-const statusLabel = (value: QueueProcessorHealth['status'] | 'unknown') => {
-  if (value === 'healthy') return 'Healthy'
-  if (value === 'warning') return 'Warning'
-  if (value === 'critical') return 'Critical'
-  return 'Unknown'
-}
-
-const metricsFor = (health: QueueProcessorHealth | null) => ([
-  ['Queued', health?.queuedCount ?? 0],
-  ['Scheduled', health?.scheduledCount ?? 0],
-  ['Sending', health?.sendingCount ?? 0],
-  ['Sent Today', health?.sentTodayCount ?? 0],
-  ['Delivered Today', health?.deliveredTodayCount ?? 0],
-  ['Failed Today', health?.failedTodayCount ?? 0],
-  ['Blocked', health?.blockedCount ?? 0],
-  ['Paused Invalid', health?.pausedInvalidCount ?? 0],
-  ['Duplicate Skipped', health?.duplicateSkippedCount ?? 0],
-  ['Suppression Blocked', health?.suppressionBlockedCount ?? 0],
-  ['Blank Body Blocked', health?.blankBodyBlockedCount ?? 0],
-  ['Routing Blocked', health?.routingBlockedCount ?? 0],
-  ['Replied Before Send', health?.repliedBeforeSendCount ?? 0],
-])
-
-const toneForHealth = (health: QueueProcessorHealth | null): 'good' | 'warning' | 'critical' | 'neutral' => {
+const toneFor = (health: QueueProcessorHealth | null): 'good' | 'warning' | 'critical' | 'neutral' => {
   if (!health) return 'neutral'
   if (health.status === 'healthy') return 'good'
   if (health.status === 'warning') return 'warning'
   if (health.status === 'critical') return 'critical'
   return 'neutral'
+}
+
+const healthLabel = (status: string) => {
+  if (status === 'healthy') return 'Healthy'
+  if (status === 'warning') return 'Warning'
+  if (status === 'critical') return 'Critical'
+  return 'Unknown'
+}
+
+const modeLabel = (mode: QueueCommandMode) => {
+  if (mode === 'safe') return 'Safe Autopilot'
+  if (mode === 'live') return 'Live Autopilot'
+  return 'Off'
+}
+
+const heroSentence = (
+  health: QueueProcessorHealth | null,
+  attentionCount: number,
+  mode: QueueCommandMode,
+): string => {
+  if (!health) return 'Connecting to queue processor...'
+  if (mode === 'off') {
+    const q = health.queuedCount
+    return q > 0 ? `Processor off — ${q} row${q !== 1 ? 's' : ''} waiting` : 'Processor off — queue clear'
+  }
+  if (health.status === 'critical') return `Critical — ${attentionCount} item${attentionCount !== 1 ? 's' : ''} need immediate attention`
+  if (health.status === 'warning') return `Warning — ${attentionCount} item${attentionCount !== 1 ? 's' : ''} need review`
+  if (attentionCount > 0) return `Healthy — ${attentionCount} item${attentionCount !== 1 ? 's' : ''} need review`
+  return 'All systems clear'
 }
 
 export function QueueCommandCenter({
@@ -77,157 +84,226 @@ export function QueueCommandCenter({
   onReconcileDelivery,
   onCancelStaleFollowUps,
 }: QueueCommandCenterProps) {
-  const healthStatus = health?.status ?? 'unknown'
-  const healthTone = toneForHealth(health)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+
+  const tone = toneFor(health)
+  const status = health?.status ?? 'unknown'
   const liveBlocked = health?.liveAutopilotAllowed === false
-  const controlsDisabled = loading || actionLoading !== null
+  const busy = loading || actionLoading !== null
+
+  // Derive "needs attention" items from health counts
+  const attentionItems = [
+    (health?.routingBlockedCount ?? 0) > 0
+      ? { label: 'Routing Blocked', desc: 'Paused sender resolution', count: health!.routingBlockedCount, action: 'Retry' as const, onAction: () => onReprocessPaused() }
+      : null,
+    (health?.blankBodyBlockedCount ?? 0) > 0
+      ? { label: 'Blank Body Blocked', desc: 'Empty message template', count: health!.blankBodyBlockedCount, action: 'Review' as const, onAction: null }
+      : null,
+    (health?.pausedInvalidCount ?? 0) > 0
+      ? { label: 'Paused Invalid', desc: 'Stale or invalid rows', count: health!.pausedInvalidCount, action: 'Reprocess' as const, onAction: () => onReprocessPaused() }
+      : null,
+    (health?.failedTodayCount ?? 0) > 0
+      ? { label: 'Failed Today', desc: 'Delivery failures', count: health!.failedTodayCount, action: 'Retry' as const, onAction: onRetryFailed }
+      : null,
+  ].filter(Boolean) as Array<{
+    label: string
+    desc: string
+    count: number
+    action: string
+    onAction: (() => void) | null
+  }>
+
+  const lastCheck = health?.checkedAt
+    ? new Date(health.checkedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : '—'
 
   return (
-    <div className="nx-queue-cc" role="dialog" aria-label="Queue Command Center">
-      <div className="nx-queue-cc__header">
-        <div className="nx-queue-cc__title-stack">
-          <p className="nx-queue-cc__eyebrow">Queue Command Center</p>
-          <h3>Deterministic Queue Operations</h3>
-          <div className={cls('nx-queue-cc__hero-pill', `is-${healthTone}`)}>
-            Health: {statusLabel(healthStatus)} {health?.queuedCount !== undefined ? `• ${health.queuedCount} queued` : ''}
-          </div>
-        </div>
-        <div className={cls('nx-queue-cc__health', `is-${healthStatus}`)}>
-          {statusLabel(healthStatus)}
-        </div>
-      </div>
+    <div className={cls('qcc-root', `is-${tone}`)} role="dialog" aria-label="Queue Command Center">
 
-      <div className="nx-queue-cc__summary">
-        <p>{loading ? 'Synchronizing queue command telemetry...' : (health?.summary ?? 'No processor data available.')}</p>
-        <div className="nx-queue-cc__summary-meta">
-          <span>Mode: <strong>{mode === 'off' ? 'Off' : mode === 'safe' ? 'Safe Autopilot' : 'Live Autopilot'}</strong></span>
-          <span>Last Check: <strong>{health?.checkedAt ? new Date(health.checkedAt).toLocaleTimeString() : '—'}</strong></span>
+      {/* ── SECTION 1: Status Hero ──────────────────────────────────── */}
+      <div className="qcc-hero">
+        <div className="qcc-hero__top">
+          <p className="qcc-hero__eyebrow">Queue Command Center</p>
+          <button
+            type="button"
+            className="qcc-refresh-btn"
+            onClick={onRefresh}
+            disabled={busy}
+            title="Refresh queue health"
+          >
+            {loading ? '⟳' : '↻'}
+          </button>
         </div>
-      </div>
 
-      <div className="nx-queue-cc__hero-grid">
-        <div className={cls('nx-queue-cc__hero-card', `is-${healthTone}`)}>
-          <div className="nx-queue-cc__hero-card-top">
-            <span>Queue Health</span>
-            <b>{statusLabel(healthStatus)}</b>
-          </div>
-          <strong>{health?.queuedCount ?? 0}</strong>
-          <small>Queued now</small>
+        <div className={cls('qcc-health-badge', `is-${tone}`)}>
+          <span className="qcc-health-badge__label">{healthLabel(status)}</span>
+          <p className="qcc-health-badge__sentence">{heroSentence(health, attentionItems.length, mode)}</p>
         </div>
-        <div className="nx-queue-cc__hero-card is-neutral">
-          <div className="nx-queue-cc__hero-card-top">
-            <span>Delivered Today</span>
-            <b>{health?.webhookHealthy ? 'Webhooks OK' : 'Webhook Stale'}</b>
-          </div>
-          <strong>{health?.deliveredTodayCount ?? 0}</strong>
-          <small>{health?.latestWebhookAt ? `Last webhook ${new Date(health.latestWebhookAt).toLocaleTimeString()}` : 'No webhook seen'}</small>
-        </div>
-        <div className={cls('nx-queue-cc__hero-card', (health?.routingBlockedCount ?? 0) > 0 ? 'is-warning' : 'is-good')}>
-          <div className="nx-queue-cc__hero-card-top">
-            <span>Routing Blocked</span>
-            <b>{(health?.routingBlockedCount ?? 0) > 0 ? 'Needs Review' : 'Clear'}</b>
-          </div>
-          <strong>{health?.routingBlockedCount ?? 0}</strong>
-          <small>Paused sender resolution rows</small>
-        </div>
-      </div>
 
-      <section className="nx-queue-cc__section">
-        <div className="nx-queue-cc__section-head">
+        <div className="qcc-hero__meta">
           <span>Mode</span>
-          {liveBlocked && <small>Live Autopilot blocked while queue health is Critical</small>}
+          <strong>{modeLabel(mode)}</strong>
+          <span className="qcc-hero__meta-dot" />
+          <span>Last check</span>
+          <strong>{lastCheck}</strong>
+          <span className="qcc-hero__meta-dot" />
+          <span>{health?.queuedCount ?? 0} queued</span>
         </div>
-        <div className="nx-queue-cc__segment">
-          <button type="button" className={cls('nx-queue-cc__chip', mode === 'off' && 'is-active')} onClick={() => onModeChange('off')} disabled={controlsDisabled}>Off</button>
-          <button type="button" className={cls('nx-queue-cc__chip', mode === 'safe' && 'is-active')} onClick={() => onModeChange('safe')} disabled={controlsDisabled}>Safe Autopilot</button>
-          <button type="button" className={cls('nx-queue-cc__chip', mode === 'live' && 'is-active')} onClick={() => onModeChange('live')} disabled={controlsDisabled || liveBlocked}>Live Autopilot</button>
-        </div>
-      </section>
+      </div>
 
-      <section className="nx-queue-cc__section">
-        <div className="nx-queue-cc__section-head">
-          <span>Actions</span>
-          <button type="button" className="nx-queue-cc__inline-btn" onClick={onRefresh} disabled={controlsDisabled}>{loading ? 'Refreshing...' : 'Refresh'}</button>
+      {/* ── SECTION 2: Mode + Primary Actions ──────────────────────── */}
+      <div className="qcc-mode-band">
+        <div className="qcc-segment">
+          <button type="button" className={cls('qcc-chip', mode === 'off' && 'is-active')} onClick={() => onModeChange('off')} disabled={busy}>Off</button>
+          <button type="button" className={cls('qcc-chip', mode === 'safe' && 'is-active')} onClick={() => onModeChange('safe')} disabled={busy}>Safe</button>
+          <button
+            type="button"
+            className={cls('qcc-chip', mode === 'live' && 'is-active')}
+            onClick={() => onModeChange('live')}
+            disabled={busy || liveBlocked}
+            title={liveBlocked ? 'Live Autopilot blocked — queue health is Critical' : undefined}
+          >
+            Live
+          </button>
         </div>
-        <div className="nx-queue-cc__actions">
-          <button type="button" onClick={onRunSafeBatch} disabled={controlsDisabled}>{actionLoading === 'safe_batch' ? 'Running Safe Batch...' : 'Run Safe Batch'}</button>
-          <button type="button" onClick={onRunQueueNow} disabled={controlsDisabled || liveBlocked}>{actionLoading === 'run_now' ? 'Running Queue...' : 'Run Queue Now'}</button>
-          <button type="button" onClick={() => onReprocessPaused()} disabled={controlsDisabled}>{actionLoading === 'reprocess_paused' ? 'Reprocessing...' : 'Reprocess Paused'}</button>
-          <button type="button" onClick={onRetryFailed} disabled={controlsDisabled}>{actionLoading === 'retry_failed' ? 'Retrying...' : 'Retry Failed'}</button>
-          <button type="button" onClick={onReconcileDelivery} disabled={controlsDisabled}>{actionLoading === 'reconcile_delivery' ? 'Reconciling...' : 'Reconcile Delivery'}</button>
-          <button type="button" onClick={onCancelStaleFollowUps} disabled={controlsDisabled}>{actionLoading === 'cancel_stale_followups' ? 'Cancelling...' : 'Cancel Stale Follow-Ups'}</button>
-        </div>
-      </section>
 
-      <section className="nx-queue-cc__section">
-        <div className="nx-queue-cc__section-head">
-          <span>Caps</span>
-          <small>Operator-editable run limits</small>
+        <div className="qcc-primary-actions">
+          <button type="button" className="qcc-btn is-primary" onClick={onRunSafeBatch} disabled={busy}>
+            {actionLoading === 'safe_batch' ? 'Running...' : 'Run Safe Batch'}
+          </button>
+          {/* TODO: wire secondary queue commands into Command-K */}
+          <button type="button" className={cls('qcc-btn is-ghost', showAdvanced && 'is-active')} onClick={() => setShowAdvanced((v) => !v)}>
+            {showAdvanced ? 'Hide' : 'Advanced'}
+          </button>
         </div>
-        <div className="nx-queue-cc__caps-grid">
-          {([
-            ['sends_per_run', 'Sends / Run'],
-            ['auto_replies_per_run', 'Auto Replies / Run'],
-            ['followups_per_run', 'Follow-Ups / Run'],
-            ['first_touches_per_run', 'First Touches / Run'],
-            ['max_per_number_per_day', 'Per Number / Day'],
-            ['max_per_market_per_hour', 'Per Market / Hour'],
-          ] as Array<[keyof QueueCommandCaps, string]>).map(([key, label]) => (
-            <label key={key} className="nx-queue-cc__cap">
-              <span>{label}</span>
-              <input
-                type="number"
-                min={0}
-                value={caps[key]}
-                onChange={(event) => onCapsChange({ [key]: Math.max(0, Number(event.target.value) || 0) })}
-              />
-            </label>
-          ))}
-        </div>
-      </section>
+        <p className="qcc-cmd-hint">Press <kbd>⌘K</kbd> for queue commands</p>
 
-      <section className="nx-queue-cc__section">
-        <div className="nx-queue-cc__section-head">
-          <span>Health Metrics</span>
-          <small>{health?.failedRate !== null && health?.failedRate !== undefined ? `${Math.round(health.failedRate * 10) / 10}% failed rate` : '— failed rate'}</small>
-        </div>
-        <div className="nx-queue-cc__metrics-grid">
-          {metricsFor(health).map(([label, value]) => (
-            <div key={label} className={cls(
-              'nx-queue-cc__metric',
-              label === 'Failed Today' && (health?.failedTodayCount ?? 0) > 0 && 'is-critical',
-              label === 'Routing Blocked' && (health?.routingBlockedCount ?? 0) > 0 && 'is-warning',
-              label === 'Delivered Today' && (health?.deliveredTodayCount ?? 0) > 0 && 'is-good',
-            )}>
-              <span>{label}</span>
-              <strong>{value}</strong>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="nx-queue-cc__section">
-        <div className="nx-queue-cc__section-head">
-          <span>Routing Blocked</span>
-          <small>{health?.routingBlockedRows.length ?? 0} paused rows need sender coverage</small>
-        </div>
-        <div className="nx-queue-cc__routing-list">
-          {(health?.routingBlockedRows.length ?? 0) > 0 ? health!.routingBlockedRows.map((row) => (
-            <div key={row.id} className="nx-queue-cc__routing-row">
-              <div>
-                <strong>{row.sellerName}</strong>
-                <p>{row.propertyAddress}</p>
-                <small>{row.market} • Routing Blocked • {row.reason}</small>
-              </div>
-              <button type="button" onClick={() => onReprocessPaused([row.id])} disabled={controlsDisabled}>
-                {actionLoading === `retry_routing:${row.id}` ? 'Retrying...' : 'Retry Routing'}
+        {/* TODO: move advanced queue diagnostics into command palette / advanced drawer */}
+        {showAdvanced && (
+          <div className="qcc-advanced">
+            <div className="qcc-advanced__actions">
+              <button type="button" className="qcc-btn is-secondary" onClick={onRunQueueNow} disabled={busy || liveBlocked} title={liveBlocked ? 'Blocked — queue health is Critical' : undefined}>
+                {actionLoading === 'run_now' ? 'Running...' : 'Run Queue Now'}
+              </button>
+              <button type="button" className="qcc-btn is-secondary" onClick={() => onReprocessPaused()} disabled={busy}>
+                {actionLoading === 'reprocess_paused' ? 'Reprocessing...' : 'Reprocess Paused'}
+              </button>
+              <button type="button" className="qcc-btn is-secondary" onClick={onRetryFailed} disabled={busy}>
+                {actionLoading === 'retry_failed' ? 'Retrying...' : 'Retry Failed'}
+              </button>
+              <button type="button" className="qcc-btn is-secondary" onClick={onReconcileDelivery} disabled={busy}>
+                {actionLoading === 'reconcile_delivery' ? 'Reconciling...' : 'Reconcile Delivery'}
+              </button>
+              <button type="button" className="qcc-btn is-secondary" onClick={onCancelStaleFollowUps} disabled={busy}>
+                {actionLoading === 'cancel_stale_followups' ? 'Cancelling...' : 'Cancel Stale Follow-Ups'}
               </button>
             </div>
-          )) : (
-            <div className="nx-queue-cc__empty">No paused routing failures right now.</div>
-          )}
-        </div>
-      </section>
+            <div className="qcc-caps-grid">
+              {([
+                ['sends_per_run', 'Sends / Run'],
+                ['auto_replies_per_run', 'Auto Replies'],
+                ['followups_per_run', 'Follow-Ups'],
+                ['first_touches_per_run', 'First Touches'],
+                ['max_per_number_per_day', 'Per Number / Day'],
+                ['max_per_market_per_hour', 'Per Market / Hr'],
+              ] as Array<[keyof QueueCommandCaps, string]>).map(([key, label]) => (
+                <label key={key} className="qcc-cap">
+                  <span>{label}</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={caps[key]}
+                    onChange={(e) => onCapsChange({ [key]: Math.max(0, Number(e.target.value) || 0) })}
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── SECTION 3: Key Metrics ──────────────────────────────────── */}
+      <div className="qcc-metrics">
+        {([
+          ['Queued', health?.queuedCount ?? 0, null],
+          ['Scheduled', health?.scheduledCount ?? 0, null],
+          ['Sent Today', health?.sentTodayCount ?? 0, null],
+          ['Delivered Today', health?.deliveredTodayCount ?? 0, (health?.deliveredTodayCount ?? 0) > 0 ? 'good' : null],
+          ['Routing Blocked', health?.routingBlockedCount ?? 0, (health?.routingBlockedCount ?? 0) > 0 ? 'warning' : null],
+          ['Failed Today', health?.failedTodayCount ?? 0, (health?.failedTodayCount ?? 0) > 0 ? 'critical' : null],
+        ] as Array<[string, number, string | null]>).map(([label, value, accent]) => (
+          <div key={label} className={cls('qcc-metric', accent && `is-${accent}`)}>
+            <strong>{value}</strong>
+            <span>{label}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* ── SECTION 4: Needs Attention ──────────────────────────────── */}
+      <div className="qcc-attention">
+        <p className="qcc-section-label">Needs Attention</p>
+
+        {attentionItems.length === 0 ? (
+          <div className="qcc-all-clear">All systems clear.</div>
+        ) : (
+          <div className="qcc-attention-list">
+            {attentionItems.map((item) => (
+              item.onAction ? (
+                <button
+                  key={item.label}
+                  type="button"
+                  className="qcc-attention-row is-actionable"
+                  onClick={item.onAction}
+                  disabled={busy}
+                >
+                  <div className="qcc-attention-row__info">
+                    <strong>{item.label}</strong>
+                    <span>{item.desc}</span>
+                  </div>
+                  <div className="qcc-attention-row__right">
+                    <b>{item.count}</b>
+                    <span className="qcc-attention-row__action-hint">{item.action} →</span>
+                  </div>
+                </button>
+              ) : (
+                <div key={item.label} className="qcc-attention-row">
+                  <div className="qcc-attention-row__info">
+                    <strong>{item.label}</strong>
+                    <span>{item.desc}</span>
+                  </div>
+                  <div className="qcc-attention-row__right">
+                    <b>{item.count}</b>
+                    <span className="qcc-attention-row__tag">Review</span>
+                  </div>
+                </div>
+              )
+            ))}
+          </div>
+        )}
+
+        {/* Individual routing-blocked detail rows */}
+        {(health?.routingBlockedRows?.length ?? 0) > 0 && (
+          <div className="qcc-routing-rows">
+            {health!.routingBlockedRows.map((row) => (
+              <div key={row.id} className="qcc-routing-detail">
+                <div className="qcc-routing-detail__info">
+                  <strong>{row.sellerName}</strong>
+                  <span>{row.market} · {row.reason}</span>
+                </div>
+                <button
+                  type="button"
+                  className="qcc-btn is-ghost is-xs"
+                  onClick={() => onReprocessPaused([row.id])}
+                  disabled={busy}
+                >
+                  {actionLoading === `retry_routing:${row.id}` ? '...' : 'Retry'}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
     </div>
   )
 }

@@ -33,7 +33,8 @@ export interface NexusNotification {
   action_href: string | null
 }
 
-const commandSpaces = ['All', 'Inbox', 'Queue', 'SMS', 'AI', 'Offers', 'Contracts', 'Title', 'Buyers', 'Properties', 'Owners', 'System', 'Errors']
+const PRIMARY_SPACES = ['All', 'Inbox', 'Queue', 'SMS', 'AI', 'System']
+const SECONDARY_SPACES = ['Offers', 'Contracts', 'Buyers', 'Properties', 'Owners', 'Title', 'Errors']
 
 const notificationIcon = (severity: NotificationSeverity) => {
   if (severity === 'critical') return 'alert'
@@ -41,6 +42,20 @@ const notificationIcon = (severity: NotificationSeverity) => {
   if (severity === 'success') return 'check'
   if (severity === 'neutral') return 'shield'
   return 'bell'
+}
+
+const sourceLabel = (source: string): string => {
+  const map: Record<string, string> = {
+    'Inbox': 'INBOX',
+    'Queue Processor': 'QUEUE',
+    'Offer Engine': 'OFFERS',
+    'Compliance': 'SMS',
+    'Autonomy Engine': 'AI ENGINE',
+    'Compliance Engine': 'COMPLIANCE',
+    'Market Intelligence': 'MARKET INTEL',
+    'NEXUS OS': 'SYSTEM',
+  }
+  return map[source] ?? source.toUpperCase()
 }
 
 export const buildInboxNotifications = ({
@@ -256,8 +271,10 @@ export const NexusNotificationCenter = ({
   const [activeSpace, setActiveSpace] = useState('All')
   const [showUnreadOnly, setShowUnreadOnly] = useState(false)
   const [showCriticalOnly, setShowCriticalOnly] = useState(false)
+  const [showSecondary, setShowSecondary] = useState(false)
   const [readIds, setReadIds] = useState<string[]>([])
   const [dismissedIds, setDismissedIds] = useState<string[]>([])
+  const activeIsSecondary = SECONDARY_SPACES.includes(activeSpace)
 
   useEffect(() => {
     if (open && DEV) {
@@ -319,76 +336,109 @@ export const NexusNotificationCenter = ({
       {open && typeof document !== 'undefined'
         ? createPortal(
             <section className="nx-notification-center nx-liquid-panel" aria-label="Notification center">
+
+              {/* ── Header ─────────────────────────────────────────── */}
               <header>
                 <div>
                   <span>Command Space</span>
                   <strong>Notifications</strong>
+                  <p className="ncc-header__subtitle">Live operational alerts from Inbox, Queue, SMS, AI, Offers, and System.</p>
                 </div>
                 <button type="button" onClick={handleClose} aria-label="Close notifications">
                   <Icon name="close" />
                 </button>
               </header>
 
+              {/* ── Filter tools ───────────────────────────────────── */}
               <div className="nx-notification-center__tools">
-                <button 
-                  type="button" 
-                  className={showUnreadOnly ? 'is-active' : ''} 
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setShowUnreadOnly((value) => !value)
-                  }}
+                <button
+                  type="button"
+                  className={showUnreadOnly ? 'is-active' : ''}
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowUnreadOnly((v) => !v) }}
                 >
                   <Icon name="bell" />
-                  Unread {unreadCount > 0 ? `(${unreadCount})` : ''}
+                  Unread{unreadCount > 0 ? ` (${unreadCount})` : ''}
                 </button>
-                <button 
-                  type="button" 
-                  className={showCriticalOnly ? 'is-active' : ''} 
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setShowCriticalOnly((value) => !value)
-                  }}
+                <button
+                  type="button"
+                  className={showCriticalOnly ? 'is-active' : ''}
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowCriticalOnly((v) => !v) }}
                 >
                   <Icon name="alert" />
                   Critical
                 </button>
-                <button 
-                  type="button" 
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setReadIds(enriched.map((item) => item.id))
-                  }}
+                <button
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); setReadIds(enriched.map((n) => n.id)) }}
                 >
                   Mark all read
                 </button>
               </div>
 
-              <div className="nx-notification-tabs" role="tablist" aria-label="Command spaces">
-                {commandSpaces.map((space) => (
+              {/* ── Primary space tabs ─────────────────────────────── */}
+              <div className="ncc-tabs" role="tablist" aria-label="Command spaces">
+                {PRIMARY_SPACES.map((space) => (
                   <button
                     key={space}
                     type="button"
-                    className={activeSpace === space ? 'is-active' : ''}
-                    onClick={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      setActiveSpace(space)
-                    }}
+                    role="tab"
+                    aria-selected={activeSpace === space}
+                    className={cls('ncc-tab', activeSpace === space && 'is-active')}
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setActiveSpace(space); setShowSecondary(false) }}
                   >
                     {space}
                   </button>
                 ))}
+                <button
+                  type="button"
+                  className={cls('ncc-tab is-more', (activeIsSecondary || showSecondary) && 'is-active')}
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowSecondary((v) => !v) }}
+                >
+                  {activeIsSecondary ? activeSpace : 'More'} ▾
+                </button>
               </div>
 
+              {/* ── Secondary spaces (flyout) ──────────────────────── */}
+              {showSecondary && (
+                <div className="ncc-secondary-tabs">
+                  {SECONDARY_SPACES.map((space) => (
+                    <button
+                      key={space}
+                      type="button"
+                      className={cls('ncc-tab is-secondary', activeSpace === space && 'is-active')}
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); setActiveSpace(space); setShowSecondary(false) }}
+                    >
+                      {space}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* ── Notification list ──────────────────────────────── */}
               <div className="nx-notification-list">
                 {filtered.map((item) => (
-                  <article key={item.id} className={cls('nx-notification-card', `is-${item.severity}`, item.status === 'read' && 'is-read')}>
+                  <article
+                    key={item.id}
+                    className={cls('ncc-card', `is-${item.severity}`, item.status === 'read' && 'is-read')}
+                  >
+                    <div className="ncc-card__top">
+                      <span className="ncc-card__icon">
+                        <Icon name={notificationIcon(item.severity)} />
+                      </span>
+                      <span className="ncc-card__source">{sourceLabel(item.source)}</span>
+                      <span className="ncc-card__time">{item.created_at ? formatRelativeTime(item.created_at) : 'Now'}</span>
+                      <button
+                        type="button"
+                        className="ncc-card__dismiss"
+                        onClick={(e) => { e.stopPropagation(); setDismissedIds((ids) => [...ids, item.id]) }}
+                        aria-label="Dismiss notification"
+                      >
+                        <Icon name="close" />
+                      </button>
+                    </div>
                     <button
                       type="button"
-                      className="nx-notification-card__main"
+                      className="ncc-card__body"
                       onClick={(e) => {
                         e.preventDefault()
                         e.stopPropagation()
@@ -396,29 +446,24 @@ export const NexusNotificationCenter = ({
                         onOpenRecord(item)
                       }}
                     >
-                      <span className="nx-notification-card__icon"><Icon name={notificationIcon(item.severity)} /></span>
-                      <span>
-                        <small>{item.command_space} · {item.source} · {item.created_at ? formatRelativeTime(item.created_at) : 'Now'}</small>
-                        <strong>{item.title}</strong>
-                        <em>{item.body}</em>
-                      </span>
-                      <b>{item.action_label}</b>
-                    </button>
-                    <button 
-                      type="button" 
-                      onClick={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        setDismissedIds((ids) => [...ids, item.id])
-                      }} 
-                      aria-label="Dismiss notification"
-                    >
-                      <Icon name="close" />
+                      <strong className="ncc-card__title">{item.title}</strong>
+                      <p className="ncc-card__text">{item.body}</p>
+                      {item.action_label && (
+                        <span className="ncc-card__action-hint">{item.action_label} →</span>
+                      )}
                     </button>
                   </article>
                 ))}
-                {filtered.length === 0 && <p className="nx-notification-empty">No notifications match this command space.</p>}
+                {filtered.length === 0 && (
+                  <p className="nx-notification-empty">No alerts for this space.</p>
+                )}
               </div>
+
+              {/* ── Footer ─────────────────────────────────────────── */}
+              <footer className="ncc-footer">
+                <span>Press <kbd>⌘K</kbd> to act on alerts</span>
+              </footer>
+
             </section>,
             document.body,
           )

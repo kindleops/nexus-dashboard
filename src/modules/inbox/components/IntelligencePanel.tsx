@@ -1924,10 +1924,29 @@ const PropertyBadge = ({ label, icon, accent = 'neutral' }: { label: string; ico
 }
 
 
+const PicField = ({
+  label,
+  value,
+  accent,
+}: {
+  label: string
+  value?: string | number | null
+  accent?: 'green' | 'red' | 'amber' | 'blue' | 'purple'
+}) => {
+  const str = value !== null && value !== undefined ? String(value).trim() : ''
+  const isEmpty = !str || /^(not enriched|n\/a|none)$/i.test(str)
+  return (
+    <div className={cls('nx-pic-field', isEmpty ? 'is-empty' : null, accent ? `is-accent-${accent}` : null)}>
+      <label>{label}</label>
+      <span>{isEmpty ? 'Not enriched' : str}</span>
+    </div>
+  )
+}
+
 export const PropertyHeroCard = ({
   thread,
   snapshot,
-  panelMode,
+  panelMode: _panelMode,
   layoutMode = 'full',
 }: {
   thread: WorkflowThread
@@ -1944,13 +1963,12 @@ export const PropertyHeroCard = ({
   const displayMarket = isPresent(rawMarket) && !/^\d+$/.test(String(rawMarket))
     ? rawMarket
     : (snapshot.city && snapshot.state ? `${snapshot.city}, ${snapshot.state}` : (rawMarket || 'Unknown market'))
-
   const displayType = isMultifamily
-    ? (unitCount > 0 ? `MULTI FAMILY • ${unitCount} UNITS` : 'MULTI FAMILY')
-    : 'SINGLE FAMILY'
+    ? (unitCount > 0 ? `Multi Family • ${unitCount} Units` : 'Multi Family')
+    : 'Single Family'
 
   const streetViewUrl = snapshot.streetViewUrl || snapshot.streetviewImage || thread.streetview_image || buildStreetViewUrl(address)
-  const aerialUrl = snapshot.aerialViewUrl || thread.satellite_image || buildAerialViewUrl(address)  
+  const aerialUrl = snapshot.aerialViewUrl || thread.satellite_image || buildAerialViewUrl(address)
   const interactiveStreetViewUrl = useMemo(
     () => buildInteractiveStreetViewUrl({ address, lat: propertyLat, lng: propertyLng }),
     [address, propertyLat, propertyLng],
@@ -1960,91 +1978,24 @@ export const PropertyHeroCard = ({
     [address, propertyLat, propertyLng],
   )
   const [imageFailed, setImageFailed] = useState(false)
-  const [fullMediaMode, setFullMediaMode] = useState<'split' | 'street' | 'aerial' | 'parcel'>('split')
+  const [mediaMode, setMediaMode] = useState<'split' | 'street' | 'aerial'>('split')
   const links = buildPropertyExternalLinks(address)
   const chips = [
     (snapshot.beds || thread.total_bedrooms || thread.beds) && { label: `${snapshot.beds || thread.total_bedrooms || thread.beds} BEDS`, icon: 'bed', accent: 'neutral' },
     (snapshot.baths || thread.total_baths || thread.baths) && { label: `${snapshot.baths || thread.total_baths || thread.baths} BATHS`, icon: 'droplet', accent: 'neutral' },
-    (snapshot.sqft || thread.building_square_feet || thread.sqft) && { 
-      label: `${formatInteger(Number(snapshot.sqft || thread.building_square_feet || thread.sqft))} SQFT`, 
-      icon: 'maximize', 
-      accent: 'neutral' 
+    (snapshot.sqft || thread.building_square_feet || thread.sqft) && {
+      label: `${formatInteger(Number(snapshot.sqft || thread.building_square_feet || thread.sqft))} SQFT`,
+      icon: 'maximize',
+      accent: 'neutral',
     },
     (snapshot.yearBuilt || thread.year_built) && { label: `BUILT ${snapshot.yearBuilt || thread.year_built}`, icon: 'calendar', accent: 'neutral' },
     (snapshot.estimatedValue || thread.estimatedValue) && { label: formatMoney(Number(snapshot.estimatedValue || thread.estimatedValue)), icon: 'dollar-sign', accent: 'green' },
     (snapshot.equityPercent || formatPercent(thread.equityPercent)) && { label: `${snapshot.equityPercent || formatPercent(thread.equityPercent)} EQUITY`, icon: 'trending-up', accent: 'purple' },
     (snapshot.repairCost || thread.estimatedRepairCost) && { label: `${formatMoney(Number(snapshot.repairCost || thread.estimatedRepairCost))} REPAIRS`, icon: 'tool', accent: 'blue' },
   ].filter(Boolean) as any[]
-  const heroBadgeOverlay = (
-    <div className="nx-property-hero__badge-overlay">
-      {chips.slice(0, 8).map((chip) => <PropertyBadge key={chip.label} label={chip.label} icon={chip.icon} accent={chip.accent} />)}
-    </div>
-  )
-  const heroInfoOverlay = (
-    <div className="nx-property-hero__media-overlay">
-      <div className="nx-property-hero__media-copy">
-        <span>{displayMarket}</span>
-        <strong>{address}</strong>
-      </div>
-      <div className="nx-property-intel-links">
-        <LinkedRecordButton label="Zillow" url={links.zillow} icon="globe" />
-        <LinkedRecordButton label="Maps" url={links.streetView} icon="map" />
-        <LinkedRecordButton label="Realtor" url={links.realtor} icon="globe" />
-        <LinkedRecordButton label="County" url={links.googleSearch} icon="briefing" />
-      </div>
-    </div>
-  )
 
-  useEffect(() => {
-    setImageFailed(false)
-  }, [streetViewUrl, address])
-
-  useEffect(() => {
-    setFullMediaMode('split')
-  }, [address])
-
-  const renderStreetMedia = (title: string) => (
-    <div className="nx-property-panel is-streetview">
-      <div className="nx-panel-label">{title}</div>
-      {interactiveStreetViewUrl ? (
-        <iframe
-          src={interactiveStreetViewUrl}
-          title={`Street view for ${address}`}
-          className="nx-property-panel__iframe"
-          loading="eager"
-          allowFullScreen
-          referrerPolicy="no-referrer-when-downgrade"
-        />
-      ) : streetViewUrl && !imageFailed ? (
-        <img src={streetViewUrl} alt="Street view" onError={() => setImageFailed(true)} />
-      ) : (
-        <div className="nx-panel-fallback"><Icon name="eye" /></div>
-      )}
-    </div>
-  )
-
-  const renderAerialMedia = (title: string) => (
-    <div className="nx-property-panel is-aerial">
-      <div className="nx-panel-label">{title}</div>
-      {interactiveAerialViewUrl ? (
-        <iframe
-          src={interactiveAerialViewUrl}
-          title={`Aerial view for ${address}`}
-          className="nx-property-panel__iframe"
-          loading="eager"
-          allowFullScreen
-          referrerPolicy="no-referrer-when-downgrade"
-        />
-      ) : aerialUrl ? (
-        <img src={aerialUrl as string | undefined} alt="Aerial view" />
-      ) : (
-        <div className="nx-panel-fallback">
-          <Icon name="map" />
-          <span>Interactive aerial unavailable</span>
-        </div>
-      )}
-    </div>
-  )
+  useEffect(() => { setImageFailed(false) }, [streetViewUrl, address])
+  useEffect(() => { setMediaMode('split') }, [address])
 
   if (layoutMode === 'compact') {
     return (
@@ -2070,40 +2021,8 @@ export const PropertyHeroCard = ({
         </div>
         <div className="nx-property-hero__info nx-glass-surface" style={{ borderTop: 'none', borderLeft: 'none', borderRight: 'none', borderRadius: '0 0 18px 18px' }}>
           <div className="nx-property-hero__telemetry">
-            <div className="nx-telemetry-item">
-              <label>LOCATION</label>
-              <span>{displayMarket}</span>
-            </div>
-            <div className="nx-telemetry-item">
-              <label>PROPERTY TYPE</label>
-              <span className={isMultifamily ? 'is-highlight' : ''}>{displayType}</span>
-            </div>
-          </div>
-          <div className="nx-property-hero__chips">
-            {chips.map((chip) => (
-              <PropertyBadge
-                key={chip.label}
-                label={chip.label}
-                icon={chip.icon}
-                accent={chip.accent}
-              />
-            ))}
-          </div>
-        </div>
-      </DossierCard>
-    )
-  }
-
-  if (layoutMode === 'medium') {
-    return (
-      <DossierCard className="nx-property-hero-shell nx-glass-card nx-property-hero--focused-mode">
-        <div className="nx-property-focused-media">
-          {renderStreetMedia('STREET VIEW')}
-        </div>
-        <div className="nx-property-hero__info nx-glass-surface">
-          <div className="nx-property-hero__telemetry">
-            <div className="nx-telemetry-item"><label>MARKET OPS</label><span>{displayMarket}</span></div>
-            <div className="nx-telemetry-item"><label>ASSET CLASS</label><span className={isMultifamily ? 'is-highlight' : ''}>{displayType}</span></div>
+            <div className="nx-telemetry-item"><label>LOCATION</label><span>{displayMarket}</span></div>
+            <div className="nx-telemetry-item"><label>TYPE</label><span className={isMultifamily ? 'is-highlight' : ''}>{displayType}</span></div>
           </div>
           <div className="nx-property-hero__chips">
             {chips.map((chip) => <PropertyBadge key={chip.label} label={chip.label} icon={chip.icon} accent={chip.accent} />)}
@@ -2113,332 +2032,285 @@ export const PropertyHeroCard = ({
     )
   }
 
-  if (layoutMode === 'expanded') {
-    return (
-      <DossierCard className="nx-property-hero-shell nx-glass-card nx-property-hero--elite nx-property-hero--expanded-mode">
-        <div className="nx-property-split-console">
-          {renderStreetMedia('INTERACTIVE STREET VIEW')}
-          {renderAerialMedia('INTERACTIVE AERIAL VIEW')}
-          <div className="nx-property-address-bar">
-            <strong>{address}</strong>
-            <div className="nx-property-intel-links">
-              <LinkedRecordButton label="Zillow" url={links.zillow} icon="globe" />
-              <LinkedRecordButton label="Maps" url={links.streetView} icon="map" />
-              <LinkedRecordButton label="Realtor" url={links.realtor} icon="globe" />
-            </div>
-          </div>
-        </div>
-        <div className="nx-property-hero__info nx-glass-surface">
-          <div className="nx-property-hero__telemetry">
-            <div className="nx-telemetry-item"><label>MARKET OPS</label><span>{displayMarket}</span></div>
-            <div className="nx-telemetry-item"><label>ASSET CLASS</label><span className={isMultifamily ? 'is-highlight' : ''}>{displayType}</span></div>
-          </div>
-          <div className="nx-property-hero__chips">
-            {chips.map((chip) => <PropertyBadge key={chip.label} label={chip.label} icon={chip.icon} accent={chip.accent} />)}
-          </div>
-        </div>
-      </DossierCard>
-    )
-  }
+  // ── Unified media + intel console for medium / expanded / full ───────────
 
-  if (panelMode === 'full') {
-    const fullModeButtons = (
-      <div className="nx-property-hero__full-toggle">
-        <button type="button" className={cls(fullMediaMode === 'split' && 'is-active')} onClick={() => setFullMediaMode('split')}>Split</button>
-        <button type="button" className={cls(fullMediaMode === 'street' && 'is-active')} onClick={() => setFullMediaMode('street')}>Street</button>
-        <button type="button" className={cls(fullMediaMode === 'aerial' && 'is-active')} onClick={() => setFullMediaMode('aerial')}>Aerial</button>
-        <button type="button" className={cls(fullMediaMode === 'parcel' && 'is-active')} onClick={() => setFullMediaMode('parcel')}>Parcel Context</button>
+  const renderStreetPanel = (label: string) => (
+    <div className="nx-prop-media-panel is-street">
+      <div className="nx-panel-label">{label}</div>
+      {interactiveStreetViewUrl ? (
+        <iframe
+          src={interactiveStreetViewUrl}
+          title={`Street view for ${address}`}
+          className="nx-property-panel__iframe"
+          loading="eager"
+          allowFullScreen
+          referrerPolicy="no-referrer-when-downgrade"
+        />
+      ) : streetViewUrl && !imageFailed ? (
+        <img src={streetViewUrl} alt="Street view" onError={() => setImageFailed(true)} />
+      ) : (
+        <div className="nx-panel-fallback"><Icon name="eye" /></div>
+      )}
+    </div>
+  )
+
+  const renderAerialPanel = (label: string) => (
+    <div className="nx-prop-media-panel is-aerial">
+      <div className="nx-panel-label">{label}</div>
+      {interactiveAerialViewUrl ? (
+        <iframe
+          src={interactiveAerialViewUrl}
+          title={`Aerial view for ${address}`}
+          className="nx-property-panel__iframe"
+          loading="eager"
+          allowFullScreen
+          referrerPolicy="no-referrer-when-downgrade"
+        />
+      ) : aerialUrl ? (
+        <img src={aerialUrl as string | undefined} alt="Aerial view" />
+      ) : (
+        <div className="nx-panel-fallback"><Icon name="map" /><span>Unavailable</span></div>
+      )}
+    </div>
+  )
+
+  const isStackedSplit = mediaMode === 'split' && layoutMode === 'medium'
+
+  const renderMediaWorkspace = () => {
+    if (mediaMode === 'street') {
+      return (
+        <div className="nx-prop-media-workspace is-single">
+          {renderStreetPanel('INTERACTIVE STREET VIEW')}
+        </div>
+      )
+    }
+    if (mediaMode === 'aerial') {
+      return (
+        <div className="nx-prop-media-workspace is-single">
+          {renderAerialPanel('INTERACTIVE AERIAL VIEW')}
+        </div>
+      )
+    }
+    return (
+      <div className={cls('nx-prop-media-workspace is-split', isStackedSplit && 'is-stacked')}>
+        {renderStreetPanel('STREET VIEW')}
+        {renderAerialPanel('AERIAL VIEW')}
       </div>
     )
-
-    if (fullMediaMode === 'street') {
-      return (
-        <DossierCard className="nx-property-hero-shell nx-glass-card nx-property-hero--elite nx-property-hero--full">
-          {fullModeButtons}
-          <div className="nx-property-hero__full-stage is-street">
-            <div className="nx-panel-label">INTERACTIVE STREET VIEW</div>
-            <div className="nx-property-panel__stage">
-              {interactiveStreetViewUrl ? (
-                <iframe
-                  src={interactiveStreetViewUrl}
-                  title={`Street view for ${address}`}
-                  className="nx-property-panel__iframe"
-                  loading="eager"
-                  allowFullScreen
-                  referrerPolicy="no-referrer-when-downgrade"
-                />
-              ) : streetViewUrl && !imageFailed ? (
-                <img src={streetViewUrl} alt="Street view" onError={() => setImageFailed(true)} />
-              ) : (
-                <div className="nx-panel-fallback"><Icon name="eye" /></div>
-              )}
-            </div>
-            {heroInfoOverlay}
-            {heroBadgeOverlay}
-            <div className="nx-property-panel__aerial-meta nx-property-panel__aerial-meta--fullwidth">
-              <div className="nx-property-panel__meta-block">
-                <label>MARKET OPS</label>
-                <span>{displayMarket}</span>
-              </div>
-              <div className="nx-property-panel__meta-block">
-                <label>ASSET CLASS</label>
-                <span className={isMultifamily ? 'is-highlight' : ''}>{displayType}</span>
-              </div>
-            </div>
-            <div className="nx-property-hero__chips nx-property-hero__chips--full">
-              {chips.map((chip) => <PropertyBadge key={chip.label} label={chip.label} icon={chip.icon} accent={chip.accent} />)}
-            </div>
-          </div>
-        </DossierCard>
-      )
-    }
-
-    if (fullMediaMode === 'aerial') {
-      return (
-        <DossierCard className="nx-property-hero-shell nx-glass-card nx-property-hero--elite nx-property-hero--full">
-          {fullModeButtons}
-          <div className="nx-property-hero__full-stage is-aerial">
-            <div className="nx-panel-label">INTERACTIVE AERIAL VIEW</div>
-            <div className="nx-property-panel__aerial-frame nx-property-panel__aerial-frame--full">
-              {interactiveAerialViewUrl ? (
-                <iframe
-                  src={interactiveAerialViewUrl}
-                  title={`Aerial view for ${address}`}
-                  className="nx-property-panel__iframe"
-                  loading="eager"
-                  allowFullScreen
-                  referrerPolicy="no-referrer-when-downgrade"
-                />
-              ) : aerialUrl ? (
-                <img src={aerialUrl as string | undefined} alt="Aerial view" />
-              ) : (
-                <div className="nx-panel-fallback"><Icon name="map" /><span>Interactive aerial unavailable</span></div>
-              )}
-            </div>
-            {heroInfoOverlay}
-            {heroBadgeOverlay}
-            <div className="nx-property-panel__aerial-meta nx-property-panel__aerial-meta--fullwidth">
-              <div className="nx-property-panel__meta-block">
-                <label>MARKET OPS</label>
-                <span>{displayMarket}</span>
-              </div>
-              <div className="nx-property-panel__meta-block">
-                <label>ASSET CLASS</label>
-                <span className={isMultifamily ? 'is-highlight' : ''}>{displayType}</span>
-              </div>
-            </div>
-            <div className="nx-property-hero__chips nx-property-hero__chips--full">
-              {chips.map((chip) => <PropertyBadge key={chip.label} label={chip.label} icon={chip.icon} accent={chip.accent} />)}
-            </div>
-          </div>
-        </DossierCard>
-      )
-    }
-
-    if (fullMediaMode === 'parcel') {
-      return (
-        <DossierCard className="nx-property-hero-shell nx-glass-card nx-property-hero--elite nx-property-hero--full">
-          {fullModeButtons}
-          <div className="nx-property-hero__full-stage is-aerial">
-            <div className="nx-panel-label">PARCEL CONTEXT</div>
-            <div className="nx-property-panel__aerial-frame nx-property-panel__aerial-frame--full nx-property-panel__parcel-stage">
-              {interactiveAerialViewUrl ? (
-                <iframe
-                  src={interactiveAerialViewUrl}
-                  title={`Parcel context for ${address}`}
-                  className="nx-property-panel__iframe"
-                  loading="eager"
-                  allowFullScreen
-                  referrerPolicy="no-referrer-when-downgrade"
-                />
-              ) : aerialUrl ? (
-                <img src={aerialUrl as string | undefined} alt="Parcel context" />
-              ) : (
-                <div className="nx-panel-fallback"><Icon name="map" /><span>Parcel context unavailable</span></div>
-              )}
-              {heroInfoOverlay}
-              <div className="nx-property-panel__parcel-overlay">
-                <div className="nx-property-panel__parcel-card">
-                  <span>Subject Parcel</span>
-                  <strong>{address}</strong>
-                </div>
-                <div className="nx-property-panel__parcel-grid">
-                  <div><label>ZIP</label><strong>{snapshot.zip || thread.property_address_zip || 'ZIP Pending'}</strong></div>
-                  <div><label>COUNTY</label><strong>{thread.property_county_name || 'County Pending'}</strong></div>
-                  <div><label>UNITS</label><strong>{unitCount || '—'}</strong></div>
-                  <div><label>LOT / CLASS</label><strong>{snapshot.propertyType || thread.propertyType || 'Pending'}</strong></div>
-                </div>
-              </div>
-            </div>
-            <div className="nx-property-panel__aerial-meta nx-property-panel__aerial-meta--fullwidth">
-              <div className="nx-property-panel__meta-block">
-                <label>MARKET OPS</label>
-                <span>{displayMarket}</span>
-              </div>
-              <div className="nx-property-panel__meta-block">
-                <label>ASSET CLASS</label>
-                <span className={isMultifamily ? 'is-highlight' : ''}>{displayType}</span>
-              </div>
-            </div>
-          </div>
-        </DossierCard>
-      )
-    }
-
-    return (
-      <DossierCard className="nx-property-hero-shell nx-glass-card nx-property-hero--elite nx-property-hero--full">
-        {fullModeButtons}
-        <div className="nx-property-split-console nx-property-split-console--full">
-          <div className="nx-property-panel nx-property-panel--street-stage is-streetview">
-            <div className="nx-panel-label">INTERACTIVE STREET VIEW</div>
-            <div className="nx-property-panel__stage">
-              {interactiveStreetViewUrl ? (
-                <iframe
-                  src={interactiveStreetViewUrl}
-                  title={`Street view for ${address}`}
-                  className="nx-property-panel__iframe"
-                  loading="eager"
-                  allowFullScreen
-                  referrerPolicy="no-referrer-when-downgrade"
-                />
-              ) : streetViewUrl && !imageFailed ? (
-                <img src={streetViewUrl} alt="Street view" onError={() => setImageFailed(true)} />
-              ) : (
-                <div className="nx-panel-fallback"><Icon name="eye" /></div>
-              )}
-            </div>
-            {heroInfoOverlay}
-            {heroBadgeOverlay}
-          </div>
-
-          <div className="nx-property-panel nx-property-panel--intel-rail is-aerial">
-            <div className="nx-panel-label">AERIAL COMPANION</div>
-            <div className="nx-property-panel__aerial-shell">
-              <div className="nx-property-panel__aerial-frame">
-                {interactiveAerialViewUrl ? (
-                  <iframe
-                    src={interactiveAerialViewUrl}
-                    title={`Aerial view for ${address}`}
-                    className="nx-property-panel__iframe"
-                    loading="eager"
-                    allowFullScreen
-                    referrerPolicy="no-referrer-when-downgrade"
-                  />
-                ) : aerialUrl ? (
-                  <img src={aerialUrl as string | undefined} alt="Aerial view" />
-                ) : (
-                  <div className="nx-panel-fallback"><Icon name="map" /><span>Interactive aerial unavailable</span></div>
-                )}
-              </div>
-              <div className="nx-property-panel__aerial-overlay">
-                <span>Parcel / aerial companion</span>
-                <strong>{thread.property_county_name || 'County Pending'}</strong>
-              </div>
-              <div className="nx-property-panel__aerial-meta">
-                <div className="nx-property-panel__meta-block">
-                  <label>MARKET OPS</label>
-                  <span>{displayMarket}</span>
-                </div>
-                <div className="nx-property-panel__meta-block">
-                  <label>ASSET CLASS</label>
-                  <span className={isMultifamily ? 'is-highlight' : ''}>{displayType}</span>
-                </div>
-              </div>
-              <div className="nx-property-hero__chips nx-property-hero__chips--full">
-                {chips.map((chip) => <PropertyBadge key={chip.label} label={chip.label} icon={chip.icon} accent={chip.accent} />)}
-              </div>
-            </div>
-          </div>
-        </div>
-      </DossierCard>
-    )
   }
 
-  // Split View: Trigger for Half (50%) only
-  if (panelMode === 'half') {
-    return (
-      <DossierCard className="nx-property-hero-shell nx-glass-card nx-property-hero--elite">
-        <div className="nx-property-split-console">
-          <div className="nx-property-panel is-streetview">
-            <div className="nx-panel-label">STREET VIEW</div>
-            {streetViewUrl && !imageFailed ? (
-              <img src={streetViewUrl} alt="Street view" onError={() => setImageFailed(true)} />
-            ) : (
-              <div className="nx-panel-fallback"><Icon name="eye" /></div>
-            )}
-          </div>
-          <div className="nx-property-panel is-aerial">
-            <div className="nx-panel-label">AERIAL VIEW</div>
-            <img src={aerialUrl as string | undefined} alt="Aerial view" />
-          </div>
-          <div className="nx-property-address-bar">
-            <strong>{address}</strong>
-            <div className="nx-property-intel-links">
-              <LinkedRecordButton label="Zillow" url={links.zillow} icon="globe" />
-              <LinkedRecordButton label="Maps" url={links.streetView} icon="map" />
-              <LinkedRecordButton label="Realtor" url={links.realtor} icon="globe" />
-            </div>
-          </div>
-        </div>
-        <div className="nx-property-hero__info nx-glass-surface">
-          <div className="nx-property-hero__telemetry">
-            <div className="nx-telemetry-item"><label>MARKET OPS</label><span>{displayMarket}</span></div>
-            <div className="nx-telemetry-item"><label>ASSET CLASS</label><span className={isMultifamily ? 'is-highlight' : ''}>{displayType}</span></div>
-          </div>
-          <div className="nx-property-hero__chips">
-            {chips.map((chip) => <PropertyBadge key={chip.label} label={chip.label} icon={chip.icon} accent={chip.accent} />)}
-          </div>
-        </div>
-      </DossierCard>
-    )
-  }
+  const renderConsole = () => {
+    const estValue = snapshot.estimatedValue || thread.estimatedValue
+    const equityPct = snapshot.equityPercent
+    const equityAmt = snapshot.equityAmount
+    const repairCost = snapshot.repairCost || thread.estimatedRepairCost
+    const finalScore = snapshot.finalScore
+    const rehabLevel = thread.rehab_level || ''
+    const condition = thread.building_condition || ''
+    const isTaxDelinquent = snapshot.taxDelinquent && /^(yes|true|1)/i.test(String(snapshot.taxDelinquent))
+    const sqft = snapshot.sqft || thread.building_square_feet || thread.sqft
+    const beds = snapshot.beds || thread.total_bedrooms || thread.beds
+    const baths = snapshot.baths || thread.total_baths || thread.baths
+    const hasExec = !!(finalScore || estValue || equityAmt || equityPct || repairCost || rehabLevel || condition)
 
-  // Standard Hero: Street View Only
-  return (
-    <DossierCard className="nx-property-hero-shell nx-glass-card">
-      <div className="nx-property-hero__media">
-        {streetViewUrl && !imageFailed ? (
-          <img src={streetViewUrl} alt={address} onError={() => setImageFailed(true)} />
-        ) : (
-          <div className="nx-property-hero__fallback">
-            <Icon name="map" />
-            <span>Property hero unavailable</span>
-            <strong>{address}</strong>
+    return (
+      <div className={cls('nx-pic-console', `is-layout-${layoutMode}`)}>
+        {/* A. Executive Snapshot */}
+        {hasExec && (
+          <div className="nx-pic-exec-row">
+            {finalScore ? (
+              <div className="nx-pic-exec-card is-score">
+                <label>Acquisition Score</label>
+                <span>{finalScore}/100</span>
+              </div>
+            ) : null}
+            {estValue ? (
+              <div className="nx-pic-exec-card is-value">
+                <label>Est. Value</label>
+                <span>{formatMoney(Number(estValue))}</span>
+              </div>
+            ) : null}
+            {equityAmt ? (
+              <div className="nx-pic-exec-card is-equity">
+                <label>Equity</label>
+                <span>{formatMoney(Number(equityAmt))}</span>
+              </div>
+            ) : null}
+            {equityPct ? (
+              <div className="nx-pic-exec-card is-equity-pct">
+                <label>Equity %</label>
+                <span>{equityPct}</span>
+              </div>
+            ) : null}
+            {repairCost ? (
+              <div className="nx-pic-exec-card is-repair">
+                <label>Repair Est.</label>
+                <span>{formatMoney(Number(repairCost))}</span>
+              </div>
+            ) : null}
+            {rehabLevel ? (
+              <div className="nx-pic-exec-card is-rehab">
+                <label>Rehab Level</label>
+                <span>{rehabLevel}</span>
+              </div>
+            ) : null}
+            {condition ? (
+              <div className="nx-pic-exec-card is-condition">
+                <label>Condition</label>
+                <span>{condition}</span>
+              </div>
+            ) : null}
           </div>
         )}
-        <div className="nx-property-hero__hover-actions">
-          <div className="nx-property-hero__hover-grid">
-            <LinkedRecordButton label="Zillow" url={links.zillow} icon="globe" />
-            <LinkedRecordButton label="Maps" url={links.streetView} icon="map" />
-            <LinkedRecordButton label="Search" url={links.googleSearch} icon="search" />
-            <LinkedRecordButton label="Realtor" url={links.realtor} icon="globe" />
+
+        {/* B–G: Grouped intelligence sections */}
+        <div className="nx-pic-sections">
+          {/* B. Property Identity */}
+          <div className="nx-pic-section">
+            <div className="nx-pic-section__header">
+              <span className="nx-pic-section__dot" />
+              <strong>Property Identity</strong>
+            </div>
+            <div className="nx-pic-section__grid">
+              <PicField label="Type" value={snapshot.propertyType || thread.propertyType} />
+              <PicField label="Class" value={snapshot.propertyClass} />
+              <PicField label="Style" value={snapshot.propertyStyle || thread.style} />
+              <PicField label="Market" value={displayMarket} />
+              <PicField label="City" value={snapshot.city || thread.property_address_city} />
+              <PicField label="ZIP" value={snapshot.zip} />
+              <PicField label="County" value={thread.property_county_name} />
+              <PicField label="Zoning" value={snapshot.zoning || thread.zoning} />
+              <PicField label="Flood Zone" value={snapshot.floodZone || thread.flood_zone} />
+              <PicField label="Occupancy" value={snapshot.occupancy} />
+            </div>
           </div>
-        </div>
-      </div>
-      <div className="nx-property-hero__info nx-glass-surface" style={{ borderTop: 'none', borderLeft: 'none', borderRight: 'none', borderRadius: '0 0 18px 18px' }}>
-        
-        <div className="nx-property-hero__telemetry">
-          <div className="nx-telemetry-item">
-            <label>LOCATION</label>
-            <span>{displayMarket}</span>
+
+          {/* C. Physical Profile */}
+          <div className="nx-pic-section">
+            <div className="nx-pic-section__header">
+              <span className="nx-pic-section__dot" />
+              <strong>Physical Profile</strong>
+            </div>
+            <div className="nx-pic-section__grid">
+              <PicField label="Beds" value={beds} />
+              <PicField label="Baths" value={baths} />
+              <PicField label="Sq Ft" value={sqft ? formatInteger(Number(sqft)) : null} />
+              <PicField label="Units" value={unitCount > 0 ? unitCount : null} />
+              <PicField label="Buildings" value={thread.sum_buildings_nbr} />
+              <PicField label="Stories" value={thread.stories} />
+              <PicField label="Avg Sqft/Unit" value={thread.avg_sqft_per_unit ? formatInteger(Number(thread.avg_sqft_per_unit)) : null} />
+              <PicField label="Beds/Unit" value={thread.beds_per_unit} />
+              <PicField label="Sqft Range" value={thread.sqft_range} />
+              <PicField label="Year Built" value={snapshot.yearBuilt || thread.year_built} />
+              <PicField label="Eff. Year" value={snapshot.effectiveYear || thread.effective_year_built} />
+            </div>
           </div>
-          <div className="nx-telemetry-item">
-            <label>PROPERTY TYPE</label>
-            <span className={isMultifamily ? 'is-highlight' : ''}>{displayType}</span>
+
+          {/* D. Construction / Systems */}
+          <div className="nx-pic-section">
+            <div className="nx-pic-section__header">
+              <span className="nx-pic-section__dot" />
+              <strong>Construction / Systems</strong>
+            </div>
+            <div className="nx-pic-section__grid">
+              <PicField label="Construction" value={thread.construction_type} />
+              <PicField label="Ext. Walls" value={thread.exterior_walls} />
+              <PicField label="Roof Cover" value={thread.roof_cover} />
+              <PicField label="Roof Type" value={thread.roof_type} />
+              <PicField label="AC" value={thread.air_conditioning} />
+              <PicField label="Heating" value={thread.heating_type} />
+              <PicField label="Heat Fuel" value={thread.heating_fuel_type} />
+              <PicField label="Int. Walls" value={thread.interior_walls} />
+              <PicField label="Floor Cover" value={thread.floor_cover} />
+              <PicField label="Basement" value={thread.basement} />
+              <PicField label="Other Rooms" value={thread.other_rooms} />
+              <PicField label="Fireplaces" value={thread.num_of_fireplaces} />
+              <PicField label="Bldg Quality" value={thread.building_quality} />
+            </div>
+          </div>
+
+          {/* E. Site / Lot / Utilities */}
+          <div className="nx-pic-section">
+            <div className="nx-pic-section__header">
+              <span className="nx-pic-section__dot" />
+              <strong>Site / Lot / Utilities</strong>
+            </div>
+            <div className="nx-pic-section__grid">
+              <PicField label="Lot Acres" value={snapshot.lotSizeAcres || thread.lot_acreage} />
+              <PicField label="Lot Sqft" value={snapshot.lotSize || thread.lot_square_feet ? formatInteger(Number(snapshot.lotSize || thread.lot_square_feet)) : null} />
+              <PicField label="Sewer" value={thread.sewer} />
+              <PicField label="Water" value={thread.water} />
+              <PicField label="Patio" value={thread.patio} />
+              <PicField label="Porch" value={thread.porch} />
+              <PicField label="Deck" value={thread.deck} />
+              <PicField label="Driveway" value={thread.driveway} />
+              <PicField label="Garage" value={thread.garage} />
+              <PicField label="Garage Sqft" value={thread.sum_garage_sqft ? formatInteger(Number(thread.sum_garage_sqft)) : null} />
+              <PicField label="Pool" value={thread.pool} />
+            </div>
+          </div>
+
+          {/* F. Sale / Loan / Equity */}
+          <div className="nx-pic-section">
+            <div className="nx-pic-section__header">
+              <span className="nx-pic-section__dot" />
+              <strong>Sale / Loan / Equity</strong>
+            </div>
+            <div className="nx-pic-section__grid">
+              <PicField label="Last Sale" value={thread.sale_price ? formatMoney(Number(thread.sale_price)) : null} accent="green" />
+              <PicField label="Sale Date" value={thread.sale_date} />
+              <PicField label="Sale Doc" value={thread.last_sale_doc_type} />
+              <PicField label="Loan Amount" value={snapshot.loanAmount ? formatMoney(Number(snapshot.loanAmount)) : null} />
+              <PicField label="Loan Balance" value={snapshot.loanBalance ? formatMoney(Number(snapshot.loanBalance)) : null} />
+              <PicField label="Loan Pmt" value={snapshot.loanPayment ? formatMoney(Number(snapshot.loanPayment)) : null} />
+              <PicField label="Equity Amt" value={equityAmt ? formatMoney(Number(equityAmt)) : null} accent="green" />
+              <PicField label="Equity %" value={equityPct} accent="purple" />
+            </div>
+          </div>
+
+          {/* G. Tax / Assessment / Risk */}
+          <div className="nx-pic-section">
+            <div className="nx-pic-section__header">
+              <span className="nx-pic-section__dot" />
+              <strong>Tax / Assessment / Risk</strong>
+            </div>
+            <div className="nx-pic-section__grid">
+              <PicField label="Tax Delinquent" value={snapshot.taxDelinquent} accent={isTaxDelinquent ? 'red' : undefined} />
+              <PicField label="Delinq. Year" value={thread.property_tax_delinquent_year || thread.oldest_tax_delinquent_year} accent={isTaxDelinquent ? 'amber' : undefined} />
+              <PicField label="Tax Amount" value={snapshot.taxAmount ? formatMoney(Number(snapshot.taxAmount)) : null} />
+              <PicField label="Assessed Total" value={snapshot.assessedTotalValue ? formatMoney(Number(snapshot.assessedTotalValue)) : null} />
+              <PicField label="Assessed Land" value={snapshot.assessedLandValue ? formatMoney(Number(snapshot.assessedLandValue)) : null} />
+              <PicField label="Assessed Imprv" value={snapshot.assessedImprovementValue ? formatMoney(Number(snapshot.assessedImprovementValue)) : null} />
+            </div>
           </div>
         </div>
 
-        <div className="nx-property-hero__chips">
-          {chips.map((chip) => (
-            <PropertyBadge 
-              key={chip.label} 
-              label={chip.label} 
-              icon={chip.icon} 
-              accent={chip.accent} 
-            />
-          ))}
+        <div className="nx-pic-links-bar">
+          <LinkedRecordButton label="Zillow" url={links.zillow} icon="globe" />
+          <LinkedRecordButton label="Maps" url={links.streetView} icon="map" />
+          <LinkedRecordButton label="Realtor" url={links.realtor} icon="globe" />
+          <LinkedRecordButton label="County" url={links.googleSearch} icon="briefing" />
         </div>
       </div>
+    )
+  }
+
+  return (
+    <DossierCard className={cls('nx-property-hero-shell nx-glass-card nx-prop-media-card', `is-layout-${layoutMode}`)}>
+      <div className="nx-prop-media-tabs">
+        {(['split', 'street', 'aerial'] as const).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            className={cls('nx-prop-media-tabs__btn', mediaMode === mode && 'is-active')}
+            onClick={() => setMediaMode(mode)}
+          >
+            {mode.charAt(0).toUpperCase() + mode.slice(1)}
+          </button>
+        ))}
+      </div>
+      {renderMediaWorkspace()}
+      {renderConsole()}
     </DossierCard>
   )
 }
