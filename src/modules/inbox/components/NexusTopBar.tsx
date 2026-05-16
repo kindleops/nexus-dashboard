@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { QueueProcessorHealth } from '../../../lib/data/inboxData'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
@@ -38,7 +38,14 @@ interface NexusTopBarProps {
   viewCounts?: any
   threads?: InboxWorkflowThread[]
   activeViewKey?: string
-  onSelectView?: (viewKey: string) => void
+  activeViewLabel?: string
+  viewOptions?: Array<{ key: string; label: string; description?: string }>
+  selectedViewKeys?: string[]
+  selectedViewWidths?: Record<string, string>
+  onToggleView?: (viewKey: string) => void
+  onFocusView?: (viewKey: string) => void
+  viewWidthOptions?: Array<{ key: string; label: string }>
+  onSelectViewWidth?: (viewKey: string, widthKey: string) => void
   onToggleTheme: () => void
   activeOverlay: ActiveOverlay
   onOpenOverlay: (overlay: ActiveOverlay) => void
@@ -83,7 +90,16 @@ export const NexusTopBar = ({
   onCancelStaleFollowUps,
   autonomyModel,
   theme,
+  activeViewKey,
+  activeViewLabel = 'Inbox Thread View',
+  viewOptions = [],
+  selectedViewKeys = [],
+  selectedViewWidths = {},
   onToggleTheme,
+  viewWidthOptions = [],
+  onToggleView,
+  onFocusView,
+  onSelectViewWidth,
   activeOverlay,
   onOpenOverlay,
   onCloseOverlay,
@@ -99,6 +115,7 @@ export const NexusTopBar = ({
 }: NexusTopBarProps) => {
   const DEV = Boolean(import.meta.env.DEV)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const [openControlMenu, setOpenControlMenu] = useState<null | 'view'>(null)
   
   useEffect(() => {
     if (DEV && activeOverlay) {
@@ -113,6 +130,12 @@ export const NexusTopBar = ({
     }
     window.addEventListener('nexus:focus-search', focusSearch as EventListener)
     return () => window.removeEventListener('nexus:focus-search', focusSearch as EventListener)
+  }, [])
+
+  useEffect(() => {
+    const handleWindowClick = () => setOpenControlMenu(null)
+    window.addEventListener('click', handleWindowClick)
+    return () => window.removeEventListener('click', handleWindowClick)
   }, [])
 
   const showSearchResults = searchQuery.trim().length > 0
@@ -149,6 +172,80 @@ export const NexusTopBar = ({
         <div className="nx-inbox-utility-row inbox-center-width">
           <div className="nx-topbar-orb-slot">
             <InboxKpiOrb />
+          </div>
+          <div className="nx-topbar-view-control">
+            <button
+              type="button"
+              className={cls('nx-topbar-view-button', openControlMenu === 'view' && 'is-active')}
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                setOpenControlMenu((current) => current === 'view' ? null : 'view')
+              }}
+            >
+              <span className="nx-topbar-view-button__label">View</span>
+              <strong>{activeViewLabel}</strong>
+              <Icon name="chevron-down" />
+            </button>
+            {openControlMenu === 'view' && (
+              <div className="nx-liquid-popover nx-topbar-view-popover" role="menu">
+                <div className="nx-topbar-view-popover__header">
+                  <span>Workspace Views</span>
+                </div>
+                <div className="nx-topbar-view-popover__list">
+                  {viewOptions.map((view) => (
+                    <div key={view.key} className={cls('nx-topbar-view-option', activeViewKey === view.key && 'is-active')}>
+                      <button
+                        type="button"
+                        className="nx-topbar-view-option__main"
+                        onClick={(event) => {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          onFocusView?.(view.key)
+                        }}
+                      >
+                        <div>
+                          <strong>{view.label}</strong>
+                          {view.description ? <small>{view.description}</small> : null}
+                        </div>
+                        {selectedViewKeys.includes(view.key) ? <span className="nx-topbar-view-option__badge">{selectedViewWidths[view.key] || 'on'}</span> : null}
+                      </button>
+                      <div className="nx-topbar-view-option__controls">
+                        <button
+                          type="button"
+                          className={cls('nx-topbar-view-toggle', selectedViewKeys.includes(view.key) && 'is-active')}
+                          onClick={(event) => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            onToggleView?.(view.key)
+                          }}
+                        >
+                          {selectedViewKeys.includes(view.key) ? 'On' : 'Off'}
+                        </button>
+                        {selectedViewKeys.includes(view.key) ? (
+                          <div className="nx-topbar-view-widths">
+                            {viewWidthOptions.map((option) => (
+                              <button
+                                key={option.key}
+                                type="button"
+                                className={cls('nx-topbar-width-pill', selectedViewWidths[view.key] === option.label && 'is-active')}
+                                onClick={(event) => {
+                                  event.preventDefault()
+                                  event.stopPropagation()
+                                  onSelectViewWidth?.(view.key, option.key)
+                                }}
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
           <div className="nx-global-search">
             <Icon name="search" />

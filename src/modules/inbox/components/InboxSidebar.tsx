@@ -66,14 +66,14 @@ type BucketConfig = {
 const BUCKETS: BucketConfig[] = [
   { bucket: 'new_replies', view: 'new_replies', label: 'NEW REPLIES', icon: '📨', description: 'Unread inbound replies that need attention now', accentClass: 'is-inbound', countKey: 'new_replies' },
   { bucket: 'priority', view: 'priority', label: 'PRIORITY', icon: '⚡', description: 'Unread, high-priority conversations', accentClass: 'is-hot', countKey: 'priority' },
-  { bucket: 'negotiating', view: 'negotiating', label: 'NEGOTIATING', icon: '💬', description: 'Price discussion, underwriting, and offer motion', accentClass: 'is-review', countKey: 'negotiating' },
-  { bucket: 'follow_up_due', view: 'follow_up_due', label: 'FOLLOW-UP DUE', icon: '⏰', description: 'System-owned follow-ups due now', accentClass: 'is-outbound', countKey: 'follow_up_due' },
-  { bucket: 'waiting_on_seller', view: 'waiting_on_seller', label: 'WAITING ON SELLER', icon: '⌛', description: 'Outbound sent, waiting for seller response', accentClass: 'is-inbound-all', countKey: 'waiting_on_seller' },
-  { bucket: 'automated', view: 'automated', label: 'AUTO-ELIGIBLE', icon: '⚙️', description: 'Deterministic automation is ready to act', accentClass: 'is-automated', countKey: 'automated' },
+  { bucket: 'priority', view: 'hot_leads', label: 'HOT LEADS', icon: '🔥', description: 'The warmest opportunities based on live signals and score.', accentClass: 'is-hot', countKey: 'hot_leads' },
+  { bucket: 'waiting_on_seller', view: 'waiting_on_seller', label: 'WAITING', icon: '⌛', description: 'Outbound sent, waiting for seller response', accentClass: 'is-inbound-all', countKey: 'waiting_on_seller' },
+  { bucket: 'follow_up_due', view: 'follow_up_due', label: 'FOLLOW-UPS DUE', icon: '⏰', description: 'System-owned follow-ups due now', accentClass: 'is-outbound', countKey: 'follow_up_due' },
   { bucket: 'needs_review', view: 'needs_review', label: 'NEEDS REVIEW', icon: '🛡', description: 'Ambiguous, legal, hostile, or low-confidence threads', accentClass: 'is-review', countKey: 'needs_review' },
-  { bucket: 'cold_no_response', view: 'cold_no_response', label: 'COLD / NO RESPONSE', icon: '🧊', description: 'Outbound with no inbound reply past threshold', accentClass: 'is-cold', countKey: 'cold_no_response' },
-  { bucket: 'dnc_suppressed', view: 'dnc_opt_out', label: 'DNC / SUPPRESSED', icon: '🚫', description: 'Opt-out, wrong number, DNC, or legal suppression', accentClass: 'is-dnc', countKey: 'suppressed' },
-  { bucket: 'all_conversations', view: 'all_conversations', label: 'ALL CONVERSATIONS', icon: '🗂', description: 'Every loaded thread in the command center', accentClass: 'is-all', countKey: 'all' },
+  { bucket: 'automated', view: 'automated', label: 'AUTOMATED', icon: '⚙️', description: 'Deterministic automation is ready to act', accentClass: 'is-automated', countKey: 'automated' },
+  { bucket: 'dnc_suppressed', view: 'suppressed', label: 'SUPPRESSED', icon: '🚫', description: 'Opt-out, wrong number, DNC, or legal suppression', accentClass: 'is-dnc', countKey: 'suppressed' },
+  { bucket: 'dnc_suppressed', view: 'archived', label: 'DEAD', icon: '☠️', description: 'Threads archived, closed, or removed from active acquisition motion.', accentClass: 'is-cold', countKey: 'archived' },
+  { bucket: 'needs_review', view: 'failed', label: 'FAILED SENDS', icon: '❌', description: 'Delivery failures, blocked sends, and queue exceptions.', accentClass: 'is-review', countKey: 'failed' },
 ]
 
 const KPI_STRIP = [
@@ -113,6 +113,22 @@ const formatMetric = (key: typeof KPI_STRIP[number]['key'], value: unknown) => {
     return `${Math.round(numeric)}%`
   }
   return `${Math.round(numeric)}`
+}
+
+const formatLoadingError = (value: unknown) => {
+  if (!value) return ''
+  if (typeof value === 'string') return value
+  if (value instanceof Error) return value.message
+  if (typeof value === 'object') {
+    const maybeMessage = (value as { message?: unknown }).message
+    if (typeof maybeMessage === 'string' && maybeMessage.trim()) return maybeMessage.trim()
+    try {
+      return JSON.stringify(value)
+    } catch {
+      return 'Unable to load inbox data'
+    }
+  }
+  return String(value)
 }
 
 const readString = (thread: InboxWorkflowThread, ...keys: string[]) => {
@@ -242,6 +258,7 @@ export const InboxSidebar = ({
   densityMode = 'compact',
 }: InboxSidebarProps) => {
   const groupsRef = useRef<HTMLDivElement | null>(null)
+  const loadingErrorMessage = formatLoadingError(loadingError)
 
   const searchableThreads = useMemo(
     () => threads.filter((thread) => !recentlyUpdatedThreadIds.has(`hidden:${thread.id}`) && matchesSearch(thread, searchQuery)),
@@ -385,10 +402,10 @@ export const InboxSidebar = ({
           />
         </label>
 
-        {loadingError && (
+        {loadingErrorMessage && (
           <div className="nx-sidebar-error">
             <Icon name="alert" />
-            <span>{loadingError}</span>
+            <span>{loadingErrorMessage}</span>
           </div>
         )}
       </div>

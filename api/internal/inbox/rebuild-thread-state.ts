@@ -186,163 +186,245 @@ function processThread(threadKey: string, events: any[], queue: any[], suppressi
 }
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' })
-  }
+  let step = 'init'
+  let payload: any = {}
+  try {
+    step = 'check_method'
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'Method not allowed' })
+    }
 
-  const supabase = getSupabaseClient()
-  const payload = parsePayload(req.body)
-  
-  const apply = payload.apply === true
-  const dry_run = payload.dry_run !== false && !apply // default true unless apply=true
-  const isDryRun = dry_run
-  const only_inconsistent = payload.only_inconsistent !== false // default true
-  const include_suppressed = payload.include_suppressed === true
-  const limit = typeof payload.limit === 'number' ? payload.limit : 1000
-  const start_date = payload.start_date
-  const end_date = payload.end_date
-  const thread_key = payload.thread_key
-
-  let query = supabase.from('message_events').select('thread_key').order('created_at', { ascending: false })
-  
-  if (thread_key) {
-    query = query.eq('thread_key', thread_key)
-  } else {
-    if (start_date) query = query.gte('created_at', start_date)
-    if (end_date) query = query.lte('created_at', end_date)
-  }
-
-  const { data: threadKeyRows, error: keyError } = await query.limit(limit * 5)
-  if (keyError || !threadKeyRows) {
-    return res.status(500).json({ error: keyError?.message || 'Failed to fetch thread keys' })
-  }
-
-  let uniqueKeys = Array.from(new Set(threadKeyRows.map(r => r.thread_key))).filter(Boolean)
-  if (limit && uniqueKeys.length > limit) {
-    uniqueKeys = uniqueKeys.slice(0, limit)
-  }
-
-  const results = {
-    inspected_threads: uniqueKeys.length,
-    updated_threads: 0,
-    skipped_threads: 0,
-    bucket_changes: 0,
-    status_changes: 0,
-    stage_changes: 0,
-    temperature_changes: 0,
-    automation_changes: 0,
-    examples: [] as any[],
-    errors: [] as any[]
-  }
-
-  for (const tk of uniqueKeys) {
-    const { data: events } = await supabase.from('message_events').select('*').eq('thread_key', tk)
-    const { data: queue } = await supabase.from('send_queue').select('*').eq('thread_key', tk)
-    const { data: stateRows } = await supabase.from('inbox_thread_state').select('*').eq('thread_key', tk).limit(1)
+    step = 'parse_payload'
+    payload = parsePayload(req.body)
     
-    if (!events || events.length === 0) continue
-
-    const state = stateRows?.[0]
+    step = 'init_supabase'
+    const supabase = getSupabaseClient()
     
-    // Check prospect suppression
-    let suppressionData = null
-    const firstEv = events[0]
-    if (firstEv?.prospect_id) {
-       const { data: prospects } = await supabase.from('prospects').select('is_opt_out, is_dnc, do_not_contact').eq('id', firstEv.prospect_id).limit(1)
-       if (prospects?.[0]) suppressionData = prospects[0]
-    }
+    const apply = payload.apply === true
+    const dry_run = payload.dry_run !== false && !apply // default true unless apply=true
+    const isDryRun = dry_run
+    const only_inconsistent = payload.only_inconsistent !== false // default true
+    const include_suppressed = payload.include_suppressed === true
+    const limit = typeof payload.limit === 'number' ? payload.limit : 1000
+    const start_date = payload.start_date
+    const end_date = payload.end_date
+    const thread_key = payload.thread_key
 
-    if (!include_suppressed && state?.is_suppressed) {
-      results.skipped_threads++
-      continue
-    }
+    step = 'load_threads_query'
+    let uniqueKeys: string[] = []
 
-    const computed = processThread(tk, events, queue || [], suppressionData)
-    
-    const existingMetadata = state?.metadata || {}
-    const existingBucket = existingMetadata.inbox_bucket || existingMetadata.bucket
-    const existingTemp = existingMetadata.temperature
+    const offset = payload.offset || 0
 
-    const isDifferent = 
-      state?.status !== computed.status || 
-      state?.stage !== computed.stage || 
-      state?.automation_status !== computed.automationStatus ||
-      state?.next_action !== computed.nextAction ||
-      existingBucket !== computed.bucket ||
-      existingTemp !== computed.temperature ||
-      state?.pending_queue_count !== computed.pendingCount ||
-      state?.failed_queue_count !== computed.failedCount ||
-      state?.last_intent !== computed.latestIntent ||
-      state?.is_suppressed !== computed.isSuppressed
-
-    if (only_inconsistent && !isDifferent && state) {
-      results.skipped_threads++
-      continue
-    }
-
-    const updates: any = {
-      thread_key: tk,
-      status: computed.status,
-      stage: computed.stage,
-      last_intent: computed.latestIntent,
-      is_suppressed: computed.isSuppressed,
-      automation_status: computed.automationStatus,
-      next_action: computed.nextAction,
-      pending_queue_count: computed.pendingCount,
-      failed_queue_count: computed.failedCount,
-      metadata: {
-        ...existingMetadata,
-        inbox_bucket: computed.bucket,
-        temperature: computed.temperature
-      }
-    }
-    
-    // Default properties for new state records
-    if (!state) {
-      updates.seller_phone = firstEv.seller_phone || ''
-      updates.canonical_e164 = firstEv.canonical_e164 || ''
-      updates.our_number = firstEv.our_number || ''
-      updates.master_owner_id = firstEv.master_owner_id
-      updates.prospect_id = firstEv.prospect_id
-      updates.property_id = firstEv.property_id
-    }
-
-    if (isDifferent || !state) {
-      if (state?.status !== computed.status) results.status_changes++
-      if (state?.stage !== computed.stage) results.stage_changes++
-      if (existingBucket !== computed.bucket) results.bucket_changes++
-      if (existingTemp !== computed.temperature) results.temperature_changes++
-      if (state?.automation_status !== computed.automationStatus) results.automation_changes++
-
-      results.updated_threads++
-      if (results.examples.length < 25) {
-        results.examples.push({
-          thread_key: tk,
-          old_status: state?.status,
-          new_status: computed.status,
-          old_bucket: existingBucket,
-          new_bucket: computed.bucket,
-          old_stage: state?.stage,
-          new_stage: computed.stage,
-          temperature: computed.temperature
-        })
+    if (thread_key) {
+      uniqueKeys = [thread_key]
+    } else if (only_inconsistent) {
+      step = 'load_threads_execute_inconsistent_tiers'
+      const fetchTier = async (q: any) => {
+        const { data, error } = await q.limit(limit + offset)
+        if (error) console.warn('Tier query error:', error)
+        return data || []
       }
 
-      if (!isDryRun) {
-        let err
-        if (state) {
-          const res = await supabase.from('inbox_thread_state').update(updates).eq('id', state.id)
-          err = res.error
-        } else {
-          const res = await supabase.from('inbox_thread_state').insert(updates)
-          err = res.error
-        }
-        if (err) results.errors.push(`Thread ${tk}: ${err.message}`)
-      }
+      let allKeys: string[] = []
+      
+      // Tier 1: Suppressed risk
+      const t1 = await fetchTier(supabase.from('inbox_thread_state').select('thread_key').eq('is_suppressed', false).in('last_intent', ['opt_out', 'hostile', 'hostile_or_legal', 'legal_threat', 'wrong_number']))
+      allKeys.push(...t1.map((r: any) => r.thread_key))
+
+      // Tier 2: New inbound risk
+      const t2 = await fetchTier(supabase.from('inbox_thread_state').select('thread_key').in('status', ['active', 'archived']).in('last_intent', ['unknown', 'ambiguous', 'needs_review']))
+      allKeys.push(...t2.map((r: any) => r.thread_key))
+
+      // Tier 3: Hot/Positive stuck in ownership check
+      const t3 = await fetchTier(supabase.from('inbox_thread_state').select('thread_key').eq('stage', 'ownership_check').in('last_intent', ['asks_offer', 'asking_price_provided', 'needs_call', 'seller_interested', 'price_given', 'yes']))
+      allKeys.push(...t3.map((r: any) => r.thread_key))
+
+      // Tier 4: Null/blank fields
+      const t4 = await fetchTier(supabase.from('inbox_thread_state').select('thread_key').or('status.is.null,status.eq."",stage.is.null,stage.eq."",automation_status.is.null,next_action.is.null,last_intent.is.null,last_intent.eq.""'))
+      allKeys.push(...t4.map((r: any) => r.thread_key))
+
+      // Tier 5: Oldest stale records
+      const t5 = await fetchTier(supabase.from('inbox_thread_state').select('thread_key').in('status', ['active', 'archived']).order('updated_at', { ascending: true }))
+      allKeys.push(...t5.map((r: any) => r.thread_key))
+
+      // Deduplicate keeping first occurrence
+      uniqueKeys = Array.from(new Set(allKeys)).filter(Boolean)
+      
+      // Apply pagination
+      uniqueKeys = uniqueKeys.slice(offset, offset + limit)
     } else {
-      results.skipped_threads++
+      step = 'load_threads_execute_all'
+      let query = supabase.from('message_events').select('thread_key').order('created_at', { ascending: false })
+      
+      if (start_date) query = query.gte('created_at', start_date)
+      if (end_date) query = query.lte('created_at', end_date)
+      
+      const { data: threadKeyRows, error: keyError } = await query.range(offset, offset + (limit * 5) - 1)
+      if (keyError) {
+        throw new Error(`Failed to fetch thread keys: ${keyError.message}`)
+      }
+      
+      uniqueKeys = Array.from(new Set((threadKeyRows || []).map(r => r.thread_key))).filter(Boolean)
+      if (limit && uniqueKeys.length > limit) {
+        uniqueKeys = uniqueKeys.slice(0, limit)
+      }
     }
-  }
 
-  res.status(200).json(results)
+    const results = {
+      inspected_threads: uniqueKeys.length,
+      updated_threads: 0,
+      skipped_threads: 0,
+      bucket_changes: 0,
+      status_changes: 0,
+      stage_changes: 0,
+      temperature_changes: 0,
+      automation_changes: 0,
+      examples: [] as any[],
+      errors: [] as any[]
+    }
+
+    for (const tk of uniqueKeys) {
+      step = `load_events_for_${tk}`
+      const { data: events, error: eventsError } = await supabase.from('message_events').select('*').eq('thread_key', tk)
+      if (eventsError) throw new Error(`Events error for ${tk}: ${eventsError.message}`)
+      
+      step = `load_queue_for_${tk}`
+      const { data: queue, error: queueError } = await supabase.from('send_queue').select('*').eq('thread_key', tk)
+      if (queueError) throw new Error(`Queue error for ${tk}: ${queueError.message}`)
+
+      step = `load_state_for_${tk}`
+      const { data: stateRows, error: stateError } = await supabase.from('inbox_thread_state').select('*').eq('thread_key', tk).limit(1)
+      if (stateError && !stateError.message.includes('not exist')) {
+        throw new Error(`State error for ${tk}: ${stateError.message}`)
+      }
+      
+      if (!events || events.length === 0) continue
+
+      const state = stateRows?.[0]
+      
+      step = `check_prospect_suppression_for_${tk}`
+      let suppressionData = null
+      const firstEv = events[0]
+      if (firstEv?.prospect_id) {
+         // Use sms_eligible instead of is_opt_out, is_dnc
+         const { data: prospects, error: prospectsError } = await supabase.from('prospects').select('sms_eligible').eq('prospect_id', firstEv.prospect_id).limit(1)
+         if (prospectsError) {
+             console.warn(`Could not fetch prospect ${firstEv.prospect_id}:`, prospectsError.message)
+         } else if (prospects?.[0]) {
+             suppressionData = {
+               is_opt_out: prospects[0].sms_eligible === false,
+               is_dnc: prospects[0].sms_eligible === false
+             }
+         }
+      }
+
+      if (!include_suppressed && state?.is_suppressed) {
+        results.skipped_threads++
+        continue
+      }
+
+      step = `rebuild_thread_${tk}`
+      const computed = processThread(tk as string, events, queue || [], suppressionData)
+      
+      const existingMetadata = state?.metadata || {}
+      const existingBucket = existingMetadata.inbox_bucket || existingMetadata.bucket
+      const existingTemp = existingMetadata.temperature
+
+      const isDifferent = 
+        state?.status !== computed.status || 
+        state?.stage !== computed.stage || 
+        state?.automation_status !== computed.automationStatus ||
+        state?.next_action !== computed.nextAction ||
+        existingBucket !== computed.bucket ||
+        existingTemp !== computed.temperature ||
+        state?.pending_queue_count !== computed.pendingCount ||
+        state?.failed_queue_count !== computed.failedCount ||
+        state?.last_intent !== computed.latestIntent ||
+        state?.is_suppressed !== computed.isSuppressed
+
+      if (only_inconsistent && !isDifferent && state) {
+        results.skipped_threads++
+        continue
+      }
+
+      const updates: any = {
+        thread_key: tk,
+        status: computed.status,
+        stage: computed.stage,
+        last_intent: computed.latestIntent,
+        is_suppressed: computed.isSuppressed,
+        automation_status: computed.automationStatus,
+        next_action: computed.nextAction,
+        pending_queue_count: computed.pendingCount,
+        failed_queue_count: computed.failedCount,
+        metadata: {
+          ...existingMetadata,
+          inbox_bucket: computed.bucket,
+          temperature: computed.temperature
+        }
+      }
+      
+      if (!state) {
+        updates.seller_phone = firstEv.seller_phone || ''
+        updates.canonical_e164 = firstEv.canonical_e164 || ''
+        updates.our_number = firstEv.our_number || ''
+        updates.master_owner_id = firstEv.master_owner_id
+        updates.prospect_id = firstEv.prospect_id
+        updates.property_id = firstEv.property_id
+      }
+
+      if (isDifferent || !state) {
+        if (state?.status !== computed.status) results.status_changes++
+        if (state?.stage !== computed.stage) results.stage_changes++
+        if (existingBucket !== computed.bucket) results.bucket_changes++
+        if (existingTemp !== computed.temperature) results.temperature_changes++
+        if (state?.automation_status !== computed.automationStatus) results.automation_changes++
+
+        results.updated_threads++
+        if (results.examples.length < 25) {
+          results.examples.push({
+            thread_key: tk,
+            old_status: state?.status,
+            new_status: computed.status,
+            old_bucket: existingBucket,
+            new_bucket: computed.bucket,
+            old_stage: state?.stage,
+            new_stage: computed.stage,
+            temperature: computed.temperature
+          })
+        }
+
+        if (!isDryRun) {
+          step = `update_thread_state_${tk}`
+          let err
+          if (state) {
+            const res = await supabase.from('inbox_thread_state').update(updates).eq('id', state.id)
+            err = res.error
+          } else {
+            const res = await supabase.from('inbox_thread_state').insert(updates)
+            err = res.error
+          }
+          if (err) results.errors.push(`Thread ${tk}: ${err.message}`)
+        }
+      } else {
+        results.skipped_threads++
+      }
+    }
+
+    step = 'return_results'
+    res.status(200).json(results)
+  } catch (error: any) {
+    console.error(`Error at step [${step}]:`, error)
+    res.status(500).json({
+      error: 'FUNCTION_INVOCATION_FAILED',
+      step,
+      payload,
+      details: {
+        name: error.name,
+        message: error.message,
+        stack: error.stack,
+        cause: error.cause
+      }
+    })
+  }
 }

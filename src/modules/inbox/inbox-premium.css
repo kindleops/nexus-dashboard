@@ -4495,6 +4495,168 @@
   opacity: 0.5;
 }
 
+.nx-icm__buyer-demand-dock,
+.nx-icm__buyer-selection-shell {
+  position: absolute;
+  left: 24px;
+  z-index: 18;
+  pointer-events: auto;
+}
+
+.nx-icm__buyer-demand-dock {
+  top: 94px;
+  width: min(360px, calc(100vw - 48px));
+  display: grid;
+  gap: 10px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(8, 14, 24, 0.94), rgba(6, 10, 18, 0.9));
+  box-shadow: 0 20px 56px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(20px);
+}
+
+.nx-icm__buyer-demand-label,
+.nx-icm-buyer-card__eyebrow {
+  color: rgba(157, 185, 220, 0.68);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.nx-icm__buyer-demand-dock strong {
+  color: #f3f8ff;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.nx-icm__buyer-demand-dock small {
+  color: rgba(209, 223, 243, 0.72);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.nx-icm__buyer-demand-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.nx-icm__buyer-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.nx-icm__buyer-summary div,
+.nx-icm-buyer-card__grid div {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.nx-icm__buyer-summary span,
+.nx-icm-buyer-card__grid span,
+.nx-icm-buyer-card__summary span {
+  color: rgba(162, 184, 214, 0.62);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.nx-icm__buyer-summary strong,
+.nx-icm-buyer-card__grid strong,
+.nx-icm-buyer-card__summary strong {
+  color: #f4f8ff;
+  font-size: 14px;
+}
+
+.nx-icm__buyer-summary-note,
+.nx-icm-buyer-card__summary p {
+  margin: 0;
+  color: rgba(216, 228, 244, 0.76);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.nx-icm__buyer-selection-shell {
+  bottom: 148px;
+  width: min(420px, calc(100vw - 48px));
+}
+
+.nx-icm-buyer-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(8, 14, 24, 0.96), rgba(6, 10, 18, 0.92));
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(22px);
+}
+
+.nx-icm-buyer-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.nx-icm-buyer-card__head strong {
+  display: block;
+  margin-top: 4px;
+  color: #f3f8ff;
+  font-size: 18px;
+}
+
+.nx-icm-buyer-card__head small {
+  display: block;
+  margin-top: 4px;
+  color: rgba(206, 219, 238, 0.72);
+  font-size: 12px;
+}
+
+.nx-icm-buyer-card__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.nx-icm-buyer-card__summary {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.nx-icm-buyer-card__actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.nx-icm-buyer-card__actions a {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: #eef5ff;
+  display: inline-flex;
+  align-items: center;
+}
+
+.nx-icm-hover--buyer .nx-icm-hover__stats {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 @keyframes nx-icm-hover-in {
   from {
     opacity: 0;
@@ -4543,7 +4705,9 @@
   .nx-icm-thread,
   .nx-icm-thread__live-dot,
   .nx-icm-thread__composer button,
-  .nx-icm-hover__metric {
+  .nx-icm-hover__metric,
+  .nx-icm__buyer-demand-dock,
+  .nx-icm-buyer-card {
     animation: none !important;
     transition: none !important;
   }

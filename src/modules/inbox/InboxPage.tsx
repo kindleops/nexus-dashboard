@@ -50,6 +50,7 @@ import { fetchInboxActivity, logInboxActivity, type InboxActivityEvent } from '.
 import { getSupabaseClient } from '../../lib/supabaseClient'
 import { emitNotification } from '../../shared/NotificationToast'
 import { Icon } from '../../shared/icons'
+import { formatRelativeTime } from '../../shared/formatters'
 import { NexusTopBar } from './components/NexusTopBar'
 import { type QueueCommandCaps, type QueueCommandMode } from './components/QueueCommandCenter'
 import { InboxSidebar } from './components/InboxSidebar'
@@ -62,12 +63,16 @@ import type { TemplateActionPayload } from './components/TemplatePopover'
 import { InboxActivityPanel } from './components/InboxActivityPanel'
 import { InboxCommandMap } from './InboxCommandMap'
 import { InboxUtilityDrawer, MapDossierDrawer } from './components/InboxUtilityDrawer'
-import { CommandView } from './components/CommandView'
 import { LiveCopilotChat } from '../copilot/components/LiveCopilotChat'
 import { AdvancedFiltersPopover } from './components/AdvancedFiltersPopover'
 import { InboxCommandPalette, type InboxCmd } from './InboxCommandPalette'
 import { InboxSchedulePanel, type ScheduledTime } from './InboxSchedulePanel'
 import { ThreadDebugModal } from './components/ThreadDebugModal'
+import {
+  defaultBuyerMapFilters,
+  useBuyerCommandData,
+  type BuyerMapFilters,
+} from '../buyer/buyerCommandData'
 
 import { translateText } from './translate.api'
 import { buildThreadCommandIntel, type ThreadCommandIntel } from './ai-command-center'
@@ -93,6 +98,9 @@ import {
   getInboxViewCounts,
   getSavedPresetConfig,
   isSuppressedThread,
+  resolveThreadAddressLine,
+  resolveThreadMarketBadge,
+  resolveThreadPrimaryName,
   type ApplyInboxFiltersOptions,
   type InboxAdvancedFilters,
   type InboxSavedFilterPreset,
@@ -121,7 +129,19 @@ const LANGUAGE_LABELS: Record<string, string> = {
 }
 
 type ThreadTranslateViewMode = 'original' | 'translated'
-type CommandCenterViewMode = 'split' | 'list' | 'dossier' | 'command'
+type InboxWorkspaceView =
+  | 'thread'
+  | 'sms_thread'
+  | 'list'
+  | 'deal_intelligence'
+  | 'command_map'
+  | 'pipeline'
+  | 'queue'
+  | 'calendar'
+  | 'metrics'
+  | 'comp_intelligence'
+  | 'buyer_match'
+type ViewWidthPercent = '25' | '50' | '75' | '100'
 type TableDensityMode = 'comfortable' | 'compact' | 'ultra_compact'
 const DEFAULT_QUEUE_COMMAND_CAPS: QueueCommandCaps = {
   sends_per_run: 10,
@@ -152,6 +172,127 @@ const isEnglishLanguage = (languageCode: string | null): boolean => {
   return languageCode.startsWith('en')
 }
 
+const WORKSPACE_VIEW_OPTIONS: Array<{ key: InboxWorkspaceView; label: string; description: string }> = [
+  { key: 'thread', label: 'Inbox Thread View', description: 'Acquisition thread rail with priority buckets and live sellers.' },
+  { key: 'sms_thread', label: 'SMS Thread View', description: 'Full seller SMS conversation with quick actions and composer.' },
+  { key: 'list', label: 'List View', description: 'Dense sortable thread list across the acquisition inbox.' },
+  { key: 'deal_intelligence', label: 'Deal Intelligence', description: 'Full-screen seller, property, offer, and timeline intelligence.' },
+  { key: 'command_map', label: 'Command Map View', description: 'Cinematic acquisition map with ticker, pins, and live activity.' },
+  { key: 'pipeline', label: 'Pipeline View', description: 'Stage-based command kanban for the active pipeline.' },
+  { key: 'queue', label: 'Queue View', description: 'Outbound, follow-up, and delivery execution status.' },
+  { key: 'calendar', label: 'Calendar View', description: 'Follow-ups, deadlines, queued sends, and contract timing.' },
+  { key: 'metrics', label: 'Metrics View', description: 'Inbox KPI command center with automation and reply health.' },
+  { key: 'comp_intelligence', label: 'Comp Intelligence View', description: 'Subject property, ARV, offer range, and comp signals.' },
+  { key: 'buyer_match', label: 'Buyer Match View', description: 'Buyer demand, dispo fit, and buyer-match readiness.' },
+]
+
+const VIEW_WIDTH_OPTIONS: Array<{ key: ViewWidthPercent; label: `${ViewWidthPercent}%` }> = [
+  { key: '25', label: '25%' },
+  { key: '50', label: '50%' },
+  { key: '75', label: '75%' },
+  { key: '100', label: '100%' },
+]
+
+const MAX_TOGGLED_VIEWS = 4
+const DEFAULT_WORKSPACE_VIEWS: InboxWorkspaceView[] = ['thread', 'sms_thread', 'deal_intelligence']
+const DEFAULT_WORKSPACE_WIDTHS: Partial<Record<InboxWorkspaceView, ViewWidthPercent>> = {
+  thread: '25',
+  sms_thread: '50',
+  deal_intelligence: '25',
+}
+
+const sumWidths = (values: ViewWidthPercent[]) => values.reduce((total, value) => total + Number(value), 0)
+const cloneDefaultWorkspaceViews = (): InboxWorkspaceView[] => [...DEFAULT_WORKSPACE_VIEWS]
+const cloneDefaultWorkspaceWidths = (): Partial<Record<InboxWorkspaceView, ViewWidthPercent>> => ({ ...DEFAULT_WORKSPACE_WIDTHS })
+const isDefaultWorkspaceSet = (views: InboxWorkspaceView[]) =>
+  views.length === DEFAULT_WORKSPACE_VIEWS.length &&
+  DEFAULT_WORKSPACE_VIEWS.every((view) => views.includes(view))
+
+const sanitizeWorkspaceWidthOverrides = (
+  views: InboxWorkspaceView[],
+  overrides: Partial<Record<InboxWorkspaceView, ViewWidthPercent>>,
+): Partial<Record<InboxWorkspaceView, ViewWidthPercent>> => {
+  if (views.length === 0 || views.length === 1) return {}
+
+  const next = Object.fromEntries(
+    Object.entries(overrides).filter(([view, value]) => views.includes(view as InboxWorkspaceView) && value),
+  ) as Partial<Record<InboxWorkspaceView, ViewWidthPercent>>
+
+  if (isDefaultWorkspaceSet(views)) return { ...cloneDefaultWorkspaceWidths(), ...next }
+
+  const values = views.map((view) => next[view]).filter(Boolean) as ViewWidthPercent[]
+  if (views.length === 2) {
+    if (values.length === 1) return next
+    return values.length === 2 && sumWidths(values) === 100 ? next : {}
+  }
+  if (views.length === 3) {
+    return next
+  }
+  if (views.length === 4) {
+    return next
+  }
+  return {}
+}
+
+const computeWorkspaceWidths = (
+  views: InboxWorkspaceView[],
+  overrides: Partial<Record<InboxWorkspaceView, ViewWidthPercent>>,
+): Partial<Record<InboxWorkspaceView, ViewWidthPercent>> => {
+  if (views.length === 0) return {}
+  if (views.length === 1) return { [views[0]]: '100' } as Record<InboxWorkspaceView, ViewWidthPercent>
+  if (views.length === 2) {
+    const [first, second] = views
+    const firstOverride = overrides[first]
+    const secondOverride = overrides[second]
+    if (firstOverride && secondOverride && sumWidths([firstOverride, secondOverride]) === 100) {
+      return { [first]: firstOverride, [second]: secondOverride } as Record<InboxWorkspaceView, ViewWidthPercent>
+    }
+    if (firstOverride === '75') return { [first]: '75', [second]: '25' } as Record<InboxWorkspaceView, ViewWidthPercent>
+    if (firstOverride === '25') return { [first]: '25', [second]: '75' } as Record<InboxWorkspaceView, ViewWidthPercent>
+    if (firstOverride === '50') return { [first]: '50', [second]: '50' } as Record<InboxWorkspaceView, ViewWidthPercent>
+    if (secondOverride === '75') return { [first]: '25', [second]: '75' } as Record<InboxWorkspaceView, ViewWidthPercent>
+    if (secondOverride === '25') return { [first]: '75', [second]: '25' } as Record<InboxWorkspaceView, ViewWidthPercent>
+    if (secondOverride === '50') return { [first]: '50', [second]: '50' } as Record<InboxWorkspaceView, ViewWidthPercent>
+    return { [first]: '50', [second]: '50' } as Record<InboxWorkspaceView, ViewWidthPercent>
+  }
+  if (views.length === 3) {
+    const overrideValues = views.map((view) => overrides[view]).filter(Boolean) as ViewWidthPercent[]
+    if (overrideValues.length === 3 && sumWidths(overrideValues) === 100) {
+      return Object.fromEntries(views.map((view) => [view, overrides[view]!])) as Record<InboxWorkspaceView, ViewWidthPercent>
+    }
+    return {
+      [views[0]]: '50',
+      [views[1]]: '25',
+      [views[2]]: '25',
+    } as Record<InboxWorkspaceView, ViewWidthPercent>
+  }
+  const overrideValues = views.slice(0, 4).map((view) => overrides[view]).filter(Boolean) as ViewWidthPercent[]
+  if (overrideValues.length === 4 && sumWidths(overrideValues) === 100) {
+    return Object.fromEntries(views.slice(0, 4).map((view) => [view, overrides[view]!])) as Record<InboxWorkspaceView, ViewWidthPercent>
+  }
+  return {
+    [views[0]]: '25',
+    [views[1]]: '25',
+    [views[2]]: '25',
+    [views[3]]: '25',
+  } as Record<InboxWorkspaceView, ViewWidthPercent>
+}
+
+const stageLaneLabel = (stage: string): string => {
+  const normalized = String(stage || '').toLowerCase()
+  if (normalized.includes('ownership')) return 'Ownership Check'
+  if (normalized.includes('interest')) return 'Interest Probe'
+  if (normalized.includes('active') || normalized.includes('seller_response')) return 'Active Communication'
+  if (normalized.includes('price')) return 'Price Discovery'
+  if (normalized.includes('condition')) return 'Condition Details'
+  if (normalized.includes('offer')) return 'Offer Stage'
+  if (normalized.includes('negotiat') || normalized.includes('counter')) return 'Negotiation'
+  if (normalized.includes('contract')) return 'Contract Sent'
+  if (normalized.includes('title') || normalized.includes('closing')) return 'Title / Closing'
+  if (normalized.includes('dead') || normalized.includes('suppressed') || normalized.includes('closed')) return 'Dead / Suppressed'
+  return 'Ownership Check'
+}
+
 export default function InboxPage() {
   const { data, loading: dataLoading, refresh: refreshInbox, loadMore, recentlyUpdatedThreadIds } = useInboxData()
   const DEV = Boolean(import.meta.env.DEV)
@@ -163,10 +304,13 @@ export default function InboxPage() {
   const [advancedFilters, setAdvancedFilters] = useState<InboxAdvancedFilters>({ outOfStateOwner: 'all' })
   const [rightViewFilter, setRightViewFilter] = useState<InboxViewSelectValue>('new_replies')
   const [rightSavedPreset, setRightSavedPreset] = useState<InboxSavedFilterPreset>('new_inbounds')
-  const [commandViewMode, setCommandViewMode] = useState<CommandCenterViewMode>('split')
+  const [selectedWorkspaceViews, setSelectedWorkspaceViews] = useState<InboxWorkspaceView[]>(cloneDefaultWorkspaceViews)
+  const [workspaceWidthOverrides, setWorkspaceWidthOverrides] = useState<Partial<Record<InboxWorkspaceView, ViewWidthPercent>>>(cloneDefaultWorkspaceWidths)
   const [tableSort, setTableSort] = useState<ConversationTableSort>('last_activity_desc')
   const [tableDensity, setTableDensity] = useState<TableDensityMode>('compact')
   const [searchQuery, setSearchQuery] = useState('')
+  const [buyerFilters, setBuyerFilters] = useState<BuyerMapFilters>(defaultBuyerMapFilters)
+  const [selectedBuyerKey, setSelectedBuyerKey] = useState<string | null>(null)
   const [draftText, setDraftText] = useState('')
   const [selectedMessages, setSelectedMessages] = useState<ThreadMessage[]>([])
   const [pendingMessagesByThread, setPendingMessagesByThread] = useState<Record<string, ThreadMessage[]>>({})
@@ -319,9 +463,11 @@ export default function InboxPage() {
       follow_up_due: local.follow_up_due,
       waiting_on_seller: local.waiting_on_seller,
       automated: local.automated,
+      hot_leads: local.hot_leads,
       needs_review: local.needs_review,
       cold_no_response: local.cold_no_response,
       suppressed: local.suppressed,
+      failed: local.failed,
       all: local.all,
       active: local.active,
       my_priority: local.priority,
@@ -389,8 +535,21 @@ export default function InboxPage() {
       const byThreadKey = threads.find((thread) => (thread.threadKey || thread.id) === selectedThreadKey)
       if (byThreadKey) return byThreadKey
     }
-    return selectedId ? null : (filtered[0] ?? null)
+    return selectedId ? null : (filtered[0] ?? threads[0] ?? null)
   }, [filtered, threads, selectedId, selectedThreadKey])
+  const buyerCommandData = useBuyerCommandData(selected, buyerFilters)
+
+  useEffect(() => {
+    if (selectedBuyerKey && buyerCommandData.matches.some((match) => match.buyerKey === selectedBuyerKey)) return
+    if (selectedBuyerKey && buyerCommandData.profilePoints.some((profile) => profile.buyerKey === selectedBuyerKey)) return
+    if (selectedBuyerKey && buyerCommandData.recentPurchases.some((purchase) => purchase.buyerKey === selectedBuyerKey)) return
+    setSelectedBuyerKey(
+      buyerCommandData.matches[0]?.buyerKey
+      || buyerCommandData.profilePoints[0]?.buyerKey
+      || buyerCommandData.recentPurchases[0]?.buyerKey
+      || null,
+    )
+  }, [buyerCommandData.matches, buyerCommandData.profilePoints, buyerCommandData.recentPurchases, selectedBuyerKey])
 
   const selectedFilteredOut = useMemo(() => (
     Boolean(selected && !filtered.some((thread) => thread.id === selected.id))
@@ -467,6 +626,87 @@ export default function InboxPage() {
       ))
       .filter((item): item is ThreadCommandIntel => Boolean(item))
   }, [displayedMessages, selected?.id, selected?.threadKey, threadContext, threadIntelligence, threads])
+
+  const activeWorkspaceView = selectedWorkspaceViews[0] ?? DEFAULT_WORKSPACE_VIEWS[0]
+  const workspaceWidths = useMemo(
+    () => computeWorkspaceWidths(selectedWorkspaceViews, workspaceWidthOverrides),
+    [selectedWorkspaceViews, workspaceWidthOverrides],
+  )
+  const activeWorkspaceLabel = useMemo(() => {
+    if (selectedWorkspaceViews.length <= 1) {
+      return WORKSPACE_VIEW_OPTIONS.find((option) => option.key === activeWorkspaceView)?.label ?? 'Inbox Thread View'
+    }
+    return `${selectedWorkspaceViews.length} Views Active`
+  }, [activeWorkspaceView, selectedWorkspaceViews.length])
+
+  const pipelineColumns = useMemo(() => {
+    const columns = [
+      'Ownership Check',
+      'Interest Probe',
+      'Active Communication',
+      'Price Discovery',
+      'Condition Details',
+      'Offer Stage',
+      'Negotiation',
+      'Contract Sent',
+      'Title / Closing',
+      'Dead / Suppressed',
+    ]
+    const grouped = new Map<string, InboxWorkflowThread[]>()
+    columns.forEach((column) => grouped.set(column, []))
+    filtered.forEach((thread) => {
+      const lane = stageLaneLabel(String(thread.conversationStage || (thread as any).stage || ''))
+      grouped.get(lane)?.push(thread)
+    })
+    return columns.map((label) => ({
+      label,
+      threads: (grouped.get(label) ?? []).slice(0, 12),
+    }))
+  }, [filtered])
+
+  const queueRows = useMemo(() => {
+    return filtered
+      .map((thread) => {
+        const decision = buildConversationDecision(thread)
+        const queueStatus = String((thread as any).queueStatus || (thread as any).queue_status || thread.deliveryStatus || '').trim() || 'waiting'
+        const nextTouch = String((thread as any).next_follow_up_at || (thread as any).follow_up_at || thread.lastOutboundAt || '').trim()
+        return {
+          thread,
+          decision,
+          queueStatus,
+          nextTouch,
+        }
+      })
+      .sort((left, right) => {
+        const a = new Date(left.nextTouch || left.thread.updatedAt || 0).getTime()
+        const b = new Date(right.nextTouch || right.thread.updatedAt || 0).getTime()
+        return b - a
+      })
+      .slice(0, 40)
+  }, [filtered])
+
+  const calendarEvents = useMemo(() => {
+    return filtered
+      .map((thread) => {
+        const eventAt = String((thread as any).next_follow_up_at || (thread as any).follow_up_at || thread.lastInboundAt || thread.lastMessageAt || '').trim()
+        return {
+          thread,
+          eventAt,
+          label: (thread as any).next_action || thread.nextSystemAction || 'Review conversation',
+          type:
+            (thread as any).contractId
+              ? 'Contract / Title'
+              : (thread as any).offerId
+              ? 'Offer Deadline'
+              : eventAt
+              ? 'Follow-Up'
+              : 'Seller Event',
+        }
+      })
+      .filter((item) => item.eventAt)
+      .sort((left, right) => new Date(left.eventAt).getTime() - new Date(right.eventAt).getTime())
+      .slice(0, 30)
+  }, [filtered])
 
   const autonomyModel = useMemo(
     () => buildAutonomousEngineModel({
@@ -574,6 +814,72 @@ export default function InboxPage() {
     setAdvancedFilters({ outOfStateOwner: 'all' })
     setSavedPreset('my_priority')
   }, [])
+
+  const handleToggleWorkspaceView = useCallback((view: InboxWorkspaceView) => {
+    setSelectedWorkspaceViews((current) => {
+      let nextViews: InboxWorkspaceView[]
+      if (current.includes(view)) {
+        if (current.length === 1) {
+          nextViews = cloneDefaultWorkspaceViews()
+          setWorkspaceWidthOverrides(cloneDefaultWorkspaceWidths())
+          return nextViews
+        }
+        nextViews = current.filter((item) => item !== view)
+      } else if (current.length >= MAX_TOGGLED_VIEWS) {
+        nextViews = [...current.slice(1), view]
+      } else {
+        nextViews = [...current, view]
+      }
+
+      setWorkspaceWidthOverrides((existing) => sanitizeWorkspaceWidthOverrides(nextViews, existing))
+      return nextViews
+    })
+  }, [])
+
+  const handleFocusWorkspaceView = useCallback((view: InboxWorkspaceView) => {
+    setSelectedWorkspaceViews((current) => {
+      if (current[0] === view) return current
+      let nextViews: InboxWorkspaceView[]
+      if (!current.includes(view)) {
+        if (current.length >= MAX_TOGGLED_VIEWS) {
+          nextViews = [view, ...current.slice(0, MAX_TOGGLED_VIEWS - 1)]
+        } else {
+          nextViews = [view, ...current]
+        }
+      } else {
+        nextViews = [view, ...current.filter((item) => item !== view)]
+      }
+      setWorkspaceWidthOverrides((existing) => sanitizeWorkspaceWidthOverrides(nextViews, existing))
+      return nextViews
+    })
+  }, [])
+
+  const handleSetWorkspaceWidth = useCallback((view: InboxWorkspaceView, width: ViewWidthPercent) => {
+    setWorkspaceWidthOverrides((current) => sanitizeWorkspaceWidthOverrides(selectedWorkspaceViews, { ...current, [view]: width }))
+  }, [selectedWorkspaceViews])
+
+  const handleOpenDealIntelligence = useCallback((threadId?: string | null) => {
+    if (threadId) {
+      setSelectedId(threadId)
+      const match = threads.find((thread) => thread.id === threadId || (thread.threadKey || thread.id) === threadId)
+      if (match) {
+        setSelectedThreadKey(match.threadKey || match.id)
+      }
+    }
+    setWorkspaceWidthOverrides({})
+    setSelectedWorkspaceViews(['deal_intelligence'])
+  }, [threads])
+
+  useEffect(() => {
+    setLayoutState((current) => {
+      const next = { ...current }
+      next.mapMode = 'off'
+      next.inboxMode = 'default'
+      next.leftPanelMode = 'default'
+      next.rightPanelMode = 'default'
+      return next
+    })
+  }, [selectedWorkspaceViews])
 
   const liveThreadQuery = useMemo(() => ({
     view: 'all',
@@ -897,9 +1203,12 @@ export default function InboxPage() {
 
   useEffect(() => {
     try {
-      const savedViewMode = window.localStorage.getItem('nx.command-view.mode') as CommandCenterViewMode | null
-      if (savedViewMode === 'split' || savedViewMode === 'list' || savedViewMode === 'dossier' || savedViewMode === 'command') {
-        setCommandViewMode(savedViewMode)
+      setSelectedWorkspaceViews(cloneDefaultWorkspaceViews())
+      setWorkspaceWidthOverrides(cloneDefaultWorkspaceWidths())
+      const savedOverrides = window.localStorage.getItem('nx.inbox.workspace-width-overrides')
+      if (savedOverrides) {
+        const parsed = JSON.parse(savedOverrides) as Partial<Record<InboxWorkspaceView, ViewWidthPercent>>
+        setWorkspaceWidthOverrides(sanitizeWorkspaceWidthOverrides(DEFAULT_WORKSPACE_VIEWS, { ...cloneDefaultWorkspaceWidths(), ...parsed }))
       }
       const savedMode = window.localStorage.getItem('nx.queue.mode') as QueueCommandMode | null
       const savedCaps = window.localStorage.getItem('nx.queue.caps')
@@ -920,9 +1229,9 @@ export default function InboxPage() {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem('nx.command-view.mode', commandViewMode)
+      window.localStorage.setItem('nx.inbox.workspace-width-overrides', JSON.stringify(workspaceWidthOverrides))
     } catch {}
-  }, [commandViewMode])
+  }, [workspaceWidthOverrides])
 
   const refreshQueueHealth = useCallback(async () => {
     setQueueProcessorHealthLoading(true)
@@ -1836,14 +2145,444 @@ export default function InboxPage() {
   const dossierOpen = activeOverlay === 'dossier'
   const aiOpen = activeOverlay === 'ai'
   const keysOpen = activeOverlay === 'keys'
-  const showLeftPanel = leftPanelMode !== 'hidden'
-  const showRightPanel = rightPanelMode !== 'hidden'
+  const isMultiView = selectedWorkspaceViews.length > 1
+  const isDefaultWorkspaceShell = isDefaultWorkspaceSet(selectedWorkspaceViews)
+  const isCustomMultiView = isMultiView && !isDefaultWorkspaceShell
+  const isCommandMapView = !isMultiView && activeWorkspaceView === 'command_map'
+  const isDealIntelligenceView = !isMultiView && activeWorkspaceView === 'deal_intelligence'
+  const showLeftPanel = isDefaultWorkspaceShell
   const isDoubleSided = inboxMode === 'full_double'
-  const isCommandView = commandViewMode === 'command'
+  const showRightCommandPanel = isDefaultWorkspaceShell
+
+  const renderCompactOperationalList = (paneWidth: ViewWidthPercent) => (
+    <section className={cls('nx-workspace-surface', 'nx-workspace-surface--list-compact', `is-pane-${paneWidth}`)}>
+      <div className="nx-workspace-card">
+        <div className="nx-workspace-card__title">
+          <Icon name="list" />
+          <span>Operational Conversations</span>
+        </div>
+        <div className="nx-workspace-lane__body">
+          {filtered.slice(0, paneWidth === '25' ? 8 : 12).map((thread) => {
+            const decision = decisions.get(thread.id) ?? buildConversationDecision(thread)
+            return (
+              <button
+                key={thread.id}
+                type="button"
+                className={cls('nx-workspace-thread-chip', selected?.id === thread.id && 'is-active')}
+                onClick={() => handleSelect(thread.id)}
+              >
+                <strong>{resolveThreadPrimaryName(thread) || 'Property Thread'}</strong>
+                <span>{resolveThreadAddressLine(thread) || 'Property Unknown'}</span>
+                <small>{resolveThreadMarketBadge(thread) || decision.conversation_stage.replace(/_/g, ' ')}</small>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </section>
+  )
+
+  const renderThreadRailPane = (paneMode: 'single' | 'multi' = 'single') => (
+    <section className={cls('nx-workspace-pane-surface', 'nx-workspace-pane-surface--thread-rail', paneMode === 'multi' && 'is-compact-pane')}>
+      <InboxSidebar
+        threads={threads}
+        selectedId={selected?.id ?? null}
+        activeViewFilter={viewFilter}
+        onSelect={handleSelect}
+        onThreadAction={handleThreadAction}
+        savedPreset={savedPreset}
+        onApplySavedPreset={applySavedPreset}
+        viewCounts={viewCounts}
+        onOpenAdvancedFilters={() => setActiveOverlay('filters')}
+        onClearFilters={handleResetFilters}
+        onLoadMore={handleLoadMore}
+        canLoadMore={Boolean(data.pagination?.hasMore)}
+        recentlyUpdatedThreadIds={recentlyUpdatedThreadIds}
+        searchQuery={searchQuery}
+        onSearchQueryChange={setSearchQuery}
+        visibleThreadCount={visibleThreadCount}
+        loadingError={data.liveFetchError}
+        densityMode={paneMode === 'single' ? 'full' : 'compact'}
+      />
+    </section>
+  )
+
+  const renderSmsThreadPane = () => (
+    <section className="nx-workspace-pane-surface nx-workspace-pane-surface--sms-thread">
+      <ChatThread
+        thread={selected}
+        messages={displayedMessagesWithTranslation}
+        loading={messagesLoading}
+        isSuppressed={selectedSuppressed}
+        isStarred={selected?.isStarred ?? false}
+        onTogglePin={handleTogglePin}
+        onToggleStar={handleToggleStar}
+        onToggleArchive={handleToggleArchive}
+        onThreadAction={handleOperatorAction}
+        onOpenDebug={() => setDebugModalOpen(true)}
+        searchQuery={searchQuery}
+      />
+
+      {showTranslation && (
+        <ComposerTranslationBar
+          sellerLanguageLabel={sellerLanguageLabel}
+          sellerLanguageCode={sellerLanguageCode}
+          isSellerLanguageEnglish={isEnglishLanguage(sellerLanguageCode)}
+          hasInboundMessages={threadHasInboundMessages}
+          hasThreadTranslations={Object.keys(threadTranslations).length > 0}
+          threadViewMode={threadViewMode}
+          isThreadTranslating={threadTranslationLoading}
+          isDraftTranslating={draftTranslationLoading}
+          hasDraftText={Boolean(draftText.trim())}
+          translatedDraftPreview={translatedDraftPreview}
+          translationError={translationError}
+          canRevertDraft={Boolean(originalDraftBeforeTranslation)}
+          onTranslateThread={handleTranslateThread}
+          onTranslateDraft={handleTranslateDraft}
+          onSetThreadViewMode={setThreadViewMode}
+          onUseDraftTranslation={handleUseDraftTranslation}
+          onRevertDraft={handleRevertDraftTranslation}
+        />
+      )}
+
+      <Composer
+        draftText={draftText}
+        setDraftText={setDraftText}
+        onSend={handleSend}
+        isSending={isSending}
+        onOpenSchedule={() => {
+          setScheduledTemplatePayload({ text: draftText, template: null })
+          setSchedulePanelOpen(true)
+        }}
+        onAI={() => setActiveOverlay('ai')}
+        thread={selected}
+        threadContext={threadContext}
+        onInsertTemplate={(text) => setDraftText(prev => prev ? `${prev}\n\n${text}` : text)}
+        onReplaceTemplate={(text) => setDraftText(text)}
+        onSendTemplate={handleSendTemplate}
+        onQueueTemplate={handleQueueTemplate}
+        onScheduleTemplate={handleScheduleTemplate}
+        onTranslate={() => setShowTranslation(!showTranslation)}
+        isTranslating={showTranslation}
+        disabled={!selected || selectedSuppressed}
+        disabledReason={!selected ? 'Select a thread to compose' : 'Messaging disabled for suppressed thread'}
+        aiHint={null}
+        aiSuggestions={commandIntel?.suggestions ?? []}
+      />
+    </section>
+  )
+
+  const formatMoney = (value: number | null | undefined): string => {
+    if (!Number.isFinite(value ?? NaN)) return '—'
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value as number)
+  }
+
+  const renderWorkspacePane = (
+    view: InboxWorkspaceView,
+    paneMode: 'single' | 'multi' = 'single',
+    paneWidth: ViewWidthPercent = '100',
+  ) => {
+    if (view === 'thread') {
+      return renderThreadRailPane(paneMode)
+    }
+
+    if (view === 'sms_thread') {
+      return renderSmsThreadPane()
+    }
+
+    if (view === 'list') {
+      if (paneMode === 'multi' && (paneWidth === '25' || paneWidth === '50')) {
+        return renderCompactOperationalList(paneWidth)
+      }
+      return (
+        <InboxConversationTable
+          threads={filtered}
+          selectedId={selected?.id ?? null}
+          sort={tableSort}
+          density={paneMode === 'multi' && paneWidth === '75' ? 'compact' : tableDensity}
+          statCounts={listStatCounts}
+          onSortChange={setTableSort}
+          onDensityChange={setTableDensity}
+          onSelect={handleSelect}
+        />
+      )
+    }
+
+    if (view === 'command_map') {
+      return (
+        <section className="nx-workspace-surface nx-workspace-surface--map">
+          <div className="nx-map-right-body nx-map-right-body--workspace">
+            <InboxCommandMap
+              threads={mapThreads}
+              visibleThreads={filtered}
+              selectedThread={selected}
+              selectedThreadMessages={displayedMessages}
+              selectedThreadMessagesLoading={messagesLoading}
+              quickReplyDraft={draftText}
+              onQuickReplyDraftChange={setDraftText}
+              onQuickReplySend={(text) => handleSend(text)}
+              quickReplyDisabled={selectedSuppressed || isSending}
+              zoomedIn
+              sourceMode={mapSourceMode}
+              onSourceModeChange={setMapSourceMode}
+              onSelectThreadId={handleSelect}
+              onBackgroundClick={() => {}}
+              onOpenDealIntelligence={handleOpenDealIntelligence}
+              buyerCommandData={buyerCommandData}
+              buyerFilters={buyerFilters}
+              onBuyerFiltersChange={(patch) => setBuyerFilters((current) => ({ ...current, ...patch }))}
+              selectedBuyerKey={selectedBuyerKey}
+              onSelectBuyerKey={setSelectedBuyerKey}
+              fullHeight={paneMode === 'single'}
+            />
+          </div>
+        </section>
+      )
+    }
+
+    if (view === 'deal_intelligence') {
+      return (
+        <IntelligencePanel
+          thread={selected}
+          threadContext={threadContext}
+          intelligence={threadIntelligence}
+          onStatusChange={handleStatusChange}
+          onStageChange={handleStageChange}
+          onOpenMap={() => setSelectedWorkspaceViews(['command_map'])}
+          onOpenDossier={() => handleOpenDealIntelligence(selected?.id ?? null)}
+          onOpenAi={() => setActiveOverlay('ai')}
+          messages={displayedMessages}
+          panelMode={paneMode === 'single' ? 'full' : paneWidth === '25' || paneWidth === '50' ? 'half' : 'default'}
+        />
+      )
+    }
+
+    if (view === 'pipeline') {
+      return (
+        <section className="nx-workspace-surface nx-workspace-surface--kanban">
+          {pipelineColumns.map((column) => (
+            <div key={column.label} className="nx-workspace-lane">
+              <div className="nx-workspace-lane__header">
+                <strong>{column.label}</strong>
+                <span>{column.threads.length}</span>
+              </div>
+              <div className="nx-workspace-lane__body">
+                {column.threads.map((thread) => {
+                  const decision = buildConversationDecision(thread)
+                  return (
+                    <button key={thread.id} type="button" className={cls('nx-workspace-thread-chip', selected?.id === thread.id && 'is-active')} onClick={() => handleSelect(thread.id)}>
+                      <strong>{thread.ownerName || 'Property Thread'}</strong>
+                      <span>{thread.propertyAddress || thread.subject || 'Property Unknown'}</span>
+                      <small>{decision.next_action}</small>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+        </section>
+      )
+    }
+
+    if (view === 'queue') {
+      return (
+        <section className="nx-workspace-surface nx-workspace-surface--queue">
+          {queueRows.map(({ thread, decision, queueStatus, nextTouch }) => (
+            <button key={thread.id} type="button" className={cls('nx-workspace-data-row', selected?.id === thread.id && 'is-active')} onClick={() => handleSelect(thread.id)}>
+              <div>
+                <strong>{thread.ownerName || 'Property Thread'}</strong>
+                <span>{thread.propertyAddress || thread.subject || 'Property Unknown'}</span>
+              </div>
+              <div><label>Queue</label><span>{queueStatus || 'waiting'}</span></div>
+              <div><label>Automation</label><span>{decision.automation_status}</span></div>
+              <div><label>Next Touch</label><span>{nextTouch ? formatRelativeTime(nextTouch) : '—'}</span></div>
+            </button>
+          ))}
+        </section>
+      )
+    }
+
+    if (view === 'calendar') {
+      return (
+        <section className="nx-workspace-surface nx-workspace-surface--calendar">
+          {calendarEvents.map((event) => (
+            <button key={`${event.thread.id}-${event.eventAt}`} type="button" className={cls('nx-workspace-data-row', selected?.id === event.thread.id && 'is-active')} onClick={() => handleSelect(event.thread.id)}>
+              <div>
+                <strong>{event.type}</strong>
+                <span>{event.thread.ownerName || 'Property Thread'}</span>
+              </div>
+              <div><label>When</label><span>{formatRelativeTime(event.eventAt)}</span></div>
+              <div><label>Property</label><span>{event.thread.propertyAddress || 'Property Unknown'}</span></div>
+              <div><label>Action</label><span>{event.label}</span></div>
+            </button>
+          ))}
+        </section>
+      )
+    }
+
+    if (view === 'metrics') {
+      return (
+        <section className="nx-workspace-surface nx-workspace-surface--metrics">
+          {[
+            ['New Replies', viewCounts.new_replies],
+            ['Hot Leads', viewCounts.hot_leads],
+            ['Waiting on Seller', viewCounts.waiting_on_seller],
+            ['Suppressed', viewCounts.suppressed],
+            ['Follow-Ups Due', viewCounts.follow_up_due],
+            ['Reply Rate', `${viewCounts.positive_reply_rate ?? '—'}%`],
+            ['Delivery Rate', `${viewCounts.delivery_rate ?? '—'}%`],
+            ['Failed Sends', viewCounts.failed],
+          ].map(([label, value]) => (
+            <div key={label} className="nx-workspace-kpi-card">
+              <span>{label}</span>
+              <strong>{String(value ?? '—')}</strong>
+            </div>
+          ))}
+        </section>
+      )
+    }
+
+    if (view === 'comp_intelligence') {
+      return (
+        <section className="nx-workspace-surface nx-workspace-surface--intel-grid">
+          <div className="nx-workspace-card">
+            <div className="nx-workspace-card__title"><Icon name="map" /><span>Subject Property</span></div>
+            <p className="nx-workspace-card__body">{selected?.propertyAddress || selected?.subject || 'Property Unknown'}</p>
+            <div className="nx-workspace-metric-row"><span>Market</span><strong>{selected?.market || (selected as any)?.marketId || 'Market Unknown'}</strong></div>
+            <div className="nx-workspace-metric-row"><span>ARV</span><strong>{String((selected as any)?.arv || '—')}</strong></div>
+            <div className="nx-workspace-metric-row"><span>Offer Range</span><strong>{String((selected as any)?.cashOffer || (selected as any)?.mao || '—')}</strong></div>
+          </div>
+          <div className="nx-workspace-card">
+            <div className="nx-workspace-card__title"><Icon name="stats" /><span>Comp Signals</span></div>
+            <p className="nx-workspace-card__body">{String((threadIntelligence as any)?.summary || '') || 'Comp intelligence will hydrate from underwriting, message context, and linked property data.'}</p>
+          </div>
+        </section>
+      )
+    }
+
+    if (view === 'buyer_match') {
+      const selectedBuyer =
+        buyerCommandData.profiles.find((profile) => profile.buyerKey === selectedBuyerKey)
+        || buyerCommandData.profilePoints.find((profile) => profile.buyerKey === selectedBuyerKey)
+        || null
+      const selectedBuyerMatches = buyerCommandData.matches.filter((match) => !selectedBuyerKey || match.buyerKey === selectedBuyerKey)
+      const selectedBuyerPurchases = buyerCommandData.recentPurchases.filter((purchase) => !selectedBuyerKey || purchase.buyerKey === selectedBuyerKey)
+      return (
+        <section className="nx-workspace-surface nx-workspace-surface--intel-grid">
+          <div className="nx-workspace-card">
+            <div className="nx-workspace-card__title"><Icon name="users" /><span>Buyer Demand Summary</span></div>
+            <div className="nx-workspace-metric-row"><span>Demand</span><strong>{buyerCommandData.summary?.demandLabel || 'Limited'}</strong></div>
+            <div className="nx-workspace-metric-row"><span>Top Match</span><strong>{buyerCommandData.summary?.topBuyerMatch || 'No live buyer yet'}</strong></div>
+            <div className="nx-workspace-metric-row"><span>Active Buyer Matches</span><strong>{String(buyerCommandData.summary?.activeBuyerMatches ?? 0)}</strong></div>
+            <div className="nx-workspace-metric-row"><span>Avg Match Score</span><strong>{buyerCommandData.summary?.averageMatchScore ?? '—'}</strong></div>
+            <div className="nx-workspace-metric-row"><span>Recent Purchases Nearby</span><strong>{String(buyerCommandData.summary?.recentPurchasesNearby ?? 0)}</strong></div>
+            <div className="nx-workspace-metric-row"><span>Dispo Confidence</span><strong>{buyerCommandData.summary ? `${buyerCommandData.summary.dispoConfidence}%` : '—'}</strong></div>
+            <p className="nx-workspace-card__body">{buyerCommandData.summary?.recommendedAction || 'Select a mapped seller property to hydrate buyer demand from Supabase sold-property intelligence.'}</p>
+          </div>
+          <div className="nx-workspace-card">
+            <div className="nx-workspace-card__title"><Icon name="filter" /><span>Buyer Filters</span></div>
+            <div className="nx-workspace-card-grid">
+              <label className="nx-workspace-field">
+                <span>Activity Window</span>
+                <select value={buyerFilters.activityWindowDays} onChange={(event) => setBuyerFilters((current) => ({ ...current, activityWindowDays: Number(event.target.value) as BuyerMapFilters['activityWindowDays'] }))}>
+                  {[30, 90, 180, 365].map((value) => <option key={value} value={value}>{value} days</option>)}
+                </select>
+              </label>
+              <label className="nx-workspace-field">
+                <span>Radius</span>
+                <select value={buyerFilters.radiusMiles} onChange={(event) => setBuyerFilters((current) => ({ ...current, radiusMiles: Number(event.target.value) as BuyerMapFilters['radiusMiles'] }))}>
+                  {[1, 3, 5, 10].map((value) => <option key={value} value={value}>{value} miles</option>)}
+                </select>
+              </label>
+              <label className="nx-workspace-field">
+                <span>Min Match</span>
+                <input type="number" min={0} max={100} value={buyerFilters.minMatchScore} onChange={(event) => setBuyerFilters((current) => ({ ...current, minMatchScore: Number(event.target.value) || 0 }))} />
+              </label>
+              <label className="nx-workspace-field">
+                <span>Min Purchases</span>
+                <input type="number" min={0} value={buyerFilters.minPurchaseCount} onChange={(event) => setBuyerFilters((current) => ({ ...current, minPurchaseCount: Number(event.target.value) || 0 }))} />
+              </label>
+            </div>
+            <p className="nx-workspace-card__body">Live filters apply to Command Map buyer layers and Buyer Match View together so the selected property, market, zip, and radius stay in sync.</p>
+          </div>
+          <div className="nx-workspace-card">
+            <div className="nx-workspace-card__title"><Icon name="target" /><span>Top Buyer Pool</span></div>
+            <div className="nx-workspace-lane__body">
+              {buyerCommandData.profilePoints.slice(0, paneMode === 'multi' && paneWidth === '25' ? 4 : 8).map((profile) => (
+                <button key={profile.buyerKey} type="button" className={cls('nx-workspace-thread-chip', selectedBuyerKey === profile.buyerKey && 'is-active')} onClick={() => setSelectedBuyerKey(profile.buyerKey)}>
+                  <strong>{profile.buyerName}</strong>
+                  <span>{profile.market || 'Market Unknown'} • {profile.purchaseCount} purchases</span>
+                  <small>{profile.category} • {formatMoney(profile.avgPurchasePrice)}</small>
+                </button>
+              ))}
+              {buyerCommandData.profilePoints.length === 0 && (
+                <p className="nx-workspace-card__body">No buyer profile rows are populated yet. Recent sold-property intelligence is still live below.</p>
+              )}
+            </div>
+          </div>
+          <div className="nx-workspace-card">
+            <div className="nx-workspace-card__title"><Icon name="briefing" /><span>Selected Buyer</span></div>
+            {selectedBuyer ? (
+              <>
+                <div className="nx-workspace-metric-row"><span>Name</span><strong>{'buyerName' in selectedBuyer ? selectedBuyer.buyerName : 'Property Buyer'}</strong></div>
+                <div className="nx-workspace-metric-row"><span>Type</span><strong>{'buyerType' in selectedBuyer ? selectedBuyer.buyerType : 'Unknown'}</strong></div>
+                <div className="nx-workspace-metric-row"><span>Tier</span><strong>{'buyerTier' in selectedBuyer ? selectedBuyer.buyerTier : 'Unknown'}</strong></div>
+                <div className="nx-workspace-metric-row"><span>Recent Purchases</span><strong>{selectedBuyerPurchases.length}</strong></div>
+                <div className="nx-workspace-metric-row"><span>Live Matches</span><strong>{selectedBuyerMatches.length}</strong></div>
+              </>
+            ) : (
+              <p className="nx-workspace-card__body">Select a buyer pin or buyer profile to review market demand and purchase history.</p>
+            )}
+          </div>
+          <div className="nx-workspace-card">
+            <div className="nx-workspace-card__title"><Icon name="zap" /><span>Live Buyer Matches</span></div>
+            <div className="nx-workspace-lane__body">
+              {selectedBuyerMatches.slice(0, 8).map((match) => (
+                <button key={match.matchKey} type="button" className="nx-workspace-thread-chip" onClick={() => setSelectedBuyerKey(match.buyerKey)}>
+                  <strong>{match.buyerName}</strong>
+                  <span>{match.matchScore ?? '—'} match • {match.dispositionStrategy || 'Unknown strategy'}</span>
+                  <small>{match.reasonForMatch || match.recommendedAction}</small>
+                </button>
+              ))}
+              {selectedBuyerMatches.length === 0 && (
+                <p className="nx-workspace-card__body">No live buyer-match rows are currently present for this property. Supabase recently sold-property demand still remains active.</p>
+              )}
+            </div>
+          </div>
+          <div className="nx-workspace-card">
+            <div className="nx-workspace-card__title"><Icon name="map" /><span>Recent Buyer Purchases</span></div>
+            <div className="nx-workspace-lane__body">
+              {selectedBuyerPurchases.slice(0, 8).map((purchase) => (
+                <button key={`${purchase.buyerKey}-${purchase.propertyId}`} type="button" className="nx-workspace-thread-chip" onClick={() => setSelectedBuyerKey(purchase.buyerKey)}>
+                  <strong>{purchase.buyerName}</strong>
+                  <span>{purchase.propertyAddressFull}</span>
+                  <small>{formatMoney(purchase.salePrice)} • {purchase.saleDate ? formatRelativeTime(purchase.saleDate) : 'Unknown timing'} • {purchase.category}</small>
+                </button>
+              ))}
+              {selectedBuyerPurchases.length === 0 && (
+                <p className="nx-workspace-card__body">No recent buyer purchases are in the current market/radius window.</p>
+              )}
+            </div>
+          </div>
+        </section>
+      )
+    }
+
+    return renderSmsThreadPane()
+  }
 
   return (
-    <div id="nx-inbox-root" className={cls('nx-premium-inbox nx-inbox', ...layoutClasses, isCommandView && 'is-command-view-active')}>
-      {!isCommandView && <NexusTopBar
+    <div
+      id="nx-inbox-root"
+      className={cls(
+        'nx-premium-inbox nx-inbox',
+        ...layoutClasses,
+        isCommandMapView && 'is-command-view-active',
+        `is-workspace-${activeWorkspaceView}`,
+        isCustomMultiView && 'is-multi-view-active',
+      )}
+    >
+      <NexusTopBar
         searchQuery={searchQuery}
         onSearchQueryChange={setSearchQuery}
         searchResults={searchResults}
@@ -1874,8 +2613,17 @@ export default function InboxPage() {
         activeOverlay={activeOverlay}
         onOpenOverlay={setActiveOverlay}
         onCloseOverlay={() => setActiveOverlay(null)}
-        onOpenMap={() => setLayoutState(openMapMode)}
-        onOpenDossier={() => setActiveOverlay('dossier')}
+        activeViewKey={activeWorkspaceView}
+        activeViewLabel={activeWorkspaceLabel}
+        viewOptions={WORKSPACE_VIEW_OPTIONS}
+        selectedViewKeys={selectedWorkspaceViews}
+        selectedViewWidths={Object.fromEntries(Object.entries(workspaceWidths).map(([key, value]) => [key, `${value}%`]))}
+        onToggleView={(viewKey) => handleToggleWorkspaceView(viewKey as InboxWorkspaceView)}
+        onFocusView={(viewKey) => handleFocusWorkspaceView(viewKey as InboxWorkspaceView)}
+        viewWidthOptions={VIEW_WIDTH_OPTIONS}
+        onSelectViewWidth={(viewKey, widthKey) => handleSetWorkspaceWidth(viewKey as InboxWorkspaceView, widthKey as ViewWidthPercent)}
+        onOpenMap={() => setSelectedWorkspaceViews(['command_map'])}
+        onOpenDossier={() => handleOpenDealIntelligence(selected?.id ?? null)}
         onOpenAi={() => setActiveOverlay('ai')}
         onOpenKeys={() => setActiveOverlay('keys')}
         onOpenKpis={() => pushRoutePath('/dashboard/kpis')}
@@ -1883,90 +2631,25 @@ export default function InboxPage() {
         onResetLayout={() => setLayoutState(resetLayoutMode)}
         dryRun={autonomyControls.dryRun}
         onToggleDryRun={() => setAutonomyControls(prev => ({ ...prev, dryRun: !prev.dryRun }))}
-      />}
-
-      {!isCommandView && <div className="nx-command-viewbar">
-        <div className="nx-command-viewbar__modes">
-          {(['split', 'list', 'dossier', 'command'] as CommandCenterViewMode[]).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              className={cls('nx-command-viewbar__mode', commandViewMode === mode && 'is-active')}
-              onClick={() => setCommandViewMode(mode)}
-            >
-              {mode === 'split' ? 'Split View' : mode === 'list' ? 'List View' : mode === 'dossier' ? 'Dossier View' : 'Command View'}
-            </button>
-          ))}
+      />
+      {isDealIntelligenceView && !isMultiView ? (
+        <div className="nx-deal-intelligence-fullscreen">
+          <IntelligencePanel
+            thread={selected}
+            threadContext={threadContext}
+            intelligence={threadIntelligence}
+            onStatusChange={handleStatusChange}
+            onStageChange={handleStageChange}
+            onOpenMap={() => setSelectedWorkspaceViews(['command_map'])}
+            onOpenDossier={() => handleOpenDealIntelligence(selected?.id ?? null)}
+            onOpenAi={() => setActiveOverlay('ai')}
+            messages={displayedMessages}
+            panelMode="full"
+          />
         </div>
-        <div className="nx-command-viewbar__modes">
-          {([
-            ['full', 'Full'],
-            ['default', 'Compact'],
-            ['hidden', 'Hidden'],
-          ] as const).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              className={cls('nx-command-viewbar__mode', leftPanelMode === value && 'is-active')}
-              onClick={() => setLayoutState((current) => ({ ...current, leftPanelMode: value }))}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <div className="nx-command-viewbar__quick-filters">
-          <button type="button" className="nx-command-viewbar__chip" onClick={() => applySavedPreset('positive_hot')}>Hot</button>
-          <button type="button" className="nx-command-viewbar__chip" onClick={() => setViewFilter('spanish_language')}>Spanish</button>
-          <button type="button" className="nx-command-viewbar__chip" onClick={() => setViewFilter('automated')}>Auto-Eligible</button>
-          <button type="button" className="nx-command-viewbar__chip" onClick={() => setViewFilter('needs_review')}>Needs Review</button>
-        </div>
-      </div>}
-
-      {isCommandView ? (
-        <CommandView
-          threads={threads}
-          visibleThreads={filtered}
-          selectedThread={selected}
-          selectedSuppressed={selectedSuppressed}
-          selectedMessages={displayedMessages}
-          messagesLoading={messagesLoading}
-          searchQuery={searchQuery}
-          tableSort={tableSort}
-          tableDensity={tableDensity}
-          listStatCounts={listStatCounts}
-          activityFeed={activityFeed}
-          queueProcessorHealth={queueProcessorHealth}
-          viewFilter={viewFilter}
-          savedPreset={savedPreset}
-          viewCounts={viewCounts}
-          recentlyUpdatedThreadIds={recentlyUpdatedThreadIds}
-          visibleThreadCount={visibleThreadCount}
-          canLoadMore={Boolean(data.pagination?.hasMore)}
-          liveFetchError={data.liveFetchError}
-          draftText={draftText}
-          isSending={isSending}
-          commandSuggestions={commandIntel?.suggestions ?? []}
-          onSelectThreadId={handleSelect}
-          onClearSelection={() => {
-            setSelectedId(null)
-            setSelectedThreadKey(null)
-          }}
-          onExitCommandView={() => setCommandViewMode('split')}
-          onSwitchViewMode={setCommandViewMode}
-          onSearchQueryChange={setSearchQuery}
-          onApplySavedPreset={applySavedPreset}
-          onSetViewFilter={setViewFilter}
-          onThreadAction={handleThreadAction}
-          onLoadMore={handleLoadMore}
-          onSetTableSort={setTableSort}
-          onSetTableDensity={setTableDensity}
-          onSetDraftText={setDraftText}
-          onSend={handleSend}
-          onOpenAi={() => setActiveOverlay('ai')}
-        />
       ) : (
       <div className="nx-inbox-shell">
-        {showLeftPanel && commandViewMode !== 'dossier' && (
+        {showLeftPanel && !isDealIntelligenceView && (
           <InboxSidebar
             threads={threads}
             selectedId={selected?.id ?? null}
@@ -2012,7 +2695,21 @@ export default function InboxPage() {
           />
         )}
 
-        <main className={cls('nx-inbox-center', commandViewMode === 'list' && 'is-list-mode', commandViewMode === 'dossier' && 'is-dossier-mode')}>
+        <main
+          className={cls(
+            'nx-inbox-center',
+            isMultiView && 'is-multi-view-shell',
+            activeWorkspaceView === 'list' && 'is-list-mode',
+            isDealIntelligenceView && 'is-dossier-mode',
+            activeWorkspaceView === 'pipeline' && 'is-pipeline-mode',
+            activeWorkspaceView === 'queue' && 'is-queue-mode',
+            activeWorkspaceView === 'calendar' && 'is-calendar-mode',
+            activeWorkspaceView === 'metrics' && 'is-metrics-mode',
+            activeWorkspaceView === 'comp_intelligence' && 'is-comp-mode',
+            activeWorkspaceView === 'buyer_match' && 'is-buyer-mode',
+            isCommandMapView && 'is-command-map-mode',
+          )}
+        >
           {dossierOpen && (
             <MapDossierDrawer
               mode="dossier"
@@ -2034,84 +2731,31 @@ export default function InboxPage() {
             </div>
           )}
 
-          {commandViewMode === 'list' ? (
-            <InboxConversationTable
-              threads={filtered}
-              selectedId={selected?.id ?? null}
-              sort={tableSort}
-              density={tableDensity}
-              statCounts={listStatCounts}
-              onSortChange={setTableSort}
-              onDensityChange={setTableDensity}
-              onSelect={handleSelect}
-            />
+          {isCustomMultiView ? (
+            <section className="nx-workspace-split-grid">
+              {selectedWorkspaceViews.map((view) => (
+                <div
+                  key={view}
+                  className={cls(
+                    'nx-workspace-pane',
+                    `is-view-${view}`,
+                    `is-width-${workspaceWidths[view] ?? '25'}`,
+                    view === activeWorkspaceView && 'is-primary',
+                  )}
+                  style={{ flex: `0 0 ${workspaceWidths[view] ?? '25'}%` }}
+                >
+                  {renderWorkspacePane(view, 'multi', workspaceWidths[view] ?? '25')}
+                </div>
+              ))}
+            </section>
+          ) : isDefaultWorkspaceShell ? (
+            renderWorkspacePane('sms_thread', 'single')
           ) : (
-            <>
-              <ChatThread
-                thread={selected}
-                messages={displayedMessagesWithTranslation}
-                loading={messagesLoading}
-                isSuppressed={selectedSuppressed}
-                isStarred={selected?.isStarred ?? false}
-                onTogglePin={handleTogglePin}
-                onToggleStar={handleToggleStar}
-                onToggleArchive={handleToggleArchive}
-                onThreadAction={handleOperatorAction}
-                onOpenDebug={() => setDebugModalOpen(true)}
-                searchQuery={searchQuery}
-              />
-
-              {showTranslation && (
-                <ComposerTranslationBar
-                  sellerLanguageLabel={sellerLanguageLabel}
-                  sellerLanguageCode={sellerLanguageCode}
-                  isSellerLanguageEnglish={isEnglishLanguage(sellerLanguageCode)}
-                  hasInboundMessages={threadHasInboundMessages}
-                  hasThreadTranslations={Object.keys(threadTranslations).length > 0}
-                  threadViewMode={threadViewMode}
-                  isThreadTranslating={threadTranslationLoading}
-                  isDraftTranslating={draftTranslationLoading}
-                  hasDraftText={Boolean(draftText.trim())}
-                  translatedDraftPreview={translatedDraftPreview}
-                  translationError={translationError}
-                  canRevertDraft={Boolean(originalDraftBeforeTranslation)}
-                  onTranslateThread={handleTranslateThread}
-                  onTranslateDraft={handleTranslateDraft}
-                  onSetThreadViewMode={setThreadViewMode}
-                  onUseDraftTranslation={handleUseDraftTranslation}
-                  onRevertDraft={handleRevertDraftTranslation}
-                />
-              )}
-
-              <Composer
-                draftText={draftText}
-                setDraftText={setDraftText}
-                onSend={handleSend}
-                isSending={isSending}
-                onOpenSchedule={() => {
-                  setScheduledTemplatePayload({ text: draftText, template: null })
-                  setSchedulePanelOpen(true)
-                }}
-                onAI={() => setActiveOverlay('ai')}
-                thread={selected}
-                threadContext={threadContext}
-                onInsertTemplate={(text) => setDraftText(prev => prev ? `${prev}\n\n${text}` : text)}
-                onReplaceTemplate={(text) => setDraftText(text)}
-                onSendTemplate={handleSendTemplate}
-                onQueueTemplate={handleQueueTemplate}
-                onScheduleTemplate={handleScheduleTemplate}
-                onTranslate={() => setShowTranslation(!showTranslation)}
-                isTranslating={showTranslation}
-                disabled={!selected || selectedSuppressed}
-                disabledReason={!selected ? 'Select a thread to compose' : 'Messaging disabled for suppressed thread'}
-                aiHint={null}
-                aiSuggestions={commandIntel?.suggestions ?? []}
-              />
-            </>
+            renderWorkspacePane(activeWorkspaceView, 'single')
           )}
         </main>
 
-        {mapOpen ? (
+        {mapOpen && !isCommandMapView ? (
           <aside className="nx-map-right-panel">
             <div className="nx-map-right-header">
               <span className="nx-map-right-header__title">
@@ -2152,18 +2796,26 @@ export default function InboxPage() {
                 zoomedIn={mapMode !== 'side'}
                 sourceMode={mapSourceMode}
                 onSourceModeChange={setMapSourceMode}
-                onSelectThreadId={handleSelect}
-                onBackgroundClick={() => {}}
-              />
-            </div>
-          </aside>
-        ) : (showRightPanel && !isDoubleSided) || commandViewMode === 'dossier' ? (
+              onSelectThreadId={handleSelect}
+              onBackgroundClick={() => {}}
+              onOpenDealIntelligence={handleOpenDealIntelligence}
+              buyerCommandData={buyerCommandData}
+              buyerFilters={buyerFilters}
+              onBuyerFiltersChange={(patch) => setBuyerFilters((current) => ({ ...current, ...patch }))}
+              selectedBuyerKey={selectedBuyerKey}
+              onSelectBuyerKey={setSelectedBuyerKey}
+            />
+          </div>
+        </aside>
+        ) : showRightCommandPanel ? (
           <IntelligencePanel
             thread={selected}
+            threadContext={threadContext}
+            intelligence={threadIntelligence}
             onStatusChange={handleStatusChange}
             onStageChange={handleStageChange}
-            onOpenMap={() => setActiveOverlay('map')}
-            onOpenDossier={() => setActiveOverlay('dossier')}
+            onOpenMap={() => setSelectedWorkspaceViews(['command_map'])}
+            onOpenDossier={() => handleOpenDealIntelligence(selected?.id ?? null)}
             onOpenAi={() => setActiveOverlay('ai')}
             messages={displayedMessages}
             panelMode={rightPanelMode === 'hidden' ? 'default' : rightPanelMode}

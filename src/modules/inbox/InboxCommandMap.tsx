@@ -10,6 +10,12 @@ import { buildConversationDecision } from './inbox-decisioning'
 import { buildStreetViewUrl } from './inbox-normalization'
 import { formatRelativeTime } from '../../shared/formatters'
 import { Icon } from '../../shared/icons'
+import type {
+  BuyerCommandData,
+  BuyerMapFilters,
+  BuyerProfilePoint,
+  BuyerRecentPurchase,
+} from '../buyer/buyerCommandData'
 
 const DARK_MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
 const CARTO_GLYPHS_URL = 'https://basemaps.cartocdn.com/gl/positron-gl-style/fonts/{fontstack}/{range}.pbf'
@@ -60,6 +66,22 @@ const CLUSTER_LAYER_IDS = [
   'command-pin-cluster-glow',
   'command-pin-cluster-core',
   'command-pin-cluster-count',
+] as const
+const BUYER_PURCHASE_SOURCE_ID = 'command-buyer-purchases'
+const BUYER_PROFILE_SOURCE_ID = 'command-buyer-profiles'
+const BUYER_HEATMAP_LAYER_ID = 'command-buyer-heatmap'
+const BUYER_PURCHASE_CLUSTER_IDS = [
+  'command-buyer-cluster-glow',
+  'command-buyer-cluster-core',
+  'command-buyer-cluster-count',
+] as const
+const BUYER_PURCHASE_LAYER_IDS = [
+  'command-buyer-purchase-glow',
+  'command-buyer-purchase-core',
+] as const
+const BUYER_PROFILE_LAYER_IDS = [
+  'command-buyer-profile-core',
+  'command-buyer-profile-label',
 ] as const
 export type MapStyleMode = 'dark' | 'satellite' | 'red'
 export type MapOverlayToggles = {
@@ -228,6 +250,64 @@ type LiveTickerItem = {
   detailLabel?: string
 }
 
+type BuyerLayerToggles = {
+  sellerThreads: boolean
+  buyerMatches: boolean
+  buyerRecentPurchases: boolean
+  buyerHeatmap: boolean
+  buyerProfiles: boolean
+  recentSoldComps: boolean
+  institutional: boolean
+  landlords: boolean
+  flippers: boolean
+  builders: boolean
+}
+
+type BuyerFeatureProps = {
+  featureType: 'buyer_purchase' | 'buyer_profile'
+  buyerKey: string
+  buyerName: string
+  buyerTier: string
+  buyerType: string
+  market: string
+  state: string
+  zip: string
+  propertyType: string
+  propertyAddressFull: string
+  saleDate: string
+  salePrice: number
+  estimatedValue: number
+  matchScore: number
+  confidenceScore: number
+  purchaseCount: number
+  category: string
+  pointColor: string
+  radiusWeight: number
+  heatWeight: number
+  pricePerSqft: number
+  beds: number
+  baths: number
+  sqft: number
+  yearBuilt: number
+  buyerActivitySignal: string
+  buyerEntityStrength: string
+  investorFitScore: number
+  compQualityScore: number
+}
+
+const defaultBuyerLayerToggles: BuyerLayerToggles = {
+  sellerThreads: true,
+  buyerMatches: false,
+  buyerRecentPurchases: false,
+  buyerHeatmap: false,
+  buyerProfiles: false,
+  recentSoldComps: false,
+  institutional: false,
+  landlords: false,
+  flippers: false,
+  builders: false,
+}
+
 const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
 const text = (value: unknown): string => String(value ?? '').trim()
 const lower = (value: unknown): string => text(value).toLowerCase()
@@ -326,6 +406,91 @@ const formatCurrency = (value: number | null): string => {
   if (!Number.isFinite(value ?? NaN)) return '—'
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value as number)
 }
+const buyerColorFor = (styleMode: MapStyleMode, category: string): string => {
+  if (styleMode === 'red') {
+    if (category === 'institutional') return '#ff8b6a'
+    if (category === 'builder') return '#f3b36d'
+    if (category === 'flipper') return '#ff6a87'
+    if (category === 'landlord') return '#e4aa5d'
+    return '#ff9b78'
+  }
+  if (styleMode === 'satellite') {
+    if (category === 'institutional') return '#7ed6d3'
+    if (category === 'builder') return '#dbb568'
+    if (category === 'flipper') return '#c79fff'
+    if (category === 'landlord') return '#9fd38c'
+    return '#9bc3d9'
+  }
+  if (category === 'institutional') return '#7be0ff'
+  if (category === 'builder') return '#f5ca76'
+  if (category === 'flipper') return '#cf90ff'
+  if (category === 'landlord') return '#7edb97'
+  return '#95beff'
+}
+const buyerCategoryLabel = (category: string): string => {
+  if (category === 'institutional') return 'Institutional'
+  if (category === 'landlord') return 'Landlord'
+  if (category === 'flipper') return 'Flipper'
+  if (category === 'builder') return 'Builder'
+  return 'Buyer'
+}
+const zillowSearchUrl = (address: string): string =>
+  `https://www.zillow.com/homes/${encodeURIComponent(address)}_rb/`
+const mapsSearchUrl = (address: string): string =>
+  `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`
+const buildBuyerFeatureCollection = (
+  items: Array<BuyerRecentPurchase | BuyerProfilePoint>,
+  styleMode: MapStyleMode,
+  featureType: BuyerFeatureProps['featureType'],
+  selectedBuyerKey: string | null,
+): FeatureCollection<Point, BuyerFeatureProps> => ({
+  type: 'FeatureCollection',
+  features: items.map((item) => {
+    const isPurchase = featureType === 'buyer_purchase'
+    const latitude = isPurchase ? (item as BuyerRecentPurchase).latitude : (item as BuyerProfilePoint).latitude
+    const longitude = isPurchase ? (item as BuyerRecentPurchase).longitude : (item as BuyerProfilePoint).longitude
+    const category = item.category || 'general'
+    const pointColor = buyerColorFor(styleMode, category)
+    const salePrice = isPurchase ? ((item as BuyerRecentPurchase).salePrice ?? 0) : ((item as BuyerProfilePoint).avgPurchasePrice ?? 0)
+    const confidence = isPurchase ? ((item as BuyerRecentPurchase).compConfidenceScore ?? 0) : ((item as BuyerProfilePoint).confidenceScore ?? 0)
+    const purchaseCount = isPurchase ? 1 : (item as BuyerProfilePoint).purchaseCount
+    return {
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [longitude, latitude] },
+      properties: {
+        featureType,
+        buyerKey: item.buyerKey,
+        buyerName: item.buyerName,
+        buyerTier: 'buyerTier' in item ? (item.buyerTier || 'Unknown') : 'Unknown',
+        buyerType: 'buyerType' in item ? (item.buyerType || 'Unknown') : 'Unknown',
+        market: item.market || 'Market Unknown',
+        state: 'propertyAddressState' in item ? item.propertyAddressState || '' : item.state || '',
+        zip: 'propertyAddressZip' in item ? item.propertyAddressZip || '' : item.zip || '',
+        propertyType: 'propertyType' in item ? item.propertyType || 'Unknown' : (item.propertyTypes?.[0] || 'Unknown'),
+        propertyAddressFull: 'propertyAddressFull' in item ? item.propertyAddressFull || 'Property Unknown' : 'Buyer Profile',
+        saleDate: 'saleDate' in item ? item.saleDate || '' : item.recentPurchaseDate || '',
+        salePrice,
+        estimatedValue: 'estimatedValue' in item ? (item.estimatedValue ?? 0) : 0,
+        matchScore: selectedBuyerKey && selectedBuyerKey === item.buyerKey ? 100 : 0,
+        confidenceScore: confidence,
+        purchaseCount,
+        category,
+        pointColor,
+        radiusWeight: Math.min(18, 8 + purchaseCount * 1.2),
+        heatWeight: Math.max(0.1, ((salePrice || 0) / 250000) + (((isPurchase ? (item as BuyerRecentPurchase).investorFitScore : (item as BuyerProfilePoint).velocityScore) ?? 0) / 100)),
+        pricePerSqft: 'pricePerSqft' in item ? (item.pricePerSqft ?? 0) : 0,
+        beds: 'totalBedrooms' in item ? (item.totalBedrooms ?? 0) : 0,
+        baths: 'totalBaths' in item ? (item.totalBaths ?? 0) : 0,
+        sqft: 'buildingSquareFeet' in item ? (item.buildingSquareFeet ?? 0) : 0,
+        yearBuilt: 'yearBuilt' in item ? (item.yearBuilt ?? 0) : 0,
+        buyerActivitySignal: 'buyerActivitySignal' in item ? item.buyerActivitySignal || '' : '',
+        buyerEntityStrength: 'buyerEntityStrength' in item ? item.buyerEntityStrength || '' : '',
+        investorFitScore: 'investorFitScore' in item ? (item.investorFitScore ?? 0) : ((item as BuyerProfilePoint).velocityScore ?? 0),
+        compQualityScore: 'compQualityScore' in item ? (item.compQualityScore ?? 0) : ((item as BuyerProfilePoint).confidenceScore ?? 0),
+      },
+    }
+  }),
+})
 
 const defaultMapOverlays: MapOverlayToggles = {
   roads: true,
@@ -1043,6 +1208,73 @@ const buildHoverCardMarkup = (pin: CommandMapPin, styleMode: MapStyleMode): stri
   `
 }
 
+const buildBuyerHoverMarkup = (buyer: BuyerFeatureProps, styleMode: MapStyleMode): string => `
+  <article class="nx-icm-hover nx-icm-hover--buyer" style="${escapeHtml(cardThemeStyleAttr(styleMode))}">
+    <div class="nx-icm-hover__body">
+      <div class="nx-icm-hover__head">
+        <div>
+          <p class="nx-icm-hover__eyebrow">${escapeHtml(buyerCategoryLabel(buyer.category))}</p>
+          <h4>${escapeHtml(buyer.buyerName || 'Property Buyer')}</h4>
+        </div>
+        <span class="nx-icm-hover__status nx-icm-hover__status--accent">${escapeHtml(buyer.buyerTier || 'Buyer')}</span>
+      </div>
+      <p class="nx-icm-hover__address"><span class="nx-icm-hover__address-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s6-5 6-10a6 6 0 0 0-12 0c0 5 6 10 6 10Z" /><circle cx="12" cy="10" r="2.2" /></svg></span>${escapeHtml(buyer.propertyAddressFull || buyer.market || 'Market Unknown')}</p>
+      <div class="nx-icm-hover__stats">
+        <div class="nx-icm-hover__metric is-accent"><div class="nx-icm-hover__metric-copy"><span>Sale Price</span><strong>${escapeHtml(formatCurrency(buyer.salePrice || null))}</strong></div></div>
+        <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>Match Score</span><strong>${buyer.matchScore ? `${Math.round(buyer.matchScore)}` : '—'}</strong></div></div>
+        <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>Sqft</span><strong>${escapeHtml(formatInteger(buyer.sqft || null))}</strong></div></div>
+        <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>Activity</span><strong>${escapeHtml(buyer.buyerActivitySignal || buyer.market || 'Live')}</strong></div></div>
+      </div>
+    </div>
+  </article>
+`
+
+const BuyerSelectionCard = ({
+  purchase,
+  matches,
+  onSelectBuyer,
+}: {
+  purchase: BuyerRecentPurchase | null
+  matches: BuyerCommandData['matches']
+  onSelectBuyer: (buyerKey: string | null) => void
+}) => {
+  if (!purchase) return null
+  const match = matches.find((item) => item.buyerKey === purchase.buyerKey) || null
+  return (
+    <article className="nx-icm-buyer-card">
+      <div className="nx-icm-buyer-card__head">
+        <div>
+          <span className="nx-icm-buyer-card__eyebrow">{buyerCategoryLabel(purchase.category)}</span>
+          <strong>{purchase.buyerName || 'Property Buyer'}</strong>
+          <small>{purchase.market || 'Market Unknown'}</small>
+        </div>
+        <button type="button" className="nx-icm__mode-tab" onClick={() => onSelectBuyer(purchase.buyerKey || null)}>
+          Open Buyer
+        </button>
+      </div>
+      <div className="nx-icm-buyer-card__grid">
+        <div><span>Address</span><strong>{purchase.propertyAddressFull || 'Property Unknown'}</strong></div>
+        <div><span>Sale Price</span><strong>{formatCurrency(purchase.salePrice)}</strong></div>
+        <div><span>Price / Sqft</span><strong>{formatCurrency(purchase.pricePerSqft)}</strong></div>
+        <div><span>Built</span><strong>{formatInteger(purchase.yearBuilt)}</strong></div>
+        <div><span>Investor Fit</span><strong>{purchase.investorFitScore ?? '—'}</strong></div>
+        <div><span>Comp Quality</span><strong>{purchase.compQualityScore ?? '—'}</strong></div>
+      </div>
+      {match ? (
+        <div className="nx-icm-buyer-card__summary">
+          <span>Live Match</span>
+          <strong>{match.matchScore ?? '—'} score • {match.dispositionStrategy || 'Unknown strategy'}</strong>
+          <p>{match.reasonForMatch || match.recommendedAction}</p>
+        </div>
+      ) : null}
+      <div className="nx-icm-buyer-card__actions">
+        <a href={zillowSearchUrl(purchase.propertyAddressFull)} target="_blank" rel="noreferrer">Open Zillow</a>
+        <a href={mapsSearchUrl(purchase.propertyAddressFull)} target="_blank" rel="noreferrer">Open Maps</a>
+      </div>
+    </article>
+  )
+}
+
 const MiniThreadPopup = ({
   thread,
   messages,
@@ -1052,6 +1284,7 @@ const MiniThreadPopup = ({
   onDraftChange,
   onSend,
   onClose,
+  onOpenDealIntelligence,
   styleMode,
 }: {
   thread: InboxWorkflowThread | null
@@ -1062,6 +1295,7 @@ const MiniThreadPopup = ({
   onDraftChange: (value: string) => void
   onSend: () => void
   onClose: () => void
+  onOpenDealIntelligence?: () => void
   styleMode: MapStyleMode
 }) => (
   <article className={cls('nx-icm-thread', `nx-icm-thread--${styleMode}`)} style={cardThemeVars(styleMode)} onClick={(event) => event.stopPropagation()}>
@@ -1079,9 +1313,16 @@ const MiniThreadPopup = ({
             </div>
           </div>
         </div>
-        <button type="button" onClick={onClose} aria-label="Close mini SMS view">
-          <Icon name="close" />
-        </button>
+        <div className="nx-icm-thread__header-actions">
+          {onOpenDealIntelligence ? (
+            <button type="button" onClick={onOpenDealIntelligence} aria-label="Open deal intelligence">
+              <Icon name="briefing" />
+            </button>
+          ) : null}
+          <button type="button" onClick={onClose} aria-label="Close mini SMS view">
+            <Icon name="close" />
+          </button>
+        </div>
       </header>
       <div className="nx-icm-thread__meta">
         <span className={cls('nx-icm-thread__status-pill', `is-${statusToneForPin({
@@ -1154,6 +1395,11 @@ const MiniThreadPopup = ({
 interface Props {
   threads: InboxWorkflowThread[]
   visibleThreads: InboxWorkflowThread[]
+  buyerCommandData?: BuyerCommandData | null
+  buyerFilters?: BuyerMapFilters
+  onBuyerFiltersChange?: (patch: Partial<BuyerMapFilters>) => void
+  selectedBuyerKey?: string | null
+  onSelectBuyerKey?: (buyerKey: string | null) => void
   selectedThread: InboxWorkflowThread | null
   selectedThreadMessages?: ThreadMessage[]
   selectedThreadMessagesLoading?: boolean
@@ -1165,6 +1411,7 @@ interface Props {
   sourceMode: MapSourceMode
   onSourceModeChange?: (mode: MapSourceMode) => void
   onSelectThreadId?: (threadId: string) => void
+  onOpenDealIntelligence?: (threadId: string) => void
   onBackgroundClick?: () => void
   fullHeight?: boolean
   commandMode?: boolean
@@ -1200,6 +1447,11 @@ const defaultFilters: MapFilterState = {
 export function InboxCommandMap({
   threads,
   visibleThreads,
+  buyerCommandData = null,
+  buyerFilters = undefined,
+  onBuyerFiltersChange,
+  selectedBuyerKey = null,
+  onSelectBuyerKey,
   selectedThread,
   selectedThreadMessages = [],
   selectedThreadMessagesLoading = false,
@@ -1211,6 +1463,7 @@ export function InboxCommandMap({
   sourceMode,
   onSourceModeChange,
   onSelectThreadId,
+  onOpenDealIntelligence,
   onBackgroundClick,
   fullHeight = false,
   commandMode = false,
@@ -1232,15 +1485,21 @@ export function InboxCommandMap({
   const activeThreadPopupRef = useRef<{ id: string; coordinates: [number, number] } | null>(null)
   const activeKpiFilterRef = useRef<MapKpiFilterKey | null>(null)
   const onSelectThreadIdRef = useRef<Props['onSelectThreadId']>(onSelectThreadId)
+  const onOpenDealIntelligenceRef = useRef<Props['onOpenDealIntelligence']>(onOpenDealIntelligence)
+  const onSelectBuyerKeyRef = useRef<Props['onSelectBuyerKey']>(onSelectBuyerKey)
   const onBackgroundClickRef = useRef<Props['onBackgroundClick']>(onBackgroundClick)
   const mapStyleModeRef = useRef<MapStyleMode>(initialMapStyleMode)
   const mapOverlaysRef = useRef<MapOverlayToggles>({ ...defaultMapOverlays, ...initialMapOverlays })
+  const buyerPurchasesRef = useRef<BuyerRecentPurchase[]>([])
+  const buyerMatchesRef = useRef<BuyerCommandData['matches']>([])
   const geojsonRef = useRef<FeatureCollection<Point, PinFeatureProps>>(featureCollectionForPins([], null, null))
   const activityModeRef = useRef<InboxMapActivityMode>('threads')
   const [activityMode, setActivityMode] = useState<InboxMapActivityMode>(initialActivityMode)
   const [filters, setFilters] = useState<MapFilterState>({ ...defaultFilters, ...initialFilters })
   const [selectedPinId, setSelectedPinId] = useState<string | null>(selectedThread?.id ?? null)
   const [showSelectedHidden, setShowSelectedHidden] = useState(false)
+  const [buyerLayers, setBuyerLayers] = useState<BuyerLayerToggles>(defaultBuyerLayerToggles)
+  const [selectedBuyerPurchase, setSelectedBuyerPurchase] = useState<BuyerRecentPurchase | null>(null)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [dockTier, setDockTier] = useState<'mini' | 'compact' | 'full'>('full')
   const [mapStyleMode, setMapStyleMode] = useState<MapStyleMode>(initialMapStyleMode)
@@ -1323,24 +1582,64 @@ export function InboxCommandMap({
     () => featureCollectionForPins(visiblePins, selectedPin?.conversation_id ?? null, activeKpiFilter),
     [activeKpiFilter, visiblePins, selectedPin?.conversation_id],
   )
+  const filteredBuyerPurchases = useMemo(() => {
+    const purchases = buyerCommandData?.recentPurchases ?? []
+    return purchases.filter((purchase) => {
+      if (buyerLayers.institutional || buyerLayers.landlords || buyerLayers.flippers || buyerLayers.builders) {
+        if (buyerLayers.institutional && purchase.category === 'institutional') return true
+        if (buyerLayers.landlords && purchase.category === 'landlord') return true
+        if (buyerLayers.flippers && purchase.category === 'flipper') return true
+        if (buyerLayers.builders && purchase.category === 'builder') return true
+        return false
+      }
+      return true
+    })
+  }, [buyerCommandData?.recentPurchases, buyerLayers.builders, buyerLayers.flippers, buyerLayers.institutional, buyerLayers.landlords])
+  const filteredBuyerProfiles = useMemo(() => {
+    const profiles = buyerCommandData?.profilePoints ?? []
+    return profiles.filter((profile) => {
+      if (buyerLayers.institutional || buyerLayers.landlords || buyerLayers.flippers || buyerLayers.builders) {
+        if (buyerLayers.institutional && profile.category === 'institutional') return true
+        if (buyerLayers.landlords && profile.category === 'landlord') return true
+        if (buyerLayers.flippers && profile.category === 'flipper') return true
+        if (buyerLayers.builders && profile.category === 'builder') return true
+        return false
+      }
+      return true
+    })
+  }, [buyerCommandData?.profilePoints, buyerLayers.builders, buyerLayers.flippers, buyerLayers.institutional, buyerLayers.landlords])
+  const buyerPurchasesGeojson = useMemo(
+    () => buildBuyerFeatureCollection(filteredBuyerPurchases, mapStyleMode, 'buyer_purchase', selectedBuyerKey),
+    [filteredBuyerPurchases, mapStyleMode, selectedBuyerKey],
+  )
+  const buyerProfilesGeojson = useMemo(
+    () => buildBuyerFeatureCollection(filteredBuyerProfiles, mapStyleMode, 'buyer_profile', selectedBuyerKey),
+    [filteredBuyerProfiles, mapStyleMode, selectedBuyerKey],
+  )
   const liveTickerItems = useMemo(() => buildLiveTickerItems(visiblePins, hydratedThreadsById), [hydratedThreadsById, visiblePins])
   const debugStats = useMemo(() => ({
     allPinsCount: allPins.length,
     filteredPinsCount: filteredPins.length,
     visiblePinsCount: visiblePins.length,
+    buyerPurchasesCount: filteredBuyerPurchases.length,
+    buyerProfilesCount: filteredBuyerProfiles.length,
     unmappedCount: pinPipeline.unmapped.length,
     activeMode: activityMode,
     activeFilters: filters,
-  }), [activityMode, allPins.length, filteredPins.length, filters, pinPipeline.unmapped.length, visiblePins.length])
+  }), [activityMode, allPins.length, filteredBuyerProfiles.length, filteredBuyerPurchases.length, filteredPins.length, filters, pinPipeline.unmapped.length, visiblePins.length])
 
   geojsonRef.current = geojson
   activityModeRef.current = activityMode
   activeThreadPopupRef.current = activeThreadPopup
   activeKpiFilterRef.current = activeKpiFilter
   onSelectThreadIdRef.current = onSelectThreadId
+  onOpenDealIntelligenceRef.current = onOpenDealIntelligence
+  onSelectBuyerKeyRef.current = onSelectBuyerKey
   onBackgroundClickRef.current = onBackgroundClick
   mapStyleModeRef.current = mapStyleMode
   mapOverlaysRef.current = mapOverlays
+  buyerPurchasesRef.current = filteredBuyerPurchases
+  buyerMatchesRef.current = buyerCommandData?.matches ?? []
 
   useEffect(() => {
     setShowSelectedHidden(false)
@@ -1352,6 +1651,34 @@ export function InboxCommandMap({
       setActiveKpiFilter(null)
     }
   }, [activeKpiFilter, kpiChips])
+
+  useEffect(() => {
+    if (!selectedThread || !buyerCommandData) return
+    if ((buyerCommandData.matches.length + buyerCommandData.recentPurchases.length) === 0) return
+    setBuyerLayers((current) => (
+      current.buyerMatches || current.buyerRecentPurchases || current.buyerHeatmap || current.buyerProfiles
+        ? current
+        : { ...current, buyerRecentPurchases: true }
+    ))
+  }, [buyerCommandData, selectedThread])
+
+  useEffect(() => {
+    if (!selectedBuyerKey) {
+      setSelectedBuyerPurchase(null)
+      return
+    }
+    const next = filteredBuyerPurchases.find((purchase) => purchase.buyerKey === selectedBuyerKey) || null
+    setSelectedBuyerPurchase(next)
+  }, [filteredBuyerPurchases, selectedBuyerKey])
+
+  useEffect(() => {
+    if (!selectedBuyerPurchase || !mapRef.current) return
+    mapRef.current.easeTo({
+      center: [selectedBuyerPurchase.longitude, selectedBuyerPurchase.latitude],
+      zoom: Math.max(mapRef.current.getZoom(), 11.6),
+      duration: 580,
+    })
+  }, [selectedBuyerPurchase])
 
   useEffect(() => {
     setSelectedPinId(selectedThread?.id ?? null)
@@ -1431,6 +1758,7 @@ export function InboxCommandMap({
           void onQuickReplySend?.(popupDraft)
         }}
         onClose={() => setActiveThreadPopup(null)}
+        onOpenDealIntelligence={popupThread ? () => onOpenDealIntelligenceRef.current?.(popupThread.id) : undefined}
       />,
     )
 
@@ -1519,6 +1847,12 @@ export function InboxCommandMap({
       setLayerVisibility(map, RAW_LAYER_IDS, !clusteredMode)
       setLayerVisibility(map, CLUSTER_POINT_LAYER_IDS, clusteredMode)
       setLayerVisibility(map, CLUSTER_LAYER_IDS, clusteredMode)
+      setLayerVisibility(map, BUYER_PURCHASE_LAYER_IDS, buyerLayers.sellerThreads || buyerLayers.buyerRecentPurchases || buyerLayers.recentSoldComps || buyerLayers.buyerMatches)
+      setLayerVisibility(map, BUYER_PURCHASE_CLUSTER_IDS, buyerLayers.sellerThreads || buyerLayers.buyerRecentPurchases || buyerLayers.recentSoldComps || buyerLayers.buyerMatches)
+      setLayerVisibility(map, BUYER_PROFILE_LAYER_IDS, buyerLayers.buyerProfiles)
+      if (map.getLayer(BUYER_HEATMAP_LAYER_ID)) {
+        map.setLayoutProperty(BUYER_HEATMAP_LAYER_ID, 'visibility', buyerLayers.buyerHeatmap ? 'visible' : 'none')
+      }
     }
 
     const applyOverlayVisibility = (map: maplibregl.Map) => {
@@ -1642,6 +1976,23 @@ export function InboxCommandMap({
           cluster: true,
           clusterRadius: 54,
           clusterMaxZoom: 11,
+        })
+      }
+
+      if (!map.getSource(BUYER_PURCHASE_SOURCE_ID)) {
+        map.addSource(BUYER_PURCHASE_SOURCE_ID, {
+          type: 'geojson',
+          data: buyerPurchasesGeojson,
+          cluster: true,
+          clusterRadius: 60,
+          clusterMaxZoom: 10,
+        })
+      }
+
+      if (!map.getSource(BUYER_PROFILE_SOURCE_ID)) {
+        map.addSource(BUYER_PROFILE_SOURCE_ID, {
+          type: 'geojson',
+          data: buyerProfilesGeojson,
         })
       }
 
@@ -1817,6 +2168,151 @@ export function InboxCommandMap({
 
       addPointLayers('raw', RAW_SOURCE_ID)
       addPointLayers('clustered', CLUSTER_SOURCE_ID, ['!', ['has', 'point_count']])
+
+      if (!map.getLayer(BUYER_HEATMAP_LAYER_ID)) {
+        map.addLayer({
+          id: BUYER_HEATMAP_LAYER_ID,
+          type: 'heatmap',
+          source: BUYER_PURCHASE_SOURCE_ID,
+          maxzoom: 12,
+          paint: {
+            'heatmap-weight': ['coalesce', ['get', 'heatWeight'], 0.3],
+            'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 4, 0.55, 10, 1.2],
+            'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 4, 18, 10, 42],
+            'heatmap-opacity': 0.55,
+            'heatmap-color': mapStyleModeRef.current === 'red'
+              ? ['interpolate', ['linear'], ['heatmap-density'], 0, 'rgba(0,0,0,0)', 0.2, '#5b1015', 0.45, '#c43e35', 0.7, '#ff8e45', 1, '#ffd67a']
+              : mapStyleModeRef.current === 'satellite'
+                ? ['interpolate', ['linear'], ['heatmap-density'], 0, 'rgba(0,0,0,0)', 0.2, '#31444f', 0.45, '#5f8c95', 0.7, '#c2aa6b', 1, '#eedfb0']
+                : ['interpolate', ['linear'], ['heatmap-density'], 0, 'rgba(0,0,0,0)', 0.2, '#0c2434', 0.45, '#1683a6', 0.7, '#4cd0b0', 1, '#9ff5cb'],
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+
+      if (!map.getLayer('command-buyer-cluster-glow')) {
+        map.addLayer({
+          id: 'command-buyer-cluster-glow',
+          type: 'circle',
+          source: BUYER_PURCHASE_SOURCE_ID,
+          filter: ['has', 'point_count'],
+          paint: {
+            'circle-radius': ['step', ['get', 'point_count'], 18, 10, 24, 30, 30, 75, 38],
+            'circle-color': '#f0b25a',
+            'circle-opacity': 0.18,
+            'circle-blur': 0.9,
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+
+      if (!map.getLayer('command-buyer-cluster-core')) {
+        map.addLayer({
+          id: 'command-buyer-cluster-core',
+          type: 'circle',
+          source: BUYER_PURCHASE_SOURCE_ID,
+          filter: ['has', 'point_count'],
+          paint: {
+            'circle-radius': ['step', ['get', 'point_count'], 12, 10, 16, 30, 20, 75, 24],
+            'circle-color': '#10141d',
+            'circle-stroke-color': '#f0b25a',
+            'circle-stroke-width': 1.5,
+            'circle-opacity': 0.95,
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+
+      if (!map.getLayer('command-buyer-cluster-count')) {
+        map.addLayer({
+          id: 'command-buyer-cluster-count',
+          type: 'symbol',
+          source: BUYER_PURCHASE_SOURCE_ID,
+          filter: ['has', 'point_count'],
+          layout: {
+            'text-field': ['get', 'point_count_abbreviated'],
+            'text-size': 11,
+            'text-font': ['Open Sans Bold'],
+            'text-allow-overlap': true,
+            visibility: 'none',
+          },
+          paint: {
+            'text-color': '#fff7e8',
+            'text-halo-color': 'rgba(8,10,15,0.92)',
+            'text-halo-width': 1.1,
+          },
+        })
+      }
+
+      if (!map.getLayer('command-buyer-purchase-glow')) {
+        map.addLayer({
+          id: 'command-buyer-purchase-glow',
+          type: 'circle',
+          source: BUYER_PURCHASE_SOURCE_ID,
+          filter: ['!', ['has', 'point_count']],
+          paint: {
+            'circle-radius': ['coalesce', ['get', 'radiusWeight'], 10],
+            'circle-color': ['get', 'pointColor'],
+            'circle-opacity': 0.2,
+            'circle-blur': 1,
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+
+      if (!map.getLayer('command-buyer-purchase-core')) {
+        map.addLayer({
+          id: 'command-buyer-purchase-core',
+          type: 'circle',
+          source: BUYER_PURCHASE_SOURCE_ID,
+          filter: ['!', ['has', 'point_count']],
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 4.2, 11, 7.8],
+            'circle-color': ['get', 'pointColor'],
+            'circle-stroke-color': '#fff4de',
+            'circle-stroke-width': 1.2,
+            'circle-opacity': 0.96,
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+
+      if (!map.getLayer('command-buyer-profile-core')) {
+        map.addLayer({
+          id: 'command-buyer-profile-core',
+          type: 'circle',
+          source: BUYER_PROFILE_SOURCE_ID,
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 7, 11, 11],
+            'circle-color': ['get', 'pointColor'],
+            'circle-stroke-color': '#ffffff',
+            'circle-stroke-width': 1.1,
+            'circle-opacity': 0.9,
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+
+      if (!map.getLayer('command-buyer-profile-label')) {
+        map.addLayer({
+          id: 'command-buyer-profile-label',
+          type: 'symbol',
+          source: BUYER_PROFILE_SOURCE_ID,
+          layout: {
+            'text-field': ['get', 'buyerName'],
+            'text-size': 10,
+            'text-font': ['Open Sans Semibold'],
+            'text-offset': [0, 1.3],
+            'text-allow-overlap': false,
+            visibility: 'none',
+          },
+          paint: {
+            'text-color': '#eef4ff',
+            'text-halo-color': 'rgba(8,10,15,0.9)',
+            'text-halo-width': 1,
+          },
+        })
+      }
       syncLayerVisibility(map, activityModeRef.current)
     }
 
@@ -1896,22 +2392,80 @@ export function InboxCommandMap({
         hoverPopupRef.current?.remove()
       }
 
+      const handleBuyerHover = (event: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+        const feature = event.features?.[0]
+        const props = feature?.properties as BuyerFeatureProps | undefined
+        if (!feature || !props) return
+        const coordinates = (feature.geometry as Point).coordinates as [number, number]
+        const popup = hoverPopupRef.current ?? new maplibregl.Popup({
+          closeButton: false,
+          closeOnClick: false,
+          offset: 18,
+          className: 'nx-icm-hover-popup',
+          maxWidth: '360px',
+        })
+        popup
+          .setLngLat(coordinates)
+          .setHTML(buildBuyerHoverMarkup(props, mapStyleModeRef.current))
+          .addTo(map)
+        hoverPopupRef.current = popup
+      }
+
+      const handleBuyerClick = (event: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+        const feature = event.features?.[0]
+        const props = feature?.properties as BuyerFeatureProps | undefined
+        if (!feature || !props) return
+        const exactPurchase = buyerPurchasesRef.current.find((purchase) =>
+          purchase.buyerKey === props.buyerKey && purchase.propertyAddressFull === props.propertyAddressFull,
+        ) || buyerPurchasesRef.current.find((purchase) => purchase.buyerKey === props.buyerKey) || null
+        setSelectedBuyerPurchase(exactPurchase)
+        onSelectBuyerKeyRef.current?.(props.buyerKey || null)
+        const coordinates = (feature.geometry as Point).coordinates as [number, number]
+        map.easeTo({ center: coordinates, zoom: Math.max(map.getZoom(), 11.8), duration: 560 })
+      }
+
+      const handleBuyerClusterClick = (event: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+        const feature = event.features?.[0]
+        if (!feature) return
+        const clusterId = Number(feature.properties?.cluster_id)
+        const source = map.getSource(BUYER_PURCHASE_SOURCE_ID) as (maplibregl.GeoJSONSource & {
+          getClusterExpansionZoom?: (id: number, cb: (error: Error | null, zoom: number) => void) => void
+        }) | undefined
+        if (!source?.getClusterExpansionZoom || !Number.isFinite(clusterId)) return
+        source.getClusterExpansionZoom(clusterId, (error, zoom) => {
+          if (error) return
+          map.easeTo({
+            center: (feature.geometry as Point).coordinates as [number, number],
+            zoom,
+            duration: 500,
+          })
+        })
+      }
+
       map.on('click', 'command-pin-core-raw', handlePinClick)
       map.on('click', 'command-pin-core-clustered', handlePinClick)
       map.on('click', 'command-pin-cluster-core', handleClusterClick)
+      map.on('click', 'command-buyer-purchase-core', handleBuyerClick)
+      map.on('click', 'command-buyer-profile-core', handleBuyerClick)
+      map.on('click', 'command-buyer-cluster-core', handleBuyerClusterClick)
       map.on('click', (event) => {
         const rendered = map.queryRenderedFeatures(event.point, {
-          layers: ['command-pin-core-raw', 'command-pin-core-clustered', 'command-pin-cluster-core'],
+          layers: ['command-pin-core-raw', 'command-pin-core-clustered', 'command-pin-cluster-core', 'command-buyer-purchase-core', 'command-buyer-profile-core', 'command-buyer-cluster-core'],
         })
         if (rendered.length === 0) {
           setActiveThreadPopup(null)
+          setSelectedBuyerPurchase(null)
           onBackgroundClickRef.current?.()
         }
       })
       map.on('mouseenter', 'command-pin-core-raw', handlePinHover)
       map.on('mouseenter', 'command-pin-core-clustered', handlePinHover)
+      map.on('mouseenter', 'command-buyer-purchase-core', handleBuyerHover)
+      map.on('mouseenter', 'command-buyer-profile-core', handleBuyerHover)
       map.on('mouseleave', 'command-pin-core-raw', clearPinHover)
       map.on('mouseleave', 'command-pin-core-clustered', clearPinHover)
+      map.on('mouseleave', 'command-buyer-purchase-core', clearPinHover)
+      map.on('mouseleave', 'command-buyer-profile-core', clearPinHover)
 
       const pulseConfig: Record<PinFeatureProps['pulseTier'], { baseRadius: number; maxAdd: number; baseOpacity: number; speed: number }> = {
         fast: { baseRadius: 13, maxAdd: 8, baseOpacity: 0.26, speed: 1.65 },
@@ -1990,7 +2544,7 @@ export function InboxCommandMap({
       }
       animationRef.current = requestAnimationFrame(animate)
 
-      ;(['command-pin-core-raw', 'command-pin-core-clustered', 'command-pin-cluster-core'] as const).forEach((layerId) => {
+      ;(['command-pin-core-raw', 'command-pin-core-clustered', 'command-pin-cluster-core', 'command-buyer-purchase-core', 'command-buyer-profile-core', 'command-buyer-cluster-core'] as const).forEach((layerId) => {
         map.on('mouseenter', layerId, () => { map.getCanvas().style.cursor = 'pointer' })
         map.on('mouseleave', layerId, () => { map.getCanvas().style.cursor = '' })
       })
@@ -2017,9 +2571,13 @@ export function InboxCommandMap({
   useEffect(() => {
     const rawSource = mapRef.current?.getSource(RAW_SOURCE_ID) as maplibregl.GeoJSONSource | undefined
     const clusterSource = mapRef.current?.getSource(CLUSTER_SOURCE_ID) as maplibregl.GeoJSONSource | undefined
+    const buyerPurchaseSource = mapRef.current?.getSource(BUYER_PURCHASE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined
+    const buyerProfileSource = mapRef.current?.getSource(BUYER_PROFILE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined
     rawSource?.setData(geojson)
     clusterSource?.setData(geojson)
-  }, [geojson])
+    buyerPurchaseSource?.setData(buyerPurchasesGeojson)
+    buyerProfileSource?.setData(buyerProfilesGeojson)
+  }, [buyerProfilesGeojson, buyerPurchasesGeojson, geojson])
 
   useEffect(() => {
     if (!mapRef.current) return
@@ -2054,16 +2612,35 @@ export function InboxCommandMap({
     const map = mapRef.current
     if (!map) return
     const clusteredMode = activityMode !== 'sends' && !activeKpiFilter
+    const sellerVisible = buyerLayers.sellerThreads
     RAW_LAYER_IDS.forEach((layerId) => {
-      if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', clusteredMode ? 'none' : 'visible')
+      if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', sellerVisible ? (clusteredMode ? 'none' : 'visible') : 'none')
     })
     CLUSTER_POINT_LAYER_IDS.forEach((layerId) => {
-      if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', clusteredMode ? 'visible' : 'none')
+      if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', sellerVisible ? (clusteredMode ? 'visible' : 'none') : 'none')
     })
     CLUSTER_LAYER_IDS.forEach((layerId) => {
-      if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', clusteredMode ? 'visible' : 'none')
+      if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', sellerVisible ? (clusteredMode ? 'visible' : 'none') : 'none')
     })
-  }, [activeKpiFilter, activityMode])
+  }, [activeKpiFilter, activityMode, buyerLayers.sellerThreads])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    const purchasesVisible = buyerLayers.buyerRecentPurchases || buyerLayers.recentSoldComps || buyerLayers.buyerMatches
+    BUYER_PURCHASE_CLUSTER_IDS.forEach((layerId) => {
+      if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', purchasesVisible ? 'visible' : 'none')
+    })
+    BUYER_PURCHASE_LAYER_IDS.forEach((layerId) => {
+      if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', purchasesVisible ? 'visible' : 'none')
+    })
+    BUYER_PROFILE_LAYER_IDS.forEach((layerId) => {
+      if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', buyerLayers.buyerProfiles ? 'visible' : 'none')
+    })
+    if (map.getLayer(BUYER_HEATMAP_LAYER_ID)) {
+      map.setLayoutProperty(BUYER_HEATMAP_LAYER_ID, 'visibility', buyerLayers.buyerHeatmap ? 'visible' : 'none')
+    }
+  }, [buyerLayers])
 
   useEffect(() => {
     if (!mapRef.current || visiblePins.length === 0) return
@@ -2238,6 +2815,55 @@ export function InboxCommandMap({
               </div>
             </div>
             <div className="nx-icm__controls-group">
+              <span className="nx-icm__controls-label">Buyer Intelligence Layers</span>
+              <div className="nx-icm__controls-segment">
+                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.sellerThreads} onChange={(e) => setBuyerLayers((current) => ({ ...current, sellerThreads: e.target.checked }))} />Seller Threads</label>
+                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.buyerMatches} onChange={(e) => setBuyerLayers((current) => ({ ...current, buyerMatches: e.target.checked }))} />Buyer Matches</label>
+                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.buyerRecentPurchases} onChange={(e) => setBuyerLayers((current) => ({ ...current, buyerRecentPurchases: e.target.checked }))} />Buyer Recent Purchases</label>
+                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.buyerHeatmap} onChange={(e) => setBuyerLayers((current) => ({ ...current, buyerHeatmap: e.target.checked }))} />Buyer Heatmap</label>
+                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.buyerProfiles} onChange={(e) => setBuyerLayers((current) => ({ ...current, buyerProfiles: e.target.checked }))} />Buyer Profiles</label>
+                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.recentSoldComps} onChange={(e) => setBuyerLayers((current) => ({ ...current, recentSoldComps: e.target.checked }))} />Recent Sold Comps</label>
+                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.institutional} onChange={(e) => setBuyerLayers((current) => ({ ...current, institutional: e.target.checked }))} />Hedge Fund / Institutional</label>
+                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.landlords} onChange={(e) => setBuyerLayers((current) => ({ ...current, landlords: e.target.checked }))} />Landlords</label>
+                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.flippers} onChange={(e) => setBuyerLayers((current) => ({ ...current, flippers: e.target.checked }))} />Flippers</label>
+                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.builders} onChange={(e) => setBuyerLayers((current) => ({ ...current, builders: e.target.checked }))} />Builders</label>
+              </div>
+            </div>
+            {selectedThread && buyerCommandData?.summary && (
+              <div className="nx-icm__controls-group">
+                <span className="nx-icm__controls-label">Buyer Demand Summary</span>
+                <div className="nx-icm__buyer-summary">
+                  <div><span>Buyer Demand</span><strong>{buyerCommandData.summary.demandLabel}</strong></div>
+                  <div><span>Top Match</span><strong>{buyerCommandData.summary.topBuyerMatch}</strong></div>
+                  <div><span>Active Matches</span><strong>{buyerCommandData.summary.activeBuyerMatches}</strong></div>
+                  <div><span>Avg Match Score</span><strong>{buyerCommandData.summary.averageMatchScore ?? '—'}</strong></div>
+                  <div><span>Nearby Purchases</span><strong>{buyerCommandData.summary.recentPurchasesNearby}</strong></div>
+                  <div><span>Dispo Confidence</span><strong>{buyerCommandData.summary.dispoConfidence}%</strong></div>
+                </div>
+                <p className="nx-icm__buyer-summary-note">{buyerCommandData.summary.recommendedAction}</p>
+              </div>
+            )}
+            {buyerFilters && (
+              <div className="nx-icm__controls-group">
+                <span className="nx-icm__controls-label">Buyer Filters</span>
+                <div className="nx-icm__filter-grid">
+                  <select value={buyerFilters.activityWindowDays} onChange={(e) => onBuyerFiltersChange?.({ activityWindowDays: Number(e.target.value) as BuyerMapFilters['activityWindowDays'] })}>
+                    {[30, 90, 180, 365].map((days) => <option key={days} value={days}>{days} days</option>)}
+                  </select>
+                  <select value={buyerFilters.radiusMiles} onChange={(e) => onBuyerFiltersChange?.({ radiusMiles: Number(e.target.value) as BuyerMapFilters['radiusMiles'] })}>
+                    {[1, 3, 5, 10].map((miles) => <option key={miles} value={miles}>{miles} miles</option>)}
+                  </select>
+                  <input type="number" min={0} value={buyerFilters.minPurchaseCount} onChange={(e) => onBuyerFiltersChange?.({ minPurchaseCount: Number(e.target.value) || 0 })} placeholder="Min purchases" />
+                  <input type="number" min={0} max={100} value={buyerFilters.minMatchScore} onChange={(e) => onBuyerFiltersChange?.({ minMatchScore: Number(e.target.value) || 0 })} placeholder="Min match" />
+                  <input type="number" min={0} max={100} value={buyerFilters.minDispoPriorityScore} onChange={(e) => onBuyerFiltersChange?.({ minDispoPriorityScore: Number(e.target.value) || 0 })} placeholder="Min dispo priority" />
+                  <input value={buyerFilters.market} onChange={(e) => onBuyerFiltersChange?.({ market: e.target.value })} placeholder="Market" />
+                  <input value={buyerFilters.state} onChange={(e) => onBuyerFiltersChange?.({ state: e.target.value })} placeholder="State" />
+                  <input value={buyerFilters.zip} onChange={(e) => onBuyerFiltersChange?.({ zip: e.target.value })} placeholder="ZIP" />
+                  <input value={buyerFilters.propertyType} onChange={(e) => onBuyerFiltersChange?.({ propertyType: e.target.value })} placeholder="Property type" />
+                </div>
+              </div>
+            )}
+            <div className="nx-icm__controls-group">
               <span className="nx-icm__controls-label">Filters</span>
               <div className="nx-icm__filter-grid">
                 <select value={filters.market} onChange={(e) => setFilters((current) => ({ ...current, market: e.target.value }))}>
@@ -2329,6 +2955,25 @@ export function InboxCommandMap({
       </div>}
 
       <div ref={containerRef} className="nx-icm__canvas" />
+
+      {!filtersOpen && selectedThread && buyerCommandData?.summary && (
+        <aside className="nx-icm__buyer-demand-dock">
+          <span className="nx-icm__buyer-demand-label">Buyer Demand</span>
+          <strong>{buyerCommandData.summary.demandLabel}</strong>
+          <small>{buyerCommandData.summary.topBuyerMatch} • {buyerCommandData.summary.activeBuyerMatches} matches • {buyerCommandData.summary.recentPurchasesNearby} nearby purchases</small>
+          <div className="nx-icm__buyer-demand-actions">
+            <button type="button" className={cls('nx-icm__mode-tab', buyerLayers.buyerRecentPurchases && 'is-active')} onClick={() => setBuyerLayers((current) => ({ ...current, buyerRecentPurchases: !current.buyerRecentPurchases }))}>
+              Purchases
+            </button>
+            <button type="button" className={cls('nx-icm__mode-tab', buyerLayers.buyerMatches && 'is-active')} onClick={() => setBuyerLayers((current) => ({ ...current, buyerMatches: !current.buyerMatches }))}>
+              Matches
+            </button>
+            <button type="button" className={cls('nx-icm__mode-tab', buyerLayers.buyerHeatmap && 'is-active')} onClick={() => setBuyerLayers((current) => ({ ...current, buyerHeatmap: !current.buyerHeatmap }))}>
+              Heatmap
+            </button>
+          </div>
+        </aside>
+      )}
 
       {emptyStateMessage && (
         <div className="nx-icm__empty" style={{ pointerEvents: 'auto' }}>
@@ -2441,6 +3086,16 @@ export function InboxCommandMap({
                       >
                         Open Thread
                       </button>
+                      <button
+                        type="button"
+                        className="nx-icm__ticker-action"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onOpenDealIntelligenceRef.current?.(item.threadId)
+                        }}
+                      >
+                        Deal Intel
+                      </button>
                     </div>
                   )}
                 </div>
@@ -2448,6 +3103,16 @@ export function InboxCommandMap({
             ))}
           </div>
           </div>
+        </div>
+      )}
+
+      {selectedBuyerPurchase && (
+        <div className="nx-icm__buyer-selection-shell">
+          <BuyerSelectionCard
+            purchase={selectedBuyerPurchase}
+            matches={buyerCommandData?.matches ?? []}
+            onSelectBuyer={(buyerKey) => onSelectBuyerKeyRef.current?.(buyerKey)}
+          />
         </div>
       )}
     </div>

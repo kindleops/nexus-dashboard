@@ -34,12 +34,39 @@ import { usePhase3Intelligence } from '../hooks/usePhase3Intelligence'
 import type { Phase3Intelligence } from '../../../lib/data/inboxIntelligencePhase3'
 
 const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
+const GOOGLE_MAPS_API_KEY = (import.meta.env as Record<string, string | undefined>).VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyAhOk7KZkduU4qywmrlq5ZqSOtgktHYiFk'
 
 import { detectPropertyCategory } from '../helpers/propertyHelpers'
 
 const formatMoney = formatCurrency
 const fmtPhone = formatPhone
 const standardFormatDisplayValue = (v: any) => String(v ?? 'Not enriched')
+
+const buildInteractiveStreetViewUrl = ({
+  address,
+  lat,
+  lng,
+}: {
+  address?: string | null
+  lat?: number | null
+  lng?: number | null
+}) => {
+  if (!GOOGLE_MAPS_API_KEY) return undefined
+
+  const hasCoords = Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(Number(lat)) > 0.0001 && Math.abs(Number(lng)) > 0.0001
+  const location = hasCoords ? `${lat},${lng}` : address
+  if (!location) return undefined
+
+  const params = new URLSearchParams({
+    key: GOOGLE_MAPS_API_KEY,
+    location,
+    heading: '210',
+    pitch: '2',
+    fov: '85',
+  })
+
+  return `https://www.google.com/maps/embed/v1/streetview?${params.toString()}`
+}
 
 type WorkflowThread = InboxWorkflowThread & Partial<{
   age: number
@@ -1702,6 +1729,8 @@ export const PropertyHeroCard = ({ thread, snapshot, panelMode }: { thread: Work
   const address = snapshot.fullAddress || thread.displayAddress || thread.propertyAddress || thread.subject
   const isMultifamily = asStr(thread.propertyType || '').toLowerCase().includes('multi') || asStr(snapshot.propertyType || '').toLowerCase().includes('multi')
   const unitCount = Number(snapshot.unitCount || thread.units_count || 0)
+  const propertyLat = Number((thread as any).lat ?? thread.latitude ?? 0)
+  const propertyLng = Number((thread as any).lng ?? thread.longitude ?? 0)
   const rawMarket = snapshot.market || thread.displayMarket || thread.market || thread.marketId
   const displayMarket = isPresent(rawMarket) && !/^\d+$/.test(String(rawMarket))
     ? rawMarket
@@ -1713,6 +1742,10 @@ export const PropertyHeroCard = ({ thread, snapshot, panelMode }: { thread: Work
 
   const streetViewUrl = snapshot.streetViewUrl || snapshot.streetviewImage || thread.streetview_image || buildStreetViewUrl(address)
   const aerialUrl = snapshot.aerialViewUrl || thread.satellite_image || buildAerialViewUrl(address)  
+  const interactiveStreetViewUrl = useMemo(
+    () => buildInteractiveStreetViewUrl({ address, lat: propertyLat, lng: propertyLng }),
+    [address, propertyLat, propertyLng],
+  )
   const [imageFailed, setImageFailed] = useState(false)
   const links = buildPropertyExternalLinks(address)
   const chips = [
@@ -1733,8 +1766,69 @@ export const PropertyHeroCard = ({ thread, snapshot, panelMode }: { thread: Work
     setImageFailed(false)
   }, [streetViewUrl, address])
 
-  // Split View: Trigger for Half (50%) and Full modes
-  if (panelMode === 'half' || panelMode === 'full') {
+  if (panelMode === 'full') {
+    return (
+      <DossierCard className="nx-property-hero-shell nx-glass-card nx-property-hero--elite nx-property-hero--full">
+        <div className="nx-property-split-console nx-property-split-console--full">
+          <div className="nx-property-panel nx-property-panel--street-stage is-streetview">
+            <div className="nx-panel-label">INTERACTIVE STREET VIEW</div>
+            <div className="nx-property-panel__stage">
+              {interactiveStreetViewUrl ? (
+                <iframe
+                  src={interactiveStreetViewUrl}
+                  title={`Street view for ${address}`}
+                  className="nx-property-panel__iframe"
+                  loading="eager"
+                  allowFullScreen
+                  referrerPolicy="no-referrer-when-downgrade"
+                />
+              ) : streetViewUrl && !imageFailed ? (
+                <img src={streetViewUrl} alt="Street view" onError={() => setImageFailed(true)} />
+              ) : (
+                <div className="nx-panel-fallback"><Icon name="eye" /></div>
+              )}
+            </div>
+            <div className="nx-property-address-bar nx-property-address-bar--full">
+              <div className="nx-property-address-copy">
+                <span className="nx-property-address-kicker">FULL SCREEN DEAL INTELLIGENCE</span>
+                <strong>{address}</strong>
+              </div>
+              <div className="nx-property-intel-links">
+                <LinkedRecordButton label="Zillow" url={links.zillow} icon="globe" />
+                <LinkedRecordButton label="Maps" url={links.streetView} icon="map" />
+                <LinkedRecordButton label="Realtor" url={links.realtor} icon="globe" />
+              </div>
+            </div>
+          </div>
+
+          <div className="nx-property-panel nx-property-panel--intel-rail is-aerial">
+            <div className="nx-panel-label">AERIAL COMPANION</div>
+            <div className="nx-property-panel__aerial-shell">
+              <div className="nx-property-panel__aerial-frame">
+                <img src={aerialUrl as string | undefined} alt="Aerial view" />
+              </div>
+              <div className="nx-property-panel__aerial-meta">
+                <div className="nx-property-panel__meta-block">
+                  <label>MARKET OPS</label>
+                  <span>{displayMarket}</span>
+                </div>
+                <div className="nx-property-panel__meta-block">
+                  <label>ASSET CLASS</label>
+                  <span className={isMultifamily ? 'is-highlight' : ''}>{displayType}</span>
+                </div>
+              </div>
+              <div className="nx-property-hero__chips nx-property-hero__chips--full">
+                {chips.map((chip) => <PropertyBadge key={chip.label} label={chip.label} icon={chip.icon} accent={chip.accent} />)}
+              </div>
+            </div>
+          </div>
+        </div>
+      </DossierCard>
+    )
+  }
+
+  // Split View: Trigger for Half (50%) only
+  if (panelMode === 'half') {
     return (
       <DossierCard className="nx-property-hero-shell nx-glass-card nx-property-hero--elite">
         <div className="nx-property-split-console">
