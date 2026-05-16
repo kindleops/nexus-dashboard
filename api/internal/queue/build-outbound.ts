@@ -2,6 +2,7 @@ import { getSupabaseClient } from '../../../src/lib/supabaseClient'
 import { checkSuppression, generateDedupeKey, scheduleWithWindow, checkExistingQueue, renderMessage, checkRepeatContactAndBlacklist } from './utils'
 import { asString, normalizeStatus, asNumber } from '../../../src/lib/data/shared'
 import { selectWeightedTemplate } from './templateSelection'
+import { resolveOutboundTextgridNumber } from '../../../src/lib/data/textgridRouting'
 
 type ApiRequest = {
   method?: string
@@ -33,6 +34,42 @@ function normalizeAssetClass(contact: any): string {
   }
   
   return 'single_family'
+}
+
+function resolveSellerFacingAgentName(contact: any, selectedTemplate: any): string {
+  const assigned = asString(contact.agent_name || contact.assigned_agent_name || contact.agent_persona || '').trim()
+  const templateAgent = asString(selectedTemplate?.paired_with_agent_type || '').trim()
+  
+  const candidates = [assigned, templateAgent]
+  
+  const isForbidden = (name: string) => {
+    const lower = name.toLowerCase()
+    return lower === 'nexus' || lower === 'ryan' || lower === 'reivesti' || lower === ''
+  }
+
+  for (const name of candidates) {
+    if (name && !isForbidden(name)) {
+      const firstName = name.split(' ')[0]
+      if (!isForbidden(firstName)) {
+        return firstName
+      }
+    }
+  }
+
+  const lang = asString(selectedTemplate?.language || contact.language || 'English').toLowerCase()
+  if (lang === 'spanish' || lang === 'es') {
+    return 'Alejandro'
+  }
+  return 'Sarah'
+}
+
+function resolvePropertyReference(fullAddress: string, streetOnly: string): string {
+  if (streetOnly && streetOnly.trim().length > 0) {
+    return streetOnly.trim()
+  }
+  if (!fullAddress) return ''
+  // Split by comma and return first part to strip city/state/zip
+  return fullAddress.split(',')[0].trim()
 }
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
@@ -115,7 +152,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       })
 
       if (!selected) {
-        results.push({ prospectId, status: 'blocked', reason: 'No suitable ownership_check template found' })
+        results.push({ prospectId, status: 'blocked', reason: 'no_eligible_controlled_template' })
         continue
       }
       
@@ -130,15 +167,14 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       const unsupportedLang = selected.language && selected.language !== language;
 
       if (requiresCity || requiresZip || requiresCounty || unsupportedLang) {
-        selected = {
-          template_id: 'fallback-safe',
-          template_text: 'Hi {{seller_first_name}}, this is {{agent_name}}. Do you still own {{property_address}}?',
-          score: 1,
-          recommendation: 'SAFE_FALLBACK',
-          bucket: 'FALLBACK',
-          reason: 'Fallback triggered due to missing vars or unsupported language',
-          language: language
-        }
+        const missing = [];
+        if (requiresCity) missing.push('city');
+        if (requiresZip) missing.push('zip');
+        if (requiresCounty) missing.push('county');
+        if (unsupportedLang) missing.push('language_mismatch');
+
+        results.push({ prospectId, status: 'blocked', reason: 'template_missing_required_variables', missingVariables: missing })
+        continue
       }
 
       // 3. Suppression Gate
@@ -181,11 +217,25 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       }
 
       // 5. Message Rendering
+      const sellerFacingAgentName = resolveSellerFacingAgentName(contact, selected)
+      const fullAddress = asString(contact.property_address_full || contact.property_address || '')
+      const streetAddress = asString(contact.property_street || contact.property_address_street || '')
+      const propertyReference = resolvePropertyReference(fullAddress, streetAddress)
+
+      const usedFallback = false;
+      if (usedFallback) {
+        throw new Error('Fallback is not allowed');
+      }
+
       const context = {
         seller_first_name: asString(contact.prospect_first_name || contact.display_name?.split(' ')[0] || 'there'),
-        property_address: asString(contact.property_address_full || ''),
+        property_address_full: fullAddress,
+        property_reference: propertyReference,
+        property_street: propertyReference,
+        property_address: propertyReference, // Default to short street reference for first touch
         market,
-        agent_name: 'Nexus',
+        agent_name: sellerFacingAgentName,
+        internal_system_name: 'Nexus',
         city: asString(contact.property_city || ''),
         zip: asString(contact.property_zip || ''),
         county: asString(contact.property_county || '')
@@ -200,16 +250,39 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         continue
       }
 
-      // 6. Scheduling
+      // 6. Sender Routing
+      const routingResult = await resolveOutboundTextgridNumber({
+        marketId: asString(contact.market_id || ''),
+        market: market,
+        ourNumber: undefined,
+        phoneNumber: phone,
+        textgridNumberId: undefined,
+        property_address_state: asString(contact.property_address_state || ''),
+        propertyId: propertyId,
+        threadKey: threadKey,
+      })
+
+      if (!routingResult.ok) {
+        results.push({
+          prospectId,
+          status: 'blocked',
+          reason: 'no_valid_textgrid_sender',
+          routingBlockReason: routingResult.error || 'Unknown routing error'
+        })
+        continue
+      }
+
+      // 7. Scheduling
       const scheduledAt = scheduleWithWindow(new Date(), contact.timezone || 'America/Chicago')
 
-      // 7. Queue the Outbound with selection metadata
+      // 8. Queue the Outbound with selection metadata
       const payload = {
         queue_key: `outbound:${prospectId}:${Date.now()}`,
         dedupe_key: dedupeKey,
         queue_status: 'scheduled',
         to_phone_number: phone,
-        from_phone_number: null,
+        from_phone_number: routingResult.from_phone_number,
+        textgrid_number_id: routingResult.textgrid_number_id,
         message_body: rendered.text,
         message_text: rendered.text,
         scheduled_for: scheduledAt.toISOString(),
@@ -223,6 +296,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         prospect_id: prospectId,
         market: contact.market,
         property_address_state: asString(contact.property_address_state || ''),
+        routing_allowed: true,
+        routing_tier: routingResult.routing_tier,
+        routing_reason: routingResult.routing_reason,
         // Metadata for observability
         selected_template_score: selected.score,
         selected_template_recommendation: selected.recommendation,
@@ -232,7 +308,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           template_id: selected.template_id,
           source: 'weighted_outbound_builder',
           selection_score: selected.score,
-          selection_bucket: selected.bucket
+          selection_bucket: selected.bucket,
+          selected_textgrid_number: routingResult.from_phone_number,
+          selected_textgrid_number_id: routingResult.textgrid_number_id,
+          selected_textgrid_market: routingResult.route_input_market,
+          routing_tier: routingResult.routing_tier,
+          selection_reason: routingResult.routing_reason,
+          routing_allowed: true
         }
       }
 
@@ -242,10 +324,28 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           status: 'would_queue',
           dedupeKey,
           template_id: selected.template_id,
+          template_name: selected.template_id,
+          template_source: 'weighted_outbound_builder',
+          agent_name: sellerFacingAgentName,
+          language: language,
+          assetClass: assetClass,
+          template_text_raw: selected.template_text,
+          rendered_preview: rendered.text,
+          selected_from_control_table: true,
+          usedFallback: false,
+          fallbackBlocked: true,
           scheduledAt: scheduledAt.toISOString(),
-          preview: rendered.text
+          preview: rendered.text,
+          fromPhoneNumber: routingResult.from_phone_number,
+          textgridNumberId: routingResult.textgrid_number_id,
+          selectedTextgridMarket: routingResult.route_input_market,
+          routingTier: routingResult.routing_tier,
+          routingReason: routingResult.routing_reason
         })
       } else if (apply) {
+        if (!payload.from_phone_number || !payload.textgrid_number_id) {
+          throw new Error('Cannot insert send_queue row without from_phone_number and textgrid_number_id')
+        }
         const { error: insertError } = await supabase.from('send_queue').insert(payload)
         if (insertError) {
           results.push({ prospectId, status: 'failed', reason: insertError.message })
