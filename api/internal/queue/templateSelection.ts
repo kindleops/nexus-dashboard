@@ -8,6 +8,7 @@ export interface SelectedTemplate {
   bucket: string
   reason: string
   language?: string
+  paired_with_agent_type?: string
 }
 
 const SAFE_AUTOPILOT = true; // Safety switch
@@ -33,19 +34,7 @@ export async function selectWeightedTemplate(params: {
   // We need to update the `get_ownership_check_template_stats_v2` RPC or create a new adjusted metrics view
   // to filter out taxonomy metadata where `is_true_delivery_failure` is false.
 
-  // 1. Fetch performance stats for ownership_check
-  let { data: stats, error } = await supabase.rpc('get_ownership_check_template_stats_v2', {
-    p_market: params.market || null,
-    p_language: reqLang,
-    p_min_sent: 0
-  })
-
-  if (error || !stats || stats.length === 0) {
-    console.warn('[TemplateSelection] No stats found or error:', error)
-    return null
-  }
-
-  // 1b. Fetch active rotation control
+  // 1. Fetch active rotation control (Source of Truth)
   const { data: controls, error: controlError } = await supabase
     .from('v_ownership_template_rotation_control')
     .select('*')
@@ -57,39 +46,73 @@ export async function selectWeightedTemplate(params: {
     return null
   }
 
-  const controlMap = new Map(controls.map((c: any) => [c.template_id, c]))
+  // 2. Fetch template texts from sms_templates
+  const templateIds = controls.map((c: any) => c.template_id)
+  const { data: templates, error: tempError } = await supabase
+    .from('sms_templates')
+    .select('template_id, podio_template_id, template_body, template_name, agent_persona, language')
+    .or(`template_id.in.(${templateIds.join(',')}),podio_template_id.in.(${templateIds.join(',')})`)
 
-  // Ensure strict language filtering and rotation control check before bucketing
-  stats = stats.filter((s: any) => {
-    const control = controlMap.get(s.template_id)
-    if (!control) return false
-
-    if ((control.language || 'English') !== reqLang) return false
-    
-    const assetScope = control.asset_scope || 'all'
-    if (assetScope !== 'all' && assetScope !== params.assetClass) return false
-
-    if (s.template_id === '213857' && params.assetClass !== 'multifamily' && params.assetClass !== 'apartment') {
-      return false
-    }
-
-    s.traffic_weight = control.traffic_weight
-    return true
-  })
-
-  if (stats.length === 0) {
-    console.warn('[TemplateSelection] No stats found after language and rotation control filter')
+  if (tempError || !templates || templates.length === 0) {
+    console.warn('[TemplateSelection] No templates found matching control ids:', tempError)
     return null
   }
 
-  // 2. Group by recommendation bucket
-  const buckets = {
-    SCALE: stats.filter((s: any) => s.recommendation === 'SCALE'),
-    TESTING: stats.filter((s: any) => s.recommendation === 'TESTING'),
-    LOW_DATA: stats.filter((s: any) => s.recommendation === 'LOW_DATA'),
+  const templateMap = new Map(templates.map((t: any) => [t.template_id || t.podio_template_id, t]))
+
+  // 3. Optional: fetch performance stats to decorate if available
+  let { data: stats } = await supabase.rpc('get_ownership_check_template_stats_v2', {
+    p_market: params.market || null,
+    p_language: reqLang,
+    p_min_sent: 0
+  })
+  const statsMap = new Map((stats || []).map((s: any) => [s.template_id, s]))
+
+  // 4. Build eligible pool
+  const eligible = controls.map((control: any) => {
+    const tId = control.template_id
+    const templateRow = templateMap.get(tId)
+    if (!templateRow) return null
+
+    if ((control.language || templateRow.language || 'English') !== reqLang) return null
+    
+    const assetScope = control.asset_scope || 'all'
+    if (assetScope !== 'all' && assetScope !== params.assetClass) return null
+
+    if (tId === '213857' && params.assetClass !== 'multifamily' && params.assetClass !== 'apartment') {
+      return null
+    }
+
+    const stat = statsMap.get(tId)
+
+    return {
+      template_id: tId,
+      template_text: templateRow.template_body,
+      template_name: templateRow.template_name,
+      agent_persona: templateRow.agent_persona,
+      language: control.language || templateRow.language || 'English',
+      traffic_weight: control.traffic_weight,
+      rotation_status: control.rotation_status,
+      // If stats exist use them, else default to TESTING/0
+      recommendation: stat ? stat.recommendation : 'TESTING',
+      overall_template_score: stat ? stat.overall_template_score : 0,
+      bucket: stat ? stat.recommendation : 'CONTROL_TABLE_TESTING'
+    }
+  }).filter(Boolean)
+
+  if (eligible.length === 0) {
+    console.warn('[TemplateSelection] No eligible templates found after filters')
+    return null
   }
 
-  // 3. Selection logic
+  // 5. Group by bucket (using recommendation or control table testing)
+  const buckets = {
+    SCALE: eligible.filter((s: any) => s.bucket === 'SCALE'),
+    TESTING: eligible.filter((s: any) => s.bucket === 'TESTING' || s.bucket === 'CONTROL_TABLE_TESTING'),
+    LOW_DATA: eligible.filter((s: any) => s.bucket === 'LOW_DATA'),
+  }
+
+  // 6. Selection logic
   const roll = Math.random() * 100
   let selectedBucket: string = ''
   let pool: any[] = []
@@ -104,9 +127,8 @@ export async function selectWeightedTemplate(params: {
     selectedBucket = 'LOW_DATA'
     pool = buckets.LOW_DATA
   } else {
-    // Fallback: Pick from whatever is available that isn't RISKY or PAUSE
-    pool = stats.filter((s: any) => s.recommendation !== 'RISKY' && s.recommendation !== 'PAUSE')
-    selectedBucket = pool.length > 0 ? 'FALLBACK' : ''
+    pool = eligible.filter((s: any) => s.bucket !== 'RISKY' && s.bucket !== 'PAUSE')
+    selectedBucket = pool.length > 0 ? 'FALLBACK_CONTROLLED' : ''
   }
 
   if (pool.length === 0) {
@@ -114,7 +136,7 @@ export async function selectWeightedTemplate(params: {
     return null
   }
 
-  // 4. Randomly select from the chosen pool using traffic_weight
+  // 7. Randomly select from the chosen pool using traffic_weight
   const totalWeight = pool.reduce((sum, item) => sum + (item.traffic_weight || 1), 0)
   let weightRoll = Math.random() * totalWeight
   let template = pool[pool.length - 1]
@@ -133,6 +155,7 @@ export async function selectWeightedTemplate(params: {
     recommendation: template.recommendation,
     bucket: selectedBucket,
     reason: `Selected via ${selectedBucket} bucket (roll: ${roll.toFixed(1)}) weight: ${template.traffic_weight}`,
-    language: template.language || 'English'
+    language: template.language || 'English',
+    paired_with_agent_type: template.agent_persona
   }
 }

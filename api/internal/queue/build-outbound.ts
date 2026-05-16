@@ -161,9 +161,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       seenCombos.add(comboKey)
       processedCount++
 
-      const requiresCity = selected.template_text.includes('{{city}}') && !contact.property_city;
-      const requiresZip = selected.template_text.includes('{{zip}}') && !contact.property_zip;
-      const requiresCounty = selected.template_text.includes('{{county}}') && !contact.property_county;
+      const city = asString(contact.property_city || contact.property_address_city || '');
+      const zip = asString(contact.property_zip || contact.property_address_zip || '');
+      const county = asString(contact.property_county || contact.property_address_county_name || '');
+
+      const requiresCity = selected.template_text.includes('{{city}}') && !city;
+      const requiresZip = selected.template_text.includes('{{zip}}') && !zip;
+      const requiresCounty = selected.template_text.includes('{{county}}') && !county;
       const unsupportedLang = selected.language && selected.language !== language;
 
       if (requiresCity || requiresZip || requiresCounty || unsupportedLang) {
@@ -236,9 +240,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         market,
         agent_name: sellerFacingAgentName,
         internal_system_name: 'Nexus',
-        city: asString(contact.property_city || ''),
-        zip: asString(contact.property_zip || ''),
-        county: asString(contact.property_county || '')
+        city,
+        zip,
+        county
       }
       
       // Creating a mock template object for rendering

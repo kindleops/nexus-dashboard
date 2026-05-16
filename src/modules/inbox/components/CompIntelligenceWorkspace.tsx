@@ -402,30 +402,43 @@ function MiniChart({
 
 function ConfidenceCard({ explanation, confidence }: { explanation: ConfidenceExplanation; confidence: number }) {
   const tier = confidence >= 78 ? 'strong' : confidence >= 58 ? 'moderate' : 'weak'
-  const tierLabel = tier === 'strong' ? 'Strong confidence' : tier === 'moderate' ? 'Moderate confidence' : 'Low confidence'
+  const tierLabel = tier === 'strong' ? 'Strong Confidence' : tier === 'moderate' ? 'Moderate Confidence' : 'Low Confidence'
   return (
     <div className={`ci-conf-card ci-conf-card--${tier}`}>
       <div className="ci-conf-card__head">
-        <span className="ci-section-eyebrow">{tierLabel} · {confidence}/100</span>
+        <div className="ci-conf-card__verdict">Valuation Verdict</div>
+        <div className="ci-conf-card__tier">{tierLabel} · {confidence}/100</div>
       </div>
-      {explanation.strengths.map(s => (
-        <div key={s} className="ci-conf-item ci-conf-item--strength">
-          <span className="ci-conf-item__dot" />
-          {s}
+      {explanation.strengths.length > 0 && (
+        <div className="ci-conf-section">
+          <div className="ci-conf-section__label ci-conf-section__label--strength">Strengths</div>
+          {explanation.strengths.map(s => (
+            <div key={s} className="ci-conf-item ci-conf-item--strength">
+              <span className="ci-conf-item__dot" />{s}
+            </div>
+          ))}
         </div>
-      ))}
-      {explanation.weaknesses.map(w => (
-        <div key={w} className="ci-conf-item ci-conf-item--weakness">
-          <span className="ci-conf-item__dot" />
-          {w}
+      )}
+      {explanation.weaknesses.length > 0 && (
+        <div className="ci-conf-section">
+          <div className="ci-conf-section__label ci-conf-section__label--weakness">Risks</div>
+          {explanation.weaknesses.map(w => (
+            <div key={w} className="ci-conf-item ci-conf-item--weakness">
+              <span className="ci-conf-item__dot" />{w}
+            </div>
+          ))}
         </div>
-      ))}
-      {explanation.flags.map(f => (
-        <div key={f} className="ci-conf-item ci-conf-item--flag">
-          <span className="ci-conf-item__dot" />
-          {f}
+      )}
+      {explanation.flags.length > 0 && (
+        <div className="ci-conf-section">
+          <div className="ci-conf-section__label ci-conf-section__label--flag">Adjustment Flags</div>
+          {explanation.flags.map(f => (
+            <div key={f} className="ci-conf-item ci-conf-item--flag">
+              <span className="ci-conf-item__dot" />{f}
+            </div>
+          ))}
         </div>
-      ))}
+      )}
     </div>
   )
 }
@@ -447,40 +460,43 @@ function SubjectPropertyStrip({ t, arv, sqft, beds, baths, address, lat, lng }: 
   const existingSv = String(t?.streetview_image || '')
 
   return (
-    <div className="ci-subject-strip">
-      <div className="ci-subject-strip__img">
+    <div className="ci-subject-card">
+      <div className="ci-subject-card__img">
         {existingSv
           ? <img src={existingSv} alt="Subject property" className="ci-sv-img ci-sv-img--subject" />
           : <StreetviewThumb lat={lat} lng={lng} size="subject" />}
       </div>
-      <div className="ci-subject-strip__body">
-        <div className="ci-subject-strip__addr">{address}</div>
-        <div className="ci-subject-strip__specs">
-          {sqft > 0 && <span>{sqft.toLocaleString()} sf</span>}
-          {beds > 0 && <span>{beds}bd / {baths}ba</span>}
-          {yearBuilt > 0 && <span>{yearBuilt}</span>}
-          {propertyType && <span>{propertyType}</span>}
-          {market && <span className="ci-market-badge">{market}</span>}
-        </div>
-        {ownerName && <div className="ci-subject-strip__owner">{ownerName}</div>}
-        <div className="ci-subject-strip__pills">
-          {repairCost > 0 && <span className="ci-pill is-amber">Repairs {fmtK(repairCost)}</span>}
-          {rehabLevel && <span className="ci-pill is-blue">Rehab {rehabLevel}</span>}
-          {equity > 0 && <span className="ci-pill is-green">{Math.round(equity)}% equity</span>}
-          {lotSqft > 0 && <span className="ci-pill">Lot {lotSqft.toLocaleString()} sf</span>}
-        </div>
-      </div>
-      <div className="ci-subject-strip__right">
-        <div className="ci-subject-arv">
-          <span>Target ARV</span>
-          <strong>{arv ? fmt(arv) : '—'}</strong>
-        </div>
-        {score > 0 && (
-          <div className="ci-subject-score">
-            <span>Score</span>
-            <strong className={score >= 70 ? 'is-green' : score >= 50 ? 'is-amber' : ''}>{Math.round(score)}</strong>
+      <div className="ci-subject-card__content">
+        <div className="ci-subject-card__top">
+          <div className="ci-subject-card__addr-line">
+            <span className="ci-subject-card__addr">{address}</span>
+            {score > 0 && (
+              <span className={`ci-subject-card__score-badge${score >= 70 ? ' is-green' : score >= 50 ? ' is-amber' : ''}`}>
+                {Math.round(score)}
+              </span>
+            )}
           </div>
-        )}
+          <div className="ci-subject-card__specs">
+            {sqft > 0 && <span>{sqft.toLocaleString()} sf</span>}
+            {beds > 0 && <span>{beds} bd / {baths} ba</span>}
+            {yearBuilt > 0 && <span>Built {yearBuilt}</span>}
+            {propertyType && <span>{propertyType}</span>}
+            {market && <span className="ci-market-badge">{market}</span>}
+          </div>
+          {ownerName && <div className="ci-subject-card__owner">{ownerName}</div>}
+        </div>
+        <div className="ci-subject-card__bottom">
+          <div className="ci-subject-card__pills">
+            {repairCost > 0 && <span className="ci-pill is-amber">Repairs {fmtK(repairCost)}</span>}
+            {rehabLevel && <span className="ci-pill is-blue">Rehab {rehabLevel}</span>}
+            {equity > 0 && <span className="ci-pill is-green">{Math.round(equity)}% equity</span>}
+            {lotSqft > 0 && <span className="ci-pill">Lot {lotSqft.toLocaleString()} sf</span>}
+          </div>
+          <div className="ci-subject-card__arv">
+            <span>Target ARV</span>
+            <strong>{arv ? fmt(arv) : '—'}</strong>
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -535,11 +551,11 @@ function SoldCompRow({ comp, isHovered, isOpen, arvStats, onEnter, onLeave, onCl
         </div>
         <div className="ci-comp-row__specs">
           <span>{comp.sqft.toLocaleString()} sf</span>
-          <span>{comp.beds}bd / {comp.baths}ba</span>
+          <span>{comp.beds} bd / {comp.baths} ba</span>
           <span>{comp.yearBuilt}</span>
-          <span className="is-dim">{comp.distance}mi</span>
-          <span className="is-dim">{comp.daysAgo}d ago</span>
           <span>{fmtPpsf(comp.ppsf)}</span>
+          <span className="is-dim">{comp.distance} mi</span>
+          <span className="ci-comp-row__date">{comp.daysAgo}d ago</span>
         </div>
         <div className="ci-comp-row__tags">
           <span className={`ci-sim-badge ${comp.similarity >= 80 ? 'is-hi' : comp.similarity >= 65 ? 'is-mid' : 'is-lo'}`}>
