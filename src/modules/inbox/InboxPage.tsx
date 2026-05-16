@@ -60,6 +60,7 @@ import { ChatThread } from './components/ChatThread'
 import { Composer } from './components/Composer'
 import { ComposerTranslationBar } from './components/ComposerTranslationBar'
 import { IntelligencePanel } from './components/IntelligencePanel'
+import { CompIntelligenceWorkspace } from './components/CompIntelligenceWorkspace'
 import { InboxPipelineView } from './components/InboxPipelineView'
 import type { TemplateActionPayload } from './components/TemplatePopover'
 import { InboxActivityPanel } from './components/InboxActivityPanel'
@@ -2336,18 +2337,8 @@ export default function InboxPage() {
 
     if (view === 'comp_intelligence') {
       return (
-        <section className="nx-workspace-surface nx-workspace-surface--intel-grid">
-          <div className="nx-workspace-card">
-            <div className="nx-workspace-card__title"><Icon name="map" /><span>Subject Property</span></div>
-            <p className="nx-workspace-card__body">{selected?.propertyAddress || selected?.subject || 'Property Unknown'}</p>
-            <div className="nx-workspace-metric-row"><span>Market</span><strong>{selected?.market || (selected as any)?.marketId || 'Market Unknown'}</strong></div>
-            <div className="nx-workspace-metric-row"><span>ARV</span><strong>{String((selected as any)?.arv || '—')}</strong></div>
-            <div className="nx-workspace-metric-row"><span>Offer Range</span><strong>{String((selected as any)?.cashOffer || (selected as any)?.mao || '—')}</strong></div>
-          </div>
-          <div className="nx-workspace-card">
-            <div className="nx-workspace-card__title"><Icon name="stats" /><span>Comp Signals</span></div>
-            <p className="nx-workspace-card__body">{String((threadIntelligence as any)?.summary || '') || 'Comp intelligence will hydrate from underwriting, message context, and linked property data.'}</p>
-          </div>
+        <section className="nx-workspace-surface nx-workspace-surface--map">
+          <CompIntelligenceWorkspace thread={selected} />
         </section>
       )
     }
