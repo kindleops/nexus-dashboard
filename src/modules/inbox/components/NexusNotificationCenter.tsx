@@ -5,6 +5,7 @@ import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
 import { formatRelativeTime } from '../../../shared/formatters'
 import type { AutonomousEngineModel } from '../autonomy-engine'
+import { useWatchlist } from '../../../lib/watchlistContext'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
@@ -271,10 +272,19 @@ export const NexusNotificationCenter = ({
   const [activeSpace, setActiveSpace] = useState('All')
   const [showUnreadOnly, setShowUnreadOnly] = useState(false)
   const [showCriticalOnly, setShowCriticalOnly] = useState(false)
+  const [showFocused, setShowFocused] = useState(false)
   const [showSecondary, setShowSecondary] = useState(false)
   const [readIds, setReadIds] = useState<string[]>([])
   const [dismissedIds, setDismissedIds] = useState<string[]>([])
   const activeIsSecondary = SECONDARY_SPACES.includes(activeSpace)
+  const { isWatched } = useWatchlist()
+
+  const isFocused = useCallback((item: NexusNotification): boolean => {
+    if (item.related_thread_id && isWatched('thread', item.related_thread_id)) return true
+    if (item.related_property_id && isWatched('property', item.related_property_id)) return true
+    if (item.related_owner_id && isWatched('owner', item.related_owner_id)) return true
+    return false
+  }, [isWatched])
 
   useEffect(() => {
     if (open && DEV) {
@@ -313,6 +323,7 @@ export const NexusNotificationCenter = ({
     if (activeSpace !== 'All' && item.command_space !== activeSpace && !(activeSpace === 'Errors' && item.severity === 'critical')) return false
     if (showUnreadOnly && item.status === 'read') return false
     if (showCriticalOnly && item.severity !== 'critical') return false
+    if (showFocused && !isFocused(item)) return false
     return true
   })
 
@@ -366,6 +377,14 @@ export const NexusNotificationCenter = ({
                 >
                   <Icon name="alert" />
                   Critical
+                </button>
+                <button
+                  type="button"
+                  className={showFocused ? 'is-active' : ''}
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowFocused((v) => !v) }}
+                >
+                  <Icon name="bell" />
+                  Focused
                 </button>
                 <button
                   type="button"
@@ -426,6 +445,7 @@ export const NexusNotificationCenter = ({
                         <Icon name={notificationIcon(item.severity)} />
                       </span>
                       <span className="ncc-card__source">{sourceLabel(item.source)}</span>
+                      {isFocused(item) && <span className="ncc-watched-chip">WATCHED</span>}
                       <span className="ncc-card__time">{item.created_at ? formatRelativeTime(item.created_at) : 'Now'}</span>
                       <button
                         type="button"

@@ -48,6 +48,7 @@ import { fetchQueueModel, type QueueModel } from '../../lib/data/queueData'
 import { fetchSmsTemplates, type SmsTemplate } from '../../lib/data/templateData'
 import { fetchInboxActivity, logInboxActivity, type InboxActivityEvent } from '../../lib/data/inboxActivityData'
 import { getSupabaseClient } from '../../lib/supabaseClient'
+import { WatchlistProvider } from '../../lib/watchlistContext'
 import { emitNotification } from '../../shared/NotificationToast'
 import { Icon } from '../../shared/icons'
 import { formatRelativeTime } from '../../shared/formatters'
@@ -2463,6 +2464,7 @@ export default function InboxPage() {
   }
 
   return (
+    <WatchlistProvider>
     <div
       id="nx-inbox-root"
       className={cls(
@@ -2737,20 +2739,17 @@ export default function InboxPage() {
         onApply={() => { /* Handled by useEffect */ }}
       />
 
-      {activeOverlay === 'activity' && typeof document !== 'undefined'
-        ? createPortal(
-            <InboxActivityPanel
-              threadKey={selected?.threadKey}
-              onClose={() => setActiveOverlay(null)}
-              onViewThread={(key) => {
-                const t = threads.find((thread) => thread.threadKey === key)
-                if (t) handleSelect(t.id)
-                setActiveOverlay(null)
-              }}
-            />,
-            document.body,
-          )
-        : null}
+      {activeOverlay === 'activity' && (
+        <InboxActivityPanel
+          threadKey={selected?.threadKey}
+          onClose={() => setActiveOverlay(null)}
+          onViewThread={(key) => {
+            const t = threads.find((thread) => thread.threadKey === key)
+            if (t) handleSelect(t.id)
+            setActiveOverlay(null)
+          }}
+        />
+      )}
 
       {aiOpen
         ? createPortal(
@@ -2816,6 +2815,6 @@ export default function InboxPage() {
         />
       )}
     </div>
-
+    </WatchlistProvider>
   )
 }

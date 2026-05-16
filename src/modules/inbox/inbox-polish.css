@@ -5857,3 +5857,790 @@
   border-top: 1px solid rgba(255, 255, 255, 0.05);
   background: rgba(9, 14, 23, 0.4);
 }
+
+/* ── WatchBell ──────────────────────────────────────────────────────────── */
+.wb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: rgba(172, 196, 230, 0.30);
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s;
+  flex-shrink: 0;
+}
+.wb-btn svg {
+  width: 13px;
+  height: 13px;
+}
+.nx-thread-card:hover .wb-btn {
+  opacity: 1;
+}
+.wb-btn.is-watching {
+  opacity: 1;
+  color: #fbbf24;
+}
+.wb-btn.is-watching svg {
+  filter: drop-shadow(0 0 4px rgba(251, 191, 36, 0.4));
+}
+
+/* Thread card time-group: bell + time side-by-side */
+.nx-thread-card__time-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* DealCommandHeader eyebrow row with watchbell */
+.dch-eyebrow-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dch-eyebrow-row .wb-btn {
+  opacity: 1;
+  color: rgba(172, 196, 230, 0.40);
+}
+.dch-eyebrow-row .wb-btn.is-watching {
+  color: #fbbf24;
+}
+
+/* WATCHED chip in notification cards */
+.ncc-watched-chip {
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: rgba(251, 191, 36, 0.70);
+  border: 1px solid rgba(251, 191, 36, 0.20);
+  background: rgba(251, 191, 36, 0.06);
+  padding: 1px 5px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+/* ── Live Activity Panel (lac-) ─────────────────────────────────────────── */
+
+/* Override panel width to match notification center */
+.nx-activity-panel {
+  width: 460px !important;
+  background: rgba(9, 13, 22, 0.99) !important;
+  backdrop-filter: blur(48px) saturate(220%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.80), 0 0 0 1px rgba(255, 255, 255, 0.04) inset !important;
+}
+
+/* Header */
+.lac-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+.lac-header__identity {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.lac-header__eyebrow {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(96, 165, 250, 0.65);
+}
+.lac-header__title {
+  font-size: 17px;
+  font-weight: 800;
+  color: rgba(240, 246, 253, 0.96);
+  letter-spacing: -0.02em;
+}
+.lac-header__subtitle {
+  font-size: 11px;
+  color: rgba(172, 196, 230, 0.45);
+  line-height: 1.4;
+  margin-top: 2px;
+}
+.lac-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(172, 196, 230, 0.55);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+.lac-close:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(240, 246, 253, 0.90);
+}
+
+/* Category filter chips */
+.lac-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  flex-shrink: 0;
+}
+.lac-chip {
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(172, 196, 230, 0.55);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 0.14s, color 0.14s, border-color 0.14s;
+  white-space: nowrap;
+}
+.lac-chip:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(240, 246, 253, 0.80);
+}
+.lac-chip.is-active {
+  background: rgba(96, 165, 250, 0.16);
+  border-color: rgba(96, 165, 250, 0.30);
+  color: rgba(147, 197, 253, 0.95);
+}
+
+/* Activity list */
+.lac-list {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.lac-list::-webkit-scrollbar {
+  width: 4px;
+}
+.lac-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.lac-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.10);
+  border-radius: 2px;
+}
+
+/* Empty state */
+.lac-empty {
+  padding: 24px 20px;
+  font-size: 12px;
+  color: rgba(172, 196, 230, 0.40);
+  text-align: center;
+}
+.lac-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 36px 28px;
+  text-align: center;
+}
+.lac-empty-state__icon {
+  font-size: 28px;
+  opacity: 0.20;
+  line-height: 1;
+}
+.lac-empty-state__text {
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(172, 196, 230, 0.38);
+  max-width: 300px;
+}
+
+/* Activity row */
+.lac-row {
+  display: flex;
+  gap: 11px;
+  padding: 11px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  transition: background 0.12s;
+}
+.lac-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.lac-row:last-child {
+  border-bottom: 0;
+}
+
+/* Severity accent bar on left */
+.lac-row.is-critical {
+  border-left: 2px solid rgba(239, 68, 68, 0.55);
+  padding-left: 14px;
+}
+.lac-row.is-warning {
+  border-left: 2px solid rgba(251, 191, 36, 0.45);
+  padding-left: 14px;
+}
+.lac-row.is-success {
+  border-left: 2px solid rgba(52, 211, 153, 0.45);
+  padding-left: 14px;
+}
+
+/* Icon bubble */
+.lac-row__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(172, 196, 230, 0.55);
+}
+.lac-row__icon.is-critical { background: rgba(239, 68, 68, 0.15); color: rgba(239, 68, 68, 0.85); }
+.lac-row__icon.is-success  { background: rgba(52, 211, 153, 0.14); color: rgba(52, 211, 153, 0.85); }
+.lac-row__icon.is-info     { background: rgba(96, 165, 250, 0.14); color: rgba(96, 165, 250, 0.85); }
+.lac-row__icon svg { width: 13px; height: 13px; }
+
+/* Row main content */
+.lac-row__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.lac-row__top {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.lac-row__source {
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(96, 165, 250, 0.60);
+  flex-shrink: 0;
+}
+.lac-row__title {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(240, 246, 253, 0.88);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lac-row__time {
+  font-size: 10px;
+  color: rgba(172, 196, 230, 0.35);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.lac-row__detail {
+  font-size: 11px;
+  color: rgba(172, 196, 230, 0.50);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lac-row__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 2px;
+}
+.lac-row__actor {
+  font-size: 10px;
+  color: rgba(172, 196, 230, 0.30);
+}
+.lac-row__actions {
+  display: flex;
+  gap: 6px;
+}
+.lac-action-btn {
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(172, 196, 230, 0.65);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.13s, color 0.13s;
+}
+.lac-action-btn:hover {
+  background: rgba(96, 165, 250, 0.15);
+  color: rgba(147, 197, 253, 0.95);
+  border-color: rgba(96, 165, 250, 0.25);
+}
+
+/* Footer */
+.lac-footer {
+  padding: 9px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 10px;
+  color: rgba(172, 196, 230, 0.30);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.lac-footer kbd {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 9px;
+  font-family: inherit;
+  color: rgba(172, 196, 230, 0.55);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Property Intelligence Console — Elite Dossier Polish Pass
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* 1. Disable CommandActionDock (unfinished stub, causes overlap) */
+.nx-command-action-dock {
+  display: none !important;
+}
+
+/* 2. Fix DealCommandHeader top clipping — add breathing room */
+.nx-deal-command-dossier {
+  padding-top: 6px;
+}
+
+/* 3. KPI Executive Strip — premium lift */
+.nx-pic-exec-row {
+  padding: 18px 18px 14px;
+  gap: 10px;
+  background: linear-gradient(180deg, rgba(9, 14, 23, 0.65) 0%, rgba(7, 11, 20, 0.40) 100%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.nx-pic-exec-card {
+  min-width: 120px;
+  min-height: 88px;
+  padding: 12px 16px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.028);
+  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+              box-shadow 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+              border-color 0.18s;
+  cursor: default;
+}
+.nx-pic-exec-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.30);
+  border-color: rgba(255, 255, 255, 0.13);
+}
+.nx-pic-exec-card label {
+  font-size: 9px;
+  letter-spacing: 0.13em;
+  color: rgba(163, 186, 221, 0.48);
+}
+.nx-pic-exec-card span {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+}
+
+/* Score card hover accent */
+.nx-pic-exec-card.is-score:hover {
+  border-color: rgba(168, 130, 255, 0.32);
+  box-shadow: 0 8px 24px rgba(168, 130, 255, 0.12);
+}
+.nx-pic-exec-card.is-value:hover,
+.nx-pic-exec-card.is-equity:hover {
+  border-color: rgba(52, 211, 153, 0.28);
+  box-shadow: 0 8px 24px rgba(52, 211, 153, 0.10);
+}
+
+/* 4. Section card layout — 3-col max, cards as proper modules */
+.nx-pic-sections {
+  padding: 16px;
+  gap: 14px;
+}
+
+.nx-pic-section {
+  background:
+    radial-gradient(ellipse 70% 50% at 0% 0%, rgba(82, 138, 236, 0.045) 0%, transparent 100%),
+    rgba(255, 255, 255, 0.022);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 16px 18px 18px;
+  /* Animate each card in on mount */
+  animation: pic-card-in 0.36s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.nx-pic-section:nth-child(1) { animation-delay: 0.03s; }
+.nx-pic-section:nth-child(2) { animation-delay: 0.07s; }
+.nx-pic-section:nth-child(3) { animation-delay: 0.11s; }
+.nx-pic-section:nth-child(4) { animation-delay: 0.15s; }
+.nx-pic-section:nth-child(5) { animation-delay: 0.19s; }
+.nx-pic-section:nth-child(6) { animation-delay: 0.23s; }
+
+/* Hide section cards where ALL fields are empty */
+.nx-pic-section:not(:has(.nx-pic-field:not(.is-empty))) {
+  display: none;
+}
+
+.nx-pic-section__header {
+  padding-bottom: 11px;
+  margin-bottom: 11px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+.nx-pic-section__header strong {
+  font-size: 10px;
+  letter-spacing: 0.10em;
+  color: rgba(226, 234, 247, 0.50);
+}
+.nx-pic-section__dot {
+  background: rgba(82, 138, 236, 0.55);
+}
+
+/* 5. Field typography — larger values, stronger hierarchy */
+.nx-pic-field {
+  gap: 3px;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+.nx-pic-field:last-child {
+  border-bottom: 0;
+}
+.nx-pic-field label {
+  font-size: 9px;
+  letter-spacing: 0.09em;
+  color: rgba(163, 186, 221, 0.40);
+}
+.nx-pic-field span {
+  font-size: 13px;
+  font-weight: 650;
+  color: rgba(226, 234, 247, 0.88);
+}
+
+/* Accent values pop more */
+.nx-pic-field.is-accent-green span { color: #34d399; font-weight: 700; }
+.nx-pic-field.is-accent-purple span { color: #b49bff; font-weight: 700; }
+.nx-pic-field.is-accent-red span { color: #f87171; font-weight: 800; }
+.nx-pic-field.is-accent-amber span { color: #fbbf24; font-weight: 700; }
+
+/* 6. Tab crossfade: animate workspace on mode change */
+@keyframes media-crossfade {
+  from { opacity: 0.55; }
+  to   { opacity: 1; }
+}
+.nx-prop-media-workspace.is-split,
+.nx-prop-media-workspace.is-single {
+  animation: media-crossfade 0.30s ease-out both;
+}
+
+/* 7. Card slide-in keyframe */
+@keyframes pic-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 8. Links bar — slightly more premium */
+.nx-pic-links-bar {
+  padding: 12px 18px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(7, 11, 20, 0.50);
+  gap: 10px;
+}
+
+/* 9. Console scrollbar — thin and invisible by default */
+.nx-pic-console::-webkit-scrollbar {
+  width: 4px;
+}
+.nx-pic-console::-webkit-scrollbar-track {
+  background: transparent;
+}
+.nx-pic-console::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+}
+.nx-pic-console::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Property Intelligence Cards — Elite Intelligence Module Polish
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Card depth: layered background + inner glow + shadow ─────────────── */
+.nx-pic-section {
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.20s cubic-bezier(0.22, 1, 0.36, 1),
+              box-shadow 0.20s cubic-bezier(0.22, 1, 0.36, 1),
+              border-color 0.20s;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.03) inset,
+    0 4px 12px rgba(0, 0, 0, 0.18);
+}
+.nx-pic-section:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 8px 28px rgba(0, 0, 0, 0.30);
+}
+
+/* ── Per-category: accent colour, dot colour, border glow, radial bg ─── */
+
+/* Identity — blue */
+.nx-pic-section.is-cat-identity {
+  background:
+    radial-gradient(ellipse 80% 50% at 0% 0%, rgba(82, 138, 236, 0.10) 0%, transparent 65%),
+    rgba(255, 255, 255, 0.022);
+  border-color: rgba(82, 138, 236, 0.14);
+}
+.nx-pic-section.is-cat-identity:hover { border-color: rgba(82, 138, 236, 0.28); }
+.nx-pic-section.is-cat-identity .nx-pic-section__dot { background: rgba(82, 138, 236, 0.70); }
+.nx-pic-section.is-cat-identity::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 3px; height: 100%;
+  background: linear-gradient(180deg, rgba(82, 138, 236, 0.55), transparent 80%);
+  border-radius: 14px 0 0 14px;
+}
+
+/* Physical — purple */
+.nx-pic-section.is-cat-physical {
+  background:
+    radial-gradient(ellipse 80% 50% at 0% 0%, rgba(168, 130, 255, 0.09) 0%, transparent 65%),
+    rgba(255, 255, 255, 0.022);
+  border-color: rgba(168, 130, 255, 0.12);
+}
+.nx-pic-section.is-cat-physical:hover { border-color: rgba(168, 130, 255, 0.26); }
+.nx-pic-section.is-cat-physical .nx-pic-section__dot { background: rgba(168, 130, 255, 0.70); }
+.nx-pic-section.is-cat-physical::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 3px; height: 100%;
+  background: linear-gradient(180deg, rgba(168, 130, 255, 0.50), transparent 80%);
+  border-radius: 14px 0 0 14px;
+}
+
+/* Construction — amber */
+.nx-pic-section.is-cat-construction {
+  background:
+    radial-gradient(ellipse 80% 50% at 0% 0%, rgba(251, 191, 36, 0.07) 0%, transparent 65%),
+    rgba(255, 255, 255, 0.022);
+  border-color: rgba(251, 191, 36, 0.11);
+}
+.nx-pic-section.is-cat-construction:hover { border-color: rgba(251, 191, 36, 0.24); }
+.nx-pic-section.is-cat-construction .nx-pic-section__dot { background: rgba(251, 191, 36, 0.65); }
+.nx-pic-section.is-cat-construction::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 3px; height: 100%;
+  background: linear-gradient(180deg, rgba(251, 191, 36, 0.48), transparent 80%);
+  border-radius: 14px 0 0 14px;
+}
+
+/* Site — cyan */
+.nx-pic-section.is-cat-site {
+  background:
+    radial-gradient(ellipse 80% 50% at 0% 0%, rgba(34, 211, 238, 0.07) 0%, transparent 65%),
+    rgba(255, 255, 255, 0.022);
+  border-color: rgba(34, 211, 238, 0.11);
+}
+.nx-pic-section.is-cat-site:hover { border-color: rgba(34, 211, 238, 0.24); }
+.nx-pic-section.is-cat-site .nx-pic-section__dot { background: rgba(34, 211, 238, 0.65); }
+.nx-pic-section.is-cat-site::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 3px; height: 100%;
+  background: linear-gradient(180deg, rgba(34, 211, 238, 0.45), transparent 80%);
+  border-radius: 14px 0 0 14px;
+}
+
+/* Equity — green */
+.nx-pic-section.is-cat-equity {
+  background:
+    radial-gradient(ellipse 80% 50% at 0% 0%, rgba(52, 211, 153, 0.09) 0%, transparent 65%),
+    rgba(255, 255, 255, 0.022);
+  border-color: rgba(52, 211, 153, 0.13);
+}
+.nx-pic-section.is-cat-equity:hover { border-color: rgba(52, 211, 153, 0.28); }
+.nx-pic-section.is-cat-equity .nx-pic-section__dot { background: rgba(52, 211, 153, 0.70); }
+.nx-pic-section.is-cat-equity::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 3px; height: 100%;
+  background: linear-gradient(180deg, rgba(52, 211, 153, 0.50), transparent 80%);
+  border-radius: 14px 0 0 14px;
+}
+
+/* Risk — red/amber */
+.nx-pic-section.is-cat-risk {
+  background:
+    radial-gradient(ellipse 80% 50% at 0% 0%, rgba(239, 68, 68, 0.07) 0%, transparent 65%),
+    rgba(255, 255, 255, 0.022);
+  border-color: rgba(239, 68, 68, 0.11);
+}
+.nx-pic-section.is-cat-risk:hover { border-color: rgba(239, 68, 68, 0.24); }
+.nx-pic-section.is-cat-risk .nx-pic-section__dot { background: rgba(239, 68, 68, 0.65); }
+.nx-pic-section.is-cat-risk::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 3px; height: 100%;
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.45), transparent 80%);
+  border-radius: 14px 0 0 14px;
+}
+
+/* Push grid content past the 3px accent bar */
+.nx-pic-section__header,
+.nx-pic-hero-signal,
+.nx-pic-chips,
+.nx-pic-section__grid {
+  padding-left: 3px;
+}
+
+/* ── Hero signal line ────────────────────────────────────────────────── */
+.nx-pic-hero-signal {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(226, 234, 247, 0.78);
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+  margin: 0 0 10px;
+  padding: 8px 12px 9px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+.nx-pic-hero-signal.is-alert {
+  color: rgba(239, 68, 68, 0.90);
+  background: rgba(239, 68, 68, 0.07);
+  border-color: rgba(239, 68, 68, 0.18);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+/* Category-tinted hero signals */
+.nx-pic-section.is-cat-identity  .nx-pic-hero-signal { border-color: rgba(82, 138, 236, 0.12); }
+.nx-pic-section.is-cat-physical  .nx-pic-hero-signal { border-color: rgba(168, 130, 255, 0.10); }
+.nx-pic-section.is-cat-construction .nx-pic-hero-signal { border-color: rgba(251, 191, 36, 0.10); }
+.nx-pic-section.is-cat-site      .nx-pic-hero-signal { border-color: rgba(34, 211, 238, 0.10); }
+.nx-pic-section.is-cat-equity    .nx-pic-hero-signal { border-color: rgba(52, 211, 153, 0.12); color: rgba(52, 211, 153, 0.88); }
+.nx-pic-section.is-cat-risk      .nx-pic-hero-signal { border-color: rgba(239, 68, 68, 0.12); }
+
+/* ── Signal chips ────────────────────────────────────────────────────── */
+.nx-pic-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+.nx-pic-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 99px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(172, 196, 230, 0.70);
+}
+.nx-pic-chip.is-success {
+  background: rgba(52, 211, 153, 0.10);
+  border-color: rgba(52, 211, 153, 0.22);
+  color: rgba(52, 211, 153, 0.90);
+}
+.nx-pic-chip.is-warning {
+  background: rgba(251, 191, 36, 0.10);
+  border-color: rgba(251, 191, 36, 0.22);
+  color: rgba(251, 191, 36, 0.90);
+}
+.nx-pic-chip.is-danger {
+  background: rgba(239, 68, 68, 0.10);
+  border-color: rgba(239, 68, 68, 0.22);
+  color: rgba(239, 68, 68, 0.90);
+}
+.nx-pic-chip.is-muted {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: rgba(172, 196, 230, 0.50);
+}
+
+/* ── Section header — stronger title treatment ───────────────────────── */
+.nx-pic-section__header strong {
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  color: rgba(226, 234, 247, 0.55);
+}
+
+/* ── Field stat pairs — cleaner hierarchy ────────────────────────────── */
+.nx-pic-section__grid {
+  gap: 0;
+}
+.nx-pic-field {
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  gap: 2px;
+}
+.nx-pic-field:last-child {
+  border-bottom: 0;
+}
+.nx-pic-field label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: rgba(163, 186, 221, 0.38);
+}
+.nx-pic-field span {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(226, 234, 247, 0.88);
+  line-height: 1.25;
+}
+
+/* Accent values */
+.nx-pic-field.is-accent-green span  { color: #34d399; font-weight: 700; }
+.nx-pic-field.is-accent-purple span { color: #b49bff; font-weight: 700; }
+.nx-pic-field.is-accent-blue span   { color: #70abf4; font-weight: 700; }
+.nx-pic-field.is-accent-amber span  { color: #fbbf24; font-weight: 700; }
+.nx-pic-field.is-accent-red span    { color: #f87171; font-weight: 800; }

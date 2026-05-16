@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef } from 'react'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
+import { WatchBell } from '../../../shared/WatchBell'
 import { formatInboxThreadTimestamp } from '../../../shared/formatters'
 import {
   resolveThreadAddressLine,
@@ -212,10 +213,20 @@ const ConversationRow = memo(({
             <div className="nx-thread-card__address">{address}</div>
           </div>
         </div>
-        <time className="nx-thread-card__time" aria-label={timestamp.fullLabel}>
-          <span className="nx-thread-card__time-day">{timestamp.dayLabel}</span>
-          {timestamp.timeLabel && <span className="nx-thread-card__time-clock">{timestamp.timeLabel}</span>}
-        </time>
+        <div className="nx-thread-card__time-group">
+          <WatchBell
+            watch_type="thread"
+            watch_key={thread.id}
+            label={name}
+            thread_key={thread.id}
+            owner_id={readString(thread, 'owner_id', 'ownerId')}
+            address={address !== 'No Address' ? address : undefined}
+          />
+          <time className="nx-thread-card__time" aria-label={timestamp.fullLabel}>
+            <span className="nx-thread-card__time-day">{timestamp.dayLabel}</span>
+            {timestamp.timeLabel && <span className="nx-thread-card__time-clock">{timestamp.timeLabel}</span>}
+          </time>
+        </div>
       </div>
 
       <div className="nx-thread-card__row nx-thread-card__row--2 nx-thread-card__row--badges">

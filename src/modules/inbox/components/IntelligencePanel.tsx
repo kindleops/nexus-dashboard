@@ -38,6 +38,7 @@ const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filt
 const GOOGLE_MAPS_API_KEY = (import.meta.env as Record<string, string | undefined>).VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyAhOk7KZkduU4qywmrlq5ZqSOtgktHYiFk'
 
 import { detectPropertyCategory } from '../helpers/propertyHelpers'
+import { WatchBell } from '../../../shared/WatchBell'
 
 const formatMoney = formatCurrency
 const fmtPhone = formatPhone
@@ -2113,6 +2114,62 @@ export const PropertyHeroCard = ({
     const baths = snapshot.baths || thread.total_baths || thread.baths
     const hasExec = !!(finalScore || estValue || equityAmt || equityPct || repairCost || rehabLevel || condition)
 
+    // ── Hero signals ────────────────────────────────────────────────────────
+    const propType = snapshot.propertyType || thread.propertyType
+    const identityHero = [propType, displayMarket].filter(Boolean).join(' · ') || null
+    const physicalHero = [
+      beds && baths ? `${beds} Bed / ${baths} Bath` : null,
+      sqft ? `${formatInteger(Number(sqft))} sqft` : null,
+    ].filter(Boolean).join(' · ') || null
+    const constructionHero = [
+      thread.heating_type || null,
+      thread.roof_cover ? `${thread.roof_cover} Roof` : null,
+      thread.air_conditioning ? `AC ${thread.air_conditioning}` : null,
+    ].filter(Boolean).join(' · ') || null
+    const lotAcres = snapshot.lotSizeAcres || thread.lot_acreage
+    const lotSqft = snapshot.lotSize || thread.lot_square_feet
+    const siteHero = [
+      lotAcres ? `${lotAcres} ac` : null,
+      lotSqft ? `${formatInteger(Number(lotSqft))} sqft lot` : null,
+    ].filter(Boolean).join(' · ') || null
+    const equityHero = [
+      equityAmt ? `${formatMoney(Number(equityAmt))} Equity` : null,
+      equityPct ? equityPct : null,
+    ].filter(Boolean).join(' · ') || null
+    const delinqYear = thread.property_tax_delinquent_year || thread.oldest_tax_delinquent_year
+    const taxHero = isTaxDelinquent
+      ? `TAX DELINQUENT${delinqYear ? ` · ${delinqYear}` : ''}`
+      : snapshot.taxAmount ? `Tax ${formatMoney(Number(snapshot.taxAmount))}/yr` : null
+
+    // ── Signal chips ─────────────────────────────────────────────────────────
+    const floodZone = snapshot.floodZone || thread.flood_zone
+    const identityChips: Array<{ label: string; tone: string }> = [
+      floodZone && !/^X$/i.test(String(floodZone)) ? { label: `Flood Zone ${floodZone}`, tone: 'warning' } : null,
+    ].filter(Boolean) as Array<{ label: string; tone: string }>
+
+    const yearBuilt = Number(snapshot.yearBuilt || thread.year_built || 0)
+    const physicalChips: Array<{ label: string; tone: string }> = [
+      yearBuilt && yearBuilt < 1960 ? { label: 'Long Hold', tone: 'muted' } : null,
+    ].filter(Boolean) as Array<{ label: string; tone: string }>
+
+    const rehabStr = String(rehabLevel).toLowerCase()
+    const constructionChips: Array<{ label: string; tone: string }> = [
+      rehabStr && /full|heavy|major/i.test(rehabStr) ? { label: 'Full Rehab', tone: 'warning' } : null,
+      repairCost && Number(repairCost) > 40000 ? { label: 'High Repair Load', tone: 'warning' } : null,
+    ].filter(Boolean) as Array<{ label: string; tone: string }>
+
+    const equityPctNum = parseFloat(String(equityPct || '0').replace(/[^0-9.]/g, ''))
+    const loanBal = snapshot.loanBalance
+    const equityChips: Array<{ label: string; tone: string }> = [
+      equityPctNum >= 95 ? { label: '100% Equity', tone: 'success' } : null,
+      equityPctNum >= 60 && equityPctNum < 95 ? { label: 'Strong Equity', tone: 'success' } : null,
+      (!loanBal || Number(loanBal) === 0) && equityAmt ? { label: 'Free & Clear', tone: 'success' } : null,
+    ].filter(Boolean) as Array<{ label: string; tone: string }>
+
+    const riskChips: Array<{ label: string; tone: string }> = [
+      isTaxDelinquent ? { label: 'Tax Delinquent', tone: 'danger' } : null,
+    ].filter(Boolean) as Array<{ label: string; tone: string }>
+
     return (
       <div className={cls('nx-pic-console', `is-layout-${layoutMode}`)}>
         {/* A. Executive Snapshot */}
@@ -2166,11 +2223,17 @@ export const PropertyHeroCard = ({
         {/* B–G: Grouped intelligence sections */}
         <div className="nx-pic-sections">
           {/* B. Property Identity */}
-          <div className="nx-pic-section">
+          <div className="nx-pic-section is-cat-identity">
             <div className="nx-pic-section__header">
               <span className="nx-pic-section__dot" />
               <strong>Property Identity</strong>
             </div>
+            {identityHero && <p className="nx-pic-hero-signal">{identityHero}</p>}
+            {identityChips.length > 0 && (
+              <div className="nx-pic-chips">
+                {identityChips.map((c) => <span key={c.label} className={`nx-pic-chip is-${c.tone}`}>{c.label}</span>)}
+              </div>
+            )}
             <div className="nx-pic-section__grid">
               <PicField label="Type" value={snapshot.propertyType || thread.propertyType} />
               <PicField label="Class" value={snapshot.propertyClass} />
@@ -2186,11 +2249,17 @@ export const PropertyHeroCard = ({
           </div>
 
           {/* C. Physical Profile */}
-          <div className="nx-pic-section">
+          <div className="nx-pic-section is-cat-physical">
             <div className="nx-pic-section__header">
               <span className="nx-pic-section__dot" />
               <strong>Physical Profile</strong>
             </div>
+            {physicalHero && <p className="nx-pic-hero-signal">{physicalHero}</p>}
+            {physicalChips.length > 0 && (
+              <div className="nx-pic-chips">
+                {physicalChips.map((c) => <span key={c.label} className={`nx-pic-chip is-${c.tone}`}>{c.label}</span>)}
+              </div>
+            )}
             <div className="nx-pic-section__grid">
               <PicField label="Beds" value={beds} />
               <PicField label="Baths" value={baths} />
@@ -2207,11 +2276,17 @@ export const PropertyHeroCard = ({
           </div>
 
           {/* D. Construction / Systems */}
-          <div className="nx-pic-section">
+          <div className="nx-pic-section is-cat-construction">
             <div className="nx-pic-section__header">
               <span className="nx-pic-section__dot" />
               <strong>Construction / Systems</strong>
             </div>
+            {constructionHero && <p className="nx-pic-hero-signal">{constructionHero}</p>}
+            {constructionChips.length > 0 && (
+              <div className="nx-pic-chips">
+                {constructionChips.map((c) => <span key={c.label} className={`nx-pic-chip is-${c.tone}`}>{c.label}</span>)}
+              </div>
+            )}
             <div className="nx-pic-section__grid">
               <PicField label="Construction" value={thread.construction_type} />
               <PicField label="Ext. Walls" value={thread.exterior_walls} />
@@ -2230,11 +2305,12 @@ export const PropertyHeroCard = ({
           </div>
 
           {/* E. Site / Lot / Utilities */}
-          <div className="nx-pic-section">
+          <div className="nx-pic-section is-cat-site">
             <div className="nx-pic-section__header">
               <span className="nx-pic-section__dot" />
               <strong>Site / Lot / Utilities</strong>
             </div>
+            {siteHero && <p className="nx-pic-hero-signal">{siteHero}</p>}
             <div className="nx-pic-section__grid">
               <PicField label="Lot Acres" value={snapshot.lotSizeAcres || thread.lot_acreage} />
               <PicField label="Lot Sqft" value={snapshot.lotSize || thread.lot_square_feet ? formatInteger(Number(snapshot.lotSize || thread.lot_square_feet)) : null} />
@@ -2251,11 +2327,17 @@ export const PropertyHeroCard = ({
           </div>
 
           {/* F. Sale / Loan / Equity */}
-          <div className="nx-pic-section">
+          <div className="nx-pic-section is-cat-equity">
             <div className="nx-pic-section__header">
               <span className="nx-pic-section__dot" />
               <strong>Sale / Loan / Equity</strong>
             </div>
+            {equityHero && <p className="nx-pic-hero-signal">{equityHero}</p>}
+            {equityChips.length > 0 && (
+              <div className="nx-pic-chips">
+                {equityChips.map((c) => <span key={c.label} className={`nx-pic-chip is-${c.tone}`}>{c.label}</span>)}
+              </div>
+            )}
             <div className="nx-pic-section__grid">
               <PicField label="Last Sale" value={thread.sale_price ? formatMoney(Number(thread.sale_price)) : null} accent="green" />
               <PicField label="Sale Date" value={thread.sale_date} />
@@ -2269,11 +2351,17 @@ export const PropertyHeroCard = ({
           </div>
 
           {/* G. Tax / Assessment / Risk */}
-          <div className="nx-pic-section">
+          <div className="nx-pic-section is-cat-risk">
             <div className="nx-pic-section__header">
               <span className="nx-pic-section__dot" />
               <strong>Tax / Assessment / Risk</strong>
             </div>
+            {taxHero && <p className={cls('nx-pic-hero-signal', isTaxDelinquent && 'is-alert')}>{taxHero}</p>}
+            {riskChips.length > 0 && (
+              <div className="nx-pic-chips">
+                {riskChips.map((c) => <span key={c.label} className={`nx-pic-chip is-${c.tone}`}>{c.label}</span>)}
+              </div>
+            )}
             <div className="nx-pic-section__grid">
               <PicField label="Tax Delinquent" value={snapshot.taxDelinquent} accent={isTaxDelinquent ? 'red' : undefined} />
               <PicField label="Delinq. Year" value={thread.property_tax_delinquent_year || thread.oldest_tax_delinquent_year} accent={isTaxDelinquent ? 'amber' : undefined} />
@@ -2777,7 +2865,17 @@ const DealCommandHeader = ({
 
         {/* ── Zone A + B: Identity & Workflow State ── */}
         <div className="dch-zone-a">
-          <span className="dch-eyebrow">DEAL COMMAND DOSSIER</span>
+          <div className="dch-eyebrow-row">
+            <span className="dch-eyebrow">DEAL COMMAND DOSSIER</span>
+            <WatchBell
+              watch_type="thread"
+              watch_key={thread.id}
+              label={sellerName}
+              thread_key={thread.id}
+              address={address !== 'Property Unknown' ? address : undefined}
+              owner_id={thread.ownerDisplayName ? thread.id : undefined}
+            />
+          </div>
           <h2 className="dch-address">{address}</h2>
           <div className="dch-seller">{sellerName}</div>
 

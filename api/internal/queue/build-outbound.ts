@@ -283,6 +283,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         to_phone_number: phone,
         from_phone_number: routingResult.from_phone_number,
         textgrid_number_id: routingResult.textgrid_number_id,
+        template_id: selected.template_id,
         message_body: rendered.text,
         message_text: rendered.text,
         scheduled_for: scheduledAt.toISOString(),
@@ -300,21 +301,25 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         routing_tier: routingResult.routing_tier,
         routing_reason: routingResult.routing_reason,
         // Metadata for observability
-        selected_template_score: selected.score,
-        selected_template_recommendation: selected.recommendation,
-        template_selection_reason: selected.reason,
-        template_selection_bucket: selected.bucket,
         metadata: {
           template_id: selected.template_id,
-          source: 'weighted_outbound_builder',
-          selection_score: selected.score,
-          selection_bucket: selected.bucket,
+          template_name: selected.template_id,
+          template_score: selected.score,
+          template_recommendation: selected.recommendation,
+          template_selection_reason: selected.reason,
+          template_selection_bucket: selected.bucket,
+          template_source: 'weighted_outbound_builder',
+          agent_name: sellerFacingAgentName,
+          asset_class: assetClass,
+          language: language,
+          selected_from_control_table: true,
+          used_fallback: false,
+          routing_allowed: true,
           selected_textgrid_number: routingResult.from_phone_number,
           selected_textgrid_number_id: routingResult.textgrid_number_id,
           selected_textgrid_market: routingResult.route_input_market,
           routing_tier: routingResult.routing_tier,
-          selection_reason: routingResult.routing_reason,
-          routing_allowed: true
+          selection_reason: routingResult.routing_reason
         }
       }
 
