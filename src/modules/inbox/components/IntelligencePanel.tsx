@@ -32,6 +32,7 @@ import {
 
 import { usePhase3Intelligence } from '../hooks/usePhase3Intelligence'
 import type { Phase3Intelligence } from '../../../lib/data/inboxIntelligencePhase3'
+import type { ViewLayoutMode } from '../view-layout'
 
 const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
 const GOOGLE_MAPS_API_KEY = (import.meta.env as Record<string, string | undefined>).VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyAhOk7KZkduU4qywmrlq5ZqSOtgktHYiFk'
@@ -66,6 +67,31 @@ const buildInteractiveStreetViewUrl = ({
   })
 
   return `https://www.google.com/maps/embed/v1/streetview?${params.toString()}`
+}
+
+const buildInteractiveAerialViewUrl = ({
+  address,
+  lat,
+  lng,
+}: {
+  address?: string | null
+  lat?: number | null
+  lng?: number | null
+}) => {
+  if (!GOOGLE_MAPS_API_KEY) return undefined
+
+  const hasCoords = Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(Number(lat)) > 0.0001 && Math.abs(Number(lng)) > 0.0001
+  const center = hasCoords ? `${lat},${lng}` : address
+  if (!center) return undefined
+
+  const params = new URLSearchParams({
+    key: GOOGLE_MAPS_API_KEY,
+    center,
+    zoom: hasCoords ? '19' : '17',
+    maptype: 'satellite',
+  })
+
+  return `https://www.google.com/maps/embed/v1/view?${params.toString()}`
 }
 
 type WorkflowThread = InboxWorkflowThread & Partial<{
@@ -201,6 +227,7 @@ type WorkflowThread = InboxWorkflowThread & Partial<{
   streetview_image: string
   satellite_image: string
   lastMessageBody: string
+  aiSummary: string
 }>
 
 // ── Helper Utilities ──────────────────────────────────────────────────────
@@ -237,6 +264,20 @@ const toChip = (v: unknown): string | null => {
   const n = Number(String(v).replace(/[,$\s]/g, ''))
   if (Number.isFinite(n)) return String(n)
   return String(v).trim() || null
+}
+
+const asNum = (value: unknown): number => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0
+  const numeric = Number(String(value ?? '').replace(/[,$%\s]/g, ''))
+  return Number.isFinite(numeric) ? numeric : 0
+}
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
+
+const percentFromScore = (value: unknown, fallback = 0) => {
+  const numeric = asNum(value)
+  if (!Number.isFinite(numeric) || numeric <= 0) return fallback
+  return clamp(numeric > 1 ? numeric : numeric * 100, 0, 100)
 }
 
 // ── Reusable UI Components ────────────────────────────────────────────────
@@ -417,6 +458,105 @@ const SectionEmptyState = ({ text }: { text: string }) => (
   <div className="nx-section-empty">
     <Icon name="alert" />
     <p>{text}</p>
+  </div>
+)
+
+const ScoreRing = ({
+  label,
+  value,
+  tone = 'blue',
+  sublabel,
+}: {
+  label: string
+  value: number
+  tone?: 'blue' | 'green' | 'amber' | 'purple' | 'red'
+  sublabel?: string
+}) => {
+  const pct = clamp(value, 0, 100)
+  return (
+    <div className={cls('nx-score-ring', `is-${tone}`)}>
+      <div
+        className="nx-score-ring__dial"
+        style={{ ['--ring-progress' as any]: `${pct}%` }}
+      >
+        <strong>{Math.round(pct)}</strong>
+        <span>/100</span>
+      </div>
+      <div className="nx-score-ring__copy">
+        <label>{label}</label>
+        <p>{sublabel || 'Signal calibrated from live thread context.'}</p>
+      </div>
+    </div>
+  )
+}
+
+const MeterBar = ({
+  label,
+  value,
+  tone = 'blue',
+  valueLabel,
+}: {
+  label: string
+  value: number
+  tone?: 'blue' | 'green' | 'amber' | 'purple' | 'red'
+  valueLabel?: string
+}) => {
+  const pct = clamp(value, 0, 100)
+  return (
+    <div className={cls('nx-meter-row', `is-${tone}`)}>
+      <div className="nx-meter-row__head">
+        <span>{label}</span>
+        <strong>{valueLabel || `${Math.round(pct)}%`}</strong>
+      </div>
+      <div className="nx-meter-row__track">
+        <div className="nx-meter-row__fill" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  )
+}
+
+const SparkBars = ({
+  title,
+  values,
+  labels,
+  tone = 'blue',
+}: {
+  title: string
+  values: number[]
+  labels?: string[]
+  tone?: 'blue' | 'green' | 'amber' | 'purple' | 'red'
+}) => {
+  const max = Math.max(...values, 1)
+  return (
+    <div className={cls('nx-spark-bars', `is-${tone}`)}>
+      <div className="nx-spark-bars__title">{title}</div>
+      <div className="nx-spark-bars__plot">
+        {values.map((value, index) => (
+          <div key={`${title}-${index}`} className="nx-spark-bars__item">
+            <div className="nx-spark-bars__bar-shell">
+              <div className="nx-spark-bars__bar" style={{ height: `${(value / max) * 100}%` }} />
+            </div>
+            <span>{labels?.[index] || `P${index + 1}`}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+const PremiumEmptyState = ({
+  title,
+  body,
+  kicker = 'PENDING DATA',
+}: {
+  title: string
+  body: string
+  kicker?: string
+}) => (
+  <div className="nx-premium-empty-state">
+    <span>{kicker}</span>
+    <strong>{title}</strong>
+    <p>{body}</p>
   </div>
 )
 
@@ -605,9 +745,16 @@ export const WorkflowControl = ({
     </DossierCard>
   )
 }
-export const OfferMemoCard = ({ thread }: { thread: WorkflowThread }) => {
+export const OfferMemoCard = ({
+  thread,
+  layoutMode = 'full',
+}: {
+  thread: WorkflowThread
+  layoutMode?: ViewLayoutMode
+}) => {
   const [isUnderwriting, setIsUnderwriting] = useState(false)
   const [underwritingData, setUnderwritingData] = useState<any>(null)
+  const [expanded, setExpanded] = useState(layoutMode === 'expanded' || layoutMode === 'full')
   
   const hasArv = isPresent(thread.estimatedValue)
   const aiOffer = Number(thread.ai_recommended_opening_offer || thread.ai_offer || 0)
@@ -617,6 +764,7 @@ export const OfferMemoCard = ({ thread }: { thread: WorkflowThread }) => {
   const confidence = asStr(thread.offer_confidence || (hasArv ? 'Review internally' : 'Hold internal'))
   const isConfidenceHigh = confidence.toLowerCase().includes('high') || confidence.toLowerCase().includes('ready')
   const isConfidenceLow = confidence.toLowerCase().includes('low') || confidence.toLowerCase().includes('hold')
+  const shouldCollapse = layoutMode === 'compact' || layoutMode === 'medium'
 
   const handleUnderwrite = async () => {
     setIsUnderwriting(true)
@@ -640,69 +788,106 @@ export const OfferMemoCard = ({ thread }: { thread: WorkflowThread }) => {
     }
   }
 
+  const summary = (
+    <div className="nx-offer-metrics-grid">
+      <div className="nx-offer-metric-card">
+        <label>Value</label>
+        <div className="nx-metric-value">{formatMoney(Number(thread.estimatedValue || 0))}</div>
+      </div>
+      <div className="nx-offer-metric-card is-highlight">
+        <label>AI Offer</label>
+        <div className="nx-metric-value">
+          {underwritingData ? formatMoney(underwritingData.valuation.mao) : (aiOffer > 0 ? formatMoney(aiOffer) : 'PENDING')}
+        </div>
+      </div>
+      <div className="nx-offer-metric-card">
+        <label>Equity</label>
+        <div className="nx-metric-value">{formatPercent(Number(thread.equityPercent || 0)) || '—'}</div>
+      </div>
+      <div className="nx-offer-metric-card">
+        <label>Repairs</label>
+        <div className="nx-metric-value">{formatMoney(Number(thread.estimatedRepairCost || 0))}</div>
+      </div>
+    </div>
+  )
+
   return (
     <DossierCard className="nx-offer-console nx-glass-card nx-offer-console--elite">
       <div className="nx-dossier-section__title nx-dossier-section__title--between">
         <span className="nx-command-label"><Icon name="zap" /> OFFER INTELLIGENCE</span>
-        <div className={cls('nx-status-pill', hasArv ? 'is-success' : 'is-warning')}>
-          {hasArv ? 'READY' : 'NEEDS ARV'}
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+          <div className={cls('nx-status-pill', hasArv ? 'is-success' : 'is-warning')}>
+            {hasArv ? 'READY' : 'NEEDS ARV'}
+          </div>
+          {shouldCollapse && (
+            <button type="button" className="nx-dossier-link" onClick={() => setExpanded((current) => !current)}>
+              <Icon name={expanded ? 'chevron-down' : 'chevron-right'} />
+              <span>{expanded ? 'Collapse' : 'Expand'}</span>
+            </button>
+          )}
         </div>
       </div>
 
-      <div className="nx-offer-metrics-grid">
-        <div className="nx-offer-metric-card">
-          <label>LEGACY CASH</label>
-          <div className="nx-metric-value">{formatMoney(cashOffer)}</div>
-        </div>
-        <div className="nx-offer-metric-card is-highlight">
-          <label>AI RECOMMENDED</label>
-          <div className="nx-metric-value">
-            {underwritingData ? formatMoney(underwritingData.valuation.mao) : (aiOffer > 0 ? formatMoney(aiOffer) : 'PENDING')}
-          </div>
-        </div>
-        <div className="nx-offer-metric-card">
-          <label>WALKAWAY</label>
-          <div className="nx-metric-value">
-            {underwritingData ? formatMoney(underwritingData.valuation.maoCeiling) : (walkaway > 0 ? formatMoney(walkaway) : '--')}
-          </div>
-        </div>
-        <div className="nx-offer-metric-card">
-          <label>CONFIDENCE</label>
-          <div className={cls('nx-metric-sentiment', isConfidenceHigh && 'is-safe', isConfidenceLow && 'is-risk')}>
-            {underwritingData ? `${underwritingData.valuation.score}% SAFE` : confidence.toUpperCase()}
-          </div>
-        </div>
-      </div>
-      
-      {underwritingData && (
-        <div className="nx-research-snapshot nx-glass-surface">
-          <div className="nx-snapshot-header">AI RESEARCH TELEMETRY</div>
-          <div className="nx-snapshot-grid">
-            <div className="nx-snapshot-item">
-              <span>ARV EST</span>
-              <strong>{formatMoney(underwritingData.valuation.arv_estimate)}</strong>
+      {shouldCollapse && summary}
+
+      {(!shouldCollapse || expanded) && (
+        <>
+          <div className="nx-offer-metrics-grid">
+            <div className="nx-offer-metric-card">
+              <label>LEGACY CASH</label>
+              <div className="nx-metric-value">{formatMoney(cashOffer)}</div>
             </div>
-            <div className="nx-snapshot-item">
-              <span>REPAIRS</span>
-              <strong>{formatMoney(underwritingData.valuation.repair_estimate)}</strong>
+            <div className="nx-offer-metric-card is-highlight">
+              <label>AI RECOMMENDED</label>
+              <div className="nx-metric-value">
+                {underwritingData ? formatMoney(underwritingData.valuation.mao) : (aiOffer > 0 ? formatMoney(aiOffer) : 'PENDING')}
+              </div>
+            </div>
+            <div className="nx-offer-metric-card">
+              <label>WALKAWAY</label>
+              <div className="nx-metric-value">
+                {underwritingData ? formatMoney(underwritingData.valuation.maoCeiling) : (walkaway > 0 ? formatMoney(walkaway) : '--')}
+              </div>
+            </div>
+            <div className="nx-offer-metric-card">
+              <label>CONFIDENCE</label>
+              <div className={cls('nx-metric-sentiment', isConfidenceHigh && 'is-safe', isConfidenceLow && 'is-risk')}>
+                {underwritingData ? `${underwritingData.valuation.score}% SAFE` : confidence.toUpperCase()}
+              </div>
             </div>
           </div>
-          <div className="nx-snapshot-comps">
-            {underwritingData.comps?.slice(0, 3).map((comp: any, i: number) => (
-              <a key={i} href={comp.source_url} target="_blank" rel="noreferrer" className="nx-comp-tag">
-                <Icon name="globe" /> {comp.price ? formatMoney(comp.price) : 'LINK'}
-              </a>
-            ))}
+          
+          {underwritingData && (
+            <div className="nx-research-snapshot nx-glass-surface">
+              <div className="nx-snapshot-header">AI RESEARCH TELEMETRY</div>
+              <div className="nx-snapshot-grid">
+                <div className="nx-snapshot-item">
+                  <span>ARV EST</span>
+                  <strong>{formatMoney(underwritingData.valuation.arv_estimate)}</strong>
+                </div>
+                <div className="nx-snapshot-item">
+                  <span>REPAIRS</span>
+                  <strong>{formatMoney(underwritingData.valuation.repair_estimate)}</strong>
+                </div>
+              </div>
+              <div className="nx-snapshot-comps">
+                {underwritingData.comps?.slice(0, 3).map((comp: any, i: number) => (
+                  <a key={i} href={comp.source_url} target="_blank" rel="noreferrer" className="nx-comp-tag">
+                    <Icon name="globe" /> {comp.price ? formatMoney(comp.price) : 'LINK'}
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="nx-offer-actions">
+            <button type="button" className={cls('nx-command-button is-primary', isUnderwriting && 'is-loading')} onClick={handleUnderwrite} disabled={isUnderwriting}>
+              <Icon name={isUnderwriting ? 'refresh-cw' : 'spark'} />
+              {isUnderwriting ? 'ANALYZING...' : 'RUN AI UNDERWRITING'}
+            </button>
           </div>
-        </div>
+        </>
       )}
-
-      <div className="nx-offer-actions">
-        <button type="button" className={cls('nx-command-button is-primary', isUnderwriting && 'is-loading')} onClick={handleUnderwrite} disabled={isUnderwriting}>
-          <Icon name={isUnderwriting ? 'refresh-cw' : 'spark'} />
-          {isUnderwriting ? 'ANALYZING...' : 'RUN AI UNDERWRITING'}
-        </button>
-      </div>
     </DossierCard>
   )
 }
@@ -1102,7 +1287,7 @@ export const LinkedRecordsCard = ({ thread }: { thread: WorkflowThread }) => {
   )
 }
 
-const ActionRailCard = ({
+export const ActionRailCard = ({
   onOpenMap,
   onOpenDossier,
   onOpenAi,
@@ -1685,6 +1870,11 @@ export const TimelinePanel = ({ thread, messages, phase3 }: { thread: WorkflowTh
 
   const isCritical = thread.inboxStatus === 'new_reply' || thread.priority === 'urgent'
   const hasMemory = Boolean(phase3?.thread)
+  const scheduleMoments = [
+    { label: 'First touch', value: thread.firstTouchAt || thread.first_touch_at || thread.updatedAt },
+    { label: 'Last reply', value: thread.lastInboundAt || thread.lastMessageAt },
+    { label: 'Next follow-up', value: thread.follow_up_at || (thread as any).followUpAt || thread.updatedAt },
+  ].filter((item) => Boolean(item.value))
 
   return (
     <div className="nx-intel-panel-grid">
@@ -1699,6 +1889,15 @@ export const TimelinePanel = ({ thread, messages, phase3 }: { thread: WorkflowTh
             {hasMemory ? <QuietBadge label="MEMORY ACTIVE" tone="success" /> : <QuietBadge label="MEMORY NOT BUILT YET" tone="default" />}
             {isCritical && <QuietBadge label="CRITICAL" tone="danger" />}
           </div>
+        </div>
+
+        <div className="nx-timeline-memory-strip">
+          {scheduleMoments.map((moment) => (
+            <div key={moment.label} className="nx-timeline-memory-strip__item">
+              <span>{moment.label}</span>
+              <strong>{moment.value ? formatDate(moment.value) : 'Pending'}</strong>
+            </div>
+          ))}
         </div>
 
         <div className="nx-timeline-v2">
@@ -1725,7 +1924,17 @@ const PropertyBadge = ({ label, icon, accent = 'neutral' }: { label: string; ico
 }
 
 
-export const PropertyHeroCard = ({ thread, snapshot, panelMode }: { thread: WorkflowThread; snapshot: NormalizedPropertySnapshot; panelMode?: PanelMode }) => {
+export const PropertyHeroCard = ({
+  thread,
+  snapshot,
+  panelMode,
+  layoutMode = 'full',
+}: {
+  thread: WorkflowThread
+  snapshot: NormalizedPropertySnapshot
+  panelMode?: PanelMode
+  layoutMode?: ViewLayoutMode
+}) => {
   const address = snapshot.fullAddress || thread.displayAddress || thread.propertyAddress || thread.subject
   const isMultifamily = asStr(thread.propertyType || '').toLowerCase().includes('multi') || asStr(snapshot.propertyType || '').toLowerCase().includes('multi')
   const unitCount = Number(snapshot.unitCount || thread.units_count || 0)
@@ -1746,7 +1955,12 @@ export const PropertyHeroCard = ({ thread, snapshot, panelMode }: { thread: Work
     () => buildInteractiveStreetViewUrl({ address, lat: propertyLat, lng: propertyLng }),
     [address, propertyLat, propertyLng],
   )
+  const interactiveAerialViewUrl = useMemo(
+    () => buildInteractiveAerialViewUrl({ address, lat: propertyLat, lng: propertyLng }),
+    [address, propertyLat, propertyLng],
+  )
   const [imageFailed, setImageFailed] = useState(false)
+  const [fullMediaMode, setFullMediaMode] = useState<'split' | 'street' | 'aerial' | 'parcel'>('split')
   const links = buildPropertyExternalLinks(address)
   const chips = [
     (snapshot.beds || thread.total_bedrooms || thread.beds) && { label: `${snapshot.beds || thread.total_bedrooms || thread.beds} BEDS`, icon: 'bed', accent: 'neutral' },
@@ -1761,14 +1975,328 @@ export const PropertyHeroCard = ({ thread, snapshot, panelMode }: { thread: Work
     (snapshot.equityPercent || formatPercent(thread.equityPercent)) && { label: `${snapshot.equityPercent || formatPercent(thread.equityPercent)} EQUITY`, icon: 'trending-up', accent: 'purple' },
     (snapshot.repairCost || thread.estimatedRepairCost) && { label: `${formatMoney(Number(snapshot.repairCost || thread.estimatedRepairCost))} REPAIRS`, icon: 'tool', accent: 'blue' },
   ].filter(Boolean) as any[]
+  const heroBadgeOverlay = (
+    <div className="nx-property-hero__badge-overlay">
+      {chips.slice(0, 8).map((chip) => <PropertyBadge key={chip.label} label={chip.label} icon={chip.icon} accent={chip.accent} />)}
+    </div>
+  )
+  const heroInfoOverlay = (
+    <div className="nx-property-hero__media-overlay">
+      <div className="nx-property-hero__media-copy">
+        <span>{displayMarket}</span>
+        <strong>{address}</strong>
+      </div>
+      <div className="nx-property-intel-links">
+        <LinkedRecordButton label="Zillow" url={links.zillow} icon="globe" />
+        <LinkedRecordButton label="Maps" url={links.streetView} icon="map" />
+        <LinkedRecordButton label="Realtor" url={links.realtor} icon="globe" />
+        <LinkedRecordButton label="County" url={links.googleSearch} icon="briefing" />
+      </div>
+    </div>
+  )
 
   useEffect(() => {
     setImageFailed(false)
   }, [streetViewUrl, address])
 
+  useEffect(() => {
+    setFullMediaMode('split')
+  }, [address])
+
+  const renderStreetMedia = (title: string) => (
+    <div className="nx-property-panel is-streetview">
+      <div className="nx-panel-label">{title}</div>
+      {interactiveStreetViewUrl ? (
+        <iframe
+          src={interactiveStreetViewUrl}
+          title={`Street view for ${address}`}
+          className="nx-property-panel__iframe"
+          loading="eager"
+          allowFullScreen
+          referrerPolicy="no-referrer-when-downgrade"
+        />
+      ) : streetViewUrl && !imageFailed ? (
+        <img src={streetViewUrl} alt="Street view" onError={() => setImageFailed(true)} />
+      ) : (
+        <div className="nx-panel-fallback"><Icon name="eye" /></div>
+      )}
+    </div>
+  )
+
+  const renderAerialMedia = (title: string) => (
+    <div className="nx-property-panel is-aerial">
+      <div className="nx-panel-label">{title}</div>
+      {interactiveAerialViewUrl ? (
+        <iframe
+          src={interactiveAerialViewUrl}
+          title={`Aerial view for ${address}`}
+          className="nx-property-panel__iframe"
+          loading="eager"
+          allowFullScreen
+          referrerPolicy="no-referrer-when-downgrade"
+        />
+      ) : aerialUrl ? (
+        <img src={aerialUrl as string | undefined} alt="Aerial view" />
+      ) : (
+        <div className="nx-panel-fallback">
+          <Icon name="map" />
+          <span>Interactive aerial unavailable</span>
+        </div>
+      )}
+    </div>
+  )
+
+  if (layoutMode === 'compact') {
+    return (
+      <DossierCard className="nx-property-hero-shell nx-glass-card">
+        <div className="nx-property-hero__media">
+          {streetViewUrl && !imageFailed ? (
+            <img src={streetViewUrl} alt={address} onError={() => setImageFailed(true)} />
+          ) : (
+            <div className="nx-property-hero__fallback">
+              <Icon name="map" />
+              <span>Property hero unavailable</span>
+              <strong>{address}</strong>
+            </div>
+          )}
+          <div className="nx-property-hero__hover-actions">
+            <div className="nx-property-hero__hover-grid">
+              <LinkedRecordButton label="Zillow" url={links.zillow} icon="globe" />
+              <LinkedRecordButton label="Maps" url={links.streetView} icon="map" />
+              <LinkedRecordButton label="Search" url={links.googleSearch} icon="search" />
+              <LinkedRecordButton label="Realtor" url={links.realtor} icon="globe" />
+            </div>
+          </div>
+        </div>
+        <div className="nx-property-hero__info nx-glass-surface" style={{ borderTop: 'none', borderLeft: 'none', borderRight: 'none', borderRadius: '0 0 18px 18px' }}>
+          <div className="nx-property-hero__telemetry">
+            <div className="nx-telemetry-item">
+              <label>LOCATION</label>
+              <span>{displayMarket}</span>
+            </div>
+            <div className="nx-telemetry-item">
+              <label>PROPERTY TYPE</label>
+              <span className={isMultifamily ? 'is-highlight' : ''}>{displayType}</span>
+            </div>
+          </div>
+          <div className="nx-property-hero__chips">
+            {chips.map((chip) => (
+              <PropertyBadge
+                key={chip.label}
+                label={chip.label}
+                icon={chip.icon}
+                accent={chip.accent}
+              />
+            ))}
+          </div>
+        </div>
+      </DossierCard>
+    )
+  }
+
+  if (layoutMode === 'medium') {
+    return (
+      <DossierCard className="nx-property-hero-shell nx-glass-card nx-property-hero--stacked-mode">
+        <div className="nx-property-split-console nx-property-split-console--stacked">
+          {renderStreetMedia('INTERACTIVE STREET VIEW')}
+          {renderAerialMedia('INTERACTIVE AERIAL VIEW')}
+          <div className="nx-property-address-bar">
+            <strong>{address}</strong>
+            <div className="nx-property-intel-links">
+              <LinkedRecordButton label="Zillow" url={links.zillow} icon="globe" />
+              <LinkedRecordButton label="Maps" url={links.streetView} icon="map" />
+              <LinkedRecordButton label="Realtor" url={links.realtor} icon="globe" />
+            </div>
+          </div>
+        </div>
+        <div className="nx-property-hero__info nx-glass-surface">
+          <div className="nx-property-hero__telemetry">
+            <div className="nx-telemetry-item"><label>MARKET OPS</label><span>{displayMarket}</span></div>
+            <div className="nx-telemetry-item"><label>ASSET CLASS</label><span className={isMultifamily ? 'is-highlight' : ''}>{displayType}</span></div>
+          </div>
+          <div className="nx-property-hero__chips">
+            {chips.map((chip) => <PropertyBadge key={chip.label} label={chip.label} icon={chip.icon} accent={chip.accent} />)}
+          </div>
+        </div>
+      </DossierCard>
+    )
+  }
+
+  if (layoutMode === 'expanded') {
+    return (
+      <DossierCard className="nx-property-hero-shell nx-glass-card nx-property-hero--elite nx-property-hero--expanded-mode">
+        <div className="nx-property-split-console">
+          {renderStreetMedia('INTERACTIVE STREET VIEW')}
+          {renderAerialMedia('INTERACTIVE AERIAL VIEW')}
+          <div className="nx-property-address-bar">
+            <strong>{address}</strong>
+            <div className="nx-property-intel-links">
+              <LinkedRecordButton label="Zillow" url={links.zillow} icon="globe" />
+              <LinkedRecordButton label="Maps" url={links.streetView} icon="map" />
+              <LinkedRecordButton label="Realtor" url={links.realtor} icon="globe" />
+            </div>
+          </div>
+        </div>
+        <div className="nx-property-hero__info nx-glass-surface">
+          <div className="nx-property-hero__telemetry">
+            <div className="nx-telemetry-item"><label>MARKET OPS</label><span>{displayMarket}</span></div>
+            <div className="nx-telemetry-item"><label>ASSET CLASS</label><span className={isMultifamily ? 'is-highlight' : ''}>{displayType}</span></div>
+          </div>
+          <div className="nx-property-hero__chips">
+            {chips.map((chip) => <PropertyBadge key={chip.label} label={chip.label} icon={chip.icon} accent={chip.accent} />)}
+          </div>
+        </div>
+      </DossierCard>
+    )
+  }
+
   if (panelMode === 'full') {
+    const fullModeButtons = (
+      <div className="nx-property-hero__full-toggle">
+        <button type="button" className={cls(fullMediaMode === 'split' && 'is-active')} onClick={() => setFullMediaMode('split')}>Split</button>
+        <button type="button" className={cls(fullMediaMode === 'street' && 'is-active')} onClick={() => setFullMediaMode('street')}>Street</button>
+        <button type="button" className={cls(fullMediaMode === 'aerial' && 'is-active')} onClick={() => setFullMediaMode('aerial')}>Aerial</button>
+        <button type="button" className={cls(fullMediaMode === 'parcel' && 'is-active')} onClick={() => setFullMediaMode('parcel')}>Parcel Context</button>
+      </div>
+    )
+
+    if (fullMediaMode === 'street') {
+      return (
+        <DossierCard className="nx-property-hero-shell nx-glass-card nx-property-hero--elite nx-property-hero--full">
+          {fullModeButtons}
+          <div className="nx-property-hero__full-stage is-street">
+            <div className="nx-panel-label">INTERACTIVE STREET VIEW</div>
+            <div className="nx-property-panel__stage">
+              {interactiveStreetViewUrl ? (
+                <iframe
+                  src={interactiveStreetViewUrl}
+                  title={`Street view for ${address}`}
+                  className="nx-property-panel__iframe"
+                  loading="eager"
+                  allowFullScreen
+                  referrerPolicy="no-referrer-when-downgrade"
+                />
+              ) : streetViewUrl && !imageFailed ? (
+                <img src={streetViewUrl} alt="Street view" onError={() => setImageFailed(true)} />
+              ) : (
+                <div className="nx-panel-fallback"><Icon name="eye" /></div>
+              )}
+            </div>
+            {heroInfoOverlay}
+            {heroBadgeOverlay}
+            <div className="nx-property-panel__aerial-meta nx-property-panel__aerial-meta--fullwidth">
+              <div className="nx-property-panel__meta-block">
+                <label>MARKET OPS</label>
+                <span>{displayMarket}</span>
+              </div>
+              <div className="nx-property-panel__meta-block">
+                <label>ASSET CLASS</label>
+                <span className={isMultifamily ? 'is-highlight' : ''}>{displayType}</span>
+              </div>
+            </div>
+            <div className="nx-property-hero__chips nx-property-hero__chips--full">
+              {chips.map((chip) => <PropertyBadge key={chip.label} label={chip.label} icon={chip.icon} accent={chip.accent} />)}
+            </div>
+          </div>
+        </DossierCard>
+      )
+    }
+
+    if (fullMediaMode === 'aerial') {
+      return (
+        <DossierCard className="nx-property-hero-shell nx-glass-card nx-property-hero--elite nx-property-hero--full">
+          {fullModeButtons}
+          <div className="nx-property-hero__full-stage is-aerial">
+            <div className="nx-panel-label">INTERACTIVE AERIAL VIEW</div>
+            <div className="nx-property-panel__aerial-frame nx-property-panel__aerial-frame--full">
+              {interactiveAerialViewUrl ? (
+                <iframe
+                  src={interactiveAerialViewUrl}
+                  title={`Aerial view for ${address}`}
+                  className="nx-property-panel__iframe"
+                  loading="eager"
+                  allowFullScreen
+                  referrerPolicy="no-referrer-when-downgrade"
+                />
+              ) : aerialUrl ? (
+                <img src={aerialUrl as string | undefined} alt="Aerial view" />
+              ) : (
+                <div className="nx-panel-fallback"><Icon name="map" /><span>Interactive aerial unavailable</span></div>
+              )}
+            </div>
+            {heroInfoOverlay}
+            {heroBadgeOverlay}
+            <div className="nx-property-panel__aerial-meta nx-property-panel__aerial-meta--fullwidth">
+              <div className="nx-property-panel__meta-block">
+                <label>MARKET OPS</label>
+                <span>{displayMarket}</span>
+              </div>
+              <div className="nx-property-panel__meta-block">
+                <label>ASSET CLASS</label>
+                <span className={isMultifamily ? 'is-highlight' : ''}>{displayType}</span>
+              </div>
+            </div>
+            <div className="nx-property-hero__chips nx-property-hero__chips--full">
+              {chips.map((chip) => <PropertyBadge key={chip.label} label={chip.label} icon={chip.icon} accent={chip.accent} />)}
+            </div>
+          </div>
+        </DossierCard>
+      )
+    }
+
+    if (fullMediaMode === 'parcel') {
+      return (
+        <DossierCard className="nx-property-hero-shell nx-glass-card nx-property-hero--elite nx-property-hero--full">
+          {fullModeButtons}
+          <div className="nx-property-hero__full-stage is-aerial">
+            <div className="nx-panel-label">PARCEL CONTEXT</div>
+            <div className="nx-property-panel__aerial-frame nx-property-panel__aerial-frame--full nx-property-panel__parcel-stage">
+              {interactiveAerialViewUrl ? (
+                <iframe
+                  src={interactiveAerialViewUrl}
+                  title={`Parcel context for ${address}`}
+                  className="nx-property-panel__iframe"
+                  loading="eager"
+                  allowFullScreen
+                  referrerPolicy="no-referrer-when-downgrade"
+                />
+              ) : aerialUrl ? (
+                <img src={aerialUrl as string | undefined} alt="Parcel context" />
+              ) : (
+                <div className="nx-panel-fallback"><Icon name="map" /><span>Parcel context unavailable</span></div>
+              )}
+              {heroInfoOverlay}
+              <div className="nx-property-panel__parcel-overlay">
+                <div className="nx-property-panel__parcel-card">
+                  <span>Subject Parcel</span>
+                  <strong>{address}</strong>
+                </div>
+                <div className="nx-property-panel__parcel-grid">
+                  <div><label>ZIP</label><strong>{snapshot.zip || thread.property_address_zip || 'ZIP Pending'}</strong></div>
+                  <div><label>COUNTY</label><strong>{thread.property_county_name || 'County Pending'}</strong></div>
+                  <div><label>UNITS</label><strong>{unitCount || '—'}</strong></div>
+                  <div><label>LOT / CLASS</label><strong>{snapshot.propertyType || thread.propertyType || 'Pending'}</strong></div>
+                </div>
+              </div>
+            </div>
+            <div className="nx-property-panel__aerial-meta nx-property-panel__aerial-meta--fullwidth">
+              <div className="nx-property-panel__meta-block">
+                <label>MARKET OPS</label>
+                <span>{displayMarket}</span>
+              </div>
+              <div className="nx-property-panel__meta-block">
+                <label>ASSET CLASS</label>
+                <span className={isMultifamily ? 'is-highlight' : ''}>{displayType}</span>
+              </div>
+            </div>
+          </div>
+        </DossierCard>
+      )
+    }
+
     return (
       <DossierCard className="nx-property-hero-shell nx-glass-card nx-property-hero--elite nx-property-hero--full">
+        {fullModeButtons}
         <div className="nx-property-split-console nx-property-split-console--full">
           <div className="nx-property-panel nx-property-panel--street-stage is-streetview">
             <div className="nx-panel-label">INTERACTIVE STREET VIEW</div>
@@ -1788,24 +2316,32 @@ export const PropertyHeroCard = ({ thread, snapshot, panelMode }: { thread: Work
                 <div className="nx-panel-fallback"><Icon name="eye" /></div>
               )}
             </div>
-            <div className="nx-property-address-bar nx-property-address-bar--full">
-              <div className="nx-property-address-copy">
-                <span className="nx-property-address-kicker">FULL SCREEN DEAL INTELLIGENCE</span>
-                <strong>{address}</strong>
-              </div>
-              <div className="nx-property-intel-links">
-                <LinkedRecordButton label="Zillow" url={links.zillow} icon="globe" />
-                <LinkedRecordButton label="Maps" url={links.streetView} icon="map" />
-                <LinkedRecordButton label="Realtor" url={links.realtor} icon="globe" />
-              </div>
-            </div>
+            {heroInfoOverlay}
+            {heroBadgeOverlay}
           </div>
 
           <div className="nx-property-panel nx-property-panel--intel-rail is-aerial">
             <div className="nx-panel-label">AERIAL COMPANION</div>
             <div className="nx-property-panel__aerial-shell">
               <div className="nx-property-panel__aerial-frame">
-                <img src={aerialUrl as string | undefined} alt="Aerial view" />
+                {interactiveAerialViewUrl ? (
+                  <iframe
+                    src={interactiveAerialViewUrl}
+                    title={`Aerial view for ${address}`}
+                    className="nx-property-panel__iframe"
+                    loading="eager"
+                    allowFullScreen
+                    referrerPolicy="no-referrer-when-downgrade"
+                  />
+                ) : aerialUrl ? (
+                  <img src={aerialUrl as string | undefined} alt="Aerial view" />
+                ) : (
+                  <div className="nx-panel-fallback"><Icon name="map" /><span>Interactive aerial unavailable</span></div>
+                )}
+              </div>
+              <div className="nx-property-panel__aerial-overlay">
+                <span>Parcel / aerial companion</span>
+                <strong>{thread.property_county_name || 'County Pending'}</strong>
               </div>
               <div className="nx-property-panel__aerial-meta">
                 <div className="nx-property-panel__meta-block">
@@ -1925,7 +2461,7 @@ const ContactIntelligenceCard = ({
   snapshot: NormalizedPropertySnapshot
   intelligence: ThreadIntelligenceRecord | null
 }) => {
-  const [activeTab, setActiveTab] = useState<'prospect' | 'owner' | 'portfolio' | 'financial' | 'property'>('prospect')
+  const [activeTab, setActiveTab] = useState<'prospect' | 'owner' | 'portfolio' | 'financial' | 'property' | 'phone' | 'email'>('prospect')
   const [propertyTab, setPropertyTab] = useState<'overview' | 'location' | 'property' | 'equity' | 'tax'>('overview')
 
   const sellerName = snapshot.ownerDisplayName || snapshot.ownerName || thread.displayName || thread.ownerDisplayName || thread.ownerName || 'Unknown seller'
@@ -1941,6 +2477,8 @@ const ContactIntelligenceCard = ({
   const topTabs = [
     { id: 'prospect', label: 'PROSPECT', icon: 'users' },
     { id: 'owner', label: 'OWNER', icon: 'user' },
+    { id: 'phone', label: 'PHONE', icon: 'phone' },
+    { id: 'email', label: 'EMAIL', icon: 'mail' },
     { id: 'portfolio', label: 'PORTFOLIO', icon: 'layers' },
     { id: 'financial', label: 'FINANCIAL', icon: 'trending-up' },
     { id: 'property', label: 'PROPERTY', icon: 'home' },
@@ -2004,13 +2542,36 @@ const ContactIntelligenceCard = ({
     { label: 'TOTAL TAX AMOUNT', value: formatMoney(Number(snapshot.taxAmount || thread.tax_amt || thread.past_due_amount || 0)), tone: 'danger' },
   ]
 
+  const phoneRows: Array<{ label: string; value?: unknown; render?: React.ReactNode; tone?: any }> = [
+    { label: 'BEST PHONE', value: fmtPhone(thread.prospect_best_phone || thread.phoneNumber || thread.canonicalE164), tone: 'accent' },
+    { label: 'DISPLAY PHONE', value: fmtPhone(thread.displayPhone) },
+    { label: 'PHONE CARRIER', value: snapshot.phoneCarrier || (thread as any).phone_carrier },
+    { label: 'CONTACTABILITY SCORE', value: formatScore(thread.contactability_score), tone: 'success' },
+    { label: 'PHONE MATCH SCORE', value: formatScore(thread.prospect_phone_score || thread.prospect_contact_score) },
+    { label: 'SMS ELIGIBLE', value: formatBoolean((thread as any).sms_eligible) },
+    { label: 'LANGUAGE', value: snapshot.language || thread.language_preference || thread.contactLanguage },
+  ]
+
+  const emailRows: Array<{ label: string; value?: unknown; render?: React.ReactNode; tone?: any }> = [
+    { label: 'BEST EMAIL', value: thread.prospect_best_email || (thread as any).best_email_1, tone: 'accent' },
+    { label: 'EMAIL ELIGIBLE', value: formatBoolean((thread as any).email_eligible) },
+    { label: 'CONTACT NAME', value: snapshot.prospectFullName || thread.prospect_full_name || thread.displayName },
+    { label: 'OWNER NAME', value: snapshot.ownerDisplayName || thread.ownerDisplayName || thread.ownerName },
+    { label: 'LAST MESSAGE CONTEXT', value: thread.latestMessageBody || thread.lastMessageBody },
+  ]
+
   const activeRows = activeTab === 'prospect'
     ? prospectRows
     : activeTab === 'owner'
       ? ownerRows
+      : activeTab === 'phone'
+        ? phoneRows
+        : activeTab === 'email'
+          ? emailRows
       : activeTab === 'portfolio'
         ? portfolioRows
         : financialRows
+  const visibleActiveRows = activeRows.filter(({ value, render }) => Boolean(render) || isPresent(value))
 
   return (
     <DossierCard className="nx-contact-intel-v2 nx-glass-card">
@@ -2096,9 +2657,9 @@ const ContactIntelligenceCard = ({
           </>
         ) : (
           <div className="nx-intel-grid-v2">
-            {activeRows.map(({ label, value, render, tone }) => (
+            {visibleActiveRows.length > 0 ? visibleActiveRows.map(({ label, value, render, tone }) => (
               <IntelField key={label} label={label} value={value} render={render} tone={tone} />
-            ))}
+            )) : <PremiumEmptyState title="Not enriched yet" body="Additional contact and ownership fields will appear here when enrichment finishes." kicker="LOWER SIGNAL" />}
           </div>
         )}
       </div>
@@ -2106,7 +2667,7 @@ const ContactIntelligenceCard = ({
   )
 }
 
-const SellerCommandCard = ({
+export const SellerCommandCard = ({
   thread,
   phase3,
   onStatusChange,
@@ -2230,11 +2791,620 @@ const SellerCommandCard = ({
   )
 }
 
+const CommandHeaderStrip = ({
+  thread,
+  snapshot,
+  phase3,
+}: {
+  thread: WorkflowThread
+  snapshot: NormalizedPropertySnapshot
+  phase3: Phase3Intelligence | null
+}) => {
+  const sellerName =
+    snapshot.ownerDisplayName ||
+    snapshot.ownerName ||
+    thread.ownerDisplayName ||
+    thread.ownerName ||
+    thread.prospect_full_name ||
+    thread.displayName ||
+    'Unknown Seller'
+  const address = snapshot.fullAddress || thread.displayAddress || thread.propertyAddress || thread.subject || 'Property Unknown'
+  const market = snapshot.market || thread.displayMarket || thread.market || `${snapshot.city || ''}${snapshot.state ? `, ${snapshot.state}` : ''}` || 'Market Pending'
+  const zip = snapshot.zip || thread.property_address_zip || 'ZIP Pending'
+  const county = thread.property_county_name || 'County Pending'
+  const phone = fmtPhone(thread.prospect_best_phone || thread.phoneNumber || thread.displayPhone || thread.canonicalE164) || 'Phone Pending'
+  const stage = getSellerStageVisual(thread.conversationStage)
+  const status = getStatusVisual(thread.inboxStatus)
+  const automation = automationStateVisuals[thread.automationState || 'manual']
+  const score = percentFromScore(thread.finalAcquisitionScore || (thread as any).ai_score || thread.motivationScore, 42)
+  const confidence = clamp((isPresent(thread.estimatedValue) ? 38 : 12) + (isPresent(thread.estimatedRepairCost) ? 22 : 0) + (isPresent(thread.equityPercent) ? 16 : 0) + (isPresent(thread.contactability_score) ? 10 : 0), 18, 96)
+  const dataConfidence = clamp((isPresent(snapshot.fullAddress) ? 24 : 0) + (isPresent(snapshot.estimatedValue || thread.estimatedValue) ? 22 : 0) + (isPresent(snapshot.repairCost || thread.estimatedRepairCost) ? 18 : 0) + (isPresent(thread.property_county_name) ? 12 : 0) + (isPresent(thread.phoneNumber || thread.prospect_best_phone) ? 12 : 0), 22, 94)
+  const isHot = thread.priority === 'urgent' || thread.inboxStatus === 'new_reply'
+  const acquisitionSummary = phase3?.latestSnapshot?.capture_reason || getNextBestAction(thread).reason
+  const badges = [
+    thread.inboxStatus === 'new_reply' ? 'UNREAD' : null,
+    thread.isSuppressed ? 'SUPPRESSED' : null,
+    isHot ? 'HOT' : null,
+  ].filter((badge): badge is string => Boolean(badge))
+
+  return (
+    <DossierCard className={cls('nx-command-header-strip', isHot && 'is-hot')}>
+      <div className="nx-command-header-strip__identity">
+        <div className="nx-command-header-strip__copy">
+          <span className="nx-command-header-strip__eyebrow">DEAL COMMAND DOSSIER</span>
+          <strong>{address}</strong>
+          <div className="nx-command-header-strip__seller">{sellerName}</div>
+          <div className="nx-command-header-strip__meta">
+            <span>{market}</span>
+            <span>{zip}</span>
+            <span>{county}</span>
+            <span>{phone}</span>
+          </div>
+          <div className="nx-command-header-strip__telemetry">
+            <QuietBadge label={`STATUS ${status.label}`} tone="accent" />
+            <QuietBadge label={`STAGE ${stage.label}`} tone="warning" />
+            <QuietBadge label={`PRIORITY ${(thread.priority || thread.priorityBucket || 'standard').toUpperCase()}`} tone={isHot ? 'danger' : 'default'} />
+            <QuietBadge label={`AUTO ${(automation?.label || 'Manual').toUpperCase()}`} tone={thread.automationState === 'active' ? 'success' : 'default'} />
+            <QuietBadge label={`LAST CONTACT ${thread.lastMessageAt ? formatRelativeTime(thread.lastMessageAt).toUpperCase() : 'PENDING'}`} tone="default" />
+            {badges.map((badge) => (
+              <QuietBadge key={badge} label={badge} tone={badge === 'HOT' ? 'danger' : badge === 'SUPPRESSED' ? 'warning' : 'accent'} />
+            ))}
+          </div>
+          <div className="nx-command-header-strip__actions">
+            {['Draft Reply', 'Run Underwriting', 'Open Comps', 'Show Buyers', 'Pause Auto', 'Suppress'].map((action, index) => (
+              <button type="button" key={action} className={cls('nx-command-header-strip__action', index === 0 && 'is-primary', action === 'Suppress' && 'is-danger')}>
+                {action}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="nx-command-header-strip__right">
+          <div className="nx-command-header-strip__scoreboard">
+            <ScoreRing label="Deal Score" value={score} tone={isHot ? 'red' : 'blue'} sublabel="Acquisition probability from live seller and property signals." />
+            <div className="nx-command-header-strip__confidence">
+              <div className="nx-command-header-strip__mini-stat">
+                <span>Confidence</span>
+                <strong>{Math.round(confidence)}/100</strong>
+                <p>Offerability + seller signal alignment.</p>
+              </div>
+              <div className="nx-command-header-strip__mini-stat">
+                <span>Data Confidence</span>
+                <strong>{Math.round(dataConfidence)}/100</strong>
+                <p>Address, valuation, contact, and enrichment coverage.</p>
+              </div>
+            </div>
+          </div>
+          <div className="nx-command-header-strip__nextcard">
+            <span>Acquisition Summary</span>
+            <strong>{thread.uiIntent || thread.detected_intent || 'Signal set still forming'}</strong>
+            <p>{acquisitionSummary}</p>
+          </div>
+        </div>
+      </div>
+    </DossierCard>
+  )
+}
+
+const DealDecisionStrip = ({ thread }: { thread: WorkflowThread }) => {
+  const arv = asNum(thread.estimatedValue || thread.arv)
+  const investorExit = arv ? Math.round(arv * 0.82) : 0
+  const repairs = asNum(thread.estimatedRepairCost)
+  const spread = Math.max(Math.round(arv * 0.18), 25000)
+  const mao = Math.max(arv - repairs - spread, 0)
+  const offer = asNum(thread.ai_recommended_opening_offer || thread.ai_offer || thread.cashOffer || thread.mao || mao)
+  const walkaway = asNum(thread.walkaway_price || thread.walkaway_internal || mao * 1.05)
+  const confidence = clamp((arv ? 40 : 18) + (repairs ? 18 : 0) + (thread.contactability_score ? 8 : 0) + (thread.finalAcquisitionScore ? 16 : 0), 24, 96)
+  const offerFloor = offer ? Math.round(offer * 0.94) : Math.round(mao * 0.94)
+  const offerCeiling = offer ? Math.round(offer * 1.03) : Math.round(mao * 1.03)
+  const decisionTone = confidence >= 72 ? 'pursue' : confidence >= 52 ? 'review' : 'pass'
+  const decisionLabel = decisionTone === 'pursue' ? 'Pursue' : decisionTone === 'review' ? 'Review' : 'Pass'
+  const decisionReasons = [
+    isPresent(thread.equityPercent) ? `${formatPercent(thread.equityPercent)} equity supports acquisition spread.` : 'Equity position still needs validation.',
+    repairs ? `${formatMoney(repairs)} repair load priced into the decision range.` : 'Repair estimate still pending.',
+    thread.inboxStatus === 'new_reply' ? 'Seller just replied, timing is favorable for action.' : 'Seller timing is still moderate.',
+  ]
+  const waterfall = [
+    { label: 'Retail ARV', value: arv, tone: 'green' },
+    { label: 'Investor Exit', value: investorExit, tone: 'purple' },
+    { label: 'Repair Estimate', value: repairs, tone: 'amber' },
+    { label: 'Target Spread', value: spread, tone: 'red' },
+    { label: 'MAO', value: mao, tone: 'blue' },
+    { label: 'AI Recommended Offer', value: offer, tone: 'green' },
+  ]
+
+  if (!arv) {
+    return (
+      <DossierCard className="nx-command-module nx-deal-decision-strip">
+        <div className="nx-command-module__head">
+          <div>
+            <span>DEAL DECISION</span>
+            <strong>Underwriting is waiting on valuation support</strong>
+          </div>
+        </div>
+        <PremiumEmptyState
+          title="Offer decision pending"
+          body="Retail comps, repair assumptions, and buyer demand are required before this deal can move into a confident pursue / review / pass lane."
+        />
+      </DossierCard>
+    )
+  }
+
+  const maxWaterfall = Math.max(...waterfall.map((item) => item.value), 1)
+
+  return (
+    <DossierCard className="nx-command-module nx-deal-decision-strip">
+      <div className="nx-command-module__head">
+        <div>
+          <span>DEAL DECISION</span>
+          <strong>Offer range, waterfall, and pursue signal</strong>
+        </div>
+        <button type="button" className="nx-command-module__cta">Run Underwriting</button>
+      </div>
+      <div className="nx-deal-decision-strip__grid">
+        <div className="nx-deal-decision-strip__hero">
+          <span>AI Recommended Offer</span>
+          <strong>{formatMoney(offer)}</strong>
+          <p>{formatMoney(offerFloor)} - {formatMoney(offerCeiling)}</p>
+          <div className="nx-deal-decision-strip__microcopy">
+            Walkaway {formatMoney(walkaway)} • Confidence {Math.round(confidence)}/100
+          </div>
+        </div>
+        <div className="nx-deal-decision-strip__waterfall">
+          {waterfall.map((item) => (
+            <div key={item.label} className={cls('nx-deal-decision-strip__step', `is-${item.tone}`)}>
+              <div className="nx-deal-decision-strip__step-head">
+                <span>{item.label}</span>
+                <strong>{formatMoney(item.value)}</strong>
+              </div>
+              <div className="nx-offer-waterfall__track">
+                <div className="nx-offer-waterfall__fill" style={{ width: `${(item.value / maxWaterfall) * 100}%` }} />
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className={cls('nx-deal-decision-strip__decision', `is-${decisionTone}`)}>
+          <span>{decisionLabel}</span>
+          <strong>{decisionTone === 'pursue' ? 'Deal support is strong enough to lean in.' : decisionTone === 'review' ? 'Signal set is mixed. Operator review recommended.' : 'Risk outweighs support right now.'}</strong>
+          <ul>
+            {decisionReasons.map((reason) => <li key={reason}>{reason}</li>)}
+          </ul>
+        </div>
+      </div>
+    </DossierCard>
+  )
+}
+
+const CompIntelligenceModule = ({ thread, snapshot }: { thread: WorkflowThread; snapshot: NormalizedPropertySnapshot }) => {
+  const arv = asNum(thread.estimatedValue || snapshot.estimatedValue)
+  const sqft = asNum(thread.building_square_feet || thread.sqft || snapshot.sqft)
+  const address = snapshot.fullAddress || thread.displayAddress || thread.propertyAddress || thread.subject || 'Property Unknown'
+  const propertyLat = Number((thread as any).lat ?? thread.latitude ?? 0)
+  const propertyLng = Number((thread as any).lng ?? thread.longitude ?? 0)
+  const compMapUrl = buildInteractiveAerialViewUrl({ address, lat: propertyLat, lng: propertyLng })
+  if (!arv) {
+    return (
+      <DossierCard className="nx-command-module nx-comp-module">
+        <div className="nx-command-module__head">
+          <div>
+            <span>COMP INTELLIGENCE</span>
+            <strong>Comp workspace staged inside the dossier</strong>
+          </div>
+        </div>
+        <PremiumEmptyState title="Needs comps" body="Attach retail or investor comps to light up ARV ranges, comp chips, and the subject map." />
+      </DossierCard>
+    )
+  }
+
+  const compBase = [
+    { label: 'Subject', price: arv, distance: 0, ppsf: sqft ? Math.round(arv / sqft) : 247, score: 100, selected: true },
+    { label: 'Comp A', price: Math.round(arv * 0.97), distance: 0.3, ppsf: sqft ? Math.round((arv * 0.97) / Math.max(sqft - 120, 1)) : 242, score: 94, selected: true },
+    { label: 'Comp B', price: Math.round(arv * 1.04), distance: 0.6, ppsf: sqft ? Math.round((arv * 1.04) / Math.max(sqft + 65, 1)) : 253, score: 88, selected: true },
+    { label: 'Comp C', price: Math.round(arv * 0.9), distance: 0.9, ppsf: sqft ? Math.round((arv * 0.9) / Math.max(sqft - 220, 1)) : 234, score: 78, selected: false },
+  ]
+  const selectedCount = compBase.filter((item) => item.selected).length
+  const excludedCount = compBase.length - selectedCount
+
+  return (
+    <DossierCard className="nx-command-module nx-comp-module">
+      <div className="nx-command-module__head">
+        <div>
+          <span>COMP INTELLIGENCE</span>
+          <strong>Retail and investor comp workspace</strong>
+        </div>
+        <div className="nx-command-module__chips">
+          <QuietBadge label={`SELECTED ${selectedCount}`} tone="success" />
+          <QuietBadge label={`EXCLUDED ${excludedCount}`} tone="warning" />
+          <QuietBadge label={`ARV ${formatMoney(Math.round(arv * 0.98))} - ${formatMoney(Math.round(arv * 1.03))}`} tone="accent" />
+        </div>
+      </div>
+      <div className="nx-comp-module__layout">
+        <div className="nx-comp-module__map">
+          <div className="nx-comp-module__map-title">Radius + comp map</div>
+          <div className="nx-comp-module__map-canvas">
+            {compMapUrl ? (
+              <iframe
+                src={compMapUrl}
+                title={`Comp map for ${address}`}
+                className="nx-comp-module__map-iframe"
+                loading="lazy"
+                allowFullScreen
+                referrerPolicy="no-referrer-when-downgrade"
+              />
+            ) : null}
+            <div className="nx-comp-module__heat is-one" />
+            <div className="nx-comp-module__heat is-two" />
+            {compBase.map((comp, index) => (
+              <button
+                key={comp.label}
+                type="button"
+                className={cls('nx-comp-module__pin', comp.selected && 'is-selected', index === 0 && 'is-subject')}
+                style={{ left: `${18 + index * 21}%`, top: `${22 + (index % 3) * 20}%` }}
+              >
+                {index === 0 ? 'S' : `$${Math.round(comp.price / 1000)}k`}
+              </button>
+            ))}
+          </div>
+          <div className="nx-comp-module__filters">
+            {['0.5 mi', '90d', 'MLS', 'Investor', 'Outliers Off'].map((chip) => (
+              <span key={chip}>{chip}</span>
+            ))}
+          </div>
+        </div>
+        <div className="nx-comp-module__visuals">
+          <SparkBars title="Comp Price Distribution" values={compBase.map((comp) => comp.price)} labels={compBase.map((comp) => comp.label.replace('Comp ', 'C'))} tone="blue" />
+          <SparkBars title="Price / Sqft" values={compBase.map((comp) => comp.ppsf)} labels={['Sub', 'A', 'B', 'C']} tone="green" />
+        </div>
+      </div>
+      <div className="nx-comp-module__table">
+        {compBase.map((comp) => (
+          <div key={comp.label} className={cls('nx-comp-module__row', comp.selected && 'is-selected')}>
+            <div>
+              <strong>{comp.label}</strong>
+              <span>{formatMoney(comp.price)} • {comp.distance.toFixed(1)} mi</span>
+            </div>
+            <div>
+              <strong>{comp.ppsf}/sf</strong>
+              <span>Similarity {comp.score}</span>
+            </div>
+            <button type="button">{comp.selected ? 'Use' : 'Exclude'}</button>
+          </div>
+        ))}
+      </div>
+    </DossierCard>
+  )
+}
+
+const BuyerMatchingModule = ({ thread, snapshot }: { thread: WorkflowThread; snapshot: NormalizedPropertySnapshot }) => {
+  const equity = percentFromScore(snapshot.equityPercent || thread.equityPercent, 38)
+  const demand = clamp(percentFromScore(thread.finalAcquisitionScore || thread.priorityScore || 58) * 0.78 + equity * 0.22, 22, 96)
+  const avgBuy = asNum(thread.estimatedValue || snapshot.estimatedValue) ? Math.round(asNum(thread.estimatedValue || snapshot.estimatedValue) * 0.72) : 0
+  const leaderboard = [
+    { name: 'Peachtree Value Fund', type: 'Fund', score: clamp(demand + 6, 0, 100), markets: 'Atlanta South + 30315', recent: 14, avg: avgBuy, max: Math.round(avgBuy * 1.24), last: '12d ago', reason: 'Heavy small multifamily velocity in this ZIP.' },
+    { name: 'Northline Cash Buyers', type: 'Local Investor', score: clamp(demand - 4, 0, 100), markets: 'Intown duplexes', recent: 9, avg: Math.round(avgBuy * 0.92), max: Math.round(avgBuy * 1.1), last: '21d ago', reason: 'Matches size and entry price band.' },
+    { name: 'Beltline Yield Group', type: 'Rental Operator', score: clamp(demand - 11, 0, 100), markets: 'Multifamily + rental holds', recent: 7, avg: Math.round(avgBuy * 1.08), max: Math.round(avgBuy * 1.36), last: '34d ago', reason: 'Strong hold profile for repaired yield assets.' },
+  ]
+
+  if (!avgBuy) {
+    return (
+      <DossierCard className="nx-command-module nx-buyer-match-module">
+        <div className="nx-command-module__head">
+          <div>
+            <span>BUYER MATCHING</span>
+            <strong>Demand layer waiting on dispo signals</strong>
+          </div>
+        </div>
+        <PremiumEmptyState title="Buyer demand layer pending" body="Upload investor buyer comps or purchase history to activate buyer matching." />
+      </DossierCard>
+    )
+  }
+
+  return (
+    <DossierCard className="nx-command-module nx-buyer-match-module">
+      <div className="nx-command-module__head">
+        <div>
+          <span>BUYER MATCHING</span>
+          <strong>Dispo confidence and top-fit buyers</strong>
+        </div>
+        <div className="nx-command-module__chips">
+          <QuietBadge label={`AVG BUY ${formatMoney(avgBuy)}`} tone="success" />
+          <QuietBadge label={`ZIP ${(snapshot.zip || thread.property_address_zip || 'PENDING').toUpperCase()}`} tone="accent" />
+        </div>
+      </div>
+      <div className="nx-buyer-match-module__top">
+        <ScoreRing label="Buyer Demand" value={demand} tone="green" sublabel="Modeled from market fit, score, and recent property economics." />
+        <div className="nx-buyer-match-module__meters">
+          <MeterBar label="Price Fit" value={clamp(demand + 4, 0, 100)} tone="green" />
+          <MeterBar label="Asset Fit" value={clamp(demand - 6, 0, 100)} tone="purple" />
+          <MeterBar label="Market Fit" value={clamp(demand + 2, 0, 100)} tone="blue" />
+          <MeterBar label="Velocity Fit" value={clamp(demand - 10, 0, 100)} tone="amber" />
+        </div>
+      </div>
+      <div className="nx-buyer-match-module__leaderboard">
+        {leaderboard.map((buyer, index) => (
+          <div key={buyer.name} className="nx-buyer-match-module__card">
+            <div>
+              <span>TOP MATCH {index + 1} • {buyer.type}</span>
+              <strong>{buyer.name}</strong>
+              <p>{buyer.markets}</p>
+              <p>Recent purchases {buyer.recent} • Avg {formatMoney(buyer.avg)} • Max {formatMoney(buyer.max)} • Last {buyer.last}</p>
+              <p>{buyer.reason}</p>
+            </div>
+            <div className="nx-buyer-match-module__score">{buyer.score}</div>
+            <div className="nx-buyer-match-module__actions">
+              <button type="button">Generate Dispo Packet</button>
+              <button type="button">Add to Buyer Blast</button>
+              <button type="button">View Buyer Profile</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </DossierCard>
+  )
+}
+
+const ConversationBrainModule = ({
+  thread,
+  messages,
+  phase3,
+}: {
+  thread: WorkflowThread
+  messages: ThreadMessage[]
+  phase3: Phase3Intelligence | null
+}) => {
+  const latestInbound = messages.find((message) => message.direction === 'inbound') || null
+  const latestOutbound = messages.find((message) => message.direction === 'outbound') || null
+  const summary = phase3?.latestSnapshot?.capture_reason || thread.aiSummary || thread.aiDraft || 'Conversation intelligence will summarize seller signals here.'
+  const intent = thread.uiIntent || thread.detected_intent || 'Intent Pending'
+  const sentiment = thread.sentiment || 'Neutral'
+  const urgency = percentFromScore(thread.urgency_score || thread.priorityScore, thread.priority === 'urgent' ? 82 : 44)
+  const stageFlow = ['Ownership Check', 'Interest Probe', 'Price Discovery', 'Condition', 'Offer', 'Negotiation', 'Contract']
+  const currentStageIndex = Math.max(
+    0,
+    sellerStageOptions.findIndex((option) => option.value === thread.conversationStage),
+  )
+
+  return (
+    <DossierCard className="nx-command-module nx-conversation-brain-module">
+      <div className="nx-command-module__head">
+        <div>
+          <span>SELLER / AI CONVERSATION BRAIN</span>
+          <strong>What the seller is saying and what we do next</strong>
+        </div>
+        <button type="button" className="nx-command-module__cta">Draft Reply</button>
+      </div>
+      <div className="nx-conversation-brain-module__top">
+        <div className="nx-conversation-brain-module__message">
+          <label>LAST INBOUND</label>
+          <strong>{latestInbound?.body || thread.latestMessageBody || thread.lastMessageBody || 'No inbound seller reply recorded yet.'}</strong>
+          <p>Latest outbound: {latestOutbound?.body || 'Pending operator or automation response.'}</p>
+        </div>
+        <div className="nx-conversation-brain-module__signals">
+          <QuietBadge label={`INTENT ${intent}`} tone="accent" />
+          <QuietBadge label={`SENTIMENT ${String(sentiment).toUpperCase()}`} tone="warning" />
+          <QuietBadge label={`AUTO ${(automationStateVisuals[thread.automationState || 'manual']?.label || 'Manual').toUpperCase()}`} tone="success" />
+        </div>
+      </div>
+      <div className="nx-conversation-brain-module__stageflow">
+        {stageFlow.map((label, index) => (
+          <div key={label} className={cls('nx-conversation-brain-module__stage', index <= currentStageIndex && 'is-complete', index === currentStageIndex && 'is-active')}>
+            <span>{label}</span>
+          </div>
+        ))}
+      </div>
+      <div className="nx-conversation-brain-module__summary">
+        <div>
+          <label>Conversation Summary</label>
+          <p>{summary}</p>
+        </div>
+        <div className="nx-conversation-brain-module__next">
+          <MeterBar label="Urgency" value={urgency} tone={urgency >= 70 ? 'red' : 'amber'} />
+          <div className="nx-conversation-brain-module__reply-chips">
+            {[
+              thread.aiDraft || 'Acknowledge seller and advance discovery',
+              'Ask condition follow-up',
+              'Move toward offer timing',
+            ].map((reply) => (
+              <button type="button" key={reply}>{reply}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </DossierCard>
+  )
+}
+
+const CommandActionDock = ({
+  onOpenMap,
+  onOpenDossier,
+  onOpenAi,
+}: {
+  onOpenMap: () => void
+  onOpenDossier: () => void
+  onOpenAi: () => void
+}) => (
+  <div className="nx-command-action-dock">
+    <div className="nx-command-action-dock__group">
+      <span>Communication</span>
+      <div>
+        <button type="button">Draft Reply</button>
+        <button type="button">Send SMS</button>
+        <button type="button">Send Email</button>
+      </div>
+    </div>
+    <div className="nx-command-action-dock__group">
+      <span>Analysis</span>
+      <div>
+        <button type="button">Run Underwriting</button>
+        <button type="button">Open Comp Workspace</button>
+        <button type="button">Show Buyer Matches</button>
+      </div>
+    </div>
+    <div className="nx-command-action-dock__group">
+      <span>Navigation</span>
+      <div>
+        <button type="button" onClick={onOpenMap}>Open Map</button>
+        <button type="button" onClick={onOpenDossier}>Open Dossier</button>
+        <button type="button" onClick={onOpenAi}>AI Assist</button>
+      </div>
+    </div>
+    <div className="nx-command-action-dock__group is-safety">
+      <span>Safety</span>
+      <div>
+        <button type="button" className="is-warning">Pause Automation</button>
+        <button type="button" className="is-danger">Suppress</button>
+        <button type="button" className="is-danger">DNC</button>
+      </div>
+    </div>
+  </div>
+)
+
+const CompactDealSnapshot = ({
+  thread,
+  snapshot,
+}: {
+  thread: WorkflowThread
+  snapshot: NormalizedPropertySnapshot
+}) => {
+  const address = snapshot.fullAddress || thread.displayAddress || thread.propertyAddress || thread.subject || 'Property Unknown'
+  const sellerName = snapshot.ownerDisplayName || snapshot.ownerName || thread.ownerDisplayName || thread.ownerName || thread.prospect_full_name || thread.displayName || 'Unknown Seller'
+  const stage = getSellerStageVisual(thread.conversationStage)
+  const score = percentFromScore(thread.finalAcquisitionScore || (thread as any).ai_score || thread.motivationScore, 42)
+  const offer = asNum(thread.ai_recommended_opening_offer || thread.ai_offer || thread.cashOffer || thread.mao)
+  const value = asNum(snapshot.estimatedValue || thread.estimatedValue)
+  const nextAction = thread.nextSystemAction || getNextBestAction(thread).title
+
+  return (
+    <div className="nx-deal-compact-shell">
+      <PropertyHeroCard thread={thread} snapshot={snapshot} panelMode="half" layoutMode="compact" />
+      <DossierCard className="nx-deal-compact-summary">
+        <span className="nx-command-header-strip__eyebrow">DEAL SNAPSHOT</span>
+        <strong>{address}</strong>
+        <p>{sellerName}</p>
+        <div className="nx-deal-compact-summary__metrics">
+          <div><label>Score</label><strong>{Math.round(score)}</strong></div>
+          <div><label>Value</label><strong>{value ? formatMoney(value) : 'Pending'}</strong></div>
+          <div><label>Offer</label><strong>{offer ? formatMoney(offer) : 'Pending'}</strong></div>
+          <div><label>Stage</label><strong>{stage.label}</strong></div>
+        </div>
+        <div className="nx-deal-compact-summary__next">
+          <span>Next</span>
+          <strong>{nextAction}</strong>
+        </div>
+        <div className="nx-deal-compact-summary__actions">
+          <button type="button">Open Full Deal</button>
+          <button type="button">Draft Reply</button>
+          <button type="button" className="is-warning">Pause Auto</button>
+        </div>
+      </DossierCard>
+    </div>
+  )
+}
+
+const MediumDealWorkspace = ({
+  thread,
+  snapshot,
+  messages,
+  phase3,
+}: {
+  thread: WorkflowThread
+  snapshot: NormalizedPropertySnapshot
+  messages: ThreadMessage[]
+  phase3: Phase3Intelligence | null
+}) => {
+  const address = snapshot.fullAddress || thread.displayAddress || thread.propertyAddress || thread.subject || 'Property Unknown'
+  const sellerName = snapshot.ownerDisplayName || snapshot.ownerName || thread.ownerDisplayName || thread.ownerName || thread.prospect_full_name || thread.displayName || 'Unknown Seller'
+  const stage = getSellerStageVisual(thread.conversationStage)
+  const status = getStatusVisual(thread.inboxStatus)
+  const value = asNum(snapshot.estimatedValue || thread.estimatedValue)
+  const offer = asNum(thread.ai_recommended_opening_offer || thread.ai_offer || thread.cashOffer || thread.mao)
+  const score = percentFromScore(thread.finalAcquisitionScore || (thread as any).ai_score || thread.motivationScore, 42)
+
+  return (
+    <div className="nx-deal-medium-shell">
+      <DossierCard className="nx-deal-medium-header">
+        <div className="nx-deal-medium-header__row">
+          <div>
+            <span className="nx-command-header-strip__eyebrow">DEAL INTELLIGENCE</span>
+            <strong>{address}</strong>
+            <p>{sellerName}</p>
+          </div>
+          <div className="nx-deal-medium-header__score">{Math.round(score)}</div>
+        </div>
+        <div className="nx-deal-medium-header__chips">
+          <QuietBadge label={`STATUS ${status.label}`} tone="accent" />
+          <QuietBadge label={`STAGE ${stage.label}`} tone="warning" />
+          <QuietBadge label={value ? `VALUE ${formatMoney(value)}` : 'VALUE PENDING'} tone="success" />
+          <QuietBadge label={offer ? `OFFER ${formatMoney(offer)}` : 'OFFER PENDING'} tone="default" />
+        </div>
+      </DossierCard>
+      <PropertyHeroCard thread={thread} snapshot={snapshot} panelMode="half" layoutMode="medium" />
+      <DealDecisionStrip thread={thread} />
+      <ConversationBrainModule thread={thread} messages={messages} phase3={phase3} />
+      <DossierCard className="nx-deal-medium-actions">
+        <button type="button">Draft Reply</button>
+        <button type="button">Run Underwriting</button>
+        <button type="button">Open Comp Workspace</button>
+        <button type="button">Show Buyer Matches</button>
+      </DossierCard>
+    </div>
+  )
+}
+
+const DealCommandDossier = ({
+  thread,
+  snapshot,
+  messages,
+  phase3,
+  intelligence,
+  layoutMode,
+  onOpenMap,
+  onOpenDossier,
+  onOpenAi,
+}: {
+  thread: WorkflowThread
+  snapshot: NormalizedPropertySnapshot
+  messages: ThreadMessage[]
+  phase3: Phase3Intelligence | null
+  intelligence: ThreadIntelligenceRecord | null
+  layoutMode: ViewLayoutMode
+  onOpenMap: () => void
+  onOpenDossier: () => void
+  onOpenAi: () => void
+}) => (
+  <div className={cls('nx-deal-command-dossier', layoutMode === 'full' && 'is-full')}>
+    <CommandHeaderStrip thread={thread} snapshot={snapshot} phase3={phase3} />
+    <div className="nx-deal-command-dossier__grid">
+      <div className="nx-deal-command-dossier__media">
+        <PropertyHeroCard thread={thread} snapshot={snapshot} panelMode="full" layoutMode="full" />
+      </div>
+      <div className="nx-deal-command-dossier__decision">
+        <DealDecisionStrip thread={thread} />
+      </div>
+      <div className="nx-deal-command-dossier__comp">
+        <CompIntelligenceModule thread={thread} snapshot={snapshot} />
+      </div>
+      <div className="nx-deal-command-dossier__buyer">
+        <BuyerMatchingModule thread={thread} snapshot={snapshot} />
+      </div>
+      <div className="nx-deal-command-dossier__seller-grid">
+        <ConversationBrainModule thread={thread} messages={messages} phase3={phase3} />
+        <ContactIntelligenceCard thread={thread} snapshot={snapshot} intelligence={intelligence} />
+        <TimelinePanel thread={thread} messages={messages} phase3={phase3} />
+      </div>
+      <div className="nx-deal-command-dossier__links">
+        <LinkedRecordsCard thread={thread} />
+      </div>
+    </div>
+    <CommandActionDock onOpenMap={onOpenMap} onOpenDossier={onOpenDossier} onOpenAi={onOpenAi} />
+  </div>
+)
+
 export interface IntelligencePanelProps {
   thread: WorkflowThread | null
   threadContext?: ThreadContext | null
   intelligence?: ThreadIntelligenceRecord | null
   panelMode?: Exclude<PanelMode, 'hidden'>
+  layoutMode?: ViewLayoutMode
   isSuppressed?: boolean
   onCollapse?: () => void
   onOpenMap?: () => void
@@ -2251,6 +3421,7 @@ export const IntelligencePanel = ({
   intelligence = null,
   isSuppressed = false,
   panelMode = 'default',
+  layoutMode = 'full',
   onCollapse,
   onOpenMap = () => undefined,
   onOpenDossier = () => undefined,
@@ -2261,6 +3432,8 @@ export const IntelligencePanel = ({
 }: IntelligencePanelProps) => {
   void threadContext
   void isSuppressed
+  void onStatusChange
+  void onStageChange
 
   if (!thread) {
     return (
@@ -2275,9 +3448,13 @@ export const IntelligencePanel = ({
 
   const snapshot = useMemo(() => normalizePropertySnapshot(intelligence || null, thread), [intelligence, thread])
   const { data: phase3 } = usePhase3Intelligence(thread.threadKey)
-
+  const panelClassMode = layoutMode === 'compact'
+    ? 'compact'
+    : layoutMode === 'medium'
+    ? 'split'
+    : 'workspace'
   return (
-    <aside className={cls('nx-intelligence-panel', `is-mode-${panelMode}`)}>
+    <aside className={cls('nx-intelligence-panel', `is-mode-${panelClassMode}`, `is-layout-${layoutMode}`, `is-panel-${panelMode}`)}>
       <header className="nx-intel-header">
         <span className="nx-section-label">DEAL COMMAND DOSSIER</span>
         {onCollapse ? (
@@ -2288,13 +3465,23 @@ export const IntelligencePanel = ({
       </header>
 
       <div className="nx-intel-scroll-body">
-        <SellerCommandCard thread={thread} phase3={phase3} onStatusChange={onStatusChange} onStageChange={onStageChange} />
-        <PropertyHeroCard thread={thread} snapshot={snapshot} panelMode={panelMode} />
-        <OfferMemoCard thread={thread} />
-        <ContactIntelligenceCard thread={thread} snapshot={snapshot} intelligence={intelligence} />
-        <TimelinePanel thread={thread} messages={messages} phase3={phase3} />
-        <LinkedRecordsCard thread={thread} />
-        <ActionRailCard onOpenMap={onOpenMap} onOpenDossier={onOpenDossier} onOpenAi={onOpenAi} />
+        {layoutMode === 'compact' ? (
+          <CompactDealSnapshot thread={thread} snapshot={snapshot} />
+        ) : layoutMode === 'medium' ? (
+          <MediumDealWorkspace thread={thread} snapshot={snapshot} messages={messages} phase3={phase3} />
+        ) : (
+          <DealCommandDossier
+            thread={thread}
+            snapshot={snapshot}
+            messages={messages}
+            phase3={phase3}
+            intelligence={intelligence}
+            layoutMode={layoutMode}
+            onOpenMap={onOpenMap}
+            onOpenDossier={onOpenDossier}
+            onOpenAi={onOpenAi}
+          />
+        )}
       </div>
     </aside>
   )

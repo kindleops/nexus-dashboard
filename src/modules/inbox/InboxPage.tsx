@@ -59,6 +59,7 @@ import { ChatThread } from './components/ChatThread'
 import { Composer } from './components/Composer'
 import { ComposerTranslationBar } from './components/ComposerTranslationBar'
 import { IntelligencePanel } from './components/IntelligencePanel'
+import { InboxPipelineView } from './components/InboxPipelineView'
 import type { TemplateActionPayload } from './components/TemplatePopover'
 import { InboxActivityPanel } from './components/InboxActivityPanel'
 import { InboxCommandMap } from './InboxCommandMap'
@@ -98,9 +99,6 @@ import {
   getInboxViewCounts,
   getSavedPresetConfig,
   isSuppressedThread,
-  resolveThreadAddressLine,
-  resolveThreadMarketBadge,
-  resolveThreadPrimaryName,
   type ApplyInboxFiltersOptions,
   type InboxAdvancedFilters,
   type InboxSavedFilterPreset,
@@ -108,6 +106,7 @@ import {
   type InboxViewSelectValue,
 } from './inbox-ui-helpers'
 import { buildConversationDecision } from './inbox-decisioning'
+import { getViewLayoutMode, type ViewWidthPercent } from './view-layout'
 import './inbox-premium.css'
 import './inbox-rebuild.css'
 import './inbox-polish.css'
@@ -141,7 +140,6 @@ type InboxWorkspaceView =
   | 'metrics'
   | 'comp_intelligence'
   | 'buyer_match'
-type ViewWidthPercent = '25' | '50' | '75' | '100'
 type TableDensityMode = 'comfortable' | 'compact' | 'ultra_compact'
 const DEFAULT_QUEUE_COMMAND_CAPS: QueueCommandCaps = {
   sends_per_run: 10,
@@ -276,21 +274,6 @@ const computeWorkspaceWidths = (
     [views[2]]: '25',
     [views[3]]: '25',
   } as Record<InboxWorkspaceView, ViewWidthPercent>
-}
-
-const stageLaneLabel = (stage: string): string => {
-  const normalized = String(stage || '').toLowerCase()
-  if (normalized.includes('ownership')) return 'Ownership Check'
-  if (normalized.includes('interest')) return 'Interest Probe'
-  if (normalized.includes('active') || normalized.includes('seller_response')) return 'Active Communication'
-  if (normalized.includes('price')) return 'Price Discovery'
-  if (normalized.includes('condition')) return 'Condition Details'
-  if (normalized.includes('offer')) return 'Offer Stage'
-  if (normalized.includes('negotiat') || normalized.includes('counter')) return 'Negotiation'
-  if (normalized.includes('contract')) return 'Contract Sent'
-  if (normalized.includes('title') || normalized.includes('closing')) return 'Title / Closing'
-  if (normalized.includes('dead') || normalized.includes('suppressed') || normalized.includes('closed')) return 'Dead / Suppressed'
-  return 'Ownership Check'
 }
 
 export default function InboxPage() {
@@ -638,31 +621,6 @@ export default function InboxPage() {
     }
     return `${selectedWorkspaceViews.length} Views Active`
   }, [activeWorkspaceView, selectedWorkspaceViews.length])
-
-  const pipelineColumns = useMemo(() => {
-    const columns = [
-      'Ownership Check',
-      'Interest Probe',
-      'Active Communication',
-      'Price Discovery',
-      'Condition Details',
-      'Offer Stage',
-      'Negotiation',
-      'Contract Sent',
-      'Title / Closing',
-      'Dead / Suppressed',
-    ]
-    const grouped = new Map<string, InboxWorkflowThread[]>()
-    columns.forEach((column) => grouped.set(column, []))
-    filtered.forEach((thread) => {
-      const lane = stageLaneLabel(String(thread.conversationStage || (thread as any).stage || ''))
-      grouped.get(lane)?.push(thread)
-    })
-    return columns.map((label) => ({
-      label,
-      threads: (grouped.get(label) ?? []).slice(0, 12),
-    }))
-  }, [filtered])
 
   const queueRows = useMemo(() => {
     return filtered
@@ -2154,60 +2112,7 @@ export default function InboxPage() {
   const isDoubleSided = inboxMode === 'full_double'
   const showRightCommandPanel = isDefaultWorkspaceShell
 
-  const renderCompactOperationalList = (paneWidth: ViewWidthPercent) => (
-    <section className={cls('nx-workspace-surface', 'nx-workspace-surface--list-compact', `is-pane-${paneWidth}`)}>
-      <div className="nx-workspace-card">
-        <div className="nx-workspace-card__title">
-          <Icon name="list" />
-          <span>Operational Conversations</span>
-        </div>
-        <div className="nx-workspace-lane__body">
-          {filtered.slice(0, paneWidth === '25' ? 8 : 12).map((thread) => {
-            const decision = decisions.get(thread.id) ?? buildConversationDecision(thread)
-            return (
-              <button
-                key={thread.id}
-                type="button"
-                className={cls('nx-workspace-thread-chip', selected?.id === thread.id && 'is-active')}
-                onClick={() => handleSelect(thread.id)}
-              >
-                <strong>{resolveThreadPrimaryName(thread) || 'Property Thread'}</strong>
-                <span>{resolveThreadAddressLine(thread) || 'Property Unknown'}</span>
-                <small>{resolveThreadMarketBadge(thread) || decision.conversation_stage.replace(/_/g, ' ')}</small>
-              </button>
-            )
-          })}
-        </div>
-      </div>
-    </section>
-  )
-
-  const renderThreadRailPane = (paneMode: 'single' | 'multi' = 'single') => (
-    <section className={cls('nx-workspace-pane-surface', 'nx-workspace-pane-surface--thread-rail', paneMode === 'multi' && 'is-compact-pane')}>
-      <InboxSidebar
-        threads={threads}
-        selectedId={selected?.id ?? null}
-        activeViewFilter={viewFilter}
-        onSelect={handleSelect}
-        onThreadAction={handleThreadAction}
-        savedPreset={savedPreset}
-        onApplySavedPreset={applySavedPreset}
-        viewCounts={viewCounts}
-        onOpenAdvancedFilters={() => setActiveOverlay('filters')}
-        onClearFilters={handleResetFilters}
-        onLoadMore={handleLoadMore}
-        canLoadMore={Boolean(data.pagination?.hasMore)}
-        recentlyUpdatedThreadIds={recentlyUpdatedThreadIds}
-        searchQuery={searchQuery}
-        onSearchQueryChange={setSearchQuery}
-        visibleThreadCount={visibleThreadCount}
-        loadingError={data.liveFetchError}
-        densityMode={paneMode === 'single' ? 'full' : 'compact'}
-      />
-    </section>
-  )
-
-  const renderSmsThreadPane = () => (
+  const renderSmsThreadPane = (layoutMode: ReturnType<typeof getViewLayoutMode> = 'full') => (
     <section className="nx-workspace-pane-surface nx-workspace-pane-surface--sms-thread">
       <ChatThread
         thread={selected}
@@ -2221,6 +2126,7 @@ export default function InboxPage() {
         onThreadAction={handleOperatorAction}
         onOpenDebug={() => setDebugModalOpen(true)}
         searchQuery={searchQuery}
+        layoutMode={layoutMode}
       />
 
       {showTranslation && (
@@ -2282,24 +2188,20 @@ export default function InboxPage() {
     paneMode: 'single' | 'multi' = 'single',
     paneWidth: ViewWidthPercent = '100',
   ) => {
-    if (view === 'thread') {
-      return renderThreadRailPane(paneMode)
-    }
+    const layoutMode = getViewLayoutMode(paneWidth)
 
-    if (view === 'sms_thread') {
-      return renderSmsThreadPane()
+    if (view === 'thread' || view === 'sms_thread') {
+      return renderSmsThreadPane(layoutMode)
     }
 
     if (view === 'list') {
-      if (paneMode === 'multi' && (paneWidth === '25' || paneWidth === '50')) {
-        return renderCompactOperationalList(paneWidth)
-      }
       return (
         <InboxConversationTable
           threads={filtered}
           selectedId={selected?.id ?? null}
           sort={tableSort}
           density={paneMode === 'multi' && paneWidth === '75' ? 'compact' : tableDensity}
+          layoutMode={layoutMode}
           statCounts={listStatCounts}
           onSortChange={setTableSort}
           onDensityChange={setTableDensity}
@@ -2334,6 +2236,7 @@ export default function InboxPage() {
               selectedBuyerKey={selectedBuyerKey}
               onSelectBuyerKey={setSelectedBuyerKey}
               fullHeight={paneMode === 'single'}
+              layoutMode={layoutMode}
             />
           </div>
         </section>
@@ -2353,34 +2256,22 @@ export default function InboxPage() {
           onOpenAi={() => setActiveOverlay('ai')}
           messages={displayedMessages}
           panelMode={paneMode === 'single' ? 'full' : paneWidth === '25' || paneWidth === '50' ? 'half' : 'default'}
+          layoutMode={layoutMode}
         />
       )
     }
 
     if (view === 'pipeline') {
       return (
-        <section className="nx-workspace-surface nx-workspace-surface--kanban">
-          {pipelineColumns.map((column) => (
-            <div key={column.label} className="nx-workspace-lane">
-              <div className="nx-workspace-lane__header">
-                <strong>{column.label}</strong>
-                <span>{column.threads.length}</span>
-              </div>
-              <div className="nx-workspace-lane__body">
-                {column.threads.map((thread) => {
-                  const decision = buildConversationDecision(thread)
-                  return (
-                    <button key={thread.id} type="button" className={cls('nx-workspace-thread-chip', selected?.id === thread.id && 'is-active')} onClick={() => handleSelect(thread.id)}>
-                      <strong>{thread.ownerName || 'Property Thread'}</strong>
-                      <span>{thread.propertyAddress || thread.subject || 'Property Unknown'}</span>
-                      <small>{decision.next_action}</small>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          ))}
-        </section>
+        <InboxPipelineView
+          threads={filtered}
+          selectedId={selected?.id ?? null}
+          selectedThread={selected}
+          layoutMode={layoutMode}
+          onSelect={handleSelect}
+          onOpenCommandView={handleOpenDealIntelligence}
+          onThreadAction={handleOperatorAction}
+        />
       )
     }
 
@@ -2641,12 +2532,13 @@ export default function InboxPage() {
             onStatusChange={handleStatusChange}
             onStageChange={handleStageChange}
             onOpenMap={() => setSelectedWorkspaceViews(['command_map'])}
-            onOpenDossier={() => handleOpenDealIntelligence(selected?.id ?? null)}
-            onOpenAi={() => setActiveOverlay('ai')}
-            messages={displayedMessages}
-            panelMode="full"
-          />
-        </div>
+          onOpenDossier={() => handleOpenDealIntelligence(selected?.id ?? null)}
+          onOpenAi={() => setActiveOverlay('ai')}
+          messages={displayedMessages}
+          panelMode="full"
+          layoutMode="full"
+        />
+      </div>
       ) : (
       <div className="nx-inbox-shell">
         {showLeftPanel && !isDealIntelligenceView && (
@@ -2733,23 +2625,28 @@ export default function InboxPage() {
 
           {isCustomMultiView ? (
             <section className="nx-workspace-split-grid">
-              {selectedWorkspaceViews.map((view) => (
-                <div
-                  key={view}
-                  className={cls(
-                    'nx-workspace-pane',
-                    `is-view-${view}`,
-                    `is-width-${workspaceWidths[view] ?? '25'}`,
-                    view === activeWorkspaceView && 'is-primary',
-                  )}
-                  style={{ flex: `0 0 ${workspaceWidths[view] ?? '25'}%` }}
-                >
-                  {renderWorkspacePane(view, 'multi', workspaceWidths[view] ?? '25')}
-                </div>
-              ))}
+              {selectedWorkspaceViews.map((view) => {
+                const paneWidth = workspaceWidths[view] ?? '25'
+                const layoutMode = getViewLayoutMode(paneWidth)
+                return (
+                  <div
+                    key={view}
+                    className={cls(
+                      'nx-workspace-pane',
+                      `is-view-${view}`,
+                      `is-width-${paneWidth}`,
+                      `is-layout-${layoutMode}`,
+                      view === activeWorkspaceView && 'is-primary',
+                    )}
+                    style={{ flex: `0 0 ${paneWidth}%` }}
+                  >
+                    {renderWorkspacePane(view, 'multi', paneWidth)}
+                  </div>
+                )
+              })}
             </section>
           ) : isDefaultWorkspaceShell ? (
-            renderWorkspacePane('sms_thread', 'single')
+            renderWorkspacePane('thread', 'single')
           ) : (
             renderWorkspacePane(activeWorkspaceView, 'single')
           )}

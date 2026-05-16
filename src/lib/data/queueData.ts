@@ -19,9 +19,11 @@ export type {
 }
 import { getSupabaseClient } from '../supabaseClient'
 import {
+  asBoolean,
   asIso,
   asNumber,
   asString,
+  getFirst,
   mapErrorMessage,
   normalizeStatus,
   safeArray,
@@ -309,7 +311,7 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
   const readyCount = items.filter((i) => i.status === 'ready').length
   const scheduledCount = items.filter((i) => i.status === 'scheduled').length
   const approvalCount = items.filter((i) => i.status === 'approval' || i.riskLevel === 'high').length
-  const failedCount = items.filter((i) => i.status === 'failed' || i.status === 'retry' || i.status === 'paused_invalid_queue_row').length
+  const failedCount = items.filter((i) => i.status === 'failed' || i.status === 'retry').length
   const retryCount = items.filter((i) => i.status === 'retry').length
   const heldCount = items.filter((i) => i.status === 'held').length
   

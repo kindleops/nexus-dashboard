@@ -3,6 +3,7 @@ import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { formatInboxThreadTimestamp } from '../../../shared/formatters'
 import { resolveThreadAddressLine, resolveThreadMarketBadge, resolveThreadPrimaryName } from '../inbox-ui-helpers'
 import { buildConversationDecision, type ConversationDecision } from '../inbox-decisioning'
+import type { ViewLayoutMode } from '../view-layout'
 
 const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
 
@@ -18,6 +19,7 @@ interface InboxConversationTableProps {
   selectedId: string | null
   sort: ConversationTableSort
   density: 'comfortable' | 'compact' | 'ultra_compact'
+  layoutMode?: ViewLayoutMode
   statCounts: Array<{ label: string; value: number | string | null | undefined }>
   onSortChange: (sort: ConversationTableSort) => void
   onDensityChange: (density: 'comfortable' | 'compact' | 'ultra_compact') => void
@@ -38,6 +40,12 @@ type RowModel = {
   seller: string
   address: string
   market: string
+  lastIntent: string
+  lastMessagePreview: string
+  priorityLabel: string
+  isHot: boolean
+  isSuppressed: boolean
+  isUnread: boolean
   lastActivityMs: number
   followUpMs: number | null
 }
@@ -60,6 +68,7 @@ export const InboxConversationTable = memo(({
   selectedId,
   sort,
   density,
+  layoutMode = 'full',
   statCounts,
   onSortChange,
   onDensityChange,
@@ -72,15 +81,118 @@ export const InboxConversationTable = memo(({
         const seller = resolveThreadPrimaryName(thread)
         const address = resolveThreadAddressLine(thread)
         const market = resolveThreadMarketBadge(thread)
+        const lastIntent = String((thread as any).uiIntent || (thread as any).detected_intent || decision.intent_tags[0] || decision.seller_intent || 'unknown')
+          .replace(/_/g, ' ')
+        const lastMessagePreview = String(thread.lastMessageBody || thread.preview || 'No recent message').trim()
+        const priorityLabel = String(thread.priority || '').trim() || (
+          decision.priority_score >= 85
+            ? 'Urgent'
+            : decision.priority_score >= 65
+            ? 'High'
+            : decision.priority_score >= 40
+            ? 'Normal'
+            : 'Low'
+        )
+        const isHot = ['HOT', 'VERY_HOT', 'READY_TO_CLOSE'].includes(decision.lead_temperature) || ['urgent', 'high'].includes(String(thread.priority || '').toLowerCase())
+        const isSuppressed = decision.suppression_status === 'suppressed' || Boolean(thread.isSuppressed)
+        const isUnread = decision.unread || Boolean((thread as any).unread) || Number((thread as any).unreadCount || 0) > 0
         const lastActivityMs = new Date(thread.lastMessageAt || thread.lastMessageIso || 0).getTime()
         const followUpMs = decision.next_follow_up_at ? new Date(decision.next_follow_up_at).getTime() : null
-        return { thread, decision, seller, address, market, lastActivityMs, followUpMs }
+        return {
+          thread,
+          decision,
+          seller,
+          address,
+          market,
+          lastIntent,
+          lastMessagePreview,
+          priorityLabel,
+          isHot,
+          isSuppressed,
+          isUnread,
+          lastActivityMs,
+          followUpMs,
+        }
       })
       .sort(sorters[sort])
   }, [sort, threads])
 
+  const renderStatusBadges = (row: RowModel) => (
+    <div className="nx-thread-card__badges">
+      <span className="nx-table-pill is-stage">{row.decision.conversation_stage.replace(/_/g, ' ')}</span>
+      <span className="nx-table-pill is-auto">{row.thread.inboxStatus.replace(/_/g, ' ')}</span>
+      <span className="nx-table-pill is-temp">{row.priorityLabel}</span>
+      {row.isHot && <span className="nx-table-pill is-hot">Hot</span>}
+      {row.isSuppressed && <span className="nx-table-pill is-suppressed">Suppressed</span>}
+      {row.isUnread && <span className="nx-table-pill is-unread">Unread</span>}
+    </div>
+  )
+
+  if (layoutMode === 'compact' || layoutMode === 'medium') {
+    return (
+      <section className={cls('nx-inbox-table-view', `is-${density}`, `is-layout-${layoutMode}`)}>
+        <header className="nx-inbox-table-view__header">
+          <div>
+            <span className="nx-section-label">LIST VIEW</span>
+            <h2>Operational Conversations</h2>
+          </div>
+          <div className="nx-inbox-table-view__controls">
+            <select value={sort} onChange={(event) => onSortChange(event.target.value as ConversationTableSort)}>
+              <option value="last_activity_desc">Last Activity</option>
+              <option value="priority_desc">Priority Score</option>
+              <option value="seller_asc">Seller</option>
+              <option value="temperature_desc">Temperature</option>
+              <option value="follow_up_asc">Next Follow-Up</option>
+            </select>
+          </div>
+        </header>
+
+        <div className="nx-inbox-stat-strip" aria-label="List view stats">
+          {statCounts.map((item) => (
+            <div key={item.label} className="nx-inbox-stat-strip__item">
+              <span>{item.label}</span>
+              <strong>{formatStat(item.value)}</strong>
+            </div>
+          ))}
+        </div>
+
+        <div className={cls('nx-thread-card-list', layoutMode === 'medium' && 'is-medium')}>
+          {rows.map((row) => {
+            const ts = formatInboxThreadTimestamp(row.thread.lastMessageAt || row.thread.lastMessageIso)
+            return (
+              <button
+                key={row.thread.id}
+                type="button"
+                className={cls('nx-thread-card', selectedId === row.thread.id && 'is-selected')}
+                onClick={() => onSelect(row.thread.id)}
+              >
+                <div className="nx-thread-card__row">
+                  <div>
+                    <strong className="nx-thread-card__title">{row.seller || 'Unknown seller'}</strong>
+                    <span className="nx-thread-card__subtitle">{row.address || 'No address available'}</span>
+                  </div>
+                  <time className="nx-thread-card__time">{ts.fullLabel}</time>
+                </div>
+                {renderStatusBadges(row)}
+                {layoutMode === 'medium' && (
+                  <div className="nx-thread-card__meta-grid">
+                    <span><label>Market</label><strong>{row.market || '—'}</strong></span>
+                    <span><label>Intent</label><strong>{row.lastIntent || '—'}</strong></span>
+                    <span><label>Next Action</label><strong>{row.decision.next_action || '—'}</strong></span>
+                    <span><label>Automation</label><strong>{row.decision.automation_status}</strong></span>
+                  </div>
+                )}
+                <p className="nx-thread-card__preview">{row.lastMessagePreview}</p>
+              </button>
+            )
+          })}
+        </div>
+      </section>
+    )
+  }
+
   return (
-    <section className={cls('nx-inbox-table-view', `is-${density}`)}>
+    <section className={cls('nx-inbox-table-view', `is-${density}`, `is-layout-${layoutMode}`)}>
       <header className="nx-inbox-table-view__header">
         <div>
           <span className="nx-section-label">LIST VIEW</span>
@@ -123,17 +235,21 @@ export const InboxConversationTable = memo(({
             <tr>
               <th>Seller</th>
               <th>Property</th>
-              <th>Message</th>
-              <th>Intent</th>
+              <th>Market</th>
+              <th>Status</th>
               <th>Stage</th>
+              <th>Priority</th>
+              <th>Intent</th>
               <th>Next Action</th>
-              <th>Score</th>
+              <th>Automation</th>
+              <th>Message</th>
               <th>Last</th>
-              <th>Auto</th>
+              <th>Flags</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ thread, decision, seller, address, market }) => {
+            {rows.map((row) => {
+              const { thread, decision, seller, address, market, lastIntent, lastMessagePreview, priorityLabel, isHot, isSuppressed, isUnread } = row
               const ts = formatInboxThreadTimestamp(thread.lastMessageAt || thread.lastMessageIso)
               return (
                 <tr
@@ -143,19 +259,28 @@ export const InboxConversationTable = memo(({
                 >
                   <td>
                     <div className="nx-inbox-table__primary">{seller}</div>
-                    <div className="nx-inbox-table__secondary">{market || '—'}</div>
+                    <div className="nx-inbox-table__secondary">{thread.phoneNumber || thread.canonicalE164 || '—'}</div>
                   </td>
                   <td>
                     <div className="nx-inbox-table__primary">{address || '—'}</div>
                     <div className="nx-inbox-table__secondary">{(thread as any).propertyType || (thread as any).property_type || '—'}</div>
                   </td>
-                  <td className="is-preview">{thread.lastMessageBody || thread.preview || 'No recent message'}</td>
-                  <td><span className="nx-table-pill is-intent">{intentLabel(decision)}</span></td>
+                  <td>{market || '—'}</td>
+                  <td><span className="nx-table-pill is-auto">{thread.inboxStatus.replace(/_/g, ' ')}</span></td>
                   <td><span className="nx-table-pill is-stage">{decision.conversation_stage.replace(/_/g, ' ')}</span></td>
+                  <td><span className="nx-table-pill is-temp">{priorityLabel}</span></td>
+                  <td><span className="nx-table-pill is-intent">{lastIntent || intentLabel(decision)}</span></td>
                   <td className="is-preview">{decision.next_action}</td>
-                  <td>{Number.isFinite(decision.priority_score) ? decision.priority_score : '—'}</td>
-                  <td>{ts.fullLabel}</td>
                   <td><span className="nx-table-pill is-auto">{decision.automation_status}</span></td>
+                  <td className="is-preview">{lastMessagePreview}</td>
+                  <td>{ts.fullLabel}</td>
+                  <td>
+                    <div className="nx-thread-card__badges is-inline">
+                      {isHot && <span className="nx-table-pill is-hot">Hot</span>}
+                      {isSuppressed && <span className="nx-table-pill is-suppressed">Suppressed</span>}
+                      {isUnread && <span className="nx-table-pill is-unread">Unread</span>}
+                    </div>
+                  </td>
                 </tr>
               )
             })}

@@ -37,7 +37,10 @@
     "proof:deal-header-mobile-wrap": "node scripts/proof/deal-header-mobile-wrap.mjs",
     "proof:deal-command-header-layout": "node scripts/proof/deal-command-header-layout.mjs",
     "proof:deal-command-header-mobile": "node scripts/proof/deal-command-header-mobile.mjs",
-    "proof:deal-command-header-no-overflow": "node scripts/proof/deal-command-header-no-overflow.mjs"
+    "proof:deal-command-header-no-overflow": "node scripts/proof/deal-command-header-no-overflow.mjs",
+    "proof:ui": "playwright test",
+    "proof:deal": "playwright test tests/ui/deal-intelligence.spec.ts",
+    "proof:headed": "playwright test tests/ui/deal-intelligence.spec.ts --headed"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.104.1",
@@ -52,7 +55,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
-    "@playwright/test": "^1.59.1",
+    "@playwright/test": "^1.60.0",
     "@types/node": "^24.12.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

@@ -6,6 +6,7 @@ import { formatMessageTime } from '../../../shared/formatters'
 import { getThreadMatchedKeywords, resolveThreadAddressLine, resolveThreadMarketBadge, resolveThreadPrimaryName } from '../inbox-ui-helpers'
 import { getStatusVisual, getSellerStageVisual } from '../status-visuals'
 import { usePhase3Intelligence } from '../hooks/usePhase3Intelligence'
+import type { ViewLayoutMode } from '../view-layout'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
@@ -22,6 +23,7 @@ interface ChatThreadProps {
   onThreadAction?: (id: string, action: string) => void
   onOpenDebug?: () => void
   searchQuery?: string
+  layoutMode?: ViewLayoutMode
 }
 
 const fallback = (value: unknown, placeholder = '') => {
@@ -89,6 +91,7 @@ export const ChatThread = ({
   onThreadAction,
   onOpenDebug,
   searchQuery = '',
+  layoutMode = 'full',
 }: ChatThreadProps) => {
   const { data: phase3 } = usePhase3Intelligence(thread?.threadKey)
   const listRef = useRef<HTMLDivElement | null>(null)
@@ -158,11 +161,20 @@ export const ChatThread = ({
   })
   const stageVisual = getSellerStageVisual(thread.conversationStage)
   const matchedKeywords = getThreadMatchedKeywords(thread, searchQuery)
+  const isCompact = layoutMode === 'compact'
+  const isMedium = layoutMode === 'medium'
+  const showContextCards = layoutMode === 'expanded' || layoutMode === 'full'
 
   const isAutoPaused = String(thread.status || '').toLowerCase().includes('pause') || (thread as any).automationStatus === 'paused'
+  const quickActions = [
+    { id: 'mark_hot', label: 'Hot', icon: 'zap' },
+    { id: 'snooze', label: 'Snooze', icon: 'clock' },
+    { id: isAutoPaused ? 'resume_automation' : 'pause_automation', label: isAutoPaused ? 'Resume Auto' : 'Pause Auto', icon: isAutoPaused ? 'play' : 'pause' },
+    { id: 'suppress', label: 'DNC', icon: 'slash' },
+  ] as const
 
   return (
-    <div className="nx-chat-container">
+    <div className={cls('nx-chat-container', `is-layout-${layoutMode}`)}>
       <header className="nx-chat-header">
         <div className="nx-chat-header__main">
           <div className="nx-chat-header__name-row">
@@ -193,59 +205,79 @@ export const ChatThread = ({
             {isSuppressed && <span className="nx-suppression-badge is-danger"><Icon name="slash" /> Opted Out</span>}
           </div>
         </div>
-        <div className="nx-chat-header__actions">
-          <button type="button" className={cls('nx-chat-action', isStarred && 'is-active')} title={isStarred ? 'Unstar thread' : 'Star thread'} onClick={() => onToggleStar?.()}
-          >
-            <Icon name="star" />
-          </button>
-          <button type="button" className={cls('nx-chat-action', thread.isPinned && 'is-active')} title={thread.isPinned ? 'Unpin thread' : 'Pin thread'} onClick={() => onTogglePin?.()}
-          >
-            <Icon name="bookmark" />
-          </button>
-          <button type="button" className="nx-chat-action" title={thread.isRead ? 'Mark as unread' : 'Mark as read'} onClick={() => onThreadAction?.(thread.id, thread.isRead ? 'unread' : 'read')}
-          >
-            <Icon name="inbox" />
-          </button>
-          <button type="button" className="nx-chat-action" title={thread.isArchived ? 'Unarchive thread' : 'Archive thread'} onClick={() => onToggleArchive?.()}
-          >
-            <Icon name="archive" />
-          </button>
-        </div>
+        {isCompact ? (
+          <details className="nx-chat-actions-disclosure">
+            <summary>Actions</summary>
+            <div className="nx-chat-actions-disclosure__menu">
+              <button type="button" className={cls('nx-chat-action', isStarred && 'is-active')} onClick={() => onToggleStar?.()}><Icon name="star" /><span>{isStarred ? 'Unstar' : 'Star'}</span></button>
+              <button type="button" className={cls('nx-chat-action', thread.isPinned && 'is-active')} onClick={() => onTogglePin?.()}><Icon name="bookmark" /><span>{thread.isPinned ? 'Unpin' : 'Pin'}</span></button>
+              <button type="button" className="nx-chat-action" onClick={() => onThreadAction?.(thread.id, thread.isRead ? 'unread' : 'read')}><Icon name="inbox" /><span>{thread.isRead ? 'Unread' : 'Read'}</span></button>
+              <button type="button" className="nx-chat-action" onClick={() => onToggleArchive?.()}><Icon name="archive" /><span>{thread.isArchived ? 'Unarchive' : 'Archive'}</span></button>
+            </div>
+          </details>
+        ) : (
+          <div className="nx-chat-header__actions">
+            <button type="button" className={cls('nx-chat-action', isStarred && 'is-active')} title={isStarred ? 'Unstar thread' : 'Star thread'} onClick={() => onToggleStar?.()}
+            >
+              <Icon name="star" />
+            </button>
+            <button type="button" className={cls('nx-chat-action', thread.isPinned && 'is-active')} title={thread.isPinned ? 'Unpin thread' : 'Pin thread'} onClick={() => onTogglePin?.()}
+            >
+              <Icon name="bookmark" />
+            </button>
+            <button type="button" className="nx-chat-action" title={thread.isRead ? 'Mark as unread' : 'Mark as read'} onClick={() => onThreadAction?.(thread.id, thread.isRead ? 'unread' : 'read')}
+            >
+              <Icon name="inbox" />
+            </button>
+            <button type="button" className="nx-chat-action" title={thread.isArchived ? 'Unarchive thread' : 'Archive thread'} onClick={() => onToggleArchive?.()}
+            >
+              <Icon name="archive" />
+            </button>
+          </div>
+        )}
       </header>
 
-      {/* Operator Rail */}
-      <div className="nx-operator-rail">
-        <div className="nx-rail-group">
-          {(thread.inboxStatus === 'new_reply' || (thread as any).inbox_category === 'new_inbound') && thread.automationState === 'active' && (
-            <button type="button" className="nx-rail-btn is-auto-reply" onClick={() => onThreadAction?.(thread.id, 'auto_reply')} title="Queue Deterministic Auto-Reply">
-              <Icon name="zap" /> <span>AUTO-REPLY</span>
-            </button>
-          )}
-          <button type="button" className="nx-rail-btn is-hot" onClick={() => onThreadAction?.(thread.id, 'mark_hot')}>
-            <Icon name="zap" /> <span>HOT</span>
-          </button>
-          <button type="button" className="nx-rail-btn" onClick={() => onThreadAction?.(thread.id, 'snooze')}>
-            <Icon name="clock" /> <span>SNOOZE</span>
-          </button>
+      {!isCompact && (
+        <div className="nx-operator-rail">
+          <div className="nx-rail-group">
+            {(thread.inboxStatus === 'new_reply' || (thread as any).inbox_category === 'new_inbound') && thread.automationState === 'active' && (
+              <button type="button" className="nx-rail-btn is-auto-reply" onClick={() => onThreadAction?.(thread.id, 'auto_reply')} title="Queue Deterministic Auto-Reply">
+                <Icon name="zap" /> <span>AUTO-REPLY</span>
+              </button>
+            )}
+            {quickActions.slice(0, isMedium ? 2 : quickActions.length).map((action) => (
+              <button key={action.id} type="button" className={cls('nx-rail-btn', action.id === 'mark_hot' && 'is-hot', action.id === 'suppress' && 'is-dnc', action.id === 'pause_automation' && 'is-pause', action.id === 'resume_automation' && 'is-resume')} onClick={() => onThreadAction?.(thread.id, action.id)}>
+                <Icon name={action.icon as any} /> <span>{action.label.toUpperCase()}</span>
+              </button>
+            ))}
+          </div>
         </div>
-        
-        <div className="nx-rail-divider" />
-        
-        <div className="nx-rail-group">
-          {isAutoPaused ? (
-            <button type="button" className="nx-rail-btn is-resume" onClick={() => onThreadAction?.(thread.id, 'resume_automation')}>
-              <Icon name="play" /> <span>RESUME AUTO</span>
-            </button>
-          ) : (
-            <button type="button" className="nx-rail-btn is-pause" onClick={() => onThreadAction?.(thread.id, 'pause_automation')}>
-              <Icon name="pause" /> <span>PAUSE AUTO</span>
-            </button>
+      )}
+
+      {(isMedium || showContextCards) && (
+        <div className="nx-thread-context-strip">
+          <div className="nx-thread-context-card">
+            <label>Next Action</label>
+            <strong>{thread.nextSystemAction || 'Review seller response'}</strong>
+          </div>
+          <div className="nx-thread-context-card">
+            <label>Priority</label>
+            <strong>{String(thread.priority || 'normal').replace(/_/g, ' ')}</strong>
+          </div>
+          {showContextCards && (
+            <>
+              <div className="nx-thread-context-card">
+                <label>Last Intent</label>
+                <strong>{String((thread as any).uiIntent || (thread as any).detected_intent || 'unknown').replace(/_/g, ' ')}</strong>
+              </div>
+              <div className="nx-thread-context-card">
+                <label>Property</label>
+                <strong>{propertyAddress || 'No address linked'}</strong>
+              </div>
+            </>
           )}
-          <button type="button" className="nx-rail-btn is-dnc" onClick={() => onThreadAction?.(thread.id, 'suppress')}>
-            <Icon name="slash" /> <span>DNC</span>
-          </button>
         </div>
-      </div>
+      )}
 
 
       <div className="nx-message-list" ref={listRef} onScroll={handleScroll}>

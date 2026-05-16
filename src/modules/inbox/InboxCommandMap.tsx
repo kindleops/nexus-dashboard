@@ -10,6 +10,7 @@ import { buildConversationDecision } from './inbox-decisioning'
 import { buildStreetViewUrl } from './inbox-normalization'
 import { formatRelativeTime } from '../../shared/formatters'
 import { Icon } from '../../shared/icons'
+import type { ViewLayoutMode } from './view-layout'
 import type {
   BuyerCommandData,
   BuyerMapFilters,
@@ -1414,6 +1415,7 @@ interface Props {
   onOpenDealIntelligence?: (threadId: string) => void
   onBackgroundClick?: () => void
   fullHeight?: boolean
+  layoutMode?: ViewLayoutMode
   commandMode?: boolean
   initialActivityMode?: InboxMapActivityMode
   initialMapStyleMode?: MapStyleMode
@@ -1466,6 +1468,7 @@ export function InboxCommandMap({
   onOpenDealIntelligence,
   onBackgroundClick,
   fullHeight = false,
+  layoutMode = 'full',
   commandMode = false,
   initialActivityMode = 'threads',
   initialMapStyleMode = 'dark',
@@ -1509,6 +1512,12 @@ export function InboxCommandMap({
   const [showKpiBadges, setShowKpiBadges] = useState(true)
   const [activeKpiFilter, setActiveKpiFilter] = useState<MapKpiFilterKey | null>(null)
   const [tickerDensity, setTickerDensity] = useState<TickerDensity>('compact')
+  const preferredDockTier = layoutMode === 'compact' ? 'mini' : layoutMode === 'medium' ? 'compact' : 'full'
+
+  useEffect(() => {
+    setDockTier(preferredDockTier)
+    setTickerDensity(layoutMode === 'compact' ? 'minimal' : 'compact')
+  }, [layoutMode, preferredDockTier])
 
   const hydratedThreadsById = useMemo(
     () => new Map(threads.map((thread) => [thread.id, thread])),
@@ -2721,7 +2730,7 @@ export function InboxCommandMap({
   }
 
   return (
-    <div ref={rootRef} className={cls('nx-icm', `nx-icm--${dockTier}`, fullHeight && 'nx-icm--full')}>
+    <div ref={rootRef} className={cls('nx-icm', `nx-icm--${dockTier}`, `is-layout-${layoutMode}`, filtersOpen && 'is-controls-open', fullHeight && 'nx-icm--full')}>
       {!commandMode && <div ref={controlsRef} className="nx-icm__toolbar">
         <div className="nx-icm__header">
           <div className="nx-icm__header-badge">
@@ -2956,7 +2965,7 @@ export function InboxCommandMap({
 
       <div ref={containerRef} className="nx-icm__canvas" />
 
-      {!filtersOpen && selectedThread && buyerCommandData?.summary && (
+      {!filtersOpen && selectedThread && buyerCommandData?.summary && layoutMode !== 'compact' && (
         <aside className="nx-icm__buyer-demand-dock">
           <span className="nx-icm__buyer-demand-label">Buyer Demand</span>
           <strong>{buyerCommandData.summary.demandLabel}</strong>
@@ -3019,7 +3028,7 @@ export function InboxCommandMap({
         ))}
       </div>}
 
-      {dockTier === 'full' && liveTickerItems.length > 0 && !commandMode && (
+      {layoutMode === 'full' && dockTier === 'full' && liveTickerItems.length > 0 && !commandMode && (
         <div className={cls('nx-icm__ticker', `is-${mapStyleMode}`, `is-${tickerDensity}`)} style={cardThemeVars(mapStyleMode)} aria-label="Live activity ticker">
           <div className="nx-icm__ticker-toolbar">
             <div className="nx-icm__ticker-heading">
@@ -3103,6 +3112,13 @@ export function InboxCommandMap({
             ))}
           </div>
           </div>
+        </div>
+      )}
+
+      {layoutMode === 'compact' && liveTickerItems.length > 0 && !commandMode && (
+        <div className="nx-icm__ticker-compact">
+          <span>Live Activity</span>
+          <strong>{liveTickerItems[0]?.sellerName || `${liveTickerItems.length} active threads`}</strong>
         </div>
       )}
 
