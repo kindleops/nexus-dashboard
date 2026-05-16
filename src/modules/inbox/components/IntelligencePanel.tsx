@@ -2096,18 +2096,9 @@ export const PropertyHeroCard = ({
 
   if (layoutMode === 'medium') {
     return (
-      <DossierCard className="nx-property-hero-shell nx-glass-card nx-property-hero--stacked-mode">
-        <div className="nx-property-split-console nx-property-split-console--stacked">
-          {renderStreetMedia('INTERACTIVE STREET VIEW')}
-          {renderAerialMedia('INTERACTIVE AERIAL VIEW')}
-          <div className="nx-property-address-bar">
-            <strong>{address}</strong>
-            <div className="nx-property-intel-links">
-              <LinkedRecordButton label="Zillow" url={links.zillow} icon="globe" />
-              <LinkedRecordButton label="Maps" url={links.streetView} icon="map" />
-              <LinkedRecordButton label="Realtor" url={links.realtor} icon="globe" />
-            </div>
-          </div>
+      <DossierCard className="nx-property-hero-shell nx-glass-card nx-property-hero--focused-mode">
+        <div className="nx-property-focused-media">
+          {renderStreetMedia('STREET VIEW')}
         </div>
         <div className="nx-property-hero__info nx-glass-surface">
           <div className="nx-property-hero__telemetry">
@@ -2791,7 +2782,7 @@ export const SellerCommandCard = ({
   )
 }
 
-const CommandHeaderStrip = ({
+const DealCommandHeader = ({
   thread,
   snapshot,
   phase3,
@@ -2800,6 +2791,7 @@ const CommandHeaderStrip = ({
   snapshot: NormalizedPropertySnapshot
   phase3: Phase3Intelligence | null
 }) => {
+  // ── Zone A: Deal Identity ─────────────────────────────────────────────────
   const sellerName =
     snapshot.ownerDisplayName ||
     snapshot.ownerName ||
@@ -2808,80 +2800,180 @@ const CommandHeaderStrip = ({
     thread.prospect_full_name ||
     thread.displayName ||
     'Unknown Seller'
-  const address = snapshot.fullAddress || thread.displayAddress || thread.propertyAddress || thread.subject || 'Property Unknown'
-  const market = snapshot.market || thread.displayMarket || thread.market || `${snapshot.city || ''}${snapshot.state ? `, ${snapshot.state}` : ''}` || 'Market Pending'
-  const zip = snapshot.zip || thread.property_address_zip || 'ZIP Pending'
-  const county = thread.property_county_name || 'County Pending'
-  const phone = fmtPhone(thread.prospect_best_phone || thread.phoneNumber || thread.displayPhone || thread.canonicalE164) || 'Phone Pending'
-  const stage = getSellerStageVisual(thread.conversationStage)
+
+  const address =
+    snapshot.fullAddress ||
+    thread.displayAddress ||
+    thread.propertyAddress ||
+    thread.subject ||
+    'Property Unknown'
+
+  // Guard raw meta values against "unknown", "n/a" etc. using the existing isPresent helper
+  const sanitizeMeta = (v: string) => isPresent(v) ? v.trim() : ''
+
+  const zip = sanitizeMeta(snapshot.zip || thread.property_address_zip || '')
+  const county = sanitizeMeta(thread.property_county_name || '')
+
+  const marketRaw = sanitizeMeta(
+    snapshot.market ||
+    thread.displayMarket ||
+    thread.market ||
+    (snapshot.city && snapshot.state
+      ? `${snapshot.city}, ${snapshot.state}`
+      : snapshot.city || snapshot.state || '')
+  )
+  // Show "Market Pending" only when we have no usable geo anchor at all
+  const market = marketRaw || (zip || county ? '' : 'Market Pending')
+  const phone = fmtPhone(
+    thread.prospect_best_phone || thread.phoneNumber || thread.displayPhone || thread.canonicalE164
+  ) || ''
+
+  const PROPERTY_CATEGORY_LABELS: Record<string, string> = {
+    sfh: 'Single Family',
+    multifamily: 'Multi-Family',
+    hotel: 'Hotel',
+    storage: 'Self Storage',
+    retail: 'Retail',
+    office: 'Office',
+    industrial: 'Industrial',
+    land: 'Land',
+  }
+  const propertyType = PROPERTY_CATEGORY_LABELS[detectPropertyCategory(thread as any) || ''] || ''
+  const metaParts = [market, zip, county, phone, propertyType].filter(Boolean)
+
+  // ── Zone B: Workflow State ────────────────────────────────────────────────
   const status = getStatusVisual(thread.inboxStatus)
+  const stage = getSellerStageVisual(thread.conversationStage)
   const automation = automationStateVisuals[thread.automationState || 'manual']
-  const score = percentFromScore(thread.finalAcquisitionScore || (thread as any).ai_score || thread.motivationScore, 42)
-  const confidence = clamp((isPresent(thread.estimatedValue) ? 38 : 12) + (isPresent(thread.estimatedRepairCost) ? 22 : 0) + (isPresent(thread.equityPercent) ? 16 : 0) + (isPresent(thread.contactability_score) ? 10 : 0), 18, 96)
-  const dataConfidence = clamp((isPresent(snapshot.fullAddress) ? 24 : 0) + (isPresent(snapshot.estimatedValue || thread.estimatedValue) ? 22 : 0) + (isPresent(snapshot.repairCost || thread.estimatedRepairCost) ? 18 : 0) + (isPresent(thread.property_county_name) ? 12 : 0) + (isPresent(thread.phoneNumber || thread.prospect_best_phone) ? 12 : 0), 22, 94)
   const isHot = thread.priority === 'urgent' || thread.inboxStatus === 'new_reply'
-  const acquisitionSummary = phase3?.latestSnapshot?.capture_reason || getNextBestAction(thread).reason
-  const badges = [
-    thread.inboxStatus === 'new_reply' ? 'UNREAD' : null,
-    thread.isSuppressed ? 'SUPPRESSED' : null,
-    isHot ? 'HOT' : null,
-  ].filter((badge): badge is string => Boolean(badge))
+  const isSuppressed = Boolean(thread.isSuppressed)
+  const isUnread = thread.inboxStatus === 'new_reply'
+  const priority = (thread.priority || thread.priorityBucket || 'normal').toLowerCase()
+  const isHighPriority = priority === 'urgent' || priority === 'high'
+  const isAutoActive = thread.automationState === 'active'
+  const lastContactStr = thread.lastMessageAt ? formatRelativeTime(thread.lastMessageAt) : null
+
+  type ChipTone = 'status' | 'stage' | 'urgent' | 'active' | 'hot' | 'unread' | 'suppressed' | 'neutral'
+  const chips: Array<{ key: string; label: string; tone: ChipTone }> = []
+  if (status?.label) chips.push({ key: 'status', label: status.label.toUpperCase(), tone: 'status' })
+  if (stage?.label) chips.push({ key: 'stage', label: stage.label.toUpperCase(), tone: 'stage' })
+  chips.push({ key: 'priority', label: `${priority.toUpperCase()} PRIORITY`, tone: isHighPriority ? 'urgent' : 'neutral' })
+  if (automation?.label) chips.push({ key: 'auto', label: `AUTO ${automation.label.toUpperCase()}`, tone: isAutoActive ? 'active' : 'neutral' })
+  if (lastContactStr) chips.push({ key: 'last', label: `LAST ${lastContactStr.toUpperCase()}`, tone: 'neutral' })
+  if (isHot && !isUnread) chips.push({ key: 'hot', label: 'HOT LEAD', tone: 'hot' })
+  if (isUnread) chips.push({ key: 'unread', label: 'UNREAD', tone: 'unread' })
+  if (isSuppressed) chips.push({ key: 'sup', label: 'SUPPRESSED', tone: 'suppressed' })
+
+  // ── Zone C: Decision Rail ─────────────────────────────────────────────────
+  const score = percentFromScore(
+    thread.finalAcquisitionScore || (thread as any).ai_score || thread.motivationScore,
+    42
+  )
+  const confidence = clamp(
+    (isPresent(thread.estimatedValue) ? 38 : 12) +
+    (isPresent(thread.estimatedRepairCost) ? 22 : 0) +
+    (isPresent(thread.equityPercent) ? 16 : 0) +
+    (isPresent(thread.contactability_score) ? 10 : 0),
+    18, 96
+  )
+  const dataConfidence = clamp(
+    (isPresent(snapshot.fullAddress) ? 24 : 0) +
+    (isPresent(snapshot.estimatedValue || thread.estimatedValue) ? 22 : 0) +
+    (isPresent(snapshot.repairCost || thread.estimatedRepairCost) ? 18 : 0) +
+    (isPresent(thread.property_county_name) ? 12 : 0) +
+    (isPresent(thread.phoneNumber || thread.prospect_best_phone) ? 12 : 0),
+    22, 94
+  )
+
+  const ringTone = isHot ? 'red' : score >= 70 ? 'green' : score >= 45 ? 'blue' : 'amber'
+  const scorePct = `${clamp(score, 0, 100)}%`
+  const scoreDisplay = Math.round(score) > 0 ? String(Math.round(score)) : '—'
+
+  const acquisitionState = isSuppressed
+    ? 'Suppressed contact · no automation'
+    : isAutoActive
+    ? 'Automation active · monitoring replies'
+    : phase3?.latestSnapshot?.capture_reason ||
+      getNextBestAction(thread).reason ||
+      thread.nextSystemAction ||
+      'Monitoring active signals'
 
   return (
-    <DossierCard className={cls('nx-command-header-strip', isHot && 'is-hot')}>
-      <div className="nx-command-header-strip__identity">
-        <div className="nx-command-header-strip__copy">
-          <span className="nx-command-header-strip__eyebrow">DEAL COMMAND DOSSIER</span>
-          <strong>{address}</strong>
-          <div className="nx-command-header-strip__seller">{sellerName}</div>
-          <div className="nx-command-header-strip__meta">
-            <span>{market}</span>
-            <span>{zip}</span>
-            <span>{county}</span>
-            <span>{phone}</span>
-          </div>
-          <div className="nx-command-header-strip__telemetry">
-            <QuietBadge label={`STATUS ${status.label}`} tone="accent" />
-            <QuietBadge label={`STAGE ${stage.label}`} tone="warning" />
-            <QuietBadge label={`PRIORITY ${(thread.priority || thread.priorityBucket || 'standard').toUpperCase()}`} tone={isHot ? 'danger' : 'default'} />
-            <QuietBadge label={`AUTO ${(automation?.label || 'Manual').toUpperCase()}`} tone={thread.automationState === 'active' ? 'success' : 'default'} />
-            <QuietBadge label={`LAST CONTACT ${thread.lastMessageAt ? formatRelativeTime(thread.lastMessageAt).toUpperCase() : 'PENDING'}`} tone="default" />
-            {badges.map((badge) => (
-              <QuietBadge key={badge} label={badge} tone={badge === 'HOT' ? 'danger' : badge === 'SUPPRESSED' ? 'warning' : 'accent'} />
-            ))}
-          </div>
-          <div className="nx-command-header-strip__actions">
-            {['Draft Reply', 'Run Underwriting', 'Open Comps', 'Show Buyers', 'Pause Auto', 'Suppress'].map((action, index) => (
-              <button type="button" key={action} className={cls('nx-command-header-strip__action', index === 0 && 'is-primary', action === 'Suppress' && 'is-danger')}>
-                {action}
-              </button>
-            ))}
+    <div className={cls('dch-root', isHot && 'is-hot', isSuppressed && 'is-suppressed')}>
+      <div className="dch-accent-line" aria-hidden />
+      <div className="dch-zones">
+
+        {/* ── Zone A + B: Identity & Workflow State ── */}
+        <div className="dch-zone-a">
+          <span className="dch-eyebrow">DEAL COMMAND DOSSIER</span>
+          <h2 className="dch-address">{address}</h2>
+          <div className="dch-seller">{sellerName}</div>
+
+          {metaParts.length > 0 && (
+            <div className="dch-meta">
+              {metaParts.map((part, i) => (
+                <React.Fragment key={part + String(i)}>
+                  {i > 0 && <span className="dch-meta-sep" aria-hidden>•</span>}
+                  <span className="dch-meta-item">{part}</span>
+                </React.Fragment>
+              ))}
+            </div>
+          )}
+
+          {chips.length > 0 && (
+            <div className="dch-chips">
+              {chips.map((chip) => (
+                <span key={chip.key} className={cls('dch-chip', `is-${chip.tone}`)}>
+                  {chip.label}
+                </span>
+              ))}
+            </div>
+          )}
+
+          <div className="dch-actions">
+            {(['Draft Reply', 'Run Underwriting', 'Open Comps', 'Show Buyers', 'Pause Auto'] as const).map(
+              (action, i) => (
+                <button key={action} type="button" className={cls('dch-action', i === 0 && 'is-primary')}>
+                  {action}
+                </button>
+              )
+            )}
           </div>
         </div>
-        <div className="nx-command-header-strip__right">
-          <div className="nx-command-header-strip__scoreboard">
-            <ScoreRing label="Deal Score" value={score} tone={isHot ? 'red' : 'blue'} sublabel="Acquisition probability from live seller and property signals." />
-            <div className="nx-command-header-strip__confidence">
-              <div className="nx-command-header-strip__mini-stat">
-                <span>Confidence</span>
-                <strong>{Math.round(confidence)}/100</strong>
-                <p>Offerability + seller signal alignment.</p>
-              </div>
-              <div className="nx-command-header-strip__mini-stat">
-                <span>Data Confidence</span>
-                <strong>{Math.round(dataConfidence)}/100</strong>
-                <p>Address, valuation, contact, and enrichment coverage.</p>
-              </div>
+
+        {/* ── Zone C: Decision Rail ── */}
+        <div className="dch-zone-c">
+          {/* Score dial + label + state line — horizontal row */}
+          <div className="dch-score-block">
+            <div
+              className={cls('dch-dial', `is-${ringTone}`)}
+              style={{ ['--dch-ring-progress' as any]: scorePct }}
+              aria-label={`Deal Score ${scoreDisplay} out of 100`}
+            >
+              <strong className="dch-dial__number">{scoreDisplay}</strong>
+              <span className="dch-dial__denom">/100</span>
+            </div>
+            <div className="dch-score-info">
+              <span className="dch-dial-label">DEAL SCORE</span>
+              <p className="dch-state-line">{acquisitionState}</p>
             </div>
           </div>
-          <div className="nx-command-header-strip__nextcard">
-            <span>Acquisition Summary</span>
-            <strong>{thread.uiIntent || thread.detected_intent || 'Signal set still forming'}</strong>
-            <p>{acquisitionSummary}</p>
+
+          {/* Confidence + data pill — below dial row */}
+          <div className="dch-confidence-rail">
+            <div className="dch-conf-metric">
+              <span className="dch-conf-metric__label">CONFIDENCE</span>
+              <strong className="dch-conf-metric__value">{Math.round(confidence)}</strong>
+            </div>
+            <div className="dch-conf-divider" aria-hidden />
+            <div className="dch-conf-metric">
+              <span className="dch-conf-metric__label">DATA</span>
+              <strong className="dch-conf-metric__value">{Math.round(dataConfidence)}</strong>
+            </div>
           </div>
         </div>
       </div>
-    </DossierCard>
+    </div>
   )
 }
 
@@ -3217,12 +3309,14 @@ const CommandActionDock = ({
   onOpenMap,
   onOpenDossier,
   onOpenAi,
+  layoutMode = 'full',
 }: {
   onOpenMap: () => void
   onOpenDossier: () => void
   onOpenAi: () => void
+  layoutMode?: ViewLayoutMode
 }) => (
-  <div className="nx-command-action-dock">
+  <div className={cls('nx-command-action-dock', layoutMode === 'expanded' && 'is-compact')}>
     <div className="nx-command-action-dock__group">
       <span>Communication</span>
       <div>
@@ -3371,11 +3465,16 @@ const DealCommandDossier = ({
   onOpenDossier: () => void
   onOpenAi: () => void
 }) => (
-  <div className={cls('nx-deal-command-dossier', layoutMode === 'full' && 'is-full')}>
-    <CommandHeaderStrip thread={thread} snapshot={snapshot} phase3={phase3} />
+  <div className={cls('nx-deal-command-dossier', `is-layout-${layoutMode}`, layoutMode === 'full' && 'is-full')}>
+    <DealCommandHeader thread={thread} snapshot={snapshot} phase3={phase3} />
     <div className="nx-deal-command-dossier__grid">
       <div className="nx-deal-command-dossier__media">
-        <PropertyHeroCard thread={thread} snapshot={snapshot} panelMode="full" layoutMode="full" />
+        <PropertyHeroCard
+          thread={thread}
+          snapshot={snapshot}
+          panelMode={layoutMode === 'full' ? 'full' : 'default'}
+          layoutMode={layoutMode}
+        />
       </div>
       <div className="nx-deal-command-dossier__decision">
         <DealDecisionStrip thread={thread} />
@@ -3395,7 +3494,7 @@ const DealCommandDossier = ({
         <LinkedRecordsCard thread={thread} />
       </div>
     </div>
-    <CommandActionDock onOpenMap={onOpenMap} onOpenDossier={onOpenDossier} onOpenAi={onOpenAi} />
+    <CommandActionDock layoutMode={layoutMode} onOpenMap={onOpenMap} onOpenDossier={onOpenDossier} onOpenAi={onOpenAi} />
   </div>
 )
 

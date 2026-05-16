@@ -191,6 +191,86 @@ export const InboxConversationTable = memo(({
     )
   }
 
+  if (layoutMode === 'expanded') {
+    return (
+      <section className={cls('nx-inbox-table-view', `is-${density}`, 'is-layout-expanded')}>
+        <header className="nx-inbox-table-view__header">
+          <div>
+            <span className="nx-section-label">LIST VIEW</span>
+            <h2>Operational Conversations</h2>
+          </div>
+          <div className="nx-inbox-table-view__controls">
+            <select value={sort} onChange={(event) => onSortChange(event.target.value as ConversationTableSort)}>
+              <option value="last_activity_desc">Last Activity</option>
+              <option value="priority_desc">Priority Score</option>
+              <option value="seller_asc">Seller</option>
+              <option value="temperature_desc">Temperature</option>
+              <option value="follow_up_asc">Next Follow-Up</option>
+            </select>
+          </div>
+        </header>
+        <div className="nx-inbox-stat-strip" aria-label="List view stats">
+          {statCounts.map((item) => (
+            <div key={item.label} className="nx-inbox-stat-strip__item">
+              <span>{item.label}</span>
+              <strong>{formatStat(item.value)}</strong>
+            </div>
+          ))}
+        </div>
+        <div className="nx-inbox-table-wrap">
+          <table className="nx-inbox-table">
+            <thead>
+              <tr>
+                <th>Seller</th>
+                <th>Property</th>
+                <th>Status</th>
+                <th>Stage</th>
+                <th>Priority</th>
+                <th>Intent</th>
+                <th>Automation</th>
+                <th>Last</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => {
+                const { thread, decision, seller, address, lastIntent, priorityLabel, isHot, isSuppressed, isUnread } = row
+                const ts = formatInboxThreadTimestamp(thread.lastMessageAt || thread.lastMessageIso)
+                return (
+                  <tr
+                    key={thread.id}
+                    className={cls(selectedId === thread.id && 'is-selected')}
+                    onClick={() => onSelect(thread.id)}
+                  >
+                    <td>
+                      <div className="nx-inbox-table__primary">{seller}</div>
+                      <div className="nx-inbox-table__secondary">{thread.phoneNumber || thread.canonicalE164 || '—'}</div>
+                    </td>
+                    <td>
+                      <div className="nx-inbox-table__primary">{address || '—'}</div>
+                    </td>
+                    <td><span className="nx-table-pill is-auto">{thread.inboxStatus.replace(/_/g, ' ')}</span></td>
+                    <td><span className="nx-table-pill is-stage">{decision.conversation_stage.replace(/_/g, ' ')}</span></td>
+                    <td>
+                      <span className="nx-table-pill is-temp">{priorityLabel}</span>
+                      {isHot && <span className="nx-table-pill is-hot"> Hot</span>}
+                    </td>
+                    <td><span className="nx-table-pill is-intent">{lastIntent || intentLabel(decision)}</span></td>
+                    <td><span className="nx-table-pill is-auto">{decision.automation_status}</span></td>
+                    <td>
+                      {ts.fullLabel}
+                      {isUnread && <> <span className="nx-table-pill is-unread">Unread</span></>}
+                      {isSuppressed && <> <span className="nx-table-pill is-suppressed">Supp</span></>}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    )
+  }
+
   return (
     <section className={cls('nx-inbox-table-view', `is-${density}`, `is-layout-${layoutMode}`)}>
       <header className="nx-inbox-table-view__header">

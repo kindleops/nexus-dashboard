@@ -2716,6 +2716,7 @@ export default function InboxPage() {
             onOpenAi={() => setActiveOverlay('ai')}
             messages={displayedMessages}
             panelMode={rightPanelMode === 'hidden' ? 'default' : rightPanelMode}
+            layoutMode={getViewLayoutMode(workspaceWidths['deal_intelligence'] ?? '25')}
           />
         ) : null}
       </div>
