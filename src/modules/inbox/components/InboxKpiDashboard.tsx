@@ -76,16 +76,36 @@ const TIME_RANGE_LABELS: Record<KpiTimeRange, string> = {
   custom: 'Custom Range',
 }
 
-// State fill colors by status
-const STATE_STATUS_FILL: Record<StatePerformance['status'], string> = {
-  quiet:       'rgba(40, 52, 78, 0.75)',
-  active:      'rgba(72, 138, 236, 0.55)',
-  strong:      'rgba(52, 211, 153, 0.65)',
-  warning:     'rgba(251, 191, 36, 0.65)',
-  blocked:     'rgba(248, 113, 113, 0.65)',
-  contracting: 'rgba(168, 85, 247, 0.65)',
+// Choropleth: blue gradient by activity level (matches target screenshot)
+function getChoroFill(data: StatePerformance | undefined): string {
+  if (!data || data.sent === 0 || data.status === 'quiet') {
+    return 'rgba(255, 255, 255, 0.02)'
+  }
+  switch (data.status) {
+    case 'strong':      return 'rgba(52, 211, 153, 0.25)'      // Green
+    case 'active':      return 'rgba(14, 162, 244, 0.25)'     // Blue
+    case 'warning':     return 'rgba(251, 191, 36, 0.25)'     // Yellow
+    case 'blocked':     return 'rgba(248, 113, 113, 0.25)'      // Red
+    case 'contracting': return 'rgba(139, 92, 246, 0.25)'      // Purple
+    default:            return 'rgba(255, 255, 255, 0.02)'
+  }
 }
-const STATE_STATUS_DEFAULT = 'rgba(28, 36, 56, 0.7)'
+
+function getChoroStroke(data: StatePerformance | undefined, isSelected: boolean, isHovered: boolean): string {
+  if (isSelected) return 'rgba(255, 255, 255, 0.95)'
+  if (isHovered) return 'rgba(255, 255, 255, 0.65)'
+  if (!data || data.sent === 0 || data.status === 'quiet') {
+    return 'rgba(255, 255, 255, 0.06)'
+  }
+  switch (data.status) {
+    case 'strong':      return 'rgba(52, 211, 153, 0.65)'
+    case 'active':      return 'rgba(14, 162, 244, 0.65)'
+    case 'warning':     return 'rgba(251, 191, 36, 0.65)'
+    case 'blocked':     return 'rgba(248, 113, 113, 0.65)'
+    case 'contracting': return 'rgba(139, 92, 246, 0.65)'
+    default:            return 'rgba(255, 255, 255, 0.06)'
+  }
+}
 
 // ── MiniLineChart ─────────────────────────────────────────────────────────────
 
@@ -137,17 +157,26 @@ function MiniLineChart({
     fillPath = `M${first[0].toFixed(1)},${height} ${pts.map(([x, y]) => `L${x.toFixed(1)},${y.toFixed(1)}`).join(' ')} L${last[0].toFixed(1)},${height} Z`
   }
 
+  const lastPt = pts[pts.length - 1]
+  const gradId = `spark-grad-${Math.random().toString(36).substring(2, 11)}`
+
   return (
     <svg
       width={width}
       height={height}
       viewBox={`0 0 ${width} ${height}`}
-      style={{ display: 'block' }}
+      style={{ display: 'block', overflow: 'visible' }}
     >
+      <defs>
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity={0.28} />
+          <stop offset="100%" stopColor={color} stopOpacity={0.0} />
+        </linearGradient>
+      </defs>
       {filled && fillPath && (
         <path
           d={fillPath}
-          fill={color.replace(/[\d.]+\)$/, '0.12)')}
+          fill={`url(#${gradId})`}
           stroke="none"
         />
       )}
@@ -155,10 +184,22 @@ function MiniLineChart({
         points={pointsStr}
         fill="none"
         stroke={color}
-        strokeWidth="1.5"
+        strokeWidth="1.8"
         strokeLinecap="round"
         strokeLinejoin="round"
+        style={{ filter: `drop-shadow(0 0 2px ${color}55)` }}
       />
+      {lastPt && (
+        <circle
+          cx={lastPt[0]}
+          cy={lastPt[1]}
+          r="2.5"
+          fill="#fff"
+          stroke={color}
+          strokeWidth="1"
+          style={{ filter: `drop-shadow(0 0 4px ${color})` }}
+        />
+      )}
     </svg>
   )
 }
@@ -440,9 +481,10 @@ interface UsaMapProps {
   selectedState: string | null
   onStateClick: (abbr: string) => void
   loading: boolean
+  markets?: MarketPerformance[]
 }
 
-function UsaMap({ states, selectedState, onStateClick, loading }: UsaMapProps) {
+function UsaMap({ states, selectedState, onStateClick, loading, markets = [] }: UsaMapProps) {
   const [hoveredState, setHoveredState] = useState<string | null>(null)
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null)
   const svgRef = useRef<SVGSVGElement>(null)
@@ -455,10 +497,17 @@ function UsaMap({ states, selectedState, onStateClick, loading }: UsaMapProps) {
     setTooltipPos({ x: e.clientX - rect.left, y: e.clientY - rect.top })
   }, [])
 
+  const stateMarkets = useMemo(() => {
+    if (!selectedState) return []
+    return markets.filter(m => m.state?.toUpperCase() === selectedState.toUpperCase())
+  }, [selectedState, markets])
+
+  const selectedStateData = selectedState ? stateMap.get(selectedState) : null
+
   if (loading) {
     return (
       <div className="kpi-map kpi-map--loading">
-        <Skeleton height={260} radius={6} />
+        <Skeleton height={280} radius={6} />
       </div>
     )
   }
@@ -474,101 +523,194 @@ function UsaMap({ states, selectedState, onStateClick, loading }: UsaMapProps) {
         )}
       </div>
 
-      <div className="kpi-map__svg-wrap">
-        <svg
-          ref={svgRef}
-          viewBox="0 0 960 600"
-          className="kpi-map__svg"
-          onMouseMove={handleMouseMove}
-          onMouseLeave={() => { setHoveredState(null); setTooltipPos(null) }}
-        >
-          {Object.entries(USA_STATE_PATHS).map(([abbr, sp]) => {
-            const data = stateMap.get(abbr)
-            const fill = data ? STATE_STATUS_FILL[data.status] : STATE_STATUS_DEFAULT
-            const isSelected = selectedState === abbr
-            const isHovered = hoveredState === abbr
+      <div className="kpi-map__body">
+        <div className="kpi-map__svg-container">
+          <div className="kpi-map__svg-wrap">
+            <svg
+              ref={svgRef}
+              viewBox="0 0 960 600"
+              className="kpi-map__svg"
+              onMouseMove={handleMouseMove}
+              onMouseLeave={() => { setHoveredState(null); setTooltipPos(null) }}
+            >
+              {/* subtle dot grid background */}
+              <defs>
+                <pattern id="kpi-map-grid" x="0" y="0" width="24" height="24" patternUnits="userSpaceOnUse">
+                  <circle cx="0.5" cy="0.5" r="0.5" fill="rgba(255,255,255,0.04)" />
+                </pattern>
+              </defs>
+              <rect width="960" height="600" fill="url(#kpi-map-grid)" />
 
-            return (
-              <g key={abbr}>
-                <path
-                  d={sp.path}
-                  fill={fill}
-                  className={cls(
-                    'kpi-map__state',
-                    isSelected && 'kpi-map__state--selected',
-                  )}
-                  style={{
-                    opacity: isHovered ? 0.8 : 1,
-                    stroke: isSelected
-                      ? 'rgba(255,255,255,0.9)'
-                      : isHovered
-                      ? 'rgba(255,255,255,0.4)'
-                      : 'rgba(0,0,0,0.55)',
-                    strokeWidth: isSelected ? 2 : isHovered ? 1.2 : 0.8,
-                  }}
-                  onClick={() => onStateClick(isSelected ? '' : abbr)}
-                  onMouseEnter={() => setHoveredState(abbr)}
-                />
-                {abbr !== 'HI' && (
-                  <text
-                    x={sp.cx}
-                    y={sp.cy}
-                    className="kpi-map__state-label"
-                    style={{ fontSize: abbr === 'DC' ? 5 : 8 }}
-                  >
-                    {abbr}
-                  </text>
+              {Object.entries(USA_STATE_PATHS).map(([abbr, sp]) => {
+                const data = stateMap.get(abbr)
+                const fill = getChoroFill(data)
+                const isSelected = selectedState === abbr
+                const isHovered = hoveredState === abbr
+                const stroke = getChoroStroke(data, isSelected, isHovered)
+
+                return (
+                  <g key={abbr}>
+                    <path
+                      d={sp.path}
+                      fill={fill}
+                      className={cls(
+                        'kpi-map__state',
+                        isSelected && 'kpi-map__state--selected',
+                      )}
+                      style={{
+                        opacity: isHovered ? 0.9 : 1,
+                        stroke,
+                        strokeWidth: isSelected ? 2.5 : isHovered ? 1.5 : 0.8,
+                      }}
+                      onClick={() => onStateClick(isSelected ? '' : abbr)}
+                      onMouseEnter={() => setHoveredState(abbr)}
+                    />
+                    {abbr !== 'HI' && (
+                      <text
+                        x={sp.cx}
+                        y={sp.cy}
+                        className="kpi-map__state-label"
+                        style={{ fontSize: abbr === 'DC' ? 5 : 8 }}
+                      >
+                        {abbr}
+                      </text>
+                    )}
+                  </g>
+                )
+              })}
+            </svg>
+
+            {hoveredData && tooltipPos && (
+              <div
+                className="kpi-map__tooltip"
+                style={{
+                  left: Math.min(tooltipPos.x + 12, 560),
+                  top: Math.max(tooltipPos.y - 80, 8),
+                  position: 'absolute',
+                }}
+              >
+                <strong>{STATE_NAMES[hoveredData.state] ?? hoveredData.state}</strong>
+                <div className="kpi-map__tooltip-grid">
+                  <span>Sent</span><span>{hoveredData.sent.toLocaleString()}</span>
+                  <span>Replied</span><span>{hoveredData.replied.toLocaleString()}</span>
+                  <span>Positive</span><span>{hoveredData.positive}</span>
+                  <span>Opt-Out</span><span>{hoveredData.optOutRate}%</span>
+                  <span>Top Market</span><span>{hoveredData.topMarket}</span>
+                  <span>Action</span>
+                  <span className={cls(
+                    'kpi-rec',
+                    hoveredData.recommendation === 'Scale' ? 'kpi-rec--scale' :
+                    hoveredData.recommendation === 'Pause' || hoveredData.recommendation === 'Investigate' ? 'kpi-rec--pause' : ''
+                  )}>
+                    {hoveredData.recommendation}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="kpi-map__legend">
+            <span className="kpi-map__legend-item">
+              <i style={{ background: 'rgba(52, 211, 153, 0.25)', border: '1px solid rgba(52, 211, 153, 0.65)' }} /> Strong (Positive)
+            </span>
+            <span className="kpi-map__legend-item">
+              <i style={{ background: 'rgba(14, 162, 244, 0.25)', border: '1px solid rgba(14, 162, 244, 0.65)' }} /> Active SMS
+            </span>
+            <span className="kpi-map__legend-item">
+              <i style={{ background: 'rgba(139, 92, 246, 0.25)', border: '1px solid rgba(139, 92, 246, 0.65)' }} /> Contracting
+            </span>
+            <span className="kpi-map__legend-item">
+              <i style={{ background: 'rgba(251, 191, 36, 0.25)', border: '1px solid rgba(251, 191, 36, 0.65)' }} /> Warnings
+            </span>
+            <span className="kpi-map__legend-item">
+              <i style={{ background: 'rgba(248, 113, 113, 0.25)', border: '1px solid rgba(248, 113, 113, 0.65)' }} /> Suppressed
+            </span>
+            <span className="kpi-map__legend-item">
+              <i style={{ background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.08)' }} /> Quiet (No Data)
+            </span>
+          </div>
+        </div>
+
+        {/* Selected State Detail Drawer */}
+        {selectedState && selectedStateData && (
+          <div className="kpi-map-drawer">
+            <div className="kpi-map-drawer__header">
+              <h3>{STATE_NAMES[selectedState] ?? selectedState} STATE INTEL</h3>
+              <button type="button" className="kpi-map-drawer__close" onClick={() => onStateClick('')}>✕</button>
+            </div>
+            
+            <div className="kpi-map-drawer__content">
+              {/* Gauges row */}
+              <div className="kpi-map-drawer__metrics">
+                <div className="kpi-map-drawer__metric">
+                  <strong>{fmt.pct(selectedStateData.deliveryRate)}</strong>
+                  <span>Delivery</span>
+                </div>
+                <div className="kpi-map-drawer__metric">
+                  <strong>{fmt.pct(selectedStateData.replyRate)}</strong>
+                  <span>Reply Rate</span>
+                </div>
+                <div className="kpi-map-drawer__metric">
+                  <strong className="is-green">{fmt.pct(selectedStateData.positiveRate)}</strong>
+                  <span>Pos Intent</span>
+                </div>
+              </div>
+
+              {/* Status and Action banner */}
+              <div className="kpi-map-drawer__status-row">
+                <div className="kpi-map-drawer__status-item">
+                  <span>Carrier Status</span>
+                  <span className={`kpi-status-badge kpi-status-badge--${selectedStateData.status}`}>
+                    {selectedStateData.status.toUpperCase()}
+                  </span>
+                </div>
+                <div className="kpi-map-drawer__status-item">
+                  <span>Recommendation</span>
+                  <span className={`kpi-rec-badge kpi-rec-badge--${selectedStateData.recommendation.toLowerCase().replace(' ', '-')}`}>
+                    {selectedStateData.recommendation}
+                  </span>
+                </div>
+              </div>
+
+              {/* Top Local Markets Leaderboard */}
+              <div className="kpi-map-drawer__section">
+                <h4>LOCAL HOT ZONES</h4>
+                {stateMarkets.length === 0 ? (
+                  <div className="kpi-map-drawer__empty">No local market campaigns in progress.</div>
+                ) : (
+                  <div className="kpi-map-drawer__markets-list">
+                    {stateMarkets.slice(0, 4).map((m, idx) => (
+                      <div key={m.market} className="kpi-map-drawer__market-row">
+                        <span className="kpi-map-drawer__market-rank">#{idx + 1}</span>
+                        <span className="kpi-map-drawer__market-name">{m.market}</span>
+                        <span className="kpi-map-drawer__market-sent">{fmt.int(m.sent)} sent</span>
+                        <strong className="kpi-map-drawer__market-pct">{fmt.pct(m.replyRate)} reply</strong>
+                      </div>
+                    ))}
+                  </div>
                 )}
-              </g>
-            )
-          })}
-        </svg>
+              </div>
 
-        {hoveredData && tooltipPos && (
-          <div
-            className="kpi-map__tooltip"
-            style={{
-              left: Math.min(tooltipPos.x + 12, 560),
-              top: Math.max(tooltipPos.y - 80, 8),
-              position: 'absolute',
-            }}
-          >
-            <strong>{STATE_NAMES[hoveredData.state] ?? hoveredData.state}</strong>
-            <div className="kpi-map__tooltip-grid">
-              <span>Sent</span><span>{hoveredData.sent.toLocaleString()}</span>
-              <span>Replied</span><span>{hoveredData.replied.toLocaleString()}</span>
-              <span>Positive</span><span>{hoveredData.positive}</span>
-              <span>Opt-Out</span><span>{hoveredData.optOutRate}%</span>
-              <span>Top Market</span><span>{hoveredData.topMarket}</span>
-              <span>Action</span>
-              <span className={cls(
-                'kpi-rec',
-                hoveredData.recommendation === 'Scale' ? 'kpi-rec--scale' :
-                hoveredData.recommendation === 'Pause' || hoveredData.recommendation === 'Investigate' ? 'kpi-rec--pause' : ''
-              )}>
-                {hoveredData.recommendation}
-              </span>
+              {/* Quick Actions */}
+              <div className="kpi-map-drawer__actions">
+                <button
+                  type="button"
+                  className="kpi-btn kpi-btn--primary"
+                  onClick={() => alert(`Optimizing outreach parameters for ${selectedStateData.stateName}...`)}
+                >
+                  🚀 Optimize State Routing
+                </button>
+                <button
+                  type="button"
+                  className="kpi-btn kpi-btn--secondary"
+                  onClick={() => alert(`Initiating TextGrid carrier cleanup for ${selectedStateData.stateName}...`)}
+                >
+                  📡 Cycle Numbers
+                </button>
+              </div>
             </div>
           </div>
         )}
-      </div>
-
-      <div className="kpi-map__legend">
-        {(
-          [
-            ['quiet', 'No Data'],
-            ['active', 'Active'],
-            ['strong', 'Strong'],
-            ['warning', 'Warning'],
-            ['blocked', 'Blocked'],
-            ['contracting', 'Contract'],
-          ] as const
-        ).map(([status, label]) => (
-          <span key={status} className="kpi-map__legend-item">
-            <i style={{ background: STATE_STATUS_FILL[status] }} />
-            {label}
-          </span>
-        ))}
       </div>
     </div>
   )
@@ -1461,6 +1603,41 @@ function FilterBar({ filters, onChange, loading, selectedState, onClearState }: 
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// HealthGauge — circular arc gauge (like the 92/100 panel in the screenshot)
+// ══════════════════════════════════════════════════════════════════════════════
+
+function HealthGauge({ score, label, loading }: { score: number; label: string; loading: boolean }) {
+  const r = 44
+  const circ = 2 * Math.PI * r
+  const dash = loading ? 0 : (score / 100) * circ
+  const color = score >= 80 ? '#0ecfce' : score >= 60 ? '#f5a623' : '#e05252'
+  return (
+    <div className="kpi-gauge">
+      <svg viewBox="0 0 100 100" className="kpi-gauge__svg">
+        <circle cx="50" cy="50" r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="8" />
+        <circle
+          cx="50" cy="50" r={r}
+          fill="none"
+          stroke={color}
+          strokeWidth="8"
+          strokeLinecap="round"
+          strokeDasharray={`${dash} ${circ}`}
+          strokeDashoffset={circ * 0.25}
+          style={{ transition: 'stroke-dasharray 1s ease', filter: `drop-shadow(0 0 6px ${color})` }}
+        />
+        <text x="50" y="47" textAnchor="middle" className="kpi-gauge__value" fill="white" fontSize="22" fontWeight="800">
+          {loading ? '—' : score}
+        </text>
+        <text x="50" y="62" textAnchor="middle" className="kpi-gauge__sub" fill="rgba(255,255,255,0.45)" fontSize="9">
+          / 100
+        </text>
+      </svg>
+      <div className="kpi-gauge__label">{label}</div>
+    </div>
+  )
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // KPI Rail — compact 25% sidebar
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -1708,6 +1885,7 @@ export function InboxKpiDashboard({ layoutMode }: InboxKpiDashboardProps) {
               selectedState={selectedState}
               onStateClick={handleStateClick}
               loading={loading}
+              markets={marketPerf}
             />
             <AcquisitionFunnel stages={funnel} loading={loading} />
           </div>
@@ -1737,6 +1915,11 @@ export function InboxKpiDashboard({ layoutMode }: InboxKpiDashboardProps) {
   // ── 100% — CEO War Room ────────────────────────────────────────────────────
   return (
     <div className="kpi kpi--warroom">
+      {import.meta.env.DEV && (
+        <div style={{ position: 'absolute', top: 4, right: 8, zIndex: 9999, background: 'rgba(14,207,206,0.15)', border: '1px solid rgba(14,207,206,0.5)', borderRadius: 4, padding: '2px 8px', fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', color: '#0ecfce', pointerEvents: 'none' }}>
+          METRICS SOLO MODE ✓
+        </div>
+      )}
       <FilterBar
         filters={filters}
         onChange={handleFilterChange}
@@ -1749,19 +1932,19 @@ export function InboxKpiDashboard({ layoutMode }: InboxKpiDashboardProps) {
         <ExecStrip summary={summary} timeSeries={timeSeries} loading={loading} compact={false} />
 
         <div className="kpi-warroom-main">
-          <div className="kpi-warroom-left">
-            <UsaMap
-              states={statePerf}
-              selectedState={selectedState}
-              onStateClick={handleStateClick}
-              loading={loading}
-            />
-            <AcquisitionFunnel stages={funnel} loading={loading} />
-          </div>
-          <div className="kpi-warroom-right">
-            <AlertsPanel alerts={alerts} loading={loading} />
-            <SpendPanel spend={spend} loading={loading} />
-          </div>
+          <UsaMap
+            states={statePerf}
+            selectedState={selectedState}
+            onStateClick={handleStateClick}
+            loading={loading}
+            markets={marketPerf}
+          />
+          <AcquisitionFunnel stages={funnel} loading={loading} />
+        </div>
+
+        <div className="kpi-two-col">
+          <AlertsPanel alerts={alerts} loading={loading} />
+          <SpendPanel spend={spend} loading={loading} />
         </div>
 
         <TimeSeriesPanel timeSeries={timeSeries} loading={loading} />
@@ -1785,9 +1968,13 @@ export function InboxKpiDashboard({ layoutMode }: InboxKpiDashboardProps) {
           <OfferContractPanel metrics={offerMetrics} loading={loading} />
         </div>
 
-        <div className="kpi-two-col">
+        <div className="kpi-warroom-gauges">
           <BuyerDemandPanel metrics={buyerMetrics} loading={loading} />
           <DataQualityPanel quality={dataQuality} loading={loading} />
+          <div className="kpi-gauge-cluster">
+            <HealthGauge score={summary?.automationHealthScore ?? 0} label="Auto Health" loading={loading} />
+            <HealthGauge score={summary?.dataQualityScore ?? 0} label="Data Quality" loading={loading} />
+          </div>
         </div>
 
         <NumbersHealthPanel

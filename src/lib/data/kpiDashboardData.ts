@@ -1088,8 +1088,8 @@ export const loadDataQualityMetrics = async (filters: KpiFilters): Promise<DataQ
     const manualReviewCount = qItems.filter(i => i.queue_status === 'approval').length
 
     const issues = failedQueueRows + blankBody + routingBlocked + wrongNumber + autoReplyBlocked
-    const total = Math.max(qItems.length, 1)
-    const healthScore = Math.max(0, Math.round(100 - (issues / total) * 200))
+    const total = Math.max(qItems.length + evs.length, 1)
+    const healthScore = Math.max(0, Math.round(100 - (issues / total) * 100))
 
     return {
       ...empty,

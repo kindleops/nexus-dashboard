@@ -63,7 +63,8 @@ import { IntelligencePanel } from './components/IntelligencePanel'
 import { CompIntelligenceWorkspace } from './components/CompIntelligenceWorkspace'
 import { SendQueueDashboard } from './components/SendQueueDashboard'
 import { InboxPipelineView } from './components/InboxPipelineView'
-import { InboxKpiDashboard } from './components/InboxKpiDashboard'
+import { InboxCalendarView } from './components/InboxCalendarView'
+import { MetricsWarRoom } from './components/MetricsWarRoom'
 import type { TemplateActionPayload } from './components/TemplatePopover'
 import { InboxActivityPanel } from './components/InboxActivityPanel'
 import { InboxCommandMap } from './InboxCommandMap'
@@ -620,35 +621,15 @@ export default function InboxPage() {
     [selectedWorkspaceViews, workspaceWidthOverrides],
   )
   const activeWorkspaceLabel = useMemo(() => {
+    // Metrics override: always show "Metrics View" label when metrics is active
+    if (selectedWorkspaceViews.includes('metrics')) {
+      return 'Metrics View'
+    }
     if (selectedWorkspaceViews.length <= 1) {
       return WORKSPACE_VIEW_OPTIONS.find((option) => option.key === activeWorkspaceView)?.label ?? 'Inbox Thread View'
     }
     return `${selectedWorkspaceViews.length} Views Active`
-  }, [activeWorkspaceView, selectedWorkspaceViews.length])
-
-
-  const calendarEvents = useMemo(() => {
-    return filtered
-      .map((thread) => {
-        const eventAt = String((thread as any).next_follow_up_at || (thread as any).follow_up_at || thread.lastInboundAt || thread.lastMessageAt || '').trim()
-        return {
-          thread,
-          eventAt,
-          label: (thread as any).next_action || thread.nextSystemAction || 'Review conversation',
-          type:
-            (thread as any).contractId
-              ? 'Contract / Title'
-              : (thread as any).offerId
-              ? 'Offer Deadline'
-              : eventAt
-              ? 'Follow-Up'
-              : 'Seller Event',
-        }
-      })
-      .filter((item) => item.eventAt)
-      .sort((left, right) => new Date(left.eventAt).getTime() - new Date(right.eventAt).getTime())
-      .slice(0, 30)
-  }, [filtered])
+  }, [activeWorkspaceView, selectedWorkspaceViews])
 
   const autonomyModel = useMemo(
     () => buildAutonomousEngineModel({
@@ -758,6 +739,18 @@ export default function InboxPage() {
   }, [])
 
   const handleToggleWorkspaceView = useCallback((view: InboxWorkspaceView) => {
+    // Metrics view always opens full-screen solo — toggling on goes solo, toggling off resets to defaults
+    if (view === 'metrics') {
+      setSelectedWorkspaceViews((current) => {
+        if (current.includes('metrics') && current.length === 1) {
+          setWorkspaceWidthOverrides(cloneDefaultWorkspaceWidths())
+          return cloneDefaultWorkspaceViews()
+        }
+        setWorkspaceWidthOverrides({})
+        return ['metrics']
+      })
+      return
+    }
     setSelectedWorkspaceViews((current) => {
       let nextViews: InboxWorkspaceView[]
       if (current.includes(view)) {
@@ -779,6 +772,12 @@ export default function InboxPage() {
   }, [])
 
   const handleFocusWorkspaceView = useCallback((view: InboxWorkspaceView) => {
+    // Metrics view always opens full-screen solo — it's a war room, not a pane
+    if (view === 'metrics') {
+      setSelectedWorkspaceViews(['metrics'])
+      setWorkspaceWidthOverrides({})
+      return
+    }
     setSelectedWorkspaceViews((current) => {
       if (current[0] === view) return current
       let nextViews: InboxWorkspaceView[]
@@ -2087,8 +2086,24 @@ export default function InboxPage() {
   const dossierOpen = activeOverlay === 'dossier'
   const aiOpen = activeOverlay === 'ai'
   const keysOpen = activeOverlay === 'keys'
-  const isMultiView = selectedWorkspaceViews.length > 1
-  const isDefaultWorkspaceShell = isDefaultWorkspaceSet(selectedWorkspaceViews)
+
+  // Defensive render override: metrics is a full-screen war room, never a pane.
+  // If metrics appears anywhere in selectedWorkspaceViews, treat it as solo.
+  const isMetricsSolo = selectedWorkspaceViews.includes('metrics')
+  const renderViews: InboxWorkspaceView[] = isMetricsSolo ? ['metrics'] : selectedWorkspaceViews
+
+  if (import.meta.env.DEV && isMetricsSolo) {
+    console.log('[workspace] metrics solo override', {
+      selectedWorkspaceViews,
+      renderViews,
+      workspaceWidthOverrides,
+      activeWorkspaceView,
+      activeWorkspaceLabel,
+    })
+  }
+
+  const isMultiView = renderViews.length > 1
+  const isDefaultWorkspaceShell = isDefaultWorkspaceSet(renderViews)
   const isCustomMultiView = isMultiView && !isDefaultWorkspaceShell
   const isCommandMapView = !isMultiView && activeWorkspaceView === 'command_map'
   const isDealIntelligenceView = !isMultiView && activeWorkspaceView === 'deal_intelligence'
@@ -2276,17 +2291,14 @@ export default function InboxPage() {
     if (view === 'calendar') {
       return (
         <section className="nx-workspace-surface nx-workspace-surface--calendar">
-          {calendarEvents.map((event) => (
-            <button key={`${event.thread.id}-${event.eventAt}`} type="button" className={cls('nx-workspace-data-row', selected?.id === event.thread.id && 'is-active')} onClick={() => handleSelect(event.thread.id)}>
-              <div>
-                <strong>{event.type}</strong>
-                <span>{event.thread.ownerName || 'Property Thread'}</span>
-              </div>
-              <div><label>When</label><span>{formatRelativeTime(event.eventAt)}</span></div>
-              <div><label>Property</label><span>{event.thread.propertyAddress || 'Property Unknown'}</span></div>
-              <div><label>Action</label><span>{event.label}</span></div>
-            </button>
-          ))}
+          <InboxCalendarView
+            threads={filtered}
+            selectedThread={selected}
+            selectedId={selected?.id ?? null}
+            layoutMode={layoutMode}
+            onSelectThread={handleSelect}
+            onOpenDealIntelligence={handleOpenDealIntelligence}
+          />
         </section>
       )
     }
@@ -2578,7 +2590,7 @@ export default function InboxPage() {
 
           {isCustomMultiView ? (
             <section className="nx-workspace-split-grid">
-              {selectedWorkspaceViews.map((view) => {
+              {renderViews.map((view) => {
                 const paneWidth = workspaceWidths[view] ?? '25'
                 const layoutMode = getViewLayoutMode(paneWidth)
                 return (

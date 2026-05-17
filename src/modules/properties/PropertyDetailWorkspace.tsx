@@ -15,6 +15,7 @@ import { RehabConditionPanel } from './RehabConditionPanel'
 import { SaleHistoryPanel } from './SaleHistoryPanel'
 import { SellerCommandPanel } from './SellerCommandPanel'
 import { ValuationPanel } from './ValuationPanel'
+import { CensusIntelligencePanel } from './CensusIntelligencePanel'
 import type { PropertyActionHandlers, PropertyIntelligenceContext, PropertyRecord } from './property.types'
 
 interface PropertyDetailWorkspaceProps {
@@ -56,6 +57,7 @@ export const PropertyDetailWorkspace = ({
       </section>
     </main>
     <section className="pi-workspace-below" aria-label="Additional property intelligence">
+      <CensusIntelligencePanel property={property} />
       <PropertySpecsPanel property={property} />
       <RehabConditionPanel property={property} />
       <AssessmentPanel property={property} />

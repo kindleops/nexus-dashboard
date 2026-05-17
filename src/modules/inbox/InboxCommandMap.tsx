@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
-import type { FeatureCollection, Point } from 'geojson'
+import type { FeatureCollection, GeoJsonProperties, Point, Polygon } from 'geojson'
 import type { ThreadMessage } from '../../lib/data/inboxData'
 import type { InboxWorkflowThread } from '../../lib/data/inboxWorkflowData'
 import type { MapSourceMode } from './inbox-layout-state'
@@ -17,9 +17,17 @@ import type {
   BuyerProfilePoint,
   BuyerRecentPurchase,
 } from '../buyer/buyerCommandData'
-import { loadCensusLayerPoints, type CensusMetric, type CensusLayerPoint } from '../../lib/data/censusMapData'
 import { loadBuyerDemandLayerPoints, type BuyerDemandMetric, type BuyerDemandLayerPoint, formatShortPrice } from '../../lib/data/buyerActivityMapData'
-import { loadCensusForProperty, loadCensusMockPoints, calculateInvestorOpportunityScore, type CensusData, type CensusMetricExtended } from '../../lib/data/censusData'
+import { loadCensusForProperty, calculateInvestorOpportunityScore, type CensusData } from '../../lib/data/censusData'
+import { loadSoldCompsInBounds, type RecentSoldComp } from '../../lib/data/commandMapData'
+import {
+  buildOverlayGeoJson,
+  getCensusOverlayLegend,
+  loadNationwideCensusOverlay,
+  type CensusOverlayFeature,
+  type CensusOverlayLegend,
+  type CensusOverlayMetric,
+} from '../../lib/map/censusOverlayUtils'
 
 const DARK_MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
 const CARTO_GLYPHS_URL = 'https://basemaps.cartocdn.com/gl/positron-gl-style/fonts/{fontstack}/{range}.pbf'
@@ -91,17 +99,11 @@ const BUYER_PROFILE_LAYER_IDS = [
 // Census + Buyer Demand overlay layer IDs
 const CENSUS_SOURCE_ID = 'census-geo-source'
 const BUYER_DEMAND_SOURCE_ID = 'buyer-demand-source'
+const SOLD_COMPS_SOURCE_ID = 'sold-comps-source'
 const CENSUS_LAYER_IDS = {
-  incomeHeat: 'census-income-heat',
-  vacancyHeat: 'census-vacancy-heat',
-  renterDensity: 'census-renter-density',
-  housingAge: 'census-housing-age',
-  acquisitionPressure: 'census-acquisition-pressure',
-  ownerOccupancy: 'census-owner-occupancy',
-  medianHomeValue: 'census-median-home-value',
-  medianRent: 'census-median-rent',
-  investorOpportunity: 'census-investor-opportunity',
-  censusHeatmap: 'census-composite-heatmap',
+  fill: 'census-overlay-fill',
+  line: 'census-overlay-line',
+  hoverLine: 'census-overlay-hover-line',
 } as const
 const BUYER_DEMAND_LAYER_IDS = {
   activity6mo: 'buyer-demand-activity-6mo',
@@ -110,8 +112,12 @@ const BUYER_DEMAND_LAYER_IDS = {
   soldPrice: 'buyer-demand-sold-price',
   soldPriceLabel: 'buyer-demand-sold-price-label',
 } as const
-const ALL_CENSUS_LAYER_IDS = Object.values(CENSUS_LAYER_IDS)
 const ALL_BUYER_DEMAND_LAYER_IDS = Object.values(BUYER_DEMAND_LAYER_IDS)
+const SOLD_COMPS_LAYER_IDS = {
+  marker: 'sold-comps-marker',
+  label: 'sold-comps-label',
+} as const
+const ALL_SOLD_COMPS_LAYER_IDS = Object.values(SOLD_COMPS_LAYER_IDS)
 
 export type MapStyleMode = 'dark' | 'satellite' | 'red'
 export type MapOverlayToggles = {
@@ -285,6 +291,11 @@ type ClusterCensusSummary = {
   metrics: Array<{ label: string; value: string }>
 }
 
+type CensusOverlaySelection = {
+  feature: CensusOverlayFeature
+  mode: 'hover' | 'selected'
+}
+
 type BuyerLayerToggles = {
   sellerThreads: boolean
   buyerMatches: boolean
@@ -353,6 +364,7 @@ type CensusLayerToggles = {
   medianHomeValue: boolean
   medianRent: boolean
   investorOpportunity: boolean
+  populationDensity: boolean
   censusHeatmap: boolean
 }
 
@@ -373,6 +385,7 @@ const defaultCensusLayers: CensusLayerToggles = {
   medianHomeValue: false,
   medianRent: false,
   investorOpportunity: false,
+  populationDensity: false,
   censusHeatmap: false,
 }
 
@@ -388,6 +401,7 @@ const CENSUS_TOGGLE_DEFS: Array<{ key: keyof CensusLayerToggles; label: string; 
   { key: 'housingAge',         label: 'Bldg Age',   color: '#94a3b8' },
   { key: 'acquisitionPressure', label: 'Acq Pressure', color: '#ec4899' },
   { key: 'investorOpportunity',label: 'Opp Score',  color: '#22c55e' },
+  { key: 'populationDensity',  label: 'Pop Density',color: '#38bdf8' },
 ]
 
 const defaultBuyerDemandLayers: BuyerDemandLayerToggles = {
@@ -415,6 +429,7 @@ const MAP_LEGEND_ITEMS = [
   { label: 'Offer / Contract', color: '#a855f7' },
   { label: 'Blocked / Suppressed / Urgent', color: '#ef4444' },
   { label: 'Selected / Hot', color: '#eab308' },
+  { label: 'Recent Sold Comp', color: '#ef4444' }, // Red
 ] as const
 
 const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
@@ -1379,6 +1394,109 @@ const buildBuyerHoverMarkup = (buyer: BuyerFeatureProps, styleMode: MapStyleMode
   </article>
 `
 
+const buildSoldCompHoverMarkup = (comp: RecentSoldComp, styleMode: MapStyleMode): string => {
+  const isMls = !!comp.mls_sold_price || !!comp.mls_sold_date
+  const isOffMarket = !isMls && (!!comp.sale_price || !!comp.sale_date)
+  const sourceLabel = isMls ? 'MLS Sold' : isOffMarket ? 'Off-Market Sold' : 'Unknown Sale Source'
+  const sourceClass = isMls ? 'is-accent' : isOffMarket ? 'is-warning' : 'is-neutral'
+
+  const ownerLabel = comp.is_corporate_owner ? 'Corporate Owner' : (comp.is_corporate_owner === false && !!comp.owner_name) ? 'Individual Owner' : 'Unknown Owner Type'
+  const ownerClass = comp.is_corporate_owner ? 'is-premium' : (comp.is_corporate_owner === false && !!comp.owner_name) ? 'is-accent' : 'is-neutral'
+
+  const imageUrl = comp.streetview_image || buildStreetViewUrl(comp.property_address_full) || ''
+  const priceLabel = formatCurrency(comp.mls_sold_price ?? comp.sale_price ?? null)
+
+  const details = [
+    formatInteger(comp.total_bedrooms) + ' bd',
+    formatInteger(comp.total_baths) + ' ba',
+    formatInteger(comp.building_square_feet) + ' sqft',
+    comp.year_built ? 'Built ' + comp.year_built : ''
+  ].filter(Boolean).join(' • ')
+
+  return `
+  <article class="nx-icm-hover nx-icm-hover--sold-comp" style="${escapeHtml(cardThemeStyleAttr(styleMode))}">
+    <div class="nx-icm-hover__body">
+      <div class="nx-icm-hover__head" style="margin-bottom: 8px;">
+        <div>
+          <h4 style="color: #ef4444; font-weight: 700; margin-bottom: 2px;">SOLD ${escapeHtml(priceLabel)}</h4>
+          <div style="display: flex; gap: 4px; margin-top: 4px;">
+            <span class="nx-icm-hover__status nx-icm-hover__status--${sourceClass}">${escapeHtml(sourceLabel)}</span>
+            <span class="nx-icm-hover__status nx-icm-hover__status--${ownerClass}">${escapeHtml(ownerLabel)}</span>
+          </div>
+        </div>
+      </div>
+      <p class="nx-icm-hover__address" style="margin-bottom: 4px;"><span class="nx-icm-hover__address-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s6-5 6-10a6 6 0 0 0-12 0c0 5 6 10 6 10Z" /><circle cx="12" cy="10" r="2.2" /></svg></span>${escapeHtml(comp.property_address_full || 'Unknown Address')}</p>
+      <p style="font-size: 11px; opacity: 0.8; margin-bottom: 8px;">${escapeHtml(comp.property_type || 'Property')} • ${escapeHtml(comp.normalized_asset_class || 'Unknown Class')} • ${escapeHtml(details)}</p>
+      <div class="nx-icm-hover__stats" style="grid-template-columns: repeat(2, 1fr);">
+        <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>Price/Sqft</span><strong>${escapeHtml(formatCurrency(comp.computed_ppsf ?? comp.arv_ppsf ?? null))}</strong></div></div>
+        <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>Condition</span><strong>${escapeHtml(comp.building_condition || comp.renovation_level_classification || 'Unknown')}</strong></div></div>
+        <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>Confidence</span><strong>${comp.comp_confidence_score ? `${Math.round(comp.comp_confidence_score)}/100` : '—'}</strong></div></div>
+        <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>Deal Grade</span><strong>${escapeHtml(comp.deal_grade || '—')}</strong></div></div>
+      </div>
+      ${imageUrl ? `<div style="margin-top: 8px; width: 100%; height: 80px; border-radius: 4px; overflow: hidden; position: relative;">
+        <img src="${escapeHtml(imageUrl)}" alt="Street view" style="width: 100%; height: 100%; object-fit: cover;" loading="lazy" />
+      </div>` : ''}
+    </div>
+  </article>
+`
+}
+
+const SoldCompSelectionCard = ({
+  comp,
+  onClose,
+}: {
+  comp: RecentSoldComp | null
+  onClose: () => void
+}) => {
+  if (!comp) return null
+  const imageUrl = comp.streetview_image || comp.satellite_image || buildStreetViewUrl(comp.property_address_full) || ''
+  
+  const isMls = !!comp.mls_sold_price || !!comp.mls_sold_date
+  const isOffMarket = !isMls && (!!comp.sale_price || !!comp.sale_date)
+  const sourceLabel = isMls ? 'MLS Sold' : isOffMarket ? 'Off-Market Sold' : 'Unknown Sale Source'
+  
+  const ownerLabel = comp.is_corporate_owner ? 'Corporate Owner' : (comp.is_corporate_owner === false && !!comp.owner_name) ? 'Individual Owner' : 'Unknown Owner Type'
+
+  return (
+    <article className="nx-icm-buyer-card" style={{ borderColor: '#ef4444' }}>
+      <div className="nx-icm-buyer-card__head">
+        <div>
+          <span className="nx-icm-buyer-card__eyebrow" style={{ color: '#ef4444' }}>{sourceLabel} • {ownerLabel}</span>
+          <strong style={{ color: '#ef4444' }}>SOLD {formatCurrency(comp.mls_sold_price ?? comp.sale_price ?? null)}</strong>
+          <small>{comp.property_address_full || 'Unknown Address'}</small>
+        </div>
+        <button type="button" className="nx-icm__mode-tab" onClick={onClose}>
+          Close
+        </button>
+      </div>
+      {imageUrl && (
+        <div style={{ width: '100%', height: '120px', borderRadius: '4px', overflow: 'hidden', marginBottom: '12px' }}>
+          <img src={imageUrl} alt="Property" style={{ width: '100%', height: '100%', objectFit: 'cover' }} loading="lazy" />
+        </div>
+      )}
+      <div className="nx-icm-buyer-card__grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
+        <div><span>MLS Sale Date</span><strong>{comp.mls_sold_date ? new Date(comp.mls_sold_date).toLocaleDateString() : '—'}</strong></div>
+        <div><span>Public Sale Date</span><strong>{comp.sale_date ? new Date(comp.sale_date).toLocaleDateString() : '—'}</strong></div>
+        <div><span>Owner Name</span><strong>{comp.owner_name || '—'}</strong></div>
+        <div><span>Price/Sqft</span><strong>{formatCurrency(comp.computed_ppsf ?? comp.arv_ppsf ?? null)}</strong></div>
+        <div><span>Beds / Baths</span><strong>{comp.total_bedrooms ?? '—'} / {comp.total_baths ?? '—'}</strong></div>
+        <div><span>Sqft / Lot</span><strong>{formatInteger(comp.building_square_feet)} sqft</strong></div>
+        <div><span>Built / Type</span><strong>{comp.year_built ?? '—'} {comp.construction_type ? `(${comp.construction_type})` : ''}</strong></div>
+        <div><span>Condition</span><strong>{comp.building_condition || comp.renovation_level_classification || '—'}</strong></div>
+        <div><span>ARV Est.</span><strong>{formatCurrency(comp.arv_estimate)}</strong></div>
+        <div><span>ARV PPSF</span><strong>{formatCurrency(comp.arv_ppsf)}</strong></div>
+        <div><span>Target Spread</span><strong>{formatCurrency(comp.potential_spread)} ({comp.target_margin_percent ? Math.round(comp.target_margin_percent) + '%' : '—'})</strong></div>
+        <div><span>Confidence</span><strong>{comp.comp_confidence_score ? Math.round(comp.comp_confidence_score) + '/100' : '—'} ({comp.deal_grade || '—'})</strong></div>
+      </div>
+      <div className="nx-icm-buyer-card__actions" style={{ marginTop: '12px' }}>
+        <button type="button" className="nx-icm__mode-tab" onClick={() => alert('TODO: Add ARV/Comp Intelligence UI connection')}>Add to ARV</button>
+        <button type="button" className="nx-icm__mode-tab" onClick={() => alert('TODO: Add Exclude Comp UI connection')}>Exclude</button>
+        <a href={mapsSearchUrl(comp.property_address_full)} target="_blank" rel="noreferrer" style={{ marginLeft: 'auto' }}>Open Maps</a>
+      </div>
+    </article>
+  )
+}
+
 const BuyerSelectionCard = ({
   purchase,
   matches,
@@ -1722,6 +1840,8 @@ export function InboxCommandMap({
   const mapOverlaysRef = useRef<MapOverlayToggles>({ ...defaultMapOverlays, ...initialMapOverlays })
   const buyerPurchasesRef = useRef<BuyerRecentPurchase[]>([])
   const buyerMatchesRef = useRef<BuyerCommandData['matches']>([])
+  const censusOverlayFeaturesRef = useRef<CensusOverlayFeature[]>([])
+  const activeCensusMetricRef = useRef<CensusOverlayMetric | null>(null)
   const geojsonRef = useRef<FeatureCollection<Point, PinFeatureProps>>(featureCollectionForPins([], null, null))
   const activityModeRef = useRef<InboxMapActivityMode>('threads')
   const [activityMode, setActivityMode] = useState<InboxMapActivityMode>(initialActivityMode)
@@ -1731,12 +1851,24 @@ export function InboxCommandMap({
   const [buyerLayers, setBuyerLayers] = useState<BuyerLayerToggles>(defaultBuyerLayerToggles)
   const [censusLayers, setCensusLayers] = useState<CensusLayerToggles>(defaultCensusLayers)
   const [buyerDemandLayers, setBuyerDemandLayers] = useState<BuyerDemandLayerToggles>(defaultBuyerDemandLayers)
-  const [censusGeojson, setCensusGeojson] = useState<FeatureCollection<Point, Record<string, unknown>>>(EMPTY_GEOJSON)
+  const [censusGeojson, setCensusGeojson] = useState<FeatureCollection<Polygon, GeoJsonProperties>>({ type: 'FeatureCollection', features: [] })
+  const [censusOverlayFeatures, setCensusOverlayFeatures] = useState<CensusOverlayFeature[]>([])
+  const [censusOverlayLegend, setCensusOverlayLegend] = useState<CensusOverlayLegend | null>(null)
+  const [censusOverlayMessage, setCensusOverlayMessage] = useState<string>('')
+  const [censusOverlayLoading, setCensusOverlayLoading] = useState(false)
+  const [hoveredCensusFeature, setHoveredCensusFeature] = useState<CensusOverlaySelection | null>(null)
+  const [selectedCensusFeature, setSelectedCensusFeature] = useState<CensusOverlaySelection | null>(null)
   const [buyerDemandGeojson, setBuyerDemandGeojson] = useState<FeatureCollection<Point, Record<string, unknown>>>(EMPTY_GEOJSON)
+  const [soldCompsGeojson, setSoldCompsGeojson] = useState<FeatureCollection<Point, Record<string, unknown>>>(EMPTY_GEOJSON)
+  const [, setSoldComps] = useState<RecentSoldComp[]>([])
+  const [, setSoldCompsLoading] = useState(false)
+  const [selectedSoldComp, setSelectedSoldComp] = useState<RecentSoldComp | null>(null)
   const [selectedThreadCensus, setSelectedThreadCensus] = useState<CensusData | null>(null)
   const [selectedBuyerPurchase, setSelectedBuyerPurchase] = useState<BuyerRecentPurchase | null>(null)
   const [hoveredClusterSummary, setHoveredClusterSummary] = useState<ClusterCensusSummary | null>(null)
   const [selectedClusterSummary, setSelectedClusterSummary] = useState<ClusterCensusSummary | null>(null)
+  const [showLegendPanel, setShowLegendPanel] = useState(true)
+  const [showCensusDock, setShowCensusDock] = useState(true)
 
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [activeControlsTab, setActiveControlsTab] = useState<ControlsTab>('view')
@@ -1749,6 +1881,39 @@ export function InboxCommandMap({
   const [activeKpiFilter, setActiveKpiFilter] = useState<MapKpiFilterKey | null>(null)
   const [tickerDensity, setTickerDensity] = useState<TickerDensity>('compact')
   const preferredDockTier = layoutMode === 'compact' ? 'mini' : layoutMode === 'medium' ? 'compact' : 'full'
+  const activeCensusMetric = useMemo(() => {
+    const metricMap: Array<[keyof CensusLayerToggles, CensusOverlayMetric]> = [
+      ['censusHeatmap', 'census_heatmap'],
+      ['vacancyHeat', 'vacancy_heat'],
+      ['incomeHeat', 'income_heat'],
+      ['renterDensity', 'renter_density'],
+      ['ownerOccupancy', 'owner_occupancy'],
+      ['medianHomeValue', 'median_home_value'],
+      ['medianRent', 'median_rent'],
+      ['housingAge', 'housing_age'],
+      ['acquisitionPressure', 'acquisition_pressure'],
+      ['investorOpportunity', 'investor_opportunity'],
+      ['populationDensity', 'population_density'],
+    ]
+    return metricMap.find(([key]) => censusLayers[key])?.[1] ?? null
+  }, [censusLayers])
+
+  const setSingleCensusMetric = (key: keyof CensusLayerToggles, enabled: boolean) => {
+    setCensusLayers({
+      incomeHeat: false,
+      vacancyHeat: false,
+      renterDensity: false,
+      housingAge: false,
+      acquisitionPressure: false,
+      ownerOccupancy: false,
+      medianHomeValue: false,
+      medianRent: false,
+      investorOpportunity: false,
+      populationDensity: false,
+      censusHeatmap: false,
+      [key]: enabled,
+    })
+  }
 
   useEffect(() => {
     setDockTier(preferredDockTier)
@@ -1885,6 +2050,8 @@ export function InboxCommandMap({
   mapOverlaysRef.current = mapOverlays
   buyerPurchasesRef.current = filteredBuyerPurchases
   buyerMatchesRef.current = buyerCommandData?.matches ?? []
+  censusOverlayFeaturesRef.current = censusOverlayFeatures
+  activeCensusMetricRef.current = activeCensusMetric
 
   useEffect(() => {
     setShowSelectedHidden(false)
@@ -2097,6 +2264,7 @@ export function InboxCommandMap({
       setLayerVisibility(map, BUYER_PURCHASE_LAYER_IDS, buyerLayers.sellerThreads || buyerLayers.buyerRecentPurchases || buyerLayers.recentSoldComps || buyerLayers.buyerMatches)
       setLayerVisibility(map, BUYER_PURCHASE_CLUSTER_IDS, buyerLayers.sellerThreads || buyerLayers.buyerRecentPurchases || buyerLayers.recentSoldComps || buyerLayers.buyerMatches)
       setLayerVisibility(map, BUYER_PROFILE_LAYER_IDS, buyerLayers.buyerProfiles)
+      setLayerVisibility(map, ALL_SOLD_COMPS_LAYER_IDS, buyerLayers.recentSoldComps)
       if (map.getLayer(BUYER_HEATMAP_LAYER_ID)) {
         map.setLayoutProperty(BUYER_HEATMAP_LAYER_ID, 'visibility', buyerLayers.buyerHeatmap ? 'visible' : 'none')
       }
@@ -2243,144 +2411,50 @@ export function InboxCommandMap({
         })
       }
 
-      // ── Census geo overlay source ──────────────────────────────────
       if (!map.getSource(CENSUS_SOURCE_ID)) {
-        map.addSource(CENSUS_SOURCE_ID, { type: 'geojson', data: EMPTY_GEOJSON })
+        map.addSource(CENSUS_SOURCE_ID, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
       }
 
-      if (!map.getLayer(CENSUS_LAYER_IDS.incomeHeat)) {
+      if (!map.getLayer(CENSUS_LAYER_IDS.fill)) {
         map.addLayer({
-          id: CENSUS_LAYER_IDS.incomeHeat, type: 'circle', source: CENSUS_SOURCE_ID,
-          filter: ['==', ['get', 'metric'], 'income_heat'],
+          id: CENSUS_LAYER_IDS.fill,
+          type: 'fill',
+          source: CENSUS_SOURCE_ID,
           paint: {
-            'circle-radius': ['interpolate', ['linear'], ['get', 'score'], 0, 4, 100, 22],
-            'circle-color': '#f59e0b', 'circle-opacity': 0.55, 'circle-blur': 0.3,
-            'circle-stroke-width': 1, 'circle-stroke-color': 'rgba(245,158,11,0.4)',
+            'fill-color': ['coalesce', ['get', 'fillColor'], 'rgba(0,0,0,0)'],
+            'fill-opacity': 0.28,
           },
+          layout: { visibility: 'none' },
+        }, 'command-pin-cluster-glow')
+      }
+
+      if (!map.getLayer(CENSUS_LAYER_IDS.line)) {
+        map.addLayer({
+          id: CENSUS_LAYER_IDS.line,
+          type: 'line',
+          source: CENSUS_SOURCE_ID,
+          paint: {
+            'line-color': 'rgba(205, 221, 243, 0.18)',
+            'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.4, 8, 0.8, 12, 1.2],
+            'line-opacity': 0.52,
+          },
+          layout: { visibility: 'none' },
+        }, 'command-pin-cluster-glow')
+      }
+
+      if (!map.getLayer(CENSUS_LAYER_IDS.hoverLine)) {
+        map.addLayer({
+          id: CENSUS_LAYER_IDS.hoverLine,
+          type: 'line',
+          source: CENSUS_SOURCE_ID,
+          paint: {
+            'line-color': 'rgba(255, 255, 255, 0.88)',
+            'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.8, 8, 1.4, 12, 2.1],
+            'line-opacity': 0.92,
+          },
+          filter: ['==', ['get', 'id'], ''],
           layout: { visibility: 'none' },
         })
-      }
-      if (!map.getLayer(CENSUS_LAYER_IDS.vacancyHeat)) {
-        map.addLayer({
-          id: CENSUS_LAYER_IDS.vacancyHeat, type: 'circle', source: CENSUS_SOURCE_ID,
-          filter: ['==', ['get', 'metric'], 'vacancy_heat'],
-          paint: {
-            'circle-radius': ['interpolate', ['linear'], ['get', 'score'], 0, 4, 100, 22],
-            'circle-color': '#ef4444', 'circle-opacity': 0.52, 'circle-blur': 0.3,
-            'circle-stroke-width': 1, 'circle-stroke-color': 'rgba(239,68,68,0.35)',
-          },
-          layout: { visibility: 'none' },
-        })
-      }
-      if (!map.getLayer(CENSUS_LAYER_IDS.renterDensity)) {
-        map.addLayer({
-          id: CENSUS_LAYER_IDS.renterDensity, type: 'circle', source: CENSUS_SOURCE_ID,
-          filter: ['==', ['get', 'metric'], 'renter_density'],
-          paint: {
-            'circle-radius': ['interpolate', ['linear'], ['get', 'score'], 0, 4, 100, 22],
-            'circle-color': '#3b82f6', 'circle-opacity': 0.52, 'circle-blur': 0.3,
-            'circle-stroke-width': 1, 'circle-stroke-color': 'rgba(59,130,246,0.35)',
-          },
-          layout: { visibility: 'none' },
-        })
-      }
-      if (!map.getLayer(CENSUS_LAYER_IDS.housingAge)) {
-        map.addLayer({
-          id: CENSUS_LAYER_IDS.housingAge, type: 'circle', source: CENSUS_SOURCE_ID,
-          filter: ['==', ['get', 'metric'], 'housing_age'],
-          paint: {
-            'circle-radius': ['interpolate', ['linear'], ['get', 'score'], 0, 4, 100, 22],
-            'circle-color': '#94a3b8', 'circle-opacity': 0.50, 'circle-blur': 0.3,
-            'circle-stroke-width': 1, 'circle-stroke-color': 'rgba(148,163,184,0.3)',
-          },
-          layout: { visibility: 'none' },
-        })
-      }
-      if (!map.getLayer(CENSUS_LAYER_IDS.acquisitionPressure)) {
-        map.addLayer({
-          id: CENSUS_LAYER_IDS.acquisitionPressure, type: 'circle', source: CENSUS_SOURCE_ID,
-          filter: ['==', ['get', 'metric'], 'acquisition_pressure'],
-          paint: {
-            'circle-radius': ['interpolate', ['linear'], ['get', 'score'], 0, 5, 100, 24],
-            'circle-color': '#a855f7', 'circle-opacity': 0.56, 'circle-blur': 0.25,
-            'circle-stroke-width': 1, 'circle-stroke-color': 'rgba(168,85,247,0.4)',
-          },
-          layout: { visibility: 'none' },
-        })
-      }
-      if (!map.getLayer(CENSUS_LAYER_IDS.ownerOccupancy)) {
-        map.addLayer({
-          id: CENSUS_LAYER_IDS.ownerOccupancy, type: 'circle', source: CENSUS_SOURCE_ID,
-          filter: ['==', ['get', 'metric'], 'owner_occupancy'],
-          paint: {
-            'circle-radius': ['interpolate', ['linear'], ['get', 'score'], 0, 4, 100, 20],
-            'circle-color': '#10b981', 'circle-opacity': 0.52, 'circle-blur': 0.3,
-            'circle-stroke-width': 1, 'circle-stroke-color': 'rgba(16,185,129,0.35)',
-          },
-          layout: { visibility: 'none' },
-        })
-      }
-      if (!map.getLayer(CENSUS_LAYER_IDS.medianHomeValue)) {
-        map.addLayer({
-          id: CENSUS_LAYER_IDS.medianHomeValue, type: 'circle', source: CENSUS_SOURCE_ID,
-          filter: ['==', ['get', 'metric'], 'median_home_value'],
-          paint: {
-            'circle-radius': ['interpolate', ['linear'], ['get', 'score'], 0, 4, 100, 22],
-            'circle-color': '#06b6d4', 'circle-opacity': 0.52, 'circle-blur': 0.28,
-            'circle-stroke-width': 1, 'circle-stroke-color': 'rgba(6,182,212,0.35)',
-          },
-          layout: { visibility: 'none' },
-        })
-      }
-      if (!map.getLayer(CENSUS_LAYER_IDS.medianRent)) {
-        map.addLayer({
-          id: CENSUS_LAYER_IDS.medianRent, type: 'circle', source: CENSUS_SOURCE_ID,
-          filter: ['==', ['get', 'metric'], 'median_rent'],
-          paint: {
-            'circle-radius': ['interpolate', ['linear'], ['get', 'score'], 0, 4, 100, 20],
-            'circle-color': '#8b5cf6', 'circle-opacity': 0.52, 'circle-blur': 0.3,
-            'circle-stroke-width': 1, 'circle-stroke-color': 'rgba(139,92,246,0.35)',
-          },
-          layout: { visibility: 'none' },
-        })
-      }
-      if (!map.getLayer(CENSUS_LAYER_IDS.investorOpportunity)) {
-        map.addLayer({
-          id: CENSUS_LAYER_IDS.investorOpportunity, type: 'circle', source: CENSUS_SOURCE_ID,
-          filter: ['==', ['get', 'metric'], 'investor_opportunity'],
-          paint: {
-            'circle-radius': ['interpolate', ['linear'], ['get', 'score'], 0, 5, 100, 26],
-            'circle-color': ['interpolate', ['linear'], ['get', 'score'],
-              0, '#16a34a', 50, '#4ade80', 100, '#86efac',
-            ],
-            'circle-opacity': 0.60,
-            'circle-blur': 0.22,
-            'circle-stroke-width': 1.5, 'circle-stroke-color': 'rgba(34,197,94,0.5)',
-          },
-          layout: { visibility: 'none' },
-        })
-      }
-      // Composite heatmap — rendered beneath all circle census layers
-      if (!map.getLayer(CENSUS_LAYER_IDS.censusHeatmap)) {
-        map.addLayer({
-          id: CENSUS_LAYER_IDS.censusHeatmap, type: 'heatmap', source: CENSUS_SOURCE_ID,
-          paint: {
-            'heatmap-weight': ['interpolate', ['linear'], ['get', 'score'], 0, 0, 100, 1],
-            'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 5, 0.6, 11, 1.4],
-            'heatmap-color': [
-              'interpolate', ['linear'], ['heatmap-density'],
-              0,    'rgba(0,0,0,0)',
-              0.15, 'rgba(67,56,202,0.4)',
-              0.4,  'rgba(124,58,237,0.5)',
-              0.65, 'rgba(236,72,153,0.55)',
-              0.85, 'rgba(245,158,11,0.65)',
-              1,    'rgba(239,68,68,0.7)',
-            ],
-            'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 5, 18, 11, 42],
-            'heatmap-opacity': 0.45,
-          },
-          layout: { visibility: 'none' },
-        }, CENSUS_LAYER_IDS.incomeHeat) // insert before circle layers
       }
 
 
@@ -2452,6 +2526,48 @@ export function InboxCommandMap({
             'text-color': '#eab308',
             'text-halo-color': 'rgba(8,10,15,0.88)',
             'text-halo-width': 1.2,
+          },
+          minzoom: 8,
+        })
+      }
+
+      if (!map.getSource(SOLD_COMPS_SOURCE_ID)) {
+        map.addSource(SOLD_COMPS_SOURCE_ID, { type: 'geojson', data: EMPTY_GEOJSON })
+      }
+
+      if (!map.getLayer(SOLD_COMPS_LAYER_IDS.marker)) {
+        map.addLayer({
+          id: SOLD_COMPS_LAYER_IDS.marker,
+          type: 'circle',
+          source: SOLD_COMPS_SOURCE_ID,
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 4, 14, 6],
+            'circle-color': '#ef4444',
+            'circle-stroke-width': 2,
+            'circle-stroke-color': '#ffffff',
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+
+      if (!map.getLayer(SOLD_COMPS_LAYER_IDS.label)) {
+        map.addLayer({
+          id: SOLD_COMPS_LAYER_IDS.label,
+          type: 'symbol',
+          source: SOLD_COMPS_SOURCE_ID,
+          layout: {
+            'text-field': ['concat', 'SOLD ', ['get', 'salePriceLabel']],
+            'text-font': ['Open Sans Semibold'],
+            'text-size': ['interpolate', ['linear'], ['zoom'], 10, 10, 14, 12],
+            'text-anchor': 'left',
+            'text-offset': [0.8, 0],
+            'text-allow-overlap': false,
+            visibility: 'none',
+          },
+          paint: {
+            'text-color': '#ef4444',
+            'text-halo-color': 'rgba(15, 8, 10, 0.95)',
+            'text-halo-width': 1.5,
           },
           minzoom: 8,
         })
@@ -2804,6 +2920,7 @@ export function InboxCommandMap({
         hoverPopupRef.current?.remove()
         threadPopupRef.current?.remove()
         setSelectedClusterSummary(null)
+        setSelectedCensusFeature(null)
         setSelectedPinId(id)
         onSelectThreadIdRef.current?.(id)
         const coordinates = (feature.geometry as Point).coordinates as [number, number]
@@ -2901,11 +3018,43 @@ export function InboxCommandMap({
         const props = feature?.properties as BuyerFeatureProps | undefined
         if (!feature || !props) return
         setSelectedClusterSummary(null)
+        setSelectedCensusFeature(null)
         const exactPurchase = buyerPurchasesRef.current.find((purchase) =>
           purchase.buyerKey === props.buyerKey && purchase.propertyAddressFull === props.propertyAddressFull,
         ) || buyerPurchasesRef.current.find((purchase) => purchase.buyerKey === props.buyerKey) || null
         setSelectedBuyerPurchase(exactPurchase)
         onSelectBuyerKeyRef.current?.(props.buyerKey || null)
+        const coordinates = (feature.geometry as Point).coordinates as [number, number]
+        map.easeTo({ center: coordinates, zoom: Math.max(map.getZoom(), 11.8), duration: 560 })
+      }
+
+      const handleSoldCompHover = (event: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+        const feature = event.features?.[0]
+        const props = feature?.properties as RecentSoldComp | undefined
+        if (!feature || !props) return
+        const coordinates = (feature.geometry as Point).coordinates as [number, number]
+        const popup = hoverPopupRef.current ?? new maplibregl.Popup({
+          closeButton: false,
+          closeOnClick: false,
+          offset: 18,
+          className: 'nx-icm-hover-popup',
+          maxWidth: '360px',
+        })
+        popup
+          .setLngLat(coordinates)
+          .setHTML(buildSoldCompHoverMarkup(props, mapStyleModeRef.current))
+          .addTo(map)
+        hoverPopupRef.current = popup
+      }
+
+      const handleSoldCompClick = (event: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+        const feature = event.features?.[0]
+        const props = feature?.properties as RecentSoldComp | undefined
+        if (!feature || !props) return
+        setSelectedClusterSummary(null)
+        setSelectedCensusFeature(null)
+        setSelectedBuyerPurchase(null)
+        setSelectedSoldComp(props)
         const coordinates = (feature.geometry as Point).coordinates as [number, number]
         map.easeTo({ center: coordinates, zoom: Math.max(map.getZoom(), 11.8), duration: 560 })
       }
@@ -2928,33 +3077,101 @@ export function InboxCommandMap({
         })
       }
 
+      const renderCensusTooltip = (feature: CensusOverlayFeature, metricLabel: string, displayValue: string) => `
+        <article class="nx-icm-hover" style="${cardThemeStyleAttr(mapStyleModeRef.current)}">
+          <div class="nx-icm-hover__body">
+            <div class="nx-icm-hover__head">
+              <div>
+                <p class="nx-icm-hover__eyebrow">${feature.geography_type}</p>
+                <h4>${escapeHtml(feature.name)}</h4>
+              </div>
+              <span class="nx-icm-hover__status nx-icm-hover__status--accent">${escapeHtml(displayValue)}</span>
+            </div>
+            <p class="nx-icm-hover__address">${escapeHtml(metricLabel)}</p>
+            <div class="nx-icm-hover__stats">
+              <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>Income</span><strong>${escapeHtml(formatCompactCurrency(feature.metric_values.median_household_income ?? null))}</strong></div></div>
+              <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>Vacancy</span><strong>${escapeHtml(formatPercent(feature.metric_values.vacancy_rate ?? NaN))}</strong></div></div>
+              <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>Renter%</span><strong>${escapeHtml(formatPercent(feature.metric_values.renter_occupied_percent ?? NaN))}</strong></div></div>
+              <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>Opp Score</span><strong>${escapeHtml(String(feature.metric_values.investor_opportunity_score ?? '—'))}</strong></div></div>
+            </div>
+            <div class="nx-icm-hover__message"><p>${escapeHtml(feature.summary)}</p></div>
+          </div>
+        </article>
+      `
+
+      const handleCensusHover = (event: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+        if (!activeCensusMetricRef.current) return
+        const hovered = event.features?.[0]
+        const featureId = String(hovered?.properties?.id || '')
+        const overlayFeature = censusOverlayFeaturesRef.current.find((item) => item.id === featureId)
+        if (!overlayFeature) return
+        setHoveredCensusFeature({ feature: overlayFeature, mode: 'hover' })
+        const popup = hoverPopupRef.current ?? new maplibregl.Popup({
+          closeButton: false,
+          closeOnClick: false,
+          offset: 18,
+          className: 'nx-icm-hover-popup',
+          maxWidth: '360px',
+        })
+        popup
+          .setLngLat(event.lngLat)
+          .setHTML(renderCensusTooltip(overlayFeature, String(hovered?.properties?.metric || activeCensusMetricRef.current), String(hovered?.properties?.displayValue || '—')))
+          .addTo(map)
+        hoverPopupRef.current = popup
+      }
+
+      const clearCensusHover = () => {
+        hoverPopupRef.current?.remove()
+        setHoveredCensusFeature(null)
+      }
+
+      const handleCensusClick = (event: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+        if (!activeCensusMetricRef.current) return
+        const clicked = event.features?.[0]
+        const featureId = String(clicked?.properties?.id || '')
+        const overlayFeature = censusOverlayFeaturesRef.current.find((item) => item.id === featureId)
+        if (!overlayFeature) return
+        setSelectedCensusFeature({ feature: overlayFeature, mode: 'selected' })
+      }
+
       map.on('click', 'command-pin-core-raw', handlePinClick)
       map.on('click', 'command-pin-core-clustered', handlePinClick)
       map.on('click', 'command-pin-cluster-core', handleClusterClick)
+      map.on('click', CENSUS_LAYER_IDS.fill, handleCensusClick)
       map.on('click', 'command-buyer-purchase-core', handleBuyerClick)
       map.on('click', 'command-buyer-profile-core', handleBuyerClick)
       map.on('click', 'command-buyer-cluster-core', handleBuyerClusterClick)
+      map.on('click', SOLD_COMPS_LAYER_IDS.marker, handleSoldCompClick)
+      map.on('click', SOLD_COMPS_LAYER_IDS.label, handleSoldCompClick)
       map.on('click', (event) => {
         const rendered = map.queryRenderedFeatures(event.point, {
-          layers: ['command-pin-core-raw', 'command-pin-core-clustered', 'command-pin-cluster-core', 'command-buyer-purchase-core', 'command-buyer-profile-core', 'command-buyer-cluster-core'],
+          layers: ['command-pin-core-raw', 'command-pin-core-clustered', 'command-pin-cluster-core', 'command-buyer-purchase-core', 'command-buyer-profile-core', 'command-buyer-cluster-core', SOLD_COMPS_LAYER_IDS.marker, SOLD_COMPS_LAYER_IDS.label],
         })
         if (rendered.length === 0) {
           setActiveThreadPopup(null)
           setSelectedBuyerPurchase(null)
+          setSelectedSoldComp(null)
           setSelectedClusterSummary(null)
+          setSelectedCensusFeature(null)
           onBackgroundClickRef.current?.()
         }
       })
       map.on('mouseenter', 'command-pin-core-raw', handlePinHover)
       map.on('mouseenter', 'command-pin-core-clustered', handlePinHover)
       map.on('mouseenter', 'command-pin-cluster-core', handleClusterHover)
+      map.on('mouseenter', CENSUS_LAYER_IDS.fill, handleCensusHover)
       map.on('mouseenter', 'command-buyer-purchase-core', handleBuyerHover)
       map.on('mouseenter', 'command-buyer-profile-core', handleBuyerHover)
+      map.on('mouseenter', SOLD_COMPS_LAYER_IDS.marker, handleSoldCompHover)
+      map.on('mouseenter', SOLD_COMPS_LAYER_IDS.label, handleSoldCompHover)
       map.on('mouseleave', 'command-pin-core-raw', clearPinHover)
       map.on('mouseleave', 'command-pin-core-clustered', clearPinHover)
       map.on('mouseleave', 'command-pin-cluster-core', clearClusterHover)
+      map.on('mouseleave', CENSUS_LAYER_IDS.fill, clearCensusHover)
       map.on('mouseleave', 'command-buyer-purchase-core', clearPinHover)
       map.on('mouseleave', 'command-buyer-profile-core', clearPinHover)
+      map.on('mouseleave', SOLD_COMPS_LAYER_IDS.marker, clearPinHover)
+      map.on('mouseleave', SOLD_COMPS_LAYER_IDS.label, clearPinHover)
 
       const pulseConfig: Record<PinFeatureProps['pulseTier'], { baseRadius: number; maxAdd: number; baseOpacity: number; speed: number }> = {
         fast: { baseRadius: 13, maxAdd: 8, baseOpacity: 0.26, speed: 1.65 },
@@ -3131,86 +3348,84 @@ export function InboxCommandMap({
     }
   }, [buyerLayers])
 
-  // ── Census layer data loading ──────────────────────────────────────────────
+  // ── Census overlay loading (viewport + zoom aware) ─────────────────────────
   useEffect(() => {
-    // Map toggle keys → CensusMetricExtended values
-    const metricMap: Record<keyof CensusLayerToggles, CensusMetricExtended> = {
-      incomeHeat:          'income_heat',
-      vacancyHeat:         'vacancy_heat',
-      renterDensity:       'renter_density',
-      housingAge:          'housing_age',
-      acquisitionPressure: 'acquisition_pressure',
-      ownerOccupancy:      'owner_occupancy',
-      medianHomeValue:     'median_home_value',
-      medianRent:          'median_rent',
-      investorOpportunity: 'investor_opportunity',
-      censusHeatmap:       'census_heatmap',
-    }
-
-    const activeMetrics = (Object.entries(censusLayers) as Array<[keyof CensusLayerToggles, boolean]>)
-      .filter(([, on]) => on)
-      .map(([key]) => metricMap[key])
-
-    if (activeMetrics.length === 0) {
-      setCensusGeojson(EMPTY_GEOJSON)
+    if (!activeCensusMetric) {
+      setCensusGeojson({ type: 'FeatureCollection', features: [] })
+      setCensusOverlayFeatures([])
+      setCensusOverlayLegend(null)
+      setCensusOverlayMessage('')
+      setCensusOverlayLoading(false)
+      setHoveredCensusFeature(null)
+      setSelectedCensusFeature(null)
       return
     }
 
     let cancelled = false
+    let timeout: ReturnType<typeof setTimeout> | null = null
 
-    // For legacy CensusMetric (existing Supabase path), only the original 5 metrics can be queried
-    const supabaseMetrics = activeMetrics.filter((m): m is CensusMetric =>
-      ['income_heat', 'vacancy_heat', 'renter_density', 'housing_age', 'acquisition_pressure'].includes(m)
-    )
-    const mockOnlyMetrics = activeMetrics.filter((m) =>
-      !['income_heat', 'vacancy_heat', 'renter_density', 'housing_age', 'acquisition_pressure'].includes(m)
-    )
-
-    const supabasePromise = supabaseMetrics.length > 0
-      ? Promise.all(supabaseMetrics.map((m) => loadCensusLayerPoints(m as CensusMetric)))
-      : Promise.resolve([] as CensusLayerPoint[][])
-
-    supabasePromise.then((supabaseResults) => {
-      if (cancelled) return
-      const supabasePoints = supabaseResults.flat()
-
-      // Collect mock points for new metrics + fallback for empty Supabase results
-      const mockPoints = mockOnlyMetrics.flatMap((m) => loadCensusMockPoints(m))
-
-      // Fallback: if Supabase returned nothing for a queried metric, fill with mocks
-      supabaseMetrics.forEach((m, idx) => {
-        if (!supabaseResults[idx]?.length) {
-          mockPoints.push(...loadCensusMockPoints(m))
-        }
+    const loadOverlay = () => {
+      const map = mapRef.current
+      if (!map) return
+      const bounds = map.getBounds()
+      const queryBounds = {
+        west: bounds.getWest(),
+        south: bounds.getSouth(),
+        east: bounds.getEast(),
+        north: bounds.getNorth(),
+      }
+      setCensusOverlayLoading(true)
+      void loadNationwideCensusOverlay(activeCensusMetric, queryBounds, map.getZoom()).then((result) => {
+        if (cancelled) return
+        const geojson = buildOverlayGeoJson(result.features, activeCensusMetric)
+        const metricValues = result.features.map((feature) => {
+          const properties = geojson.features.find((geoFeature) => String(geoFeature.properties?.id) === feature.id)?.properties
+          return Number(properties?.metricValue ?? 0)
+        }).filter(Number.isFinite)
+        const range = metricValues.length > 0
+          ? { min: Math.min(...metricValues), max: Math.max(...metricValues) }
+          : undefined
+        setCensusGeojson(geojson)
+        setCensusOverlayFeatures(result.features)
+        setCensusOverlayLegend(getCensusOverlayLegend(activeCensusMetric, range))
+        setCensusOverlayMessage(result.message || '')
+        setCensusOverlayLoading(false)
+      }).catch(() => {
+        if (cancelled) return
+        setCensusGeojson({ type: 'FeatureCollection', features: [] })
+        setCensusOverlayFeatures([])
+        setCensusOverlayLegend(getCensusOverlayLegend(activeCensusMetric))
+        setCensusOverlayMessage('Nationwide Census overlay data not connected yet.')
+        setCensusOverlayLoading(false)
       })
+    }
 
-      const allPoints = [...supabasePoints, ...mockPoints]
-      const features = allPoints.map((pt) => ({
-        type: 'Feature' as const,
-        geometry: { type: 'Point' as const, coordinates: [pt.lng, pt.lat] as [number, number] },
-        properties: { id: pt.id, metric: pt.metric, score: pt.score, value: pt.value, label: pt.label, geo_key: pt.geo_key, geo_level: pt.geo_level },
-      }))
-      setCensusGeojson({ type: 'FeatureCollection', features })
-    }).catch(() => {
-      if (cancelled) return
-      // Full fallback — render mocks for all active metrics
-      const fallbackPoints = activeMetrics.flatMap((m) => loadCensusMockPoints(m))
-      const features = fallbackPoints.map((pt) => ({
-        type: 'Feature' as const,
-        geometry: { type: 'Point' as const, coordinates: [pt.lng, pt.lat] as [number, number] },
-        properties: { id: pt.id, metric: pt.metric, score: pt.score, value: pt.value, label: pt.label, geo_key: pt.geo_key, geo_level: pt.geo_level },
-      }))
-      setCensusGeojson({ type: 'FeatureCollection', features })
-    })
+    loadOverlay()
 
-    return () => { cancelled = true }
-  }, [censusLayers])
+    const map = mapRef.current
+    const onMoveEnd = () => {
+      if (timeout) clearTimeout(timeout)
+      timeout = setTimeout(loadOverlay, 180)
+    }
+    map?.on('moveend', onMoveEnd)
+
+    return () => {
+      cancelled = true
+      if (timeout) clearTimeout(timeout)
+      map?.off('moveend', onMoveEnd)
+    }
+  }, [activeCensusMetric])
 
   // ── Census intelligence for selected thread ────────────────────────────────
   useEffect(() => {
     if (!selectedThread) { setSelectedThreadCensus(null); return }
     loadCensusForProperty(selectedThread).then(setSelectedThreadCensus).catch(() => setSelectedThreadCensus(null))
   }, [selectedThread?.id])
+
+  useEffect(() => {
+    setHoveredCensusFeature(null)
+    setSelectedCensusFeature(null)
+  }, [activeCensusMetric])
 
   const buildClusterSummaryFromLeaves = (clusterId: number, coordinates: [number, number], mode: 'hover' | 'selected') => {
     const source = mapRef.current?.getSource(CLUSTER_SOURCE_ID) as (maplibregl.GeoJSONSource & {
@@ -3274,6 +3489,7 @@ export function InboxCommandMap({
   }, [visiblePins])
 
   const censusPanelModel = useMemo(() => {
+    const overlaySelection = selectedCensusFeature?.feature || hoveredCensusFeature?.feature || null
     if (selectedThread && selectedThreadCensus) {
       return {
         title: 'Selected Property Census',
@@ -3281,6 +3497,31 @@ export function InboxCommandMap({
         data: selectedThreadCensus,
         metrics: undefined,
         emptyMessage: undefined,
+      }
+    }
+    if (overlaySelection) {
+      return {
+        title: selectedCensusFeature ? 'Selected Geography' : 'Hovered Geography',
+        subtitle: overlaySelection.name,
+        data: {
+          state: overlaySelection.state,
+          county: overlaySelection.county,
+          zip: overlaySelection.zip,
+          census_tract: overlaySelection.tract,
+          population_density: overlaySelection.metric_values.population_density,
+          vacancy_rate: overlaySelection.metric_values.vacancy_rate,
+          renter_occupied_percent: overlaySelection.metric_values.renter_occupied_percent,
+          owner_occupied_percent: overlaySelection.metric_values.owner_occupied_percent,
+          median_household_income: overlaySelection.metric_values.median_household_income,
+          median_home_value: overlaySelection.metric_values.median_home_value,
+          median_gross_rent: overlaySelection.metric_values.median_gross_rent,
+          median_age: overlaySelection.metric_values.median_age,
+          investor_opportunity_score: overlaySelection.metric_values.investor_opportunity_score,
+          acquisition_pressure_score: overlaySelection.metric_values.acquisition_pressure_score,
+          investor_signal_summary: overlaySelection.summary,
+        } as CensusData,
+        metrics: undefined,
+        emptyMessage: censusOverlayMessage || undefined,
       }
     }
     if (selectedClusterSummary) {
@@ -3308,7 +3549,7 @@ export function InboxCommandMap({
       metrics: visibleBoundsCensusPanel.metrics,
       emptyMessage: 'Census metrics will hydrate when you select a property or inspect a cluster.',
     }
-  }, [hoveredClusterSummary, selectedClusterSummary, selectedHydratedThread, selectedPin, selectedThread, selectedThreadCensus, visibleBoundsCensusPanel])
+  }, [censusOverlayMessage, hoveredCensusFeature, hoveredClusterSummary, selectedCensusFeature, selectedClusterSummary, selectedHydratedThread, selectedPin, selectedThread, selectedThreadCensus, visibleBoundsCensusPanel])
 
 
 
@@ -3349,6 +3590,67 @@ export function InboxCommandMap({
     return () => { cancelled = true }
   }, [buyerDemandLayers])
 
+  // ── Sold comps data loading ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!buyerLayers.recentSoldComps) {
+      setSoldCompsGeojson(EMPTY_GEOJSON)
+      setSoldComps([])
+      return
+    }
+
+    let cancelled = false
+    let timeout: ReturnType<typeof setTimeout> | null = null
+
+    const loadComps = () => {
+      const map = mapRef.current
+      if (!map) return
+      const bounds = map.getBounds()
+      const queryBounds = {
+        minLng: bounds.getWest(),
+        minLat: bounds.getSouth(),
+        maxLng: bounds.getEast(),
+        maxLat: bounds.getNorth(),
+      }
+      setSoldCompsLoading(true)
+      loadSoldCompsInBounds(queryBounds, { monthsBack: 6, limit: 1000 }).then((comps) => {
+        if (cancelled) return
+        setSoldComps(comps)
+        const features = comps.map((comp) => ({
+          type: 'Feature' as const,
+          geometry: { type: 'Point' as const, coordinates: [comp.longitude, comp.latitude] as [number, number] },
+          properties: {
+            ...comp,
+            id: `sold-comp-${comp.property_id}`,
+            layer: 'sold_comp',
+            salePriceLabel: formatShortPrice(comp.sale_price ?? comp.mls_sold_price ?? 0),
+          },
+        }))
+        setSoldCompsGeojson({ type: 'FeatureCollection', features })
+        setSoldCompsLoading(false)
+      }).catch(() => {
+        if (cancelled) return
+        setSoldCompsGeojson(EMPTY_GEOJSON)
+        setSoldComps([])
+        setSoldCompsLoading(false)
+      })
+    }
+
+    loadComps()
+
+    const map = mapRef.current
+    const onMoveEnd = () => {
+      if (timeout) clearTimeout(timeout)
+      timeout = setTimeout(loadComps, 250)
+    }
+    map?.on('moveend', onMoveEnd)
+
+    return () => {
+      cancelled = true
+      if (timeout) clearTimeout(timeout)
+      map?.off('moveend', onMoveEnd)
+    }
+  }, [buyerLayers.recentSoldComps])
+
   // ── Push census + buyer demand GeoJSON to map sources ─────────────────────
   useEffect(() => {
     const censusSource = mapRef.current?.getSource(CENSUS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined
@@ -3360,30 +3662,24 @@ export function InboxCommandMap({
     bdSource?.setData(buyerDemandGeojson as Parameters<maplibregl.GeoJSONSource['setData']>[0])
   }, [buyerDemandGeojson])
 
-  // ── Census layer visibility ────────────────────────────────────────────────
+  useEffect(() => {
+    const scSource = mapRef.current?.getSource(SOLD_COMPS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined
+    scSource?.setData(soldCompsGeojson as Parameters<maplibregl.GeoJSONSource['setData']>[0])
+  }, [soldCompsGeojson])
+
+  // ── Census layer visibility + hovered outline ─────────────────────────────
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
-    ALL_CENSUS_LAYER_IDS.forEach((layerId) => {
-      if (map.getLayer(layerId)) {
-        const metricMap: Record<string, keyof CensusLayerToggles> = {
-          [CENSUS_LAYER_IDS.incomeHeat]:          'incomeHeat',
-          [CENSUS_LAYER_IDS.vacancyHeat]:         'vacancyHeat',
-          [CENSUS_LAYER_IDS.renterDensity]:       'renterDensity',
-          [CENSUS_LAYER_IDS.housingAge]:          'housingAge',
-          [CENSUS_LAYER_IDS.acquisitionPressure]: 'acquisitionPressure',
-          [CENSUS_LAYER_IDS.ownerOccupancy]:      'ownerOccupancy',
-          [CENSUS_LAYER_IDS.medianHomeValue]:     'medianHomeValue',
-          [CENSUS_LAYER_IDS.medianRent]:          'medianRent',
-          [CENSUS_LAYER_IDS.investorOpportunity]: 'investorOpportunity',
-          [CENSUS_LAYER_IDS.censusHeatmap]:       'censusHeatmap',
-        }
-        const key = metricMap[layerId]
-        const visible = key ? censusLayers[key] : false
-        map.setLayoutProperty(layerId, 'visibility', visible ? 'visible' : 'none')
-      }
-    })
-  }, [censusLayers])
+    const visible = Boolean(activeCensusMetric && censusGeojson.features.length > 0)
+    if (map.getLayer(CENSUS_LAYER_IDS.fill)) map.setLayoutProperty(CENSUS_LAYER_IDS.fill, 'visibility', visible ? 'visible' : 'none')
+    if (map.getLayer(CENSUS_LAYER_IDS.line)) map.setLayoutProperty(CENSUS_LAYER_IDS.line, 'visibility', visible ? 'visible' : 'none')
+    if (map.getLayer(CENSUS_LAYER_IDS.hoverLine)) {
+      map.setLayoutProperty(CENSUS_LAYER_IDS.hoverLine, 'visibility', visible ? 'visible' : 'none')
+      const highlightedId = selectedCensusFeature?.feature.id || hoveredCensusFeature?.feature.id || ''
+      map.setFilter(CENSUS_LAYER_IDS.hoverLine, ['==', ['get', 'id'], highlightedId])
+    }
+  }, [activeCensusMetric, censusGeojson.features.length, hoveredCensusFeature?.feature.id, selectedCensusFeature?.feature.id])
 
 
   // ── Buyer demand layer visibility ─────────────────────────────────────────
@@ -3567,6 +3863,19 @@ export function InboxCommandMap({
                     </div>
                   </div>
                   <div className="nx-icm__controls-group">
+                    <span className="nx-icm__controls-label">Map UI</span>
+                    <div className="nx-icm__controls-segment">
+                      <label className="nx-icm__checkbox">
+                        <input type="checkbox" checked={showLegendPanel} onChange={(event) => setShowLegendPanel(event.target.checked)} />
+                        Map Key
+                      </label>
+                      <label className="nx-icm__checkbox">
+                        <input type="checkbox" checked={showCensusDock} onChange={(event) => setShowCensusDock(event.target.checked)} />
+                        Census Intelligence
+                      </label>
+                    </div>
+                  </div>
+                  <div className="nx-icm__controls-group">
                     <span className="nx-icm__controls-label">Map Legend</span>
                     <div className="nx-icm__legend-grid is-expanded">
                       {MAP_LEGEND_ITEMS.map((item) => (
@@ -3661,10 +3970,23 @@ export function InboxCommandMap({
                     <div className="nx-icm__controls-segment">
                       {CENSUS_TOGGLE_DEFS.map((def) => (
                         <label key={def.key} className="nx-icm__checkbox">
-                          <input type="checkbox" checked={censusLayers[def.key]} onChange={(e) => setCensusLayers((c) => ({ ...c, [def.key]: e.target.checked }))} />
+                          <input type="checkbox" checked={censusLayers[def.key]} onChange={(e) => setSingleCensusMetric(def.key, e.target.checked)} />
                           {def.label}
                         </label>
                       ))}
+                    </div>
+                  </div>
+                  <div className="nx-icm__controls-group">
+                    <span className="nx-icm__controls-label">Census UI</span>
+                    <div className="nx-icm__controls-segment">
+                      <label className="nx-icm__checkbox">
+                        <input type="checkbox" checked={showCensusDock} onChange={(event) => setShowCensusDock(event.target.checked)} />
+                        Show Census Intelligence
+                      </label>
+                      <label className="nx-icm__checkbox">
+                        <input type="checkbox" checked={showLegendPanel} onChange={(event) => setShowLegendPanel(event.target.checked)} />
+                        Show Map Key
+                      </label>
                     </div>
                   </div>
                   <CensusIntelPanel
@@ -3777,17 +4099,25 @@ export function InboxCommandMap({
         </aside>
       )}
 
-      {!filtersOpen && layoutMode !== 'compact' && (
+      {!filtersOpen && layoutMode !== 'compact' && showCensusDock && (
         <aside className="nx-icm__census-dock nx-icm__buyer-demand-dock" style={{ top: buyerCommandData?.summary ? '324px' : '94px', maxHeight: 'calc(100vh - 350px)', overflowY: 'auto' }}>
-          <span className="nx-icm__buyer-demand-label" style={{ color: '#a78bfa' }}>Census Intelligence</span>
+          <div className="nx-icm__dock-headline">
+            <span className="nx-icm__buyer-demand-label" style={{ color: '#a78bfa' }}>Census Intelligence</span>
+            <button type="button" className="nx-icm__mode-tab" onClick={() => setShowCensusDock(false)}>Hide</button>
+          </div>
+          {activeCensusMetric && (
+            <strong>{censusOverlayLegend?.title || activeCensusMetric.replace(/_/g, ' ')}</strong>
+          )}
+          {censusOverlayLoading && <small>Refreshing visible geography overlay…</small>}
+          {!censusOverlayLoading && censusOverlayMessage && <small>{censusOverlayMessage}</small>}
           <div className="nx-icm__buyer-demand-actions" style={{ marginTop: '8px', marginBottom: '12px' }}>
-            {CENSUS_TOGGLE_DEFS.slice(0, 5).map((def) => (
+            {CENSUS_TOGGLE_DEFS.map((def) => (
               <button
                 type="button"
                 key={def.key}
                 className={cls('nx-icm__mode-tab', censusLayers[def.key] && 'is-active')}
                 style={censusLayers[def.key] ? { borderColor: def.color, boxShadow: `0 0 10px ${def.color}44` } : undefined}
-                onClick={() => setCensusLayers((current) => ({ ...current, [def.key]: !current[def.key] }))}
+                onClick={() => setSingleCensusMetric(def.key, !censusLayers[def.key])}
               >
                 <span className="nx-icm__census-legend-dot" style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', background: def.color, marginRight: '6px' }} />
                 {def.label}
@@ -3805,9 +4135,31 @@ export function InboxCommandMap({
         </aside>
       )}
 
-      {!filtersOpen && layoutMode !== 'compact' && (
+      {!filtersOpen && layoutMode !== 'compact' && showLegendPanel && (
         <aside className="nx-icm__legend-panel">
-          <span className="nx-icm__buyer-demand-label">Map Legend</span>
+          <div className="nx-icm__dock-headline">
+            <span className="nx-icm__buyer-demand-label">{activeCensusMetric ? 'Census Legend' : 'Map Legend'}</span>
+            <button type="button" className="nx-icm__mode-tab" onClick={() => setShowLegendPanel(false)}>Hide</button>
+          </div>
+          {activeCensusMetric && censusOverlayLegend ? (
+            <div className="nx-icm__census-legend-card">
+              <strong>{censusOverlayLegend.title}</strong>
+              <div className="nx-icm__census-legend-bar">
+                {censusOverlayLegend.stops.map((stop) => <span key={`${stop.value}-${stop.color}`} style={{ background: stop.color }} />)}
+              </div>
+              <div className="nx-icm__census-legend-scale">
+                <span>{censusOverlayLegend.lowLabel}</span>
+                <span>{censusOverlayLegend.rangeLabel}</span>
+                <span>{censusOverlayLegend.highLabel}</span>
+              </div>
+              {(selectedCensusFeature?.feature || hoveredCensusFeature?.feature) && (
+                <div className="nx-icm__census-legend-focus">
+                  <span>Focused Geography</span>
+                  <strong>{(selectedCensusFeature?.feature || hoveredCensusFeature?.feature)?.name}</strong>
+                </div>
+              )}
+            </div>
+          ) : null}
           <div className="nx-icm__legend-grid">
             {MAP_LEGEND_ITEMS.map((item) => (
               <div key={item.label} className="nx-icm__legend-row">
@@ -3963,6 +4315,15 @@ export function InboxCommandMap({
             purchase={selectedBuyerPurchase}
             matches={buyerCommandData?.matches ?? []}
             onSelectBuyer={(buyerKey) => onSelectBuyerKeyRef.current?.(buyerKey)}
+          />
+        </div>
+      )}
+
+      {selectedSoldComp && (
+        <div className="nx-icm__buyer-selection-shell">
+          <SoldCompSelectionCard
+            comp={selectedSoldComp}
+            onClose={() => setSelectedSoldComp(null)}
           />
         </div>
       )}

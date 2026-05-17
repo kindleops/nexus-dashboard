@@ -2043,3 +2043,27 @@
     grid-column: 1 / -1;
   }
 }
+
+/* Census Intelligence - Industrial Anchor */
+.census-intel-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 24px;
+}
+
+.census-intel-row strong {
+  font-family: var(--nx-font-mono, "IBM Plex Mono", monospace);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.census-grade-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid currentColor;
+  font-family: var(--nx-font-mono);
+  text-transform: uppercase;
+  font-size: 10px;
+}
