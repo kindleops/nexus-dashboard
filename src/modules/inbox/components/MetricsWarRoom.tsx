@@ -136,28 +136,29 @@ function WrTrend({ current, prev, invert = false }: { current: number; prev: num
 // ── Choropleth helpers ────────────────────────────────────────────────────────
 
 function choroFill(d: StatePerformance | undefined): string {
-  if (!d || d.sent === 0 || d.status === 'quiet') return 'rgba(255,255,255,0.02)'
+  if (!d || d.sent === 0 || d.status === 'quiet') return 'rgba(255,255,255,0.04)'
   switch (d.status) {
-    case 'strong':      return 'rgba(14,212,138,0.22)'
-    case 'active':      return 'rgba(14,207,206,0.20)'
-    case 'contracting': return 'rgba(168,85,247,0.22)'
-    case 'warning':     return 'rgba(245,166,35,0.22)'
-    case 'blocked':     return 'rgba(224,82,82,0.22)'
-    default:            return 'rgba(255,255,255,0.02)'
+    case 'strong':      return 'rgba(14,212,138,0.28)'
+    case 'active':      return 'rgba(14,207,206,0.24)'
+    case 'contracting': return 'rgba(168,85,247,0.28)'
+    case 'warning':     return 'rgba(245,166,35,0.28)'
+    case 'blocked':     return 'rgba(224,82,82,0.28)'
+    default:            return 'rgba(255,255,255,0.04)'
   }
 }
 
 function choroStroke(d: StatePerformance | undefined, sel: boolean, hov: boolean): string {
-  if (sel) return 'rgba(255,255,255,0.9)'
-  if (hov) return 'rgba(255,255,255,0.55)'
-  if (!d || d.sent === 0 || d.status === 'quiet') return 'rgba(255,255,255,0.06)'
+  if (sel) return 'rgba(255,255,255,0.95)'
+  if (hov) return 'rgba(255,255,255,0.65)'
+  // Always show visible state borders, even with no data
+  if (!d || d.sent === 0 || d.status === 'quiet') return 'rgba(255,255,255,0.22)'
   switch (d.status) {
-    case 'strong':      return 'rgba(14,212,138,0.6)'
-    case 'active':      return 'rgba(14,207,206,0.55)'
-    case 'contracting': return 'rgba(168,85,247,0.6)'
-    case 'warning':     return 'rgba(245,166,35,0.55)'
-    case 'blocked':     return 'rgba(224,82,82,0.6)'
-    default:            return 'rgba(255,255,255,0.06)'
+    case 'strong':      return 'rgba(14,212,138,0.75)'
+    case 'active':      return 'rgba(14,207,206,0.70)'
+    case 'contracting': return 'rgba(168,85,247,0.75)'
+    case 'warning':     return 'rgba(245,166,35,0.70)'
+    case 'blocked':     return 'rgba(224,82,82,0.75)'
+    default:            return 'rgba(255,255,255,0.22)'
   }
 }
 
@@ -321,22 +322,24 @@ function WrUsaMap({
 
   if (loading) {
     return (
-      <div className="wr-map">
-        <WrSkeleton h={240} />
+      <div className="wr-panel wr-map-panel">
+        <div className="wr-panel__header"><span className="wr-panel__title">Nationwide Performance Map</span></div>
+        <div className="wr-panel__body"><WrSkeleton h={260} /></div>
       </div>
     )
   }
 
   return (
-    <div className="wr-map">
-      <div className="wr-map__header">
-        <span className="wr-panel__title">Nationwide Performance Map</span>
+    <div className="wr-panel wr-map-panel">
+      <div className="wr-panel__header">
+        <span className="wr-panel__title">NATIONWIDE PERFORMANCE MAP</span>
         {selectedState && (
           <button type="button" className="wr-map__clear" onClick={() => onStateClick('')}>
             {STATE_NAMES[selectedState] ?? selectedState} ✕
           </button>
         )}
       </div>
+      <div className="wr-panel__body wr-map-body">
       <div className="wr-map__svg-wrap">
         <svg
           viewBox="0 0 960 600"
@@ -405,11 +408,13 @@ function WrUsaMap({
           ['#a855f7', 'Contracting'],
           ['#f5a623', 'Warning'],
           ['#e05252', 'Blocked'],
+          ['rgba(255,255,255,0.22)', 'Quiet'],
         ].map(([c, label]) => (
           <span key={label} className="wr-map__legend-item">
-            <i style={{ background: `${c}38`, border: `1px solid ${c}80` }} /> {label}
+            <i style={{ background: `${c}`, border: `1px solid ${c}` }} /> {label}
           </span>
         ))}
+      </div>
       </div>
     </div>
   )
@@ -476,14 +481,12 @@ function WrRevenue({ spend, offerMetrics, loading }: {
 }) {
   const rows = offerMetrics
     ? [
-        { label: 'Offers Created',      value: fmt.int(offerMetrics.offersCreated),      color: 'var(--wr-blue)' },
-        { label: 'Offers Sent',         value: fmt.int(offerMetrics.offersSent),          color: 'var(--wr-blue)' },
-        { label: 'Contracts Sent',      value: fmt.int(offerMetrics.contractsSent),       color: 'var(--wr-amber)' },
-        { label: 'Under Contract',      value: fmt.int(offerMetrics.underContract),       color: 'var(--wr-teal)' },
-        { label: 'Closed',              value: fmt.int(offerMetrics.closed),              color: 'var(--wr-green)' },
-        { label: 'Gross Revenue',       value: fmt.usd(offerMetrics.grossRevenue),        color: '#fff' },
-        { label: 'Projected',           value: fmt.usd(offerMetrics.projectedRevenue),    color: 'var(--wr-blue)' },
-        { label: 'Avg Deal Size',       value: fmt.usd(offerMetrics.avgDealSize),         color: '#fff' },
+        { label: 'Offers Created',  value: fmt.int(offerMetrics.offersCreated),   color: 'var(--wr-blue)' },
+        { label: 'Offers Sent',     value: fmt.int(offerMetrics.offersSent),       color: 'var(--wr-blue)' },
+        { label: 'Contracts Sent',  value: fmt.int(offerMetrics.contractsSent),    color: 'var(--wr-amber)' },
+        { label: 'Fully Executed',  value: fmt.int(offerMetrics.fullyExecuted),    color: 'var(--wr-teal)' },
+        { label: 'Closed',          value: fmt.int(offerMetrics.closed),           color: 'var(--wr-green)' },
+        { label: 'Projected Rev.',  value: fmt.usd(offerMetrics.projectedRevenue), color: 'var(--wr-blue)' },
       ]
     : []
 
@@ -515,8 +518,10 @@ function WrRevenue({ spend, offerMetrics, loading }: {
               <span className="wr-spend-item__value">{fmt.usd(spend.totalSpend)}</span>
             </div>
             <div className="wr-spend-item">
-              <span className="wr-spend-item__label">ROI</span>
-              <span className="wr-spend-item__value" style={{ color: 'var(--wr-green)' }}>{spend.roi != null ? `${spend.roi}x` : '—'}</span>
+              <span className="wr-spend-item__label">Proj. ROI</span>
+              <span className="wr-spend-item__value" style={{ color: 'var(--wr-green)' }}>
+                {spend.projectedROI != null ? `${spend.projectedROI}x` : '—'}
+              </span>
             </div>
           </div>
         )}
@@ -541,9 +546,8 @@ function WrAlerts({ alerts, loading }: { alerts: KpiAlert[]; loading: boolean })
           <div className="wr-empty">No active alerts.</div>
         ) : (
           alerts.slice(0, 6).map((a, i) => (
-            <div key={i} className={cls('wr-alert', `wr-alert--${a.level}`)}>
+            <div key={i} className={cls('wr-alert', a.severity === 'critical' ? 'wr-alert--critical' : a.severity === 'warning' ? 'wr-alert--warning' : 'wr-alert--info')}>
               <span className="wr-alert__msg">{a.message}</span>
-              <span className="wr-alert__time">{a.age}</span>
             </div>
           ))
         )}
@@ -624,12 +628,14 @@ function WrChannelPerf({ channels, loading }: { channels: ChannelPerformance[]; 
             </div>
             {channels.map(ch => (
               <div key={ch.channel} className="wr-channel-row">
-                <span className="wr-channel-name">{ch.channel}</span>
+                <span className="wr-channel-name">{ch.channel.toUpperCase()}</span>
                 <span>{fmt.int(ch.sent)}</span>
                 <span>{fmt.pct(ch.deliveryRate)}</span>
                 <span style={{ color: 'var(--wr-teal)' }}>{fmt.pct(ch.replyRate)}</span>
                 <span style={{ color: 'var(--wr-green)' }}>{fmt.pct(ch.positiveRate)}</span>
-                <span style={{ color: ch.optOutRate > 2 ? 'var(--wr-amber)' : 'inherit' }}>{fmt.pct(ch.optOutRate)}</span>
+                <span style={{ color: ch.sent > 0 && (ch.optOut / ch.sent * 100) > 2 ? 'var(--wr-amber)' : 'inherit' }}>
+                  {ch.sent > 0 ? `${(ch.optOut / ch.sent * 100).toFixed(1)}%` : '—'}
+                </span>
                 <span style={{ color: 'var(--wr-muted)' }}>{fmt.usd(ch.costPerReply)}</span>
               </div>
             ))}
@@ -721,9 +727,14 @@ function WrCarrierIntel({ carriers, loading }: { carriers: CarrierPerformance[];
 // ── WrNumbersHealth ───────────────────────────────────────────────────────────
 
 function WrNumbersHealth({ numbers, loading }: { numbers: TextgridNumberHealth[]; loading: boolean }) {
-  const totalActive = numbers.filter(n => n.status === 'healthy').length
-  const totalFlagged = numbers.filter(n => n.status === 'warning').length
-  const totalCritical = numbers.filter(n => n.status === 'critical').length
+  const totalActive   = numbers.filter(n => n.isActive).length
+  const totalHealthy  = numbers.filter(n => n.recommendation === 'Healthy').length
+  const totalWarning  = numbers.filter(n => n.recommendation === 'Watch' || n.recommendation === 'Throttle').length
+  const totalCritical = numbers.filter(n => n.recommendation === 'Pause' || n.recommendation === 'Replace').length
+
+  const cardStatus = (n: TextgridNumberHealth) =>
+    n.recommendation === 'Healthy' ? 'healthy' :
+    n.recommendation === 'Watch' || n.recommendation === 'Throttle' ? 'warning' : 'critical'
 
   return (
     <div className="wr-panel">
@@ -742,12 +753,12 @@ function WrNumbersHealth({ numbers, loading }: { numbers: TextgridNumberHealth[]
           <>
             <div className="wr-numbers-summary">
               <div className="wr-numbers-summary__item">
-                <strong style={{ color: 'var(--wr-green)' }}>{totalActive}</strong>
-                <span>Active</span>
+                <strong style={{ color: 'var(--wr-green)' }}>{totalHealthy}</strong>
+                <span>Healthy</span>
               </div>
               <div className="wr-numbers-summary__item">
-                <strong style={{ color: 'var(--wr-amber)' }}>{totalFlagged}</strong>
-                <span>Flagged</span>
+                <strong style={{ color: 'var(--wr-amber)' }}>{totalWarning}</strong>
+                <span>Watch</span>
               </div>
               <div className="wr-numbers-summary__item">
                 <strong style={{ color: 'var(--wr-red)' }}>{totalCritical}</strong>
@@ -759,15 +770,18 @@ function WrNumbersHealth({ numbers, loading }: { numbers: TextgridNumberHealth[]
               </div>
             </div>
             <div className="wr-numbers-grid">
-              {numbers.slice(0, 12).map(n => (
-                <div key={n.phoneNumber} className={cls('wr-number-card', `wr-number-card--${n.status}`)}>
-                  <span className="wr-number-card__num">{n.phoneNumber}</span>
-                  <span className="wr-number-card__label">{n.market}</span>
-                  <span className={cls('wr-number-card__stat', n.status === 'healthy' ? 'ok' : n.status === 'warning' ? 'warn' : 'bad')}>
-                    {fmt.int(n.sent24h)} sent · {fmt.pct(n.deliveryRate)} del · {fmt.pct(n.optOutRate)} opt
-                  </span>
-                </div>
-              ))}
+              {numbers.slice(0, 12).map(n => {
+                const s = cardStatus(n)
+                return (
+                  <div key={n.phoneNumber} className={cls('wr-number-card', `wr-number-card--${s}`)}>
+                    <span className="wr-number-card__num">{n.phoneNumber}</span>
+                    <span className="wr-number-card__label">{n.market}</span>
+                    <span className={cls('wr-number-card__stat', s === 'healthy' ? 'ok' : s === 'warning' ? 'warn' : 'bad')}>
+                      {fmt.int(n.sentToday)} sent · {fmt.pct(n.deliveryRate)} del · {fmt.pct(n.optOutRate)} opt
+                    </span>
+                  </div>
+                )
+              })}
             </div>
           </>
         )}
@@ -815,14 +829,14 @@ function WrDataQuality({ quality, loading }: { quality: DataQualityMetrics | nul
             </div>
             <div className="wr-quality-rows">
               {[
-                ['Failed Queue',       quality.failedQueue,      'wr-red'],
-                ['Blank Messages',     quality.blankMessages,    'wr-amber'],
-                ['Routing Blocked',    quality.routingBlocked,   'wr-amber'],
-                ['Wrong Numbers',      quality.wrongNumbers,     'wr-red'],
-                ['DNC Matches',        quality.dncMatches,       'wr-red'],
-                ['Missing Phone',      quality.missingPhone,     'wr-amber'],
-                ['Manual Review',      quality.manualReviewQueue, ''],
-                ['Auto Blocked',       quality.autoBlocked,      'wr-red'],
+                ['Failed Queue',    quality.failedQueueRows,    'wr-red'],
+                ['Blank Body',      quality.blankBody,          'wr-amber'],
+                ['Routing Blocked', quality.routingBlocked,     'wr-amber'],
+                ['Wrong Number',    quality.wrongNumber,        'wr-red'],
+                ['DNC Count',       quality.dncCount,           'wr-red'],
+                ['Missing Phone',   quality.missingPhone,       'wr-amber'],
+                ['Manual Review',   quality.manualReviewCount,  ''],
+                ['Auto Blocked',    quality.autoReplyBlocked,   'wr-red'],
               ].filter(([, v]) => (v as number) != null).map(([label, val, tone]) => (
                 <div key={label as string} className="wr-quality-row">
                   <span className="wr-quality-row__label">{label as string}</span>
@@ -842,21 +856,25 @@ function WrDataQuality({ quality, loading }: { quality: DataQualityMetrics | nul
 // ── WrBuyerDemand ─────────────────────────────────────────────────────────────
 
 function WrBuyerDemand({ metrics, loading }: { metrics: BuyerDemandMetrics | null; loading: boolean }) {
-  const score = metrics?.buyerScore ?? 0
-  const scoreColor = score > 66 ? 'var(--wr-green)' : score > 33 ? 'var(--wr-amber)' : 'var(--wr-red)'
+  const confidence = metrics?.avgConfidence ?? 0
+  const scoreColor = confidence > 66 ? 'var(--wr-green)' : confidence > 33 ? 'var(--wr-amber)' : 'var(--wr-red)'
   const r = 28, cx = 36, cy = 36, circ = 2 * Math.PI * r
-  const dash = (score / 100) * circ
+  const dash = (confidence / 100) * circ
 
   return (
     <div className="wr-panel">
       <div className="wr-panel__header">
         <span className="wr-panel__title">Buyer Demand</span>
-        {metrics && <span className="wr-panel__badge" style={{ color: scoreColor }}>{metrics.demandLabel}</span>}
+        {metrics && (
+          <span className="wr-panel__badge" style={{ color: scoreColor }}>
+            {metrics.totalMatches} matches
+          </span>
+        )}
       </div>
       <div className="wr-panel__body">
         {loading ? (
           <WrSkeleton h={80} />
-        ) : !metrics ? (
+        ) : !metrics || !metrics.isWired ? (
           <div className="wr-empty">No buyer demand data yet.</div>
         ) : (
           <div className="wr-buyer-layout">
@@ -872,22 +890,36 @@ function WrBuyerDemand({ metrics, loading }: { metrics: BuyerDemandMetrics | nul
                     transform={`rotate(-90 ${cx} ${cy})`}
                     style={{ filter: `drop-shadow(0 0 4px ${scoreColor}80)` }}
                   />
-                  <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle" fill={scoreColor} fontSize="14" fontWeight="800">{score}</text>
+                  <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle" fill={scoreColor} fontSize="12" fontWeight="800">
+                    {Math.round(confidence)}
+                  </text>
                 </svg>
-                <span className="wr-gauge__label">Buyer Score</span>
+                <span className="wr-gauge__label">Confidence</span>
               </div>
             </div>
             <div className="wr-buyer-breakdown">
-              {[
-                { label: 'High',    value: metrics.high,    color: 'var(--wr-green)' },
-                { label: 'Medium',  value: metrics.medium,  color: 'var(--wr-teal)' },
-                { label: 'Low',     value: metrics.low,     color: 'var(--wr-amber)' },
-                { label: 'Passive', value: metrics.passive, color: 'var(--wr-muted)' },
-              ].map(r => (
-                <div key={r.label} className="wr-buyer-row">
-                  <span className="wr-buyer-row__dot" style={{ background: r.color }} />
-                  <span className="wr-buyer-row__label">{r.label}</span>
-                  <strong className="wr-buyer-row__val" style={{ color: r.color }}>{fmt.int(r.value)}</strong>
+              <div className="wr-buyer-row">
+                <span className="wr-buyer-row__dot" style={{ background: 'var(--wr-green)' }} />
+                <span className="wr-buyer-row__label">Total Matches</span>
+                <strong className="wr-buyer-row__val" style={{ color: 'var(--wr-green)' }}>{fmt.int(metrics.totalMatches)}</strong>
+              </div>
+              <div className="wr-buyer-row">
+                <span className="wr-buyer-row__dot" style={{ background: 'var(--wr-teal)' }} />
+                <span className="wr-buyer-row__label">Assigned</span>
+                <strong className="wr-buyer-row__val" style={{ color: 'var(--wr-teal)' }}>{fmt.int(metrics.assignedCount)}</strong>
+              </div>
+              <div className="wr-buyer-row">
+                <span className="wr-buyer-row__dot" style={{ background: 'var(--wr-amber)' }} />
+                <span className="wr-buyer-row__label">Response Rate</span>
+                <strong className="wr-buyer-row__val" style={{ color: 'var(--wr-amber)' }}>
+                  {metrics.buyerResponseRate != null ? fmt.pct(metrics.buyerResponseRate) : '—'}
+                </strong>
+              </div>
+              {metrics.topMarkets.slice(0, 3).map(m => (
+                <div key={m.market} className="wr-buyer-row">
+                  <span className="wr-buyer-row__dot" style={{ background: 'var(--wr-purple)' }} />
+                  <span className="wr-buyer-row__label">{m.market}</span>
+                  <strong className="wr-buyer-row__val" style={{ color: 'var(--wr-purple)' }}>{m.matches}</strong>
                 </div>
               ))}
             </div>
@@ -990,8 +1022,8 @@ function useMetricsData(filters: KpiFilters) {
   }))
 
   const agentLbRows: LbRow[] = agentPerf.map(a => ({
-    key: a.agent,
-    label: a.agent,
+    key: a.agentId,
+    label: a.agentName || a.agentId,
     sent: a.sent,
     replies: a.replied,
     positive: a.positive,
@@ -1000,11 +1032,11 @@ function useMetricsData(filters: KpiFilters) {
 
   const templateLbRows: LbRow[] = templatePerf.map(t => ({
     key: t.templateId,
-    label: t.templateName || t.templateId,
+    label: t.preview ? t.preview.slice(0, 32) : t.templateId,
     sent: t.sent,
     replies: t.replied,
     positive: t.positive,
-    optOutRate: t.optOutRate,
+    optOutRate: t.stopRate,
   }))
 
   return {
@@ -1054,7 +1086,7 @@ export function MetricsRail25({
       </div>
       <div className="wr-rail__scroll">
         {alerts.slice(0, 1).map((a, i) => (
-          <div key={i} className={cls('wr-alert', `wr-alert--${a.level}`)} style={{ margin: '6px 8px 0', fontSize: 10 }}>
+          <div key={i} className={cls('wr-alert', a.severity === 'critical' ? 'wr-alert--critical' : a.severity === 'warning' ? 'wr-alert--warning' : 'wr-alert--info')} style={{ margin: '6px 8px 0', fontSize: 10 }}>
             <span className="wr-alert__msg">{a.message.slice(0, 55)}{a.message.length > 55 && '…'}</span>
           </div>
         ))}
@@ -1155,9 +1187,6 @@ export function MetricsCommand75({
   summary,
   timeSeries,
   statePerf,
-  marketPerf,
-  agentPerf,
-  templatePerf,
   channelPerf,
   funnel,
   numberHealth,
@@ -1176,9 +1205,6 @@ export function MetricsCommand75({
   summary: KpiSummary | null
   timeSeries: TimeSeriesPoint[]
   statePerf: StatePerformance[]
-  marketPerf: MarketPerformance[]
-  agentPerf: AgentPerformance[]
-  templatePerf: TemplatePerformance[]
   channelPerf: ChannelPerformance[]
   funnel: FunnelStage[]
   numberHealth: TextgridNumberHealth[]
@@ -1391,9 +1417,6 @@ export function MetricsWarRoom({ layoutMode, paneWidth }: MetricsWarRoomProps) {
           summary={data.summary}
           timeSeries={data.timeSeries}
           statePerf={data.statePerf}
-          marketPerf={data.marketPerf}
-          agentPerf={data.agentPerf}
-          templatePerf={data.templatePerf}
           channelPerf={data.channelPerf}
           funnel={data.funnel}
           numberHealth={data.numberHealth}

@@ -117,7 +117,12 @@ const SOLD_COMPS_LAYER_IDS = {
   marker: 'sold-comps-marker',
   label: 'sold-comps-label',
 } as const
-const ALL_SOLD_COMPS_LAYER_IDS = Object.values(SOLD_COMPS_LAYER_IDS)
+const SOLD_COMPS_CLUSTER_LAYER_IDS = {
+  glow: 'sold-comps-cluster-glow',
+  core: 'sold-comps-cluster-core',
+  count: 'sold-comps-cluster-count',
+} as const
+const ALL_SOLD_COMPS_LAYER_IDS = [...Object.values(SOLD_COMPS_LAYER_IDS), ...Object.values(SOLD_COMPS_CLUSTER_LAYER_IDS)]
 
 export type MapStyleMode = 'dark' | 'satellite' | 'red'
 export type MapOverlayToggles = {
@@ -429,7 +434,10 @@ const MAP_LEGEND_ITEMS = [
   { label: 'Offer / Contract', color: '#a855f7' },
   { label: 'Blocked / Suppressed / Urgent', color: '#ef4444' },
   { label: 'Selected / Hot', color: '#eab308' },
-  { label: 'Recent Sold Comp', color: '#ef4444' }, // Red
+  { label: 'Recent Sold Comp', color: '#ef4444' },
+  { label: 'MLS Sold', color: '#3b82f6' },
+  { label: 'Public Record Sold', color: '#eab308' },
+  { label: 'Off-Market Sold', color: '#facc15' },
 ] as const
 
 const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
@@ -683,7 +691,7 @@ const fetchDarkStyleSpec = async (): Promise<maplibregl.StyleSpecification | nul
   return darkStyleSpecPromise
 }
 
-const ownLayerPrefix = 'command-pin-'
+const isCustomLayer = (id?: string) => !id ? false : id.startsWith('command-') || id.startsWith('census-') || id.startsWith('buyer-demand-') || id.startsWith('sold-comps-')
 const hybridLayerPrefix = 'nx-icm-hybrid-'
 
 const classifyBaseLayer = (layer: StyleLayerLike): Array<keyof MapOverlayToggles> => {
@@ -1394,48 +1402,378 @@ const buildBuyerHoverMarkup = (buyer: BuyerFeatureProps, styleMode: MapStyleMode
   </article>
 `
 
-const buildSoldCompHoverMarkup = (comp: RecentSoldComp, styleMode: MapStyleMode): string => {
-  const isMls = !!comp.mls_sold_price || !!comp.mls_sold_date
-  const isOffMarket = !isMls && (!!comp.sale_price || !!comp.sale_date)
-  const sourceLabel = isMls ? 'MLS Sold' : isOffMarket ? 'Off-Market Sold' : 'Unknown Sale Source'
-  const sourceClass = isMls ? 'is-accent' : isOffMarket ? 'is-warning' : 'is-neutral'
+const haversineMiles = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
+  const toRad = (value: number) => (value * Math.PI) / 180
+  const earthRadiusMiles = 3958.8
+  const dLat = toRad(lat2 - lat1)
+  const dLng = toRad(lng2 - lng1)
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+    Math.sin(dLng / 2) * Math.sin(dLng / 2)
+  return earthRadiusMiles * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
 
-  const ownerLabel = comp.is_corporate_owner ? 'Corporate Owner' : (comp.is_corporate_owner === false && !!comp.owner_name) ? 'Individual Owner' : 'Unknown Owner Type'
-  const ownerClass = comp.is_corporate_owner ? 'is-premium' : (comp.is_corporate_owner === false && !!comp.owner_name) ? 'is-accent' : 'is-neutral'
+type SoldCompMetricItem = {
+  label: string
+  value: string
+  emphasis?: 'default' | 'accent' | 'hero'
+}
 
-  const imageUrl = comp.streetview_image || buildStreetViewUrl(comp.property_address_full) || ''
-  const priceLabel = formatCurrency(comp.mls_sold_price ?? comp.sale_price ?? null)
+type SoldCompPresentation = {
+  variant: 'residential' | 'multifamily'
+  accentHex: string
+  accentTone: 'danger' | 'accent'
+  salePrice: string
+  saleDate: string
+  sourceLabel: string
+  sourceTone: 'accent' | 'premium' | 'warning'
+  buyerName: string
+  buyerType: string
+  buyerTone: 'institutional' | 'premium' | 'accent'
+  entityLabel: string
+  imageUrl: string
+  imageLabel: string
+  propertyLabel: string
+  subtypeLabel: string | null
+  distanceLabel: string | null
+  residentialMetrics: SoldCompMetricItem[]
+  multifamilyHeroMetric: SoldCompMetricItem | null
+  multifamilyMetrics: SoldCompMetricItem[]
+  intelligenceChips: Array<{ label: string; value: string; tone?: 'success' | 'accent' | 'warning' | 'neutral' }>
+  whyItMatters: string
+  actionLinks: {
+    fullComp: string
+    buyerSearch: string
+    maps: string
+  }
+}
 
-  const details = [
-    formatInteger(comp.total_bedrooms) + ' bd',
-    formatInteger(comp.total_baths) + ' ba',
-    formatInteger(comp.building_square_feet) + ' sqft',
-    comp.year_built ? 'Built ' + comp.year_built : ''
-  ].filter(Boolean).join(' • ')
+const SOLD_COMP_INSTITUTIONAL_NAME_PATTERNS = [
+  'INVITATION HOMES', 'PROGRESS RESIDENTIAL', 'AMERICAN HOMES 4 RENT', 'AH4R', 'TRICON',
+  'AMHERST', 'FIRSTKEY', 'STARWOOD', 'BLACKSTONE', 'VINEBROOK', 'ROOFSTOCK', 'PRETIUM',
+  'OPENDOOR', 'OFFERPAD', 'HOME PARTNERS OF AMERICA', 'MAYMONT HOMES', 'SECOND AVENUE',
+]
 
+const SOLD_COMP_INSTITUTIONAL_KEYWORDS = [
+  'REIT', 'HEDGE FUND', 'PORTFOLIO', 'SINGLE FAMILY RENTAL', 'INSTITUTIONAL',
+  'CAPITAL', 'FUND', 'OPPORTUNITY FUND', 'ASSET MANAGEMENT', 'INVESTMENT MANAGEMENT',
+]
+
+const SOLD_COMP_BUILDER_KEYWORDS = [
+  'BUILDER', 'BUILDERS', 'DEVELOPMENT', 'DEVELOPER', 'CONSTRUCTION', 'HOMES',
+  'LAND DEVELOPMENT', 'CUSTOM HOME', 'COMMUNITIES',
+]
+
+const SOLD_COMP_OPERATOR_KEYWORDS = [
+  'APARTMENTS', 'APARTMENT', 'RESIDENCES', 'RESIDENCE', 'COMMUNITY', 'COMMUNITIES',
+  'LIVING', 'HOLDINGS', 'PROPERTIES', 'MANAGEMENT', 'LOFTS', 'VILLAS',
+]
+
+const formatDateLabel = (value: string | null | undefined): string => {
+  if (!value) return 'Date Unknown'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Date Unknown'
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+const formatDecimal = (value: number | null | undefined, digits = 1): string => {
+  if (!Number.isFinite(value ?? NaN)) return '—'
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: digits,
+  }).format(value as number)
+}
+
+const formatLotSizeLabel = (lotAcreage: number | null | undefined, lotSquareFeet: number | null | undefined): string => {
+  if (Number.isFinite(lotAcreage ?? NaN) && (lotAcreage as number) >= 1) return `${formatDecimal(lotAcreage, 2)} ac`
+  if (Number.isFinite(lotAcreage ?? NaN) && (lotAcreage as number) > 0) return `${formatDecimal(lotAcreage, 2)} ac`
+  if (Number.isFinite(lotSquareFeet ?? NaN)) return `${formatInteger(lotSquareFeet as number)} sf`
+  return '—'
+}
+
+const toUpperTokens = (value: string): string => value.toUpperCase().replace(/\s+/g, ' ').trim()
+
+const inferSoldCompVariant = (comp: RecentSoldComp): SoldCompPresentation['variant'] => {
+  const anyComp = comp as RecentSoldComp & Record<string, unknown>
+  const propertyType = toUpperTokens(text(comp.property_type))
+  const subtype = toUpperTokens(text(comp.normalized_asset_class || comp.property_class))
+  const units = Number(comp.units_count ?? anyComp.units_count ?? 0)
+  if (
+    units >= 5
+    || propertyType.includes('APARTMENT')
+    || propertyType.includes('MULTI')
+    || subtype.includes('APARTMENT')
+    || subtype.includes('MULTIFAMILY')
+  ) {
+    return 'multifamily'
+  }
+  return 'residential'
+}
+
+const classifySoldCompBuyer = (comp: RecentSoldComp, variant: SoldCompPresentation['variant']) => {
+  const anyComp = comp as RecentSoldComp & Record<string, unknown>
+  const buyerName = [
+    text(anyComp.buyer_display_name),
+    text(anyComp.buyer_name),
+    text(comp.owner_name),
+  ].find(Boolean) || 'Unknown Buyer'
+  const tokens = toUpperTokens(buyerName)
+  const providedLabel = text(comp.buyer_type_label)
+
+  let buyerType = providedLabel && !providedLabel.toUpperCase().includes('UNKNOWN') ? providedLabel : ''
+  let buyerTone: SoldCompPresentation['buyerTone'] = comp.is_corporate_owner ? 'premium' : 'accent'
+  let entityLabel = comp.is_corporate_owner === false ? 'Individual' : 'Corporate'
+
+  const institutionalMatch =
+    SOLD_COMP_INSTITUTIONAL_NAME_PATTERNS.some((pattern) => tokens.includes(pattern))
+    || (
+      comp.is_corporate_owner !== false
+      && SOLD_COMP_INSTITUTIONAL_KEYWORDS.some((pattern) => tokens.includes(pattern))
+    )
+
+  const builderMatch =
+    comp.is_corporate_owner !== false
+    && SOLD_COMP_BUILDER_KEYWORDS.some((pattern) => tokens.includes(pattern))
+
+  const apartmentOperatorMatch =
+    comp.is_corporate_owner !== false
+    && (
+      SOLD_COMP_OPERATOR_KEYWORDS.some((pattern) => tokens.includes(pattern))
+      || (tokens.includes('LLC') && variant === 'multifamily')
+    )
+
+  if (!buyerType) {
+    if (institutionalMatch) buyerType = 'Hedge Fund / Institutional'
+    else if (builderMatch) buyerType = 'Builder / Developer'
+    else if (apartmentOperatorMatch) buyerType = 'Apartment Operator'
+    else if (comp.is_corporate_owner) buyerType = variant === 'multifamily' && tokens.includes('LLC') ? 'Investor / Operator' : 'Corporate Buyer'
+    else if (comp.is_corporate_owner === false) buyerType = 'Individual Buyer'
+    else if (tokens.includes('LLC') || tokens.includes('LP') || tokens.includes('TRUST')) buyerType = variant === 'multifamily' ? 'Investor / Operator' : 'Corporate Buyer'
+    else buyerType = 'Individual Buyer'
+  }
+
+  if (/INDIVIDUAL/i.test(buyerType)) entityLabel = 'Individual'
+  else entityLabel = institutionalMatch || builderMatch || apartmentOperatorMatch || comp.is_corporate_owner !== false ? 'Corporate' : 'Individual'
+
+  if (institutionalMatch || /HEDGE FUND|INSTITUTIONAL/i.test(buyerType)) buyerTone = 'institutional'
+  else if (entityLabel === 'Corporate') buyerTone = 'premium'
+  else buyerTone = 'accent'
+
+  return {
+    buyerName,
+    buyerType,
+    buyerTone,
+    entityLabel,
+  }
+}
+
+const buildSoldCompPresentation = (
+  comp: RecentSoldComp,
+  subject?: { latitude: number; longitude: number; normalized_asset_class?: string | null; building_square_feet?: number | null } | null,
+): SoldCompPresentation => {
+  const anyComp = comp as RecentSoldComp & Record<string, unknown>
+  const variant = inferSoldCompVariant(comp)
+  const accentHex = variant === 'multifamily' ? '#7dd3fc' : '#ff7a59'
+  const accentTone: SoldCompPresentation['accentTone'] = variant === 'multifamily' ? 'accent' : 'danger'
+  const salePriceValue = comp.sale_price ?? comp.mls_sold_price ?? null
+  const salePrice = formatCurrency(salePriceValue)
+  const saleDate = formatDateLabel(comp.sale_date || comp.mls_sold_date)
+  const sourceLabel =
+    comp.sale_source
+    || (comp.mls_sold_price || comp.mls_sold_date ? 'MLS Sold' : (comp.sale_price || comp.sale_date ? 'Public Record Sold' : 'Sold'))
+  const sourceTone: SoldCompPresentation['sourceTone'] =
+    sourceLabel.includes('MLS') ? 'accent' : sourceLabel.includes('Off-Market') ? 'premium' : 'warning'
+  const { buyerName, buyerType, buyerTone, entityLabel } = classifySoldCompBuyer(comp, variant)
+  const imageUrl = text(anyComp.streetview_image) || text(anyComp.map_image) || text(comp.satellite_image) || buildStreetViewUrl(comp.property_address_full) || ''
+  const imageLabel = text(anyComp.streetview_image) ? 'Street View Preview' : 'Property Preview'
+  const propertyLabel = text(comp.property_type) || (variant === 'multifamily' ? 'Apartment' : 'Residential')
+  const subtypeLabel = text(comp.normalized_asset_class || comp.property_class) || null
+  const distance =
+    subject?.latitude && subject?.longitude
+      ? haversineMiles(subject.latitude, subject.longitude, comp.latitude, comp.longitude)
+      : null
+  const distanceLabel = distance !== null ? `${distance.toFixed(distance < 1 ? 2 : 1)} mi away` : null
+  const units = Number(comp.units_count ?? anyComp.units_count ?? 0) || 0
+  const buildingSqft = Number(comp.building_square_feet ?? 0) || null
+  const totalBeds = Number(comp.total_bedrooms ?? 0) || null
+  const totalBaths = Number(comp.total_baths ?? 0) || null
+  const ppsf =
+    comp.computed_ppsf
+    ?? comp.arv_ppsf
+    ?? (salePriceValue && buildingSqft ? Math.round(salePriceValue / buildingSqft) : null)
+  const ppu = salePriceValue && units > 1 ? Math.round(salePriceValue / units) : null
+  const sqftPerUnit = Number(anyComp.avg_sqft_per_unit ?? anyComp.sqft_per_unit ?? (buildingSqft && units > 0 ? Math.round(buildingSqft / units) : NaN))
+  const bedsPerUnit = Number(anyComp.beds_per_unit ?? (totalBeds && units > 0 ? totalBeds / units : NaN))
+  const lotSize = formatLotSizeLabel(comp.lot_acreage, comp.lot_square_feet)
+  const yearBuilt = formatInteger(comp.year_built ?? (anyComp.effective_year_built as number | null) ?? null)
+  const confidenceValue = comp.comp_confidence_score ? `${Math.round(comp.comp_confidence_score)}%` : '—'
+  const gradeValue = text(comp.deal_grade) || 'Watchlist'
+  const conditionValue = text(comp.building_condition) || 'Condition N/A'
+  const constructionValue = text(comp.construction_type) || 'Construction N/A'
+
+  const residentialMetrics: SoldCompMetricItem[] = [
+    { label: 'PPSF', value: formatCurrency(ppsf), emphasis: 'accent' },
+    { label: 'Beds / Baths', value: totalBeds || totalBaths ? `${formatDecimal(totalBeds, 1)} / ${formatDecimal(totalBaths, 1)}` : '—' },
+    { label: 'Building Sqft', value: formatInteger(buildingSqft) },
+    { label: 'Built', value: yearBuilt },
+    { label: 'Lot Size', value: lotSize },
+    { label: 'Construction', value: constructionValue },
+    { label: 'Condition', value: conditionValue },
+    { label: 'Grade / Confidence', value: `${gradeValue} • ${confidenceValue}` },
+  ]
+
+  const multifamilyHeroMetric =
+    units > 0
+      ? { label: 'Units Count', value: formatInteger(units), emphasis: 'hero' as const }
+      : null
+
+  const multifamilyMetrics: SoldCompMetricItem[] = [
+    { label: 'Price / Unit', value: formatCurrency(ppu), emphasis: 'accent' },
+    { label: 'Avg Sqft / Unit', value: formatInteger(Number.isFinite(sqftPerUnit) ? sqftPerUnit : null) },
+    { label: 'Beds / Unit', value: Number.isFinite(bedsPerUnit) ? formatDecimal(bedsPerUnit, 1) : '—' },
+    { label: 'Building Sqft', value: formatInteger(buildingSqft) },
+    { label: 'Lot Size', value: lotSize },
+    { label: 'Built', value: yearBuilt },
+    { label: 'Construction', value: constructionValue },
+    { label: 'Condition', value: conditionValue },
+  ]
+
+  const intelligenceChips = [
+    { label: 'Grade', value: gradeValue, tone: 'success' as const },
+    { label: 'Confidence', value: confidenceValue, tone: 'accent' as const },
+    ...(text(comp.building_condition) ? [{ label: 'Condition', value: text(comp.building_condition), tone: 'neutral' as const }] : []),
+    ...(text(comp.construction_type) ? [{ label: 'Construction', value: text(comp.construction_type), tone: 'neutral' as const }] : []),
+    { label: 'Buyer', value: buyerType, tone: buyerTone === 'institutional' ? 'warning' : 'neutral' as const },
+  ]
+
+  const sameAssetClass =
+    Boolean(subject?.normalized_asset_class)
+    && Boolean(comp.normalized_asset_class)
+    && text(subject?.normalized_asset_class).toLowerCase() === text(comp.normalized_asset_class).toLowerCase()
+  const tightDistance = distance !== null && distance <= 0.75
+  const similarSize =
+    Number.isFinite(subject?.building_square_feet ?? NaN)
+    && Number.isFinite(buildingSqft ?? NaN)
+    && Math.abs((subject?.building_square_feet ?? 0) - (buildingSqft ?? 0)) <= 500
+
+  let whyItMatters = 'Recent sold comp for pricing context.'
+  if (variant === 'multifamily' && units > 0) {
+    whyItMatters = `Unitized comp with ${formatInteger(units)} doors and ${formatCurrency(ppu)} per unit for apartment pricing.`
+  } else if (tightDistance && sameAssetClass) {
+    whyItMatters = 'Tight-radius asset-class match that strongly supports nearby pricing decisions.'
+  } else if (tightDistance && similarSize) {
+    whyItMatters = 'Close-proximity size match that helps anchor residential sold pricing.'
+  } else if (comp.comp_confidence_score && comp.comp_confidence_score >= 85) {
+    whyItMatters = 'High-confidence sold comp that should carry meaningful weight in comp review.'
+  }
+
+  return {
+    variant,
+    accentHex,
+    accentTone,
+    salePrice,
+    saleDate,
+    sourceLabel,
+    sourceTone,
+    buyerName,
+    buyerType,
+    buyerTone,
+    entityLabel,
+    imageUrl,
+    imageLabel,
+    propertyLabel,
+    subtypeLabel,
+    distanceLabel,
+    residentialMetrics,
+    multifamilyHeroMetric,
+    multifamilyMetrics,
+    intelligenceChips,
+    whyItMatters,
+    actionLinks: {
+      fullComp: zillowSearchUrl(comp.property_address_full || ''),
+      buyerSearch: `https://www.google.com/search?q=${encodeURIComponent(buyerName)}`,
+      maps: mapsSearchUrl(comp.property_address_full || ''),
+    },
+  }
+}
+
+const buildSoldCompHoverMarkup = (comp: RecentSoldComp, styleMode: MapStyleMode, subject?: { latitude: number, longitude: number } | null): string => {
+  const intelligence = buildSoldCompPresentation(comp, subject)
+  const themeStyle = cardThemeStyleAttr(styleMode)
+  const metrics = intelligence.variant === 'multifamily' ? intelligence.multifamilyMetrics : intelligence.residentialMetrics
   return `
-  <article class="nx-icm-hover nx-icm-hover--sold-comp" style="${escapeHtml(cardThemeStyleAttr(styleMode))}">
-    <div class="nx-icm-hover__body">
-      <div class="nx-icm-hover__head" style="margin-bottom: 8px;">
+  <article class="nx-icm-hover nx-icm-hover--sold-comp ${intelligence.variant === 'multifamily' ? 'is-multifamily' : 'is-residential'}" style="${escapeHtml(themeStyle)} --nx-sold-comp-accent:${escapeHtml(intelligence.accentHex)};">
+    ${intelligence.imageUrl ? `
+      <div class="nx-sold-comp__media">
+        <img src="${escapeHtml(intelligence.imageUrl)}" alt="${escapeHtml(comp.property_address_full || 'Sold comp')} preview" loading="lazy" />
+        <div class="nx-sold-comp__media-scrim"></div>
+        <span class="nx-sold-comp__media-badge">${escapeHtml(intelligence.imageLabel)}</span>
+      </div>
+    ` : ''}
+    <div class="nx-sold-comp__body">
+      <div class="nx-sold-comp__hero">
         <div>
-          <h4 style="color: #ef4444; font-weight: 700; margin-bottom: 2px;">SOLD ${escapeHtml(priceLabel)}</h4>
-          <div style="display: flex; gap: 4px; margin-top: 4px;">
-            <span class="nx-icm-hover__status nx-icm-hover__status--${sourceClass}">${escapeHtml(sourceLabel)}</span>
-            <span class="nx-icm-hover__status nx-icm-hover__status--${ownerClass}">${escapeHtml(ownerLabel)}</span>
-          </div>
+          <p class="nx-sold-comp__eyebrow">Sold ${escapeHtml(intelligence.saleDate)}</p>
+          <div class="nx-sold-comp__price">${escapeHtml(intelligence.salePrice)}</div>
+        </div>
+        <div class="nx-sold-comp__badge-stack">
+          <span class="nx-icm-hover__status nx-icm-hover__status--${intelligence.sourceTone}">${escapeHtml(intelligence.sourceLabel)}</span>
+          <span class="nx-icm-hover__status nx-icm-hover__status--${intelligence.buyerTone}">${escapeHtml(intelligence.buyerType)}</span>
+          <span class="nx-sold-comp__micro-pill">${escapeHtml(intelligence.entityLabel)}</span>
         </div>
       </div>
-      <p class="nx-icm-hover__address" style="margin-bottom: 4px;"><span class="nx-icm-hover__address-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s6-5 6-10a6 6 0 0 0-12 0c0 5 6 10 6 10Z" /><circle cx="12" cy="10" r="2.2" /></svg></span>${escapeHtml(comp.property_address_full || 'Unknown Address')}</p>
-      <p style="font-size: 11px; opacity: 0.8; margin-bottom: 8px;">${escapeHtml(comp.property_type || 'Property')} • ${escapeHtml(comp.normalized_asset_class || 'Unknown Class')} • ${escapeHtml(details)}</p>
-      <div class="nx-icm-hover__stats" style="grid-template-columns: repeat(2, 1fr);">
-        <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>Price/Sqft</span><strong>${escapeHtml(formatCurrency(comp.computed_ppsf ?? comp.arv_ppsf ?? null))}</strong></div></div>
-        <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>Condition</span><strong>${escapeHtml(comp.building_condition || comp.renovation_level_classification || 'Unknown')}</strong></div></div>
-        <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>Confidence</span><strong>${comp.comp_confidence_score ? `${Math.round(comp.comp_confidence_score)}/100` : '—'}</strong></div></div>
-        <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>Deal Grade</span><strong>${escapeHtml(comp.deal_grade || '—')}</strong></div></div>
-      </div>
-      ${imageUrl ? `<div style="margin-top: 8px; width: 100%; height: 80px; border-radius: 4px; overflow: hidden; position: relative;">
-        <img src="${escapeHtml(imageUrl)}" alt="Street view" style="width: 100%; height: 100%; object-fit: cover;" loading="lazy" />
-      </div>` : ''}
+
+      <section class="nx-sold-comp__buyer-block">
+        <div class="nx-sold-comp__section-label">Buyer Identity</div>
+        <div class="nx-sold-comp__buyer-name">${escapeHtml(intelligence.buyerName)}</div>
+      </section>
+
+      <section class="nx-sold-comp__address-block">
+        <div class="nx-sold-comp__address">${escapeHtml(comp.property_address_full || 'Property Unknown')}</div>
+        <div class="nx-sold-comp__meta-row">
+          <span>${escapeHtml(intelligence.propertyLabel)}</span>
+          ${intelligence.subtypeLabel ? `<span class="nx-sold-comp__dot"></span><span>${escapeHtml(intelligence.subtypeLabel)}</span>` : ''}
+          ${intelligence.distanceLabel ? `<span class="nx-sold-comp__dot"></span><span class="nx-sold-comp__distance">${escapeHtml(intelligence.distanceLabel)}</span>` : ''}
+        </div>
+      </section>
+
+      ${intelligence.variant === 'multifamily' && intelligence.multifamilyHeroMetric ? `
+        <section class="nx-sold-comp__hero-metric">
+          <span>${escapeHtml(intelligence.multifamilyHeroMetric.label)}</span>
+          <strong>${escapeHtml(intelligence.multifamilyHeroMetric.value)}</strong>
+        </section>
+      ` : ''}
+
+      <section class="nx-sold-comp__metrics ${intelligence.variant === 'multifamily' ? 'is-multifamily' : 'is-residential'}">
+        ${metrics.map((metric) => `
+          <div class="nx-sold-comp__metric ${metric.emphasis === 'accent' ? 'is-accent' : ''} ${metric.emphasis === 'hero' ? 'is-hero' : ''}">
+            <span>${escapeHtml(metric.label)}</span>
+            <strong>${escapeHtml(metric.value)}</strong>
+          </div>
+        `).join('')}
+      </section>
+
+      <section class="nx-sold-comp__chip-section">
+        <div class="nx-sold-comp__section-label">Comp Intelligence</div>
+        <div class="nx-sold-comp__chips">
+          ${intelligence.intelligenceChips.map((chip) => `
+            <div class="nx-sold-comp__chip ${chip.tone ? `is-${chip.tone}` : ''}">
+              <span>${escapeHtml(chip.label)}</span>
+              <strong>${escapeHtml(chip.value)}</strong>
+            </div>
+          `).join('')}
+        </div>
+        <p class="nx-sold-comp__why">${escapeHtml(intelligence.whyItMatters)}</p>
+      </section>
+
+      <section class="nx-sold-comp__actions">
+        <a href="${escapeHtml(intelligence.actionLinks.fullComp)}" target="_blank" rel="noreferrer">Open Full Comp</a>
+        <a href="${escapeHtml(intelligence.actionLinks.buyerSearch)}" target="_blank" rel="noreferrer">View Buyer</a>
+        <a href="${escapeHtml(intelligence.actionLinks.maps)}" target="_blank" rel="noreferrer">Nearby Comps</a>
+        <span aria-disabled="true">Find Similar Sellers</span>
+        <span aria-disabled="true">Add to Buyer Cluster</span>
+      </section>
     </div>
   </article>
 `
@@ -1443,55 +1781,155 @@ const buildSoldCompHoverMarkup = (comp: RecentSoldComp, styleMode: MapStyleMode)
 
 const SoldCompSelectionCard = ({
   comp,
+  subject,
+  onCenterMap,
   onClose,
 }: {
   comp: RecentSoldComp | null
+  subject?: any | null
+  onCenterMap: (lng: number, lat: number) => void
   onClose: () => void
 }) => {
   if (!comp) return null
-  const imageUrl = comp.streetview_image || comp.satellite_image || buildStreetViewUrl(comp.property_address_full) || ''
-  
-  const isMls = !!comp.mls_sold_price || !!comp.mls_sold_date
-  const isOffMarket = !isMls && (!!comp.sale_price || !!comp.sale_date)
-  const sourceLabel = isMls ? 'MLS Sold' : isOffMarket ? 'Off-Market Sold' : 'Unknown Sale Source'
-  
-  const ownerLabel = comp.is_corporate_owner ? 'Corporate Owner' : (comp.is_corporate_owner === false && !!comp.owner_name) ? 'Individual Owner' : 'Unknown Owner Type'
+  const intelligence = buildSoldCompPresentation(comp, subject)
+  const anyComp = comp as RecentSoldComp & Record<string, unknown>
+  const price = comp.sale_price ?? comp.mls_sold_price ?? 0
+  const metrics = intelligence.variant === 'multifamily' ? intelligence.multifamilyMetrics : intelligence.residentialMetrics
+  const propertyFacts = [
+    { label: 'Property Type', value: intelligence.propertyLabel },
+    ...(intelligence.subtypeLabel ? [{ label: 'Subtype / Class', value: intelligence.subtypeLabel }] : []),
+    { label: 'Sale Source', value: intelligence.sourceLabel },
+    { label: 'Buyer Type', value: intelligence.buyerType },
+    { label: 'Entity', value: intelligence.entityLabel },
+    ...(intelligence.distanceLabel ? [{ label: 'Distance', value: intelligence.distanceLabel }] : []),
+  ]
+  const saleFacts = [
+    { label: 'Sale Price', value: intelligence.salePrice },
+    { label: 'Sale Date', value: intelligence.saleDate },
+    { label: 'MLS Sold Price', value: formatCurrency(comp.mls_sold_price) },
+    { label: 'Public Record Price', value: formatCurrency(comp.sale_price) },
+  ]
+  const buyerFacts = [
+    { label: 'Buyer Name', value: intelligence.buyerName },
+    { label: 'Buyer Type', value: intelligence.buyerType },
+    { label: 'Corporate Flag', value: comp.is_corporate_owner === null ? '—' : comp.is_corporate_owner ? 'Yes' : 'No' },
+    ...(text(comp.institutional_match_name) ? [{ label: 'Institution Match', value: text(comp.institutional_match_name) }] : []),
+    ...(text(comp.institutional_match_method) ? [{ label: 'Match Method', value: `${text(comp.institutional_match_method)}${text(comp.institutional_match_confidence) ? ` • ${text(comp.institutional_match_confidence)}` : ''}` }] : []),
+  ]
 
   return (
-    <article className="nx-icm-buyer-card" style={{ borderColor: '#ef4444' }}>
-      <div className="nx-icm-buyer-card__head">
-        <div>
-          <span className="nx-icm-buyer-card__eyebrow" style={{ color: '#ef4444' }}>{sourceLabel} • {ownerLabel}</span>
-          <strong style={{ color: '#ef4444' }}>SOLD {formatCurrency(comp.mls_sold_price ?? comp.sale_price ?? null)}</strong>
-          <small>{comp.property_address_full || 'Unknown Address'}</small>
-        </div>
-        <button type="button" className="nx-icm__mode-tab" onClick={onClose}>
+    <article
+      className={cls('nx-icm-buyer-card', 'nx-sold-comp-card', intelligence.variant === 'multifamily' ? 'is-multifamily' : 'is-residential')}
+      style={{ ['--nx-sold-comp-accent' as any]: intelligence.accentHex }}
+    >
+      <div className="nx-sold-comp-card__hero">
+        {intelligence.imageUrl ? (
+          <img src={intelligence.imageUrl} alt={comp.property_address_full || 'Sold comp'} loading="lazy" />
+        ) : (
+          <div className="nx-sold-comp-card__empty-media">No Preview Available</div>
+        )}
+        <div className="nx-sold-comp-card__hero-scrim" />
+        <button type="button" className="nx-sold-comp-card__close" onClick={onClose}>
           Close
         </button>
-      </div>
-      {imageUrl && (
-        <div style={{ width: '100%', height: '120px', borderRadius: '4px', overflow: 'hidden', marginBottom: '12px' }}>
-          <img src={imageUrl} alt="Property" style={{ width: '100%', height: '100%', objectFit: 'cover' }} loading="lazy" />
+        <span className="nx-sold-comp-card__hero-badge">{intelligence.imageLabel}</span>
+        <div className="nx-sold-comp-card__hero-copy">
+          <div className="nx-sold-comp__badge-stack">
+            <span className={`nx-icm-hover__status nx-icm-hover__status--${intelligence.sourceTone}`}>{intelligence.sourceLabel}</span>
+            <span className={`nx-icm-hover__status nx-icm-hover__status--${intelligence.buyerTone}`}>{intelligence.buyerType}</span>
+            <span className="nx-sold-comp__micro-pill">{intelligence.entityLabel}</span>
+          </div>
+          <p className="nx-sold-comp__eyebrow">Sold {intelligence.saleDate}</p>
+          <div className="nx-sold-comp__price">{intelligence.salePrice}</div>
+          <div className="nx-sold-comp__address">{comp.property_address_full || 'Property Unknown'}</div>
+          <div className="nx-sold-comp__meta-row">
+            <span>{intelligence.propertyLabel}</span>
+            {intelligence.subtypeLabel ? <><span className="nx-sold-comp__dot" /><span>{intelligence.subtypeLabel}</span></> : null}
+            {intelligence.distanceLabel ? <><span className="nx-sold-comp__dot" /><span className="nx-sold-comp__distance">{intelligence.distanceLabel}</span></> : null}
+          </div>
         </div>
-      )}
-      <div className="nx-icm-buyer-card__grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
-        <div><span>MLS Sale Date</span><strong>{comp.mls_sold_date ? new Date(comp.mls_sold_date).toLocaleDateString() : '—'}</strong></div>
-        <div><span>Public Sale Date</span><strong>{comp.sale_date ? new Date(comp.sale_date).toLocaleDateString() : '—'}</strong></div>
-        <div><span>Owner Name</span><strong>{comp.owner_name || '—'}</strong></div>
-        <div><span>Price/Sqft</span><strong>{formatCurrency(comp.computed_ppsf ?? comp.arv_ppsf ?? null)}</strong></div>
-        <div><span>Beds / Baths</span><strong>{comp.total_bedrooms ?? '—'} / {comp.total_baths ?? '—'}</strong></div>
-        <div><span>Sqft / Lot</span><strong>{formatInteger(comp.building_square_feet)} sqft</strong></div>
-        <div><span>Built / Type</span><strong>{comp.year_built ?? '—'} {comp.construction_type ? `(${comp.construction_type})` : ''}</strong></div>
-        <div><span>Condition</span><strong>{comp.building_condition || comp.renovation_level_classification || '—'}</strong></div>
-        <div><span>ARV Est.</span><strong>{formatCurrency(comp.arv_estimate)}</strong></div>
-        <div><span>ARV PPSF</span><strong>{formatCurrency(comp.arv_ppsf)}</strong></div>
-        <div><span>Target Spread</span><strong>{formatCurrency(comp.potential_spread)} ({comp.target_margin_percent ? Math.round(comp.target_margin_percent) + '%' : '—'})</strong></div>
-        <div><span>Confidence</span><strong>{comp.comp_confidence_score ? Math.round(comp.comp_confidence_score) + '/100' : '—'} ({comp.deal_grade || '—'})</strong></div>
       </div>
-      <div className="nx-icm-buyer-card__actions" style={{ marginTop: '12px' }}>
-        <button type="button" className="nx-icm__mode-tab" onClick={() => alert('TODO: Add ARV/Comp Intelligence UI connection')}>Add to ARV</button>
-        <button type="button" className="nx-icm__mode-tab" onClick={() => alert('TODO: Add Exclude Comp UI connection')}>Exclude</button>
-        <a href={mapsSearchUrl(comp.property_address_full)} target="_blank" rel="noreferrer" style={{ marginLeft: 'auto' }}>Open Maps</a>
+
+      <div className="nx-sold-comp-card__body">
+        <section className="nx-sold-comp__buyer-block">
+          <div className="nx-sold-comp__section-label">Buyer Identity</div>
+          <div className="nx-sold-comp__buyer-name">{intelligence.buyerName}</div>
+          <div className="nx-sold-comp__buyer-subline">
+            <span>{intelligence.buyerType}</span>
+            <span className="nx-sold-comp__dot" />
+            <span>{intelligence.entityLabel}</span>
+          </div>
+        </section>
+
+        {intelligence.variant === 'multifamily' && intelligence.multifamilyHeroMetric ? (
+          <section className="nx-sold-comp__hero-metric is-card">
+            <span>{intelligence.multifamilyHeroMetric.label}</span>
+            <strong>{intelligence.multifamilyHeroMetric.value}</strong>
+          </section>
+        ) : null}
+
+        <section>
+          <div className="nx-sold-comp__section-label">Key Metrics</div>
+          <div className={cls('nx-sold-comp__metrics', intelligence.variant === 'multifamily' ? 'is-multifamily' : 'is-residential')}>
+            {metrics.map((metric) => (
+              <div key={`${metric.label}-${metric.value}`} className={cls('nx-sold-comp__metric', metric.emphasis === 'accent' && 'is-accent', metric.emphasis === 'hero' && 'is-hero')}>
+                <span>{metric.label}</span>
+                <strong>{metric.value}</strong>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section>
+          <div className="nx-sold-comp__section-label">Comp Intelligence</div>
+          <div className="nx-sold-comp__chips">
+            {intelligence.intelligenceChips.map((chip) => (
+              <div key={`${chip.label}-${chip.value}`} className={cls('nx-sold-comp__chip', chip.tone && `is-${chip.tone}`)}>
+                <span>{chip.label}</span>
+                <strong>{chip.value}</strong>
+              </div>
+            ))}
+          </div>
+          <p className="nx-sold-comp__why">{intelligence.whyItMatters}</p>
+        </section>
+
+        <section className="nx-sold-comp-card__fact-grid">
+          <div className="nx-sold-comp-card__fact-panel">
+            <div className="nx-sold-comp__section-label">Property Profile</div>
+            {propertyFacts.map((item) => (
+              <div key={item.label} className="nx-sold-comp-card__fact-row"><span>{item.label}</span><strong>{item.value}</strong></div>
+            ))}
+          </div>
+          <div className="nx-sold-comp-card__fact-panel">
+            <div className="nx-sold-comp__section-label">Sale Intelligence</div>
+            {saleFacts.map((item) => (
+              <div key={item.label} className="nx-sold-comp-card__fact-row"><span>{item.label}</span><strong>{item.value}</strong></div>
+            ))}
+          </div>
+          <div className="nx-sold-comp-card__fact-panel">
+            <div className="nx-sold-comp__section-label">Buyer Intelligence</div>
+            {buyerFacts.map((item) => (
+              <div key={item.label} className="nx-sold-comp-card__fact-row"><span>{item.label}</span><strong>{item.value}</strong></div>
+            ))}
+          </div>
+          <div className="nx-sold-comp-card__fact-panel">
+            <div className="nx-sold-comp__section-label">Extra Context</div>
+            <div className="nx-sold-comp-card__fact-row"><span>ARV Estimate</span><strong>{formatCurrency(comp.arv_estimate)}</strong></div>
+            <div className="nx-sold-comp-card__fact-row"><span>Potential Spread</span><strong>{formatCurrency(anyComp.potential_spread as number | null)}</strong></div>
+            <div className="nx-sold-comp-card__fact-row"><span>Target Margin</span><strong>{Number.isFinite(anyComp.target_margin_percent as number) ? `${Math.round((anyComp.target_margin_percent as number) * 10) / 10}%` : '—'}</strong></div>
+            <div className="nx-sold-comp-card__fact-row"><span>Search Profile</span><strong>{text(comp.comp_search_profile_hash).slice(0, 10) || '—'}</strong></div>
+          </div>
+        </section>
+
+        {!subject ? <div className="nx-sold-comp-card__empty-state">Select a subject property to compare distance and similarity context.</div> : null}
+
+        <div className="nx-sold-comp-card__actions">
+          <a href={intelligence.actionLinks.fullComp} target="_blank" rel="noreferrer">Open Full Comp</a>
+          <a href={intelligence.actionLinks.buyerSearch} target="_blank" rel="noreferrer">View Buyer</a>
+          <button type="button" onClick={() => onCenterMap(comp.longitude, comp.latitude)}>Nearby Comps</button>
+          <button type="button" onClick={() => alert('TODO: Find similar sellers workflow')}>Find Similar Sellers</button>
+          <button type="button" onClick={() => alert('TODO: Add to buyer cluster workflow')}>Add to Buyer Cluster</button>
+        </div>
       </div>
     </article>
   )
@@ -1836,6 +2274,10 @@ export function InboxCommandMap({
   const onOpenDealIntelligenceRef = useRef<Props['onOpenDealIntelligence']>(onOpenDealIntelligence)
   const onSelectBuyerKeyRef = useRef<Props['onSelectBuyerKey']>(onSelectBuyerKey)
   const onBackgroundClickRef = useRef<Props['onBackgroundClick']>(onBackgroundClick)
+  const selectedThreadRef = useRef<InboxWorkflowThread | null>(null)
+  useEffect(() => {
+    selectedThreadRef.current = selectedThread
+  }, [selectedThread])
   const mapStyleModeRef = useRef<MapStyleMode>(initialMapStyleMode)
   const mapOverlaysRef = useRef<MapOverlayToggles>({ ...defaultMapOverlays, ...initialMapOverlays })
   const buyerPurchasesRef = useRef<BuyerRecentPurchase[]>([])
@@ -2275,7 +2717,7 @@ export function InboxCommandMap({
       const layers = map.getStyle()?.layers ?? []
       layers.forEach((layer) => {
         const typedLayer = layer as StyleLayerLike
-        if (!typedLayer.id || typedLayer.id.startsWith(ownLayerPrefix)) return
+        if (!typedLayer.id || isCustomLayer(typedLayer.id)) return
         const categories = classifyBaseLayer(typedLayer)
         if (categories.length === 0) return
         const visible = categories.every((category) => overlayState[category])
@@ -2289,7 +2731,7 @@ export function InboxCommandMap({
       const layers = map.getStyle()?.layers ?? []
       layers.forEach((layer) => {
         const typedLayer = layer as StyleLayerLike
-        if (!typedLayer.id || typedLayer.id.startsWith(ownLayerPrefix)) return
+        if (!typedLayer.id || isCustomLayer(typedLayer.id)) return
         const id = lower(typedLayer.id)
         const sourceLayer = lower(typedLayer['source-layer'])
         const token = `${id} ${sourceLayer}`
@@ -2351,7 +2793,7 @@ export function InboxCommandMap({
 
       const candidateLayers = (darkStyle.layers ?? [])
         .map((layer) => layer as StyleLayerLike)
-        .filter((layer) => !layer.id.startsWith(ownLayerPrefix))
+        .filter((layer) => !isCustomLayer(layer.id))
         .filter((layer) => classifyBaseLayer(layer).length > 0)
 
       candidateLayers.forEach((layer) => {
@@ -2532,7 +2974,13 @@ export function InboxCommandMap({
       }
 
       if (!map.getSource(SOLD_COMPS_SOURCE_ID)) {
-        map.addSource(SOLD_COMPS_SOURCE_ID, { type: 'geojson', data: EMPTY_GEOJSON })
+        map.addSource(SOLD_COMPS_SOURCE_ID, { 
+          type: 'geojson', 
+          data: EMPTY_GEOJSON,
+          cluster: true,
+          clusterRadius: 50,
+          clusterMaxZoom: 11
+        })
       }
 
       if (!map.getLayer(SOLD_COMPS_LAYER_IDS.marker)) {
@@ -2540,6 +2988,7 @@ export function InboxCommandMap({
           id: SOLD_COMPS_LAYER_IDS.marker,
           type: 'circle',
           source: SOLD_COMPS_SOURCE_ID,
+          filter: ['!', ['has', 'point_count']],
           paint: {
             'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 4, 14, 6],
             'circle-color': '#ef4444',
@@ -2547,6 +2996,7 @@ export function InboxCommandMap({
             'circle-stroke-color': '#ffffff',
           },
           layout: { visibility: 'none' },
+          minzoom: 6,
         })
       }
 
@@ -2555,8 +3005,17 @@ export function InboxCommandMap({
           id: SOLD_COMPS_LAYER_IDS.label,
           type: 'symbol',
           source: SOLD_COMPS_SOURCE_ID,
+          filter: ['!', ['has', 'point_count']],
           layout: {
-            'text-field': ['concat', 'SOLD ', ['get', 'salePriceLabel']],
+            'text-field': [
+              'step',
+              ['zoom'],
+              ['get', 'salePriceLabel'],
+              11,
+              ['concat', 'SOLD ', ['get', 'salePriceLabel']],
+              14,
+              ['concat', ['get', 'sourceShort'], 'SOLD ', ['get', 'salePriceLabel']]
+            ],
             'text-font': ['Open Sans Semibold'],
             'text-size': ['interpolate', ['linear'], ['zoom'], 10, 10, 14, 12],
             'text-anchor': 'left',
@@ -2570,6 +3029,56 @@ export function InboxCommandMap({
             'text-halo-width': 1.5,
           },
           minzoom: 8,
+        })
+      }
+
+      if (!map.getLayer(SOLD_COMPS_CLUSTER_LAYER_IDS.glow)) {
+        map.addLayer({
+          id: SOLD_COMPS_CLUSTER_LAYER_IDS.glow,
+          type: 'circle',
+          source: SOLD_COMPS_SOURCE_ID,
+          filter: ['has', 'point_count'],
+          paint: {
+            'circle-radius': ['step', ['get', 'point_count'], 14, 20, 18, 80, 22, 200, 26, 500, 30],
+            'circle-color': 'rgba(239, 68, 68, 0.25)',
+            'circle-blur': 0.5,
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+
+      if (!map.getLayer(SOLD_COMPS_CLUSTER_LAYER_IDS.core)) {
+        map.addLayer({
+          id: SOLD_COMPS_CLUSTER_LAYER_IDS.core,
+          type: 'circle',
+          source: SOLD_COMPS_SOURCE_ID,
+          filter: ['has', 'point_count'],
+          paint: {
+            'circle-radius': ['step', ['get', 'point_count'], 10, 20, 13, 80, 16, 200, 20, 500, 24],
+            'circle-color': '#ef4444',
+            'circle-stroke-width': 2,
+            'circle-stroke-color': '#ffffff',
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+
+      if (!map.getLayer(SOLD_COMPS_CLUSTER_LAYER_IDS.count)) {
+        map.addLayer({
+          id: SOLD_COMPS_CLUSTER_LAYER_IDS.count,
+          type: 'symbol',
+          source: SOLD_COMPS_SOURCE_ID,
+          filter: ['has', 'point_count'],
+          layout: {
+            'text-field': ['get', 'point_count_abbreviated'],
+            'text-font': ['Open Sans Semibold'],
+            'text-size': ['step', ['get', 'point_count'], 10, 20, 11, 80, 12],
+            'text-allow-overlap': true,
+            visibility: 'none',
+          },
+          paint: {
+            'text-color': '#ffffff',
+          },
         })
       }
 
@@ -3042,7 +3551,7 @@ export function InboxCommandMap({
         })
         popup
           .setLngLat(coordinates)
-          .setHTML(buildSoldCompHoverMarkup(props, mapStyleModeRef.current))
+          .setHTML(buildSoldCompHoverMarkup(props, mapStyleModeRef.current, selectedThreadRef.current))
           .addTo(map)
         hoverPopupRef.current = popup
       }
@@ -3134,6 +3643,21 @@ export function InboxCommandMap({
         setSelectedCensusFeature({ feature: overlayFeature, mode: 'selected' })
       }
 
+      const handleSoldCompClusterClick = (event: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+        const feature = event.features?.[0]
+        if (!feature) return
+        const clusterId = Number(feature.properties?.cluster_id)
+        const source = map.getSource(SOLD_COMPS_SOURCE_ID) as (maplibregl.GeoJSONSource & {
+          getClusterExpansionZoom?: (id: number, cb: (error: Error | null, zoom: number) => void) => void
+        }) | undefined
+        if (!source?.getClusterExpansionZoom || !Number.isFinite(clusterId)) return
+        source.getClusterExpansionZoom(clusterId, (error, zoom) => {
+          if (error) return
+          const coordinates = (feature.geometry as Point).coordinates as [number, number]
+          map.easeTo({ center: coordinates, zoom: zoom + 0.5, duration: 420 })
+        })
+      }
+
       map.on('click', 'command-pin-core-raw', handlePinClick)
       map.on('click', 'command-pin-core-clustered', handlePinClick)
       map.on('click', 'command-pin-cluster-core', handleClusterClick)
@@ -3143,9 +3667,10 @@ export function InboxCommandMap({
       map.on('click', 'command-buyer-cluster-core', handleBuyerClusterClick)
       map.on('click', SOLD_COMPS_LAYER_IDS.marker, handleSoldCompClick)
       map.on('click', SOLD_COMPS_LAYER_IDS.label, handleSoldCompClick)
+      map.on('click', SOLD_COMPS_CLUSTER_LAYER_IDS.core, handleSoldCompClusterClick)
       map.on('click', (event) => {
         const rendered = map.queryRenderedFeatures(event.point, {
-          layers: ['command-pin-core-raw', 'command-pin-core-clustered', 'command-pin-cluster-core', 'command-buyer-purchase-core', 'command-buyer-profile-core', 'command-buyer-cluster-core', SOLD_COMPS_LAYER_IDS.marker, SOLD_COMPS_LAYER_IDS.label],
+          layers: ['command-pin-core-raw', 'command-pin-core-clustered', 'command-pin-cluster-core', 'command-buyer-purchase-core', 'command-buyer-profile-core', 'command-buyer-cluster-core', SOLD_COMPS_LAYER_IDS.marker, SOLD_COMPS_LAYER_IDS.label, SOLD_COMPS_CLUSTER_LAYER_IDS.core],
         })
         if (rendered.length === 0) {
           setActiveThreadPopup(null)
@@ -3250,7 +3775,7 @@ export function InboxCommandMap({
       }
       animationRef.current = requestAnimationFrame(animate)
 
-      ;(['command-pin-core-raw', 'command-pin-core-clustered', 'command-pin-cluster-core', 'command-buyer-purchase-core', 'command-buyer-profile-core', 'command-buyer-cluster-core'] as const).forEach((layerId) => {
+      ;(['command-pin-core-raw', 'command-pin-core-clustered', 'command-pin-cluster-core', 'command-buyer-purchase-core', 'command-buyer-profile-core', 'command-buyer-cluster-core', SOLD_COMPS_LAYER_IDS.marker, SOLD_COMPS_LAYER_IDS.label, SOLD_COMPS_CLUSTER_LAYER_IDS.core] as const).forEach((layerId) => {
         map.on('mouseenter', layerId, () => { map.getCanvas().style.cursor = 'pointer' })
         map.on('mouseleave', layerId, () => { map.getCanvas().style.cursor = '' })
       })
@@ -3295,7 +3820,7 @@ export function InboxCommandMap({
     const layers = mapRef.current.getStyle()?.layers ?? []
     layers.forEach((layer) => {
       const typedLayer = layer as StyleLayerLike
-      if (!typedLayer.id || typedLayer.id.startsWith(ownLayerPrefix)) return
+      if (!typedLayer.id || isCustomLayer(typedLayer.id)) return
       const categories = classifyBaseLayer(typedLayer)
       if (categories.length === 0) return
       const visible = categories.every((category) => mapOverlays[category])
@@ -3333,7 +3858,7 @@ export function InboxCommandMap({
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
-    const purchasesVisible = buyerLayers.buyerRecentPurchases || buyerLayers.recentSoldComps || buyerLayers.buyerMatches
+    const purchasesVisible = buyerLayers.buyerRecentPurchases || buyerLayers.buyerMatches
     BUYER_PURCHASE_CLUSTER_IDS.forEach((layerId) => {
       if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', purchasesVisible ? 'visible' : 'none')
     })
@@ -3342,6 +3867,9 @@ export function InboxCommandMap({
     })
     BUYER_PROFILE_LAYER_IDS.forEach((layerId) => {
       if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', buyerLayers.buyerProfiles ? 'visible' : 'none')
+    })
+    ALL_SOLD_COMPS_LAYER_IDS.forEach((layerId) => {
+      if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', buyerLayers.recentSoldComps ? 'visible' : 'none')
     })
     if (map.getLayer(BUYER_HEATMAP_LAYER_ID)) {
       map.setLayoutProperty(BUYER_HEATMAP_LAYER_ID, 'visibility', buyerLayers.buyerHeatmap ? 'visible' : 'none')
@@ -3604,6 +4132,12 @@ export function InboxCommandMap({
     const loadComps = () => {
       const map = mapRef.current
       if (!map) return
+      if (map.getZoom() < 6) {
+        setSoldCompsGeojson(EMPTY_GEOJSON)
+        setSoldComps([])
+        setSoldCompsLoading(false)
+        return
+      }
       const bounds = map.getBounds()
       const queryBounds = {
         minLng: bounds.getWest(),
@@ -3615,16 +4149,25 @@ export function InboxCommandMap({
       loadSoldCompsInBounds(queryBounds, { monthsBack: 6, limit: 1000 }).then((comps) => {
         if (cancelled) return
         setSoldComps(comps)
-        const features = comps.map((comp) => ({
-          type: 'Feature' as const,
-          geometry: { type: 'Point' as const, coordinates: [comp.longitude, comp.latitude] as [number, number] },
-          properties: {
-            ...comp,
-            id: `sold-comp-${comp.property_id}`,
-            layer: 'sold_comp',
-            salePriceLabel: formatShortPrice(comp.sale_price ?? comp.mls_sold_price ?? 0),
-          },
-        }))
+        const features = comps.map((comp) => {
+          const price = comp.sale_price ?? comp.mls_sold_price ?? 0
+          let sourceShort = ''
+          if (comp.sale_source === 'MLS Sold') sourceShort = 'MLS '
+          else if (comp.sale_source === 'Public Record Sold') sourceShort = 'PR '
+          else if (comp.sale_source === 'Off-Market Sold') sourceShort = 'OM '
+
+          return {
+            type: 'Feature' as const,
+            geometry: { type: 'Point' as const, coordinates: [comp.longitude, comp.latitude] as [number, number] },
+            properties: {
+              ...comp,
+              id: `sold-comp-${comp.property_id}`,
+              layer: 'sold_comp',
+              salePriceLabel: formatShortPrice(price),
+              sourceShort,
+            },
+          }
+        })
         setSoldCompsGeojson({ type: 'FeatureCollection', features })
         setSoldCompsLoading(false)
       }).catch(() => {
@@ -4323,6 +4866,7 @@ export function InboxCommandMap({
         <div className="nx-icm__buyer-selection-shell">
           <SoldCompSelectionCard
             comp={selectedSoldComp}
+            subject={selectedThread}
             onClose={() => setSelectedSoldComp(null)}
           />
         </div>

@@ -739,18 +739,6 @@ export default function InboxPage() {
   }, [])
 
   const handleToggleWorkspaceView = useCallback((view: InboxWorkspaceView) => {
-    // Metrics view always opens full-screen solo — toggling on goes solo, toggling off resets to defaults
-    if (view === 'metrics') {
-      setSelectedWorkspaceViews((current) => {
-        if (current.includes('metrics') && current.length === 1) {
-          setWorkspaceWidthOverrides(cloneDefaultWorkspaceWidths())
-          return cloneDefaultWorkspaceViews()
-        }
-        setWorkspaceWidthOverrides({})
-        return ['metrics']
-      })
-      return
-    }
     setSelectedWorkspaceViews((current) => {
       let nextViews: InboxWorkspaceView[]
       if (current.includes(view)) {
@@ -772,12 +760,6 @@ export default function InboxPage() {
   }, [])
 
   const handleFocusWorkspaceView = useCallback((view: InboxWorkspaceView) => {
-    // Metrics view always opens full-screen solo — it's a war room, not a pane
-    if (view === 'metrics') {
-      setSelectedWorkspaceViews(['metrics'])
-      setWorkspaceWidthOverrides({})
-      return
-    }
     setSelectedWorkspaceViews((current) => {
       if (current[0] === view) return current
       let nextViews: InboxWorkspaceView[]
@@ -2087,20 +2069,7 @@ export default function InboxPage() {
   const aiOpen = activeOverlay === 'ai'
   const keysOpen = activeOverlay === 'keys'
 
-  // Defensive render override: metrics is a full-screen war room, never a pane.
-  // If metrics appears anywhere in selectedWorkspaceViews, treat it as solo.
-  const isMetricsSolo = selectedWorkspaceViews.includes('metrics')
-  const renderViews: InboxWorkspaceView[] = isMetricsSolo ? ['metrics'] : selectedWorkspaceViews
-
-  if (import.meta.env.DEV && isMetricsSolo) {
-    console.log('[workspace] metrics solo override', {
-      selectedWorkspaceViews,
-      renderViews,
-      workspaceWidthOverrides,
-      activeWorkspaceView,
-      activeWorkspaceLabel,
-    })
-  }
+  const renderViews: InboxWorkspaceView[] = selectedWorkspaceViews
 
   const isMultiView = renderViews.length > 1
   const isDefaultWorkspaceShell = isDefaultWorkspaceSet(renderViews)
@@ -2304,7 +2273,7 @@ export default function InboxPage() {
     }
 
     if (view === 'metrics') {
-      return <InboxKpiDashboard layoutMode={layoutMode} />
+      return <MetricsWarRoom layoutMode={layoutMode} paneWidth={paneWidth} />
     }
 
     if (view === 'comp_intelligence') {

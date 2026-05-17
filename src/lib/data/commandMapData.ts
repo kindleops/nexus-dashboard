@@ -50,6 +50,164 @@ export type RecentSoldComp = {
   target_margin_percent: number | null
   computed_ppsf: number | null
   property_flags_text?: string | null
+  
+  units_count?: number | null
+  lot_square_feet?: number | null
+  lot_acreage?: number | null
+  effective_year_built?: number | null
+  
+  sale_source?: string | null
+  owner_type_label?: string | null
+  buyer_type_label?: string | null
+  buyer_type_confidence?: string | null
+  is_institutional_buyer?: boolean | null
+  institutional_match_name?: string | null
+  institutional_match_method?: string | null
+  institutional_match_confidence?: string | null
+}
+
+const INSTITUTIONAL_NAMES = [
+  'INVITATION HOMES', 'IH6', 'IH5', 'IH4', 'STARWOOD', 'TRICON', 'FIRSTKEY',
+  'AMHERST', 'PROGRESS RESIDENTIAL', 'PRETIUM', 'MAIN STREET RENEWAL',
+  'MAYMONT HOMES', 'SECOND AVENUE', 'HOME PARTNERS OF AMERICA', 'OPENDOOR',
+  'OFFERPAD', 'AMERICAN HOMES 4 RENT', 'AH4R', 'ROOFSTOCK', 'RESICAP',
+  'CERBERUS', 'BLACKSTONE', 'SFR3', 'VINEBROOK', 'WEDGEWOOD', 'SUNDAE',
+  'ENTERA', 'MYND', 'DIVVY', 'REALPHA', 'SYLVAN HOMES', 'RENU PROPERTY MANAGEMENT',
+  'FRONT YARD RESIDENTIAL', 'ALTISOURCE', 'TRANSCENDENT ELECTRA', 'TIBER CAPITAL',
+  'CONREX', 'AMHERST RESIDENTIAL', 'SREIT', 'TRICON RESIDENTIAL'
+];
+
+const INSTITUTIONAL_KEYWORDS = [
+  'FUND', 'REIT', 'PORTFOLIO', 'TRUST', 'CAPITAL', 'INVESTMENT', 'HOLDING', 
+  'PARTNER', 'MANAGEMENT', 'CORPORATION', 'OPPORTUNITY FUND', 'SINGLE FAMILY RENTAL',
+  'EQUITY', 'VENTURE', 'ADVISOR'
+];
+
+const BUILDER_KEYWORDS = [
+  'BUILDER', 'DEVELOP', 'CONSTRUCTION', 'HOMES', 'LIVABLE', 'NEIGHBORHOOD',
+  'CUSTOM HOME', 'LAND', 'CONTRACTOR'
+];
+
+const OPERATOR_KEYWORDS = [
+  'APARTMENT', 'LIVING', 'RESIDENCE', 'COMMUNITY', 'SUITES', 'LOFTS',
+  'VILLAS', 'MANOR', 'OPERATOR', 'REALTY'
+];
+
+function enrichSoldComp(comp: RecentSoldComp): RecentSoldComp {
+  // Compute sale source if not returned from DB
+  if (!comp.sale_source) {
+    if (comp.mls_sold_price || comp.mls_sold_date) {
+      comp.sale_source = 'MLS Sold'
+    } else if (comp.sale_price || comp.sale_date) {
+      comp.sale_source = 'Public Record Sold'
+    } else {
+      comp.sale_source = 'Unknown'
+    }
+  }
+
+  // Compute owner type if not returned
+  if (!comp.owner_type_label) {
+    if (comp.is_corporate_owner) {
+      comp.owner_type_label = 'Corporate Owner'
+    } else if (comp.is_corporate_owner === false && comp.owner_name) {
+      comp.owner_type_label = 'Individual Owner'
+    } else {
+      comp.owner_type_label = 'Unknown Owner Type'
+    }
+  }
+
+  const ownerNameUpper = (comp.owner_name || '').toUpperCase()
+  let isInst = false
+  let matchName = null
+  let matchMethod = null
+  let matchConfidence = null
+  let buyerLabel = 'Unknown Buyer Type'
+
+  if (ownerNameUpper) {
+    // 1. Institutional / Hedge Fund Check
+    for (const name of INSTITUTIONAL_NAMES) {
+      if (ownerNameUpper.includes(name)) {
+        isInst = true
+        matchName = name
+        matchMethod = 'name_match'
+        matchConfidence = 'Confirmed'
+        break
+      }
+    }
+
+    if (!isInst) {
+      for (const kw of INSTITUTIONAL_KEYWORDS) {
+        if (ownerNameUpper.includes(kw)) {
+          if (comp.is_corporate_owner !== false) {
+            isInst = true
+            matchName = kw
+            matchMethod = 'keyword_match'
+            matchConfidence = 'High'
+            break
+          }
+        }
+      }
+    }
+
+    if (isInst) {
+      buyerLabel = 'Hedge Fund / Institutional'
+      comp.is_institutional_buyer = true
+    } 
+    // 2. Builder / Developer Check
+    else if (BUILDER_KEYWORDS.some(kw => ownerNameUpper.includes(kw)) && comp.is_corporate_owner !== false) {
+      buyerLabel = 'Builder / Developer'
+      comp.is_institutional_buyer = false
+    }
+    // 3. Apartment Operator / Investor Check (LLC + Multifamily context)
+    else if ((OPERATOR_KEYWORDS.some(kw => ownerNameUpper.includes(kw)) || (ownerNameUpper.includes('LLC') && (comp.units_count ?? 0) >= 5)) && comp.is_corporate_owner !== false) {
+      buyerLabel = 'Apartment Operator'
+      comp.is_institutional_buyer = false
+    }
+    // 4. Local Investor / LLC
+    else if (ownerNameUpper.includes('LLC') || ownerNameUpper.includes('LP') || ownerNameUpper.includes('TRUST')) {
+      buyerLabel = 'Local Investor / LLC'
+      comp.is_institutional_buyer = false
+    }
+    // 5. General Corporate
+    else if (comp.is_corporate_owner || ownerNameUpper.includes('INC') || ownerNameUpper.includes('CORP')) {
+      buyerLabel = 'Corporate Buyer'
+      comp.is_institutional_buyer = false
+    }
+    // 6. Individual
+    else {
+      buyerLabel = 'Individual Buyer'
+      comp.is_institutional_buyer = false
+    }
+  } else {
+    // Fallback if no owner name
+    if (comp.is_corporate_owner) buyerLabel = 'Corporate Buyer'
+    else if (comp.is_corporate_owner === false) buyerLabel = 'Individual Buyer'
+  }
+
+  comp.institutional_match_name = matchName
+  comp.institutional_match_method = matchMethod
+  comp.institutional_match_confidence = matchConfidence
+
+  if (!comp.buyer_type_label || comp.buyer_type_label === 'Unknown Buyer Type') {
+    comp.buyer_type_label = buyerLabel
+  }
+
+  return comp
+}
+
+export const loadSubjectComps = async (propertyId: string, radiusMiles = 1.0, monthsBack = 12, limit = 50): Promise<RecentSoldComp[]> => {
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase.rpc('get_comp_candidates_for_subject', {
+    p_subject_property_id: propertyId,
+    p_radius_miles: radiusMiles,
+    p_months_back: monthsBack,
+    p_limit: limit
+  })
+  if (error || !data) {
+    console.error('Failed to load subject comps', error)
+    return []
+  }
+  return (data as RecentSoldComp[]).map(enrichSoldComp)
 }
 
 export const loadSoldCompsInBounds = async (
@@ -94,6 +252,9 @@ export const loadSoldCompsInBounds = async (
 
   // Client-side filtering for complex fields
   comps = comps.filter((comp) => {
+    const price = comp.mls_sold_price ?? comp.sale_price ?? 0
+    if (price <= 0) return false // Do not show comps with a $0 sale price
+
     if (filters?.beds && comp.total_bedrooms !== filters.beds) return false
     if (filters?.baths && comp.total_baths !== filters.baths) return false
     
@@ -103,7 +264,6 @@ export const loadSoldCompsInBounds = async (
     }
 
     if (filters?.minSalePrice || filters?.maxSalePrice) {
-      const price = comp.mls_sold_price || comp.sale_price || 0
       if (filters.minSalePrice && price < filters.minSalePrice) return false
       if (filters.maxSalePrice && price > filters.maxSalePrice) return false
     }
@@ -111,5 +271,5 @@ export const loadSoldCompsInBounds = async (
     return true
   })
 
-  return comps
+  return comps.map(enrichSoldComp)
 }

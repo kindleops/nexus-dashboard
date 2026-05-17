@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
+import { loadSubjectComps } from '../../../lib/data/commandMapData'
 import '../comp-intelligence.css'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -73,11 +74,6 @@ const SATELLITE_STYLE: maplibregl.StyleSpecification = {
   layers: [{ id: 'satellite', type: 'raster', source: 'satellite' }],
 }
 
-const STREET_NAMES = ['Oak', 'Elm', 'Pine', 'Maple', 'Cedar', 'Birch', 'Walnut', 'Cypress', 'Willow', 'Magnolia', 'Peach', 'Peachtree']
-const STREET_TYPES = ['St', 'Ave', 'Dr', 'Ln', 'Blvd', 'Way', 'Ct', 'Pl']
-const CONDITIONS: SoldComp['condition'][] = ['excellent', 'good', 'average', 'fair']
-const EXCLUDE_REASONS = ['Too far', 'Low similarity', 'Outlier price', 'Stale sale', 'Size mismatch', 'Condition mismatch', 'Different bed count']
-
 // ── Pure utilities ─────────────────────────────────────────────────────────
 
 const fmt = (n: number) =>
@@ -99,86 +95,8 @@ function formatRelativeMin(date: Date): string {
   return `${Math.round(diff / 60)}h ago`
 }
 
-function seededRand(seed: number): () => number {
-  let s = (seed >>> 0) || 1
-  return () => { s = Math.imul(1664525, s) + 1013904223; return (s >>> 0) / 0xffffffff }
-}
-
-function makeHashSeed(str: string): number {
-  let h = 0x811c9dc5
-  for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 0x01000193)
-  return (h >>> 0) || 1
-}
-
 function makeStreetviewUrl(lat: number, lng: number, size: string): string {
   return `https://maps.googleapis.com/maps/api/streetview?size=${size}&location=${lat},${lng}&pitch=5&fov=90&key=${MAPS_API_KEY}`
-}
-
-// ── Data generation ────────────────────────────────────────────────────────
-
-function generateComps(arv: number, sqft: number, beds: number, baths: number, lat: number, lng: number, count = 9, seed = 42): SoldComp[] {
-  const rnd = seededRand(seed)
-  const now = Date.now()
-  const result: SoldComp[] = []
-  const currentYear = new Date().getFullYear()
-
-  for (let i = 0; i < count; i++) {
-    const angle = rnd() * 2 * Math.PI
-    const distMiles = 0.08 + rnd() * 1.4
-    const latOffset = (distMiles / 69) * Math.cos(angle)
-    const lngOffset = (distMiles / (69 * Math.cos((lat * Math.PI) / 180))) * Math.sin(angle)
-
-    const priceRatio = 0.82 + rnd() * 0.36
-    const salePrice = Math.round((arv * priceRatio) / 1000) * 1000
-
-    const sqftRatio = 0.72 + rnd() * 0.54
-    const compSqft = Math.max(600, Math.round((sqft * sqftRatio) / 10) * 10)
-
-    const daysAgo = Math.floor(rnd() * 360) + 5
-    const saleDate = new Date(now - daysAgo * 86400000).toISOString().split('T')[0]
-
-    const compBeds = Math.max(1, Math.min(6, beds + Math.floor(rnd() * 3) - 1))
-    const compBaths = Math.max(1, Math.round((baths + (rnd() * 2 - 1)) * 2) / 2)
-    const ppsf = Math.round(salePrice / compSqft)
-    const yearBuilt = currentYear - Math.floor(10 + rnd() * 60)
-    const condition = CONDITIONS[Math.floor(rnd() * CONDITIONS.length)]
-
-    const priceSim = 100 - Math.abs(salePrice / arv - 1) * 80
-    const distSim = 100 - distMiles * 26
-    const sqftSim = 100 - Math.abs(compSqft / sqft - 1) * 55
-    const recencySim = 100 - (daysAgo / 360) * 28
-    const similarity = Math.round(Math.max(20, Math.min(99, priceSim * 0.35 + distSim * 0.3 + sqftSim * 0.2 + recencySim * 0.15)))
-
-    const sn = STREET_NAMES[Math.floor(rnd() * STREET_NAMES.length)]
-    const st = STREET_TYPES[Math.floor(rnd() * STREET_TYPES.length)]
-    const num = 100 + Math.floor(rnd() * 9800)
-
-    const autoSelected = similarity >= 72 && distMiles <= 0.75
-    let excludeReason: string | null = null
-    if (!autoSelected) {
-      if (distMiles > 1.0) excludeReason = 'Too far'
-      else if (daysAgo > 180) excludeReason = 'Stale sale'
-      else if (salePrice / arv > 1.28 || salePrice / arv < 0.72) excludeReason = 'Outlier price'
-      else if (Math.abs(compSqft - sqft) / sqft > 0.4) excludeReason = 'Size mismatch'
-      else if (similarity < 55) excludeReason = 'Low similarity'
-      else excludeReason = EXCLUDE_REASONS[Math.floor(rnd() * EXCLUDE_REASONS.length)]
-    }
-
-    result.push({
-      id: `comp-${i}`,
-      address: `${num} ${sn} ${st}`,
-      salePrice, saleDate, daysAgo,
-      distance: Math.round(distMiles * 10) / 10,
-      sqft: compSqft, beds: compBeds, baths: compBaths, yearBuilt, condition,
-      lat: lat + latOffset, lng: lng + lngOffset,
-      ppsf, similarity,
-      selected: autoSelected,
-      excluded: false,
-      excludeReason,
-    })
-  }
-
-  return result.sort((a, b) => b.similarity - a.similarity)
 }
 
 // ── ARV computation ────────────────────────────────────────────────────────
@@ -839,13 +757,62 @@ export function CompIntelligenceWorkspace({ thread }: { thread: InboxWorkflowThr
   const [openCompId, setOpenCompId] = useState<string | null>(null)
   const [lastCalcTime, setLastCalcTime] = useState<Date | null>(null)
 
-  const threadSeed = useMemo(() => makeHashSeed(String(t?.id || t?.thread_key || 'default')), [t?.id, t?.thread_key])
-  const rawComps = useMemo(
-    () => arv ? generateComps(arv, sqft, beds, baths, lat || 33.749, lng || -84.388, 9, threadSeed) : [],
-    [arv, sqft, beds, baths, lat, lng, threadSeed],
-  )
+  useEffect(() => {
+    let cancelled = false
+    const propertyId = String(t?.propertyId || t?.property_id || '')
+    if (!propertyId || !lat || !lng) {
+      setComps([])
+      return
+    }
+    
+    loadSubjectComps(propertyId, radius).then((data) => {
+      if (cancelled) return
+      
+      const mappedComps: SoldComp[] = data.map((d, i) => {
+        const salePrice = d.mls_sold_price ?? d.sale_price ?? 0
+        const saleDateStr = d.mls_sold_date ?? d.sale_date ?? new Date().toISOString()
+        const daysAgo = Math.round((Date.now() - new Date(saleDateStr).getTime()) / 86400000)
+        
+        // Approximate distance if API didn't return it
+        const R = 3958.8 // Radius of the Earth in miles
+        const dLat = (d.latitude - lat) * Math.PI / 180
+        const dLon = (d.longitude - lng) * Math.PI / 180
+        const a = 
+          Math.sin(dLat/2) * Math.sin(dLat/2) +
+          Math.cos(lat * Math.PI / 180) * Math.cos(d.latitude * Math.PI / 180) * 
+          Math.sin(dLon/2) * Math.sin(dLon/2)
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+        const distance = R * c
 
-  useEffect(() => { setComps(rawComps) }, [rawComps])
+        return {
+          id: d.property_id || `comp-${i}`,
+          address: d.property_address_full,
+          salePrice,
+          saleDate: saleDateStr,
+          daysAgo: Math.max(0, daysAgo),
+          distance: Math.round(distance * 10) / 10,
+          sqft: d.building_square_feet ?? 0,
+          beds: d.total_bedrooms ?? 0,
+          baths: d.total_baths ?? 0,
+          yearBuilt: d.year_built ?? 0,
+          condition: (d.building_condition?.toLowerCase() as any) || 'average',
+          lat: d.latitude,
+          lng: d.longitude,
+          ppsf: d.computed_ppsf ?? d.arv_ppsf ?? Math.round(salePrice / Math.max(1, d.building_square_feet ?? 1)),
+          similarity: d.comp_confidence_score ?? 70,
+          selected: d.comp_confidence_score ? d.comp_confidence_score >= 65 : true,
+          excluded: false,
+          excludeReason: null,
+        }
+      })
+      
+      // If we don't have enough comps, we could optionally fallback to generateComps here,
+      // but the prompt explicitly says "We now have real recent sold comp data".
+      setComps(mappedComps.sort((a, b) => b.similarity - a.similarity))
+    }).catch(console.error)
+    
+    return () => { cancelled = true }
+  }, [t?.propertyId, t?.property_id, lat, lng, radius])
 
   const arvStats = useMemo(() => computeArvStats(comps, sqft), [comps, sqft])
   const prevArv = useRef<number | null>(null)

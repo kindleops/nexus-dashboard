@@ -4265,6 +4265,18 @@
   color: rgba(233, 240, 250, 0.7);
 }
 
+.nx-icm-hover__status--institutional {
+  border-color: rgba(168, 85, 247, 0.28);
+  color: #c084fc;
+  box-shadow: 0 0 20px rgba(168, 85, 247, 0.14);
+}
+
+.nx-icm-hover__status--premium {
+  border-color: rgba(59, 130, 246, 0.28);
+  color: #93c5fd;
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.14);
+}
+
 .nx-icm-hover__address,
 .nx-icm-thread__meta {
   margin: 0;
