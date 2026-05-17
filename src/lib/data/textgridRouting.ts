@@ -2,7 +2,7 @@ import { getSupabaseClient } from '../supabaseClient'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { InboxThread } from '../../modules/inbox/inbox.adapter'
 
-type RoutingInput = Pick<InboxThread, 'marketId' | 'market' | 'ourNumber' | 'phoneNumber' | 'textgridNumberId' | 'property_address_state' | 'propertyId' | 'threadKey'>
+type RoutingInput = Pick<InboxThread, 'marketId' | 'market' | 'ourNumber' | 'phoneNumber' | 'textgridNumberId' | 'property_address_state' | 'propertyId' | 'threadKey'> & { allow_cluster_routing?: boolean }
 
 interface TextgridNumberRow {
   id?: string | null
@@ -22,6 +22,7 @@ interface RoutingResult {
   market_id: string | null
   routing_tier?: number
   routing_reason?: string
+  routing_cluster?: string
   error?: string
   route_input_state?: string | null
   route_input_market?: string | null
@@ -29,6 +30,33 @@ interface RoutingResult {
   route_candidate_count?: number
   route_rejected_reasons?: string[]
 }
+
+const APPROVED_TEXTGRID_CLUSTERS = [
+  {
+    cluster_key: 'WEST_COAST',
+    allowed_seller_states: ['CA', 'AZ', 'NV'],
+    preferred_sender_markets: ['los angeles, ca'],
+    fallback_sender_states: ['CA']
+  },
+  {
+    cluster_key: 'TEXAS_OK',
+    allowed_seller_states: ['TX', 'OK'],
+    preferred_sender_markets: ['dallas, tx', 'houston, tx'],
+    fallback_sender_states: ['TX']
+  },
+  {
+    cluster_key: 'SOUTHEAST_EAST',
+    allowed_seller_states: ['GA', 'NC', 'SC', 'FL'],
+    preferred_sender_markets: ['atlanta, ga', 'charlotte, nc', 'jacksonville, fl', 'miami, fl'],
+    fallback_sender_states: ['GA', 'NC', 'FL']
+  },
+  {
+    cluster_key: 'MIDWEST',
+    allowed_seller_states: ['MN', 'WI', 'IA', 'ND', 'SD'],
+    preferred_sender_markets: ['minneapolis, mn'],
+    fallback_sender_states: ['MN']
+  }
+]
 
 const normalizePhone = (phone: string | null | undefined): string | null => {
   if (!phone) return null
@@ -232,12 +260,13 @@ export const resolveOutboundTextgridNumber = async (
 
   const match = chooseBestCandidate(activeRows, routeInputMarket, routeInputState)
   if (match.row?.id) {
+    const isTier1 = match.reasons.some(r => r.startsWith('market:'))
     return {
       ok: true,
       from_phone_number: normalizePhone(match.row.phone_number),
       textgrid_number_id: match.row.id ?? null,
       market_id: match.row.market ?? null,
-      routing_tier: 2,
+      routing_tier: isTier1 ? 1 : 2,
       routing_reason: match.reasons.join(', ') || 'Market/state match',
       route_input_state: routeInputState || null,
       route_input_market: routeInputMarket || null,
@@ -247,23 +276,55 @@ export const resolveOutboundTextgridNumber = async (
     }
   }
 
-  const fallbackRow = !routeInputMarket && !routeInputState ? activeRows[0] ?? null : null
-  if (fallbackRow?.id) {
-    return {
-      ok: true,
-      from_phone_number: normalizePhone(fallbackRow.phone_number),
-      textgrid_number_id: fallbackRow.id ?? null,
-      market_id: fallbackRow.market ?? null,
-      routing_tier: 4,
-      routing_reason: 'Fallback from general inventory',
-      route_input_state: routeInputState || null,
-      route_input_market: routeInputMarket || null,
-      route_input_property_id: routeInputPropertyId,
-      route_candidate_count: activeRows.length,
-      route_rejected_reasons: [],
+  // Tier 3: Approved Cluster Fallback
+  const allowCluster = thread.allow_cluster_routing !== false
+  if (allowCluster && routeInputState) {
+    const rawState = routeInputState.toUpperCase()
+    const cluster = APPROVED_TEXTGRID_CLUSTERS.find(c => c.allowed_seller_states.includes(rawState))
+    
+    if (cluster) {
+      let clusterMatchRow: TextgridNumberRow | null = null
+      
+      // Try preferred sender markets first
+      for (const prefMarket of cluster.preferred_sender_markets) {
+        const prefMatch = chooseBestCandidate(activeRows, prefMarket, '')
+        if (prefMatch.row?.id && prefMatch.reasons.some(r => r.startsWith('market:'))) {
+          clusterMatchRow = prefMatch.row
+          break
+        }
+      }
+      
+      // Try fallback sender states if no market matched
+      if (!clusterMatchRow) {
+        for (const fbState of cluster.fallback_sender_states) {
+          const fbMatch = chooseBestCandidate(activeRows, '', fbState)
+          if (fbMatch.row?.id && fbMatch.reasons.some(r => r.startsWith('state:'))) {
+            clusterMatchRow = fbMatch.row
+            break
+          }
+        }
+      }
+
+      if (clusterMatchRow?.id) {
+        return {
+          ok: true,
+          from_phone_number: normalizePhone(clusterMatchRow.phone_number),
+          textgrid_number_id: clusterMatchRow.id ?? null,
+          market_id: clusterMatchRow.market ?? null,
+          routing_tier: 3,
+          routing_reason: `approved_cluster:${cluster.cluster_key}`,
+          routing_cluster: cluster.cluster_key,
+          route_input_state: routeInputState || null,
+          route_input_market: routeInputMarket || null,
+          route_input_property_id: routeInputPropertyId,
+          route_candidate_count: activeRows.length,
+          route_rejected_reasons: [],
+        }
+      }
     }
   }
 
+  // Tier 4: Block (No valid sender)
   return {
     ok: false,
     from_phone_number: null,

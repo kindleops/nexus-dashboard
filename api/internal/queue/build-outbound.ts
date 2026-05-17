@@ -85,6 +85,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     const dryRun = req.body?.dry_run !== false && req.body?.apply !== true
     const apply = req.body?.apply === true && req.body?.dry_run === false
     const limit = Math.min(100, Number(req.body?.limit || 50))
+    const allowClusterRouting = req.body?.allow_cluster_routing !== false
 
     // 1. Check available columns to safely add filters
     const { data: colsCheck } = await supabase.from('v_sms_ready_contacts').select('*').limit(1)
@@ -264,6 +265,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         property_address_state: asString(contact.property_address_state || ''),
         propertyId: propertyId,
         threadKey: threadKey,
+        allow_cluster_routing: allowClusterRouting
       })
 
       if (!routingResult.ok) {
@@ -323,7 +325,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           selected_textgrid_number_id: routingResult.textgrid_number_id,
           selected_textgrid_market: routingResult.route_input_market,
           routing_tier: routingResult.routing_tier,
-          selection_reason: routingResult.routing_reason
+          selection_reason: routingResult.routing_reason,
+          routing_cluster: routingResult.routing_cluster
         }
       }
 
@@ -349,7 +352,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           textgridNumberId: routingResult.textgrid_number_id,
           selectedTextgridMarket: routingResult.route_input_market,
           routingTier: routingResult.routing_tier,
-          routingReason: routingResult.routing_reason
+          routingReason: routingResult.routing_reason,
+          routingCluster: routingResult.routing_cluster
         })
       } else if (apply) {
         if (!payload.from_phone_number || !payload.textgrid_number_id) {
