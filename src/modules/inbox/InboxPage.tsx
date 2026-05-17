@@ -63,6 +63,7 @@ import { IntelligencePanel } from './components/IntelligencePanel'
 import { CompIntelligenceWorkspace } from './components/CompIntelligenceWorkspace'
 import { SendQueueDashboard } from './components/SendQueueDashboard'
 import { InboxPipelineView } from './components/InboxPipelineView'
+import { InboxKpiDashboard } from './components/InboxKpiDashboard'
 import type { TemplateActionPayload } from './components/TemplatePopover'
 import { InboxActivityPanel } from './components/InboxActivityPanel'
 import { InboxCommandMap } from './InboxCommandMap'
@@ -2291,25 +2292,7 @@ export default function InboxPage() {
     }
 
     if (view === 'metrics') {
-      return (
-        <section className="nx-workspace-surface nx-workspace-surface--metrics">
-          {[
-            ['New Replies', viewCounts.new_replies],
-            ['Hot Leads', viewCounts.hot_leads],
-            ['Waiting on Seller', viewCounts.waiting_on_seller],
-            ['Suppressed', viewCounts.suppressed],
-            ['Follow-Ups Due', viewCounts.follow_up_due],
-            ['Reply Rate', `${viewCounts.positive_reply_rate ?? '—'}%`],
-            ['Delivery Rate', `${viewCounts.delivery_rate ?? '—'}%`],
-            ['Failed Sends', viewCounts.failed],
-          ].map(([label, value]) => (
-            <div key={label} className="nx-workspace-kpi-card">
-              <span>{label}</span>
-              <strong>{String(value ?? '—')}</strong>
-            </div>
-          ))}
-        </section>
-      )
+      return <InboxKpiDashboard layoutMode={layoutMode} />
     }
 
     if (view === 'comp_intelligence') {

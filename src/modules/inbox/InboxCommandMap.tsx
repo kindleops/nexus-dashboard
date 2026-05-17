@@ -253,19 +253,14 @@ type LiveTickerItem = {
   lat: number
   eventType:
     | 'new_reply'
-    | 'hot_lead'
-    | 'needs_review'
-    | 'send_queued'
-    | 'send_sent'
-    | 'send_delivered'
-    | 'send_failed'
+    | 'positive_intent'
+    | 'hot_seller'
+    | 'offer_generated'
+    | 'contract_sent'
+    | 'queue_blocked'
+    | 'buyer_match_found'
     | 'follow_up_due'
-    | 'follow_up_scheduled'
     | 'suppressed'
-    | 'opt_out'
-    | 'price_given'
-    | 'offer_requested'
-    | 'underwriting_complete'
   badge: string
   sellerName: string
   location: string
@@ -278,6 +273,16 @@ type LiveTickerItem = {
   tone: 'accent' | 'danger' | 'success' | 'warning' | 'neutral' | 'premium'
   disabledReply?: boolean
   detailLabel?: string
+}
+
+type ControlsTab = 'view' | 'seller_layers' | 'buyer_layers' | 'census' | 'filters' | 'map_style'
+
+type ClusterCensusSummary = {
+  id: string
+  title: string
+  subtitle: string
+  itemCount: number
+  metrics: Array<{ label: string; value: string }>
 }
 
 type BuyerLayerToggles = {
@@ -381,6 +386,7 @@ const CENSUS_TOGGLE_DEFS: Array<{ key: keyof CensusLayerToggles; label: string; 
   { key: 'medianHomeValue',    label: 'Med Value',  color: '#06b6d4' },
   { key: 'medianRent',         label: 'Med Rent',   color: '#8b5cf6' },
   { key: 'housingAge',         label: 'Bldg Age',   color: '#94a3b8' },
+  { key: 'acquisitionPressure', label: 'Acq Pressure', color: '#ec4899' },
   { key: 'investorOpportunity',label: 'Opp Score',  color: '#22c55e' },
 ]
 
@@ -392,6 +398,24 @@ const defaultBuyerDemandLayers: BuyerDemandLayerToggles = {
 }
 
 const EMPTY_GEOJSON: FeatureCollection<Point, Record<string, unknown>> = { type: 'FeatureCollection', features: [] }
+const CONTROLS_TABS: Array<{ key: ControlsTab; label: string }> = [
+  { key: 'view', label: 'View' },
+  { key: 'seller_layers', label: 'Seller Layers' },
+  { key: 'buyer_layers', label: 'Buyer Layers' },
+  { key: 'census', label: 'Census' },
+  { key: 'filters', label: 'Filters' },
+  { key: 'map_style', label: 'Map Style' },
+]
+const MAP_LEGEND_ITEMS = [
+  { label: 'Not Contacted', color: '#97a3b6' },
+  { label: 'Active Cluster', color: '#3b82f6' },
+  { label: 'Contacted / Replied', color: '#38bdf8' },
+  { label: 'Needs Review', color: '#facc15' },
+  { label: 'Positive Intent', color: '#22c55e' },
+  { label: 'Offer / Contract', color: '#a855f7' },
+  { label: 'Blocked / Suppressed / Urgent', color: '#ef4444' },
+  { label: 'Selected / Hot', color: '#eab308' },
+] as const
 
 const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
 const text = (value: unknown): string => String(value ?? '').trim()
@@ -491,6 +515,52 @@ const formatCurrency = (value: number | null): string => {
   if (!Number.isFinite(value ?? NaN)) return '—'
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value as number)
 }
+const formatCompactCurrency = (value: number | null): string => {
+  if (!Number.isFinite(value ?? NaN)) return '—'
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(value as number)
+}
+const resolveSellerName = (thread: InboxWorkflowThread | null, pin?: Pick<CommandMapPin, 'seller_name'> | null): string =>
+  [
+    text((thread as any)?.seller_name),
+    text((thread as any)?.ownerDisplayName),
+    text((thread as any)?.owner_display_name),
+    text((thread as any)?.ownerName),
+    text((thread as any)?.owner_name),
+    text((thread as any)?.prospect_name),
+    text((thread as any)?.contact_name),
+    text(pin?.seller_name),
+  ].find((value) => value && lower(value) !== 'unknown seller') || 'Unknown Seller'
+const resolveAddress = (thread: InboxWorkflowThread | null, pin?: Pick<CommandMapPin, 'address'> | null): string =>
+  [
+    text((thread as any)?.propertyAddress),
+    text((thread as any)?.propertyAddressFull),
+    text((thread as any)?.property_address),
+    text((thread as any)?.property_address_full),
+    text((thread as any)?.address),
+    text((thread as any)?.situs_address),
+    text(pin?.address),
+  ].find(Boolean) || 'Property Unknown'
+const resolveMarket = (thread: InboxWorkflowThread | null, pin?: Pick<CommandMapPin, 'city' | 'state' | 'market'> | null): string =>
+  [
+    text((thread as any)?.market),
+    text((thread as any)?.marketName),
+    [text((thread as any)?.city || (thread as any)?.property_address_city || pin?.city), text((thread as any)?.state || (thread as any)?.property_address_state || pin?.state)].filter(Boolean).join(', '),
+    [text(pin?.city), text(pin?.state)].filter(Boolean).join(', '),
+    text(pin?.market),
+  ].find(Boolean) || 'Market Unknown'
+const resolveLastIntent = (thread: InboxWorkflowThread | null): string =>
+  text((thread as any)?.last_intent || (thread as any)?.lastIntent || (thread as any)?.intent || '')
+const resolveQueueStatus = (thread: InboxWorkflowThread | null, pin: CommandMapPin): string =>
+  text((thread as any)?.queue_status || (thread as any)?.queueStatus || pin.queue_status || '')
+const resolveOfferStatus = (thread: InboxWorkflowThread | null, pin: CommandMapPin): string =>
+  text((thread as any)?.offer_status || (thread as any)?.offerStatus || pin.offer_status || '')
+const resolveContractStatus = (thread: InboxWorkflowThread | null, pin: CommandMapPin): string =>
+  text((thread as any)?.contract_status || (thread as any)?.contractStatus || pin.contract_status || '')
 const buyerColorFor = (styleMode: MapStyleMode, category: string): string => {
   if (styleMode === 'red') {
     if (category === 'institutional') return '#ff8b6a'
@@ -1007,31 +1077,9 @@ const buildLiveTickerItems = (pins: CommandMapPin[], threadsById: Map<string, In
   return pins
     .map((pin) => {
       const thread = threadsById.get(pin.conversation_id) || null
-      const sellerName = [
-        text((thread as any)?.seller_name),
-        text((thread as any)?.ownerDisplayName),
-        text((thread as any)?.owner_display_name),
-        text((thread as any)?.ownerName),
-        text((thread as any)?.owner_name),
-        text((thread as any)?.prospect_name),
-        text((thread as any)?.contact_name),
-        text(pin.seller_name),
-      ].find((value) => value && lower(value) !== 'unknown seller') || 'Property Thread'
-      const hydratedAddress = [
-        text((thread as any)?.propertyAddress),
-        text((thread as any)?.propertyAddressFull),
-        text((thread as any)?.property_address),
-        text((thread as any)?.property_address_full),
-        text((thread as any)?.address),
-        text((thread as any)?.situs_address),
-        text(pin.address),
-      ].find(Boolean) || 'Property Unknown'
-      const marketLine = [
-        text((thread as any)?.market),
-        text((thread as any)?.marketName),
-        [text((thread as any)?.city || (thread as any)?.property_address_city || pin.city), text((thread as any)?.state || (thread as any)?.property_address_state || pin.state)].filter(Boolean).join(', '),
-        [text(pin.city), text(pin.state)].filter(Boolean).join(', '),
-      ].find(Boolean) || 'Market Unknown'
+      const sellerName = resolveSellerName(thread, pin)
+      const hydratedAddress = resolveAddress(thread, pin)
+      const marketLine = resolveMarket(thread, pin)
       const lastMessage = [
         text((thread as any)?.message_body),
         text((thread as any)?.latestMessageBody),
@@ -1040,6 +1088,10 @@ const buildLiveTickerItems = (pins: CommandMapPin[], threadsById: Map<string, In
         text((thread as any)?.preview),
         text(pin.last_message),
       ].find(Boolean) || ''
+      const lastIntent = lower(resolveLastIntent(thread))
+      const queueStatus = lower(resolveQueueStatus(thread, pin))
+      const offerStatus = lower(resolveOfferStatus(thread, pin))
+      const contractStatus = lower(resolveContractStatus(thread, pin))
       const lowerStage = lower(pin.conversation_stage)
       const lowerStatus = lower(pin.conversation_status)
       const lowerMessage = lower(lastMessage)
@@ -1047,85 +1099,98 @@ const buildLiveTickerItems = (pins: CommandMapPin[], threadsById: Map<string, In
       let eventType: LiveTickerItem['eventType'] = 'new_reply'
       let badge = 'New Reply'
       let tone: LiveTickerItem['tone'] = 'accent'
-      let detailLabel = 'Message'
+      let detailLabel = 'Inbound'
 
-      if (pin.suppression_status !== 'clear') {
-        eventType = lowerMessage.includes('stop') || lowerMessage.includes('opt out') ? 'opt_out' : 'suppressed'
-        badge = eventType === 'opt_out' ? 'Opt-Out' : 'Suppressed'
+      if (queueStatus.includes('blocked') || pin.activity_state === 'queue_blocked' || pin.activity_state === 'failed') {
+        eventType = 'queue_blocked'
+        badge = 'Queue Blocked'
         tone = 'danger'
-        detailLabel = 'Reason'
-      } else if (pin.inbox_bucket === 'needs_review' || pin.activity_state === 'needs_review') {
-        eventType = 'needs_review'
-        badge = 'Needs Review'
-        tone = 'warning'
-        detailLabel = 'Review'
-      } else if ((pin.priority_score ?? 0) >= 92) {
-        eventType = 'hot_lead'
-        badge = 'Hot Lead'
+        detailLabel = 'Routing'
+      } else if (pin.suppression_status !== 'clear') {
+        eventType = 'suppressed'
+        badge = 'Suppressed'
+        tone = 'danger'
+        detailLabel = 'Safety'
+      } else if (
+        contractStatus.includes('active')
+        || contractStatus.includes('sent')
+        || lowerStage.includes('contract')
+        || lowerStage.includes('closing')
+      ) {
+        eventType = 'contract_sent'
+        badge = 'Contract Sent'
         tone = 'premium'
-        detailLabel = 'Signal'
-      } else if (lowerStage.includes('price') || lowerStatus.includes('price') || /\$\d/.test(lastMessage)) {
-        eventType = 'price_given'
-        badge = 'Price Given'
-        tone = 'premium'
-        detailLabel = 'Price'
-      } else if (lowerStage.includes('offer') || lowerStatus.includes('offer') || lower(pin.offer_status).includes('ready') || lower(pin.offer_status).includes('sent')) {
-        eventType = 'offer_requested'
-        badge = 'Offer Requested'
+        detailLabel = 'Contract'
+      } else if (
+        offerStatus.includes('ready')
+        || offerStatus.includes('sent')
+        || lowerStage.includes('offer')
+        || lowerStatus.includes('offer')
+      ) {
+        eventType = 'offer_generated'
+        badge = 'Offer Generated'
         tone = 'premium'
         detailLabel = 'Offer'
-      } else if (lowerStatus.includes('underwriting')) {
-        eventType = 'underwriting_complete'
-        badge = 'Underwriting'
+      } else if (
+        lastIntent.includes('sell')
+        || lastIntent.includes('interested')
+        || lastIntent.includes('positive')
+        || lastIntent.includes('price')
+        || lowerMessage.includes('yes')
+        || lowerMessage.includes('interested')
+      ) {
+        eventType = 'positive_intent'
+        badge = 'Positive Intent'
         tone = 'success'
-        detailLabel = 'Summary'
-      } else if (pin.activity_state === 'queued') {
-        eventType = pin.next_follow_up_at ? 'follow_up_scheduled' : 'send_queued'
-        badge = pin.next_follow_up_at ? 'Follow-Up Scheduled' : 'Send Queued'
-        tone = 'neutral'
-        detailLabel = pin.next_follow_up_at ? 'Next Follow-Up' : 'Queued'
-      } else if (pin.activity_state === 'sending' || pin.activity_state === 'sent') {
-        eventType = 'send_sent'
-        badge = 'Send Sent'
-        tone = 'accent'
-        detailLabel = 'Outbound'
-      } else if (pin.activity_state === 'delivered') {
-        eventType = 'send_delivered'
-        badge = 'Delivered'
+        detailLabel = 'Intent'
+      } else if (
+        lower((thread as any)?.next_action || pin.next_action).includes('buyer')
+        || lower((thread as any)?.recommended_action || '').includes('buyer')
+        || lower((thread as any)?.dispo_status || '').includes('buyer')
+      ) {
+        eventType = 'buyer_match_found'
+        badge = 'Buyer Match Found'
         tone = 'success'
-        detailLabel = 'Delivery'
-      } else if (pin.activity_state === 'failed' || pin.activity_state === 'queue_blocked') {
-        eventType = 'send_failed'
-        badge = pin.activity_state === 'queue_blocked' ? 'Routing Blocked' : 'Send Failed'
-        tone = 'danger'
-        detailLabel = 'Failure'
+        detailLabel = 'Disposition'
+      } else if ((pin.priority_score ?? 0) >= 92) {
+        eventType = 'hot_seller'
+        badge = 'Hot Seller'
+        tone = 'premium'
+        detailLabel = 'Signal'
       } else if (pin.activity_state === 'due_now' || pin.activity_state === 'overdue' || pin.activity_state === 'follow_up_due') {
         eventType = 'follow_up_due'
         badge = 'Follow-Up Due'
         tone = 'warning'
         detailLabel = 'Follow-Up'
-      } else if (pin.activity_state === 'new_replies' || pin.activity_state === 'replied') {
+      } else if (pin.activity_state === 'new_replies' || pin.activity_state === 'replied' || pin.inbox_bucket === 'new_replies') {
         eventType = 'new_reply'
         badge = 'New Reply'
         tone = 'accent'
         detailLabel = 'Inbound'
       }
 
-      const timestamp =
-        eventType === 'new_reply' || eventType === 'price_given'
+      const timestamp = (
+        eventType === 'new_reply' || eventType === 'positive_intent'
           ? (pin.last_inbound_at || pin.last_activity_at)
           : (pin.last_outbound_at || pin.next_follow_up_at || pin.last_activity_at)
+      )
 
       const preview =
-        eventType === 'send_failed'
+        eventType === 'queue_blocked'
           ? pin.next_action || pin.conversation_status || 'Message send blocked.'
-          : eventType === 'follow_up_scheduled'
-            ? pin.next_follow_up_at ? `Scheduled ${formatRelative(pin.next_follow_up_at)}` : pin.next_action || ''
-            : eventType === 'underwriting_complete'
-              ? `Value ${formatCurrency(pin.estimated_value)} • Repairs ${formatCurrency(pin.repair_estimate)} • Equity ${formatPercent(pin.equity_percent ?? NaN)}`
-              : eventType === 'price_given'
-                ? `${lastMessage || 'Seller price shared.'}${Number.isFinite(pin.estimated_value ?? NaN) ? ` • Value ${formatCurrency(pin.estimated_value)}` : ''}`
-                : lastMessage || undefined
+          : eventType === 'offer_generated'
+            ? `Offer ${formatCompactCurrency(num((thread as any)?.recommended_offer) ?? null)} • Walkaway ${formatCompactCurrency(num((thread as any)?.walkaway_price) ?? null)}`
+            : eventType === 'contract_sent'
+              ? pin.next_action || 'Contract motion is active.'
+              : eventType === 'buyer_match_found'
+                ? text((thread as any)?.recommended_action || pin.next_action) || 'Buyer demand surfaced for this property.'
+                : eventType === 'hot_seller'
+                  ? `${lastMessage || 'Seller activity is accelerating.'}${Number.isFinite(pin.estimated_value ?? NaN) ? ` • Value ${formatCompactCurrency(pin.estimated_value)}` : ''}`
+                  : eventType === 'follow_up_due'
+                    ? pin.next_follow_up_at ? `Due ${formatRelative(pin.next_follow_up_at)} • ${pin.next_action || 'Follow-up required.'}` : pin.next_action || 'Follow-up required.'
+                    : eventType === 'positive_intent'
+                      ? `${resolveLastIntent(thread) || 'Positive seller signal.'}${lastMessage ? ` • ${lastMessage}` : ''}`
+                      : lastMessage || undefined
 
       return {
         id: `${pin.conversation_id}:${eventType}:${timestamp}`,
@@ -1143,7 +1208,7 @@ const buildLiveTickerItems = (pins: CommandMapPin[], threadsById: Map<string, In
         statusLabel: formatLabel(pin.conversation_status || 'Unknown'),
         stageLabel: formatLabel(pin.conversation_stage || 'Unknown'),
         tone,
-        disabledReply: eventType === 'suppressed' || eventType === 'opt_out',
+        disabledReply: eventType === 'suppressed' || eventType === 'queue_blocked',
         detailLabel,
       }
     })
@@ -1361,8 +1426,24 @@ const BuyerSelectionCard = ({
 }
 
 // ── Census Intelligence Panel ──────────────────────────────────────────────────
-const CensusIntelPanel = ({ data, styleMode }: { data: CensusData; styleMode: MapStyleMode }) => {
-  const { score, grade, summary } = calculateInvestorOpportunityScore(data)
+const CensusIntelPanel = ({
+  data,
+  styleMode,
+  title,
+  subtitle,
+  metrics,
+  emptyMessage,
+}: {
+  data: CensusData | null
+  styleMode: MapStyleMode
+  title: string
+  subtitle: string
+  metrics?: Array<{ label: string; value: string }>
+  emptyMessage?: string
+}) => {
+  const { score, grade, summary } = data
+    ? calculateInvestorOpportunityScore(data)
+    : { score: 0, grade: 'Watchlist', summary: emptyMessage || 'No census intelligence available.' }
   const gradeColor: Record<string, string> = {
     A: '#14b8a6', B: '#f59e0b', C: '#fb923c', Watchlist: '#6b7280',
   }
@@ -1372,55 +1453,49 @@ const CensusIntelPanel = ({ data, styleMode }: { data: CensusData; styleMode: Ma
     n != null && Number.isFinite(n) ? `$${Math.round(n / 1000)}K` : '—'
   const fmtPct = (n: number | undefined) =>
     n != null && Number.isFinite(n) ? `${Math.round(n)}%` : '—'
+  const metricRows = data
+    ? [
+        { label: 'Med. Income', value: fmtK(data.median_household_income) },
+        { label: 'Vacancy', value: fmtPct(data.vacancy_rate) },
+        { label: 'Renter%', value: fmtPct(data.renter_occupied_percent) },
+        { label: 'Owner%', value: fmtPct(data.owner_occupied_percent) },
+        { label: 'Med. Rent', value: fmt(data.median_gross_rent, '$') },
+        { label: 'Med. Value', value: fmtK(data.median_home_value) },
+        { label: 'Pop/mi²', value: fmt(data.population_density) },
+        { label: 'Opp Score', value: `${score}` },
+      ]
+    : (metrics ?? [])
 
   return (
     <div className="nx-icm__census-panel">
       <div className="nx-icm__census-panel-head">
-        <span className="nx-icm__census-panel-title">
-          <span className="nx-icm__census-dot" />
-          Census Intel
-        </span>
+        <div className="nx-icm__census-panel-headercopy">
+          <span className="nx-icm__census-panel-title">
+            <span className="nx-icm__census-dot" />
+            {title}
+          </span>
+          <small className="nx-icm__census-panel-subtitle">{subtitle}</small>
+        </div>
         <span
           className="nx-icm__census-grade"
           style={{ color: gradeColor[grade] ?? '#6b7280', borderColor: gradeColor[grade] ?? '#6b7280' }}
         >
-          {grade}
+          {data ? grade : 'Live'}
         </span>
-        <span className="nx-icm__census-score">{score}<span>/100</span></span>
+        <span className="nx-icm__census-score">{data ? score : '—'}<span>{data ? '/100' : ''}</span></span>
       </div>
       <div className={cls('nx-icm__census-grid', `is-${styleMode}`)}>
-        <div className="nx-icm__census-stat">
-          <span>Med. Income</span>
-          <strong>{fmtK(data.median_household_income)}</strong>
-        </div>
-        <div className="nx-icm__census-stat">
-          <span>Vacancy</span>
-          <strong>{fmtPct(data.vacancy_rate)}</strong>
-        </div>
-        <div className="nx-icm__census-stat">
-          <span>Renter%</span>
-          <strong>{fmtPct(data.renter_occupied_percent)}</strong>
-        </div>
-        <div className="nx-icm__census-stat">
-          <span>Owner%</span>
-          <strong>{fmtPct(data.owner_occupied_percent)}</strong>
-        </div>
-        <div className="nx-icm__census-stat">
-          <span>Med. Rent</span>
-          <strong>{fmt(data.median_gross_rent, '$')}</strong>
-        </div>
-        <div className="nx-icm__census-stat">
-          <span>Med. Value</span>
-          <strong>{fmtK(data.median_home_value)}</strong>
-        </div>
-        <div className="nx-icm__census-stat">
-          <span>Pop/mi²</span>
-          <strong>{fmt(data.population_density)}</strong>
-        </div>
-        <div className="nx-icm__census-stat is-highlight">
-          <span>Opp Score</span>
-          <strong style={{ color: gradeColor[grade] }}>{score}</strong>
-        </div>
+        {metricRows.length > 0 ? metricRows.map((metric) => (
+          <div key={metric.label} className={cls('nx-icm__census-stat', metric.label === 'Opp Score' && data && 'is-highlight')}>
+            <span>{metric.label}</span>
+            <strong style={metric.label === 'Opp Score' && data ? { color: gradeColor[grade] } : undefined}>{metric.value}</strong>
+          </div>
+        )) : (
+          <div className="nx-icm__census-empty">
+            <strong>Waiting for geography data</strong>
+            <p>{emptyMessage || 'Select a property or hover a cluster to inspect census intelligence.'}</p>
+          </div>
+        )}
       </div>
       <p className="nx-icm__census-summary">◆ {summary}</p>
     </div>
@@ -1660,8 +1735,11 @@ export function InboxCommandMap({
   const [buyerDemandGeojson, setBuyerDemandGeojson] = useState<FeatureCollection<Point, Record<string, unknown>>>(EMPTY_GEOJSON)
   const [selectedThreadCensus, setSelectedThreadCensus] = useState<CensusData | null>(null)
   const [selectedBuyerPurchase, setSelectedBuyerPurchase] = useState<BuyerRecentPurchase | null>(null)
+  const [hoveredClusterSummary, setHoveredClusterSummary] = useState<ClusterCensusSummary | null>(null)
+  const [selectedClusterSummary, setSelectedClusterSummary] = useState<ClusterCensusSummary | null>(null)
 
   const [filtersOpen, setFiltersOpen] = useState(false)
+  const [activeControlsTab, setActiveControlsTab] = useState<ControlsTab>('view')
   const [dockTier, setDockTier] = useState<'mini' | 'compact' | 'full'>('full')
   const [mapStyleMode, setMapStyleMode] = useState<MapStyleMode>(initialMapStyleMode)
   const [mapDimension, setMapDimension] = useState<'2d' | '3d'>('2d')
@@ -1849,6 +1927,7 @@ export function InboxCommandMap({
 
   useEffect(() => {
     setSelectedPinId(selectedThread?.id ?? null)
+    if (selectedThread?.id) setSelectedClusterSummary(null)
   }, [selectedThread?.id])
 
   useEffect(() => {
@@ -1968,6 +2047,7 @@ export function InboxCommandMap({
 
   useEffect(() => {
     if (!filtersOpen) return
+    setActiveControlsTab((current) => current || 'view')
     const handlePointerDown = (event: MouseEvent) => {
       if (!controlsRef.current?.contains(event.target as Node)) setFiltersOpen(false)
     }
@@ -2723,6 +2803,7 @@ export function InboxCommandMap({
         if (!id) return
         hoverPopupRef.current?.remove()
         threadPopupRef.current?.remove()
+        setSelectedClusterSummary(null)
         setSelectedPinId(id)
         onSelectThreadIdRef.current?.(id)
         const coordinates = (feature.geometry as Point).coordinates as [number, number]
@@ -2734,6 +2815,13 @@ export function InboxCommandMap({
         const feature = event.features?.[0]
         if (!feature) return
         const clusterId = Number(feature.properties?.cluster_id)
+        const coordinates = (feature.geometry as Point).coordinates as [number, number]
+        setActiveThreadPopup(null)
+        setSelectedBuyerPurchase(null)
+        setSelectedClusterSummary(null)
+        if (Number.isFinite(clusterId)) {
+          buildClusterSummaryFromLeaves(clusterId, coordinates, 'selected')
+        }
         const source = map.getSource(CLUSTER_SOURCE_ID) as (maplibregl.GeoJSONSource & {
           getClusterExpansionZoom?: (id: number, cb: (error: Error | null, zoom: number) => void) => void
         }) | undefined
@@ -2741,7 +2829,7 @@ export function InboxCommandMap({
         source.getClusterExpansionZoom(clusterId, (error, zoom) => {
           if (error) return
           map.easeTo({
-            center: (feature.geometry as Point).coordinates as [number, number],
+            center: coordinates,
             zoom,
             duration: 500,
           })
@@ -2750,6 +2838,7 @@ export function InboxCommandMap({
 
       const handlePinHover = (event: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
         if (activeThreadPopupRef.current) return
+        setHoveredClusterSummary(null)
         const feature = event.features?.[0]
         if (!feature?.properties) return
         const props = feature.properties as unknown as CommandMapPin
@@ -2771,9 +2860,24 @@ export function InboxCommandMap({
       const clearPinHover = () => {
         if (activeThreadPopupRef.current) return
         hoverPopupRef.current?.remove()
+        setHoveredClusterSummary(null)
+      }
+
+      const handleClusterHover = (event: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+        const feature = event.features?.[0]
+        if (!feature) return
+        const clusterId = Number(feature.properties?.cluster_id)
+        const coordinates = (feature.geometry as Point).coordinates as [number, number]
+        if (!Number.isFinite(clusterId)) return
+        buildClusterSummaryFromLeaves(clusterId, coordinates, 'hover')
+      }
+
+      const clearClusterHover = () => {
+        setHoveredClusterSummary(null)
       }
 
       const handleBuyerHover = (event: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+        setHoveredClusterSummary(null)
         const feature = event.features?.[0]
         const props = feature?.properties as BuyerFeatureProps | undefined
         if (!feature || !props) return
@@ -2796,6 +2900,7 @@ export function InboxCommandMap({
         const feature = event.features?.[0]
         const props = feature?.properties as BuyerFeatureProps | undefined
         if (!feature || !props) return
+        setSelectedClusterSummary(null)
         const exactPurchase = buyerPurchasesRef.current.find((purchase) =>
           purchase.buyerKey === props.buyerKey && purchase.propertyAddressFull === props.propertyAddressFull,
         ) || buyerPurchasesRef.current.find((purchase) => purchase.buyerKey === props.buyerKey) || null
@@ -2836,15 +2941,18 @@ export function InboxCommandMap({
         if (rendered.length === 0) {
           setActiveThreadPopup(null)
           setSelectedBuyerPurchase(null)
+          setSelectedClusterSummary(null)
           onBackgroundClickRef.current?.()
         }
       })
       map.on('mouseenter', 'command-pin-core-raw', handlePinHover)
       map.on('mouseenter', 'command-pin-core-clustered', handlePinHover)
+      map.on('mouseenter', 'command-pin-cluster-core', handleClusterHover)
       map.on('mouseenter', 'command-buyer-purchase-core', handleBuyerHover)
       map.on('mouseenter', 'command-buyer-profile-core', handleBuyerHover)
       map.on('mouseleave', 'command-pin-core-raw', clearPinHover)
       map.on('mouseleave', 'command-pin-core-clustered', clearPinHover)
+      map.on('mouseleave', 'command-pin-cluster-core', clearClusterHover)
       map.on('mouseleave', 'command-buyer-purchase-core', clearPinHover)
       map.on('mouseleave', 'command-buyer-profile-core', clearPinHover)
 
@@ -3104,6 +3212,104 @@ export function InboxCommandMap({
     loadCensusForProperty(selectedThread).then(setSelectedThreadCensus).catch(() => setSelectedThreadCensus(null))
   }, [selectedThread?.id])
 
+  const buildClusterSummaryFromLeaves = (clusterId: number, coordinates: [number, number], mode: 'hover' | 'selected') => {
+    const source = mapRef.current?.getSource(CLUSTER_SOURCE_ID) as (maplibregl.GeoJSONSource & {
+      getClusterLeaves?: (
+        clusterId: number,
+        limit: number,
+        offset: number,
+        callback: (error: Error | null, features: maplibregl.MapGeoJSONFeature[]) => void
+      ) => void
+    }) | undefined
+    if (!source?.getClusterLeaves) return
+    source.getClusterLeaves(clusterId, 50, 0, (error, features) => {
+      if (error) return
+      const leaves = (features ?? []).map((feature) => feature.properties as unknown as PinFeatureProps)
+      const hotCount = leaves.filter((leaf) => (leaf.priority_score ?? 0) >= 92).length
+      const reviewCount = leaves.filter((leaf) => leaf.inbox_bucket === 'needs_review' || leaf.activity_state === 'needs_review').length
+      const replyCount = leaves.filter((leaf) => leaf.inbox_bucket === 'new_replies' || leaf.activity_state === 'replied').length
+      const avgValue = leaves.reduce((sum, leaf) => sum + (leaf.estimated_value ?? 0), 0) / Math.max(leaves.filter((leaf) => Number.isFinite(leaf.estimated_value ?? NaN)).length, 1)
+      const avgEquity = leaves.reduce((sum, leaf) => sum + (leaf.equity_percent ?? 0), 0) / Math.max(leaves.filter((leaf) => Number.isFinite(leaf.equity_percent ?? NaN)).length, 1)
+      const markets = Array.from(new Set(leaves.map((leaf) => leaf.market).filter(Boolean)))
+      const summary: ClusterCensusSummary = {
+        id: `${clusterId}:${coordinates[0]}:${coordinates[1]}`,
+        title: mode === 'selected' ? 'Selected Cluster' : 'Hovered Cluster',
+        subtitle: markets.slice(0, 2).join(' • ') || 'Live cluster summary',
+        itemCount: leaves.length,
+        metrics: [
+          { label: 'Threads', value: `${leaves.length}` },
+          { label: 'Hot', value: `${hotCount}` },
+          { label: 'New Replies', value: `${replyCount}` },
+          { label: 'Needs Review', value: `${reviewCount}` },
+          { label: 'Avg Value', value: Number.isFinite(avgValue) ? formatCompactCurrency(avgValue) : '—' },
+          { label: 'Avg Equity', value: Number.isFinite(avgEquity) && avgEquity > 0 ? formatPercent(avgEquity) : '—' },
+        ],
+      }
+      if (mode === 'selected') {
+        setSelectedClusterSummary(summary)
+      } else {
+        setHoveredClusterSummary(summary)
+      }
+    })
+  }
+
+  const visibleBoundsCensusPanel = useMemo(() => {
+    const marketsInView = Array.from(new Set(visiblePins.map((pin) => pin.market).filter(Boolean)))
+    const hotCount = visiblePins.filter((pin) => (pin.priority_score ?? 0) >= 92).length
+    const replyCount = visiblePins.filter((pin) => pin.inbox_bucket === 'new_replies' || pin.activity_state === 'replied').length
+    const reviewCount = visiblePins.filter((pin) => pin.inbox_bucket === 'needs_review' || pin.activity_state === 'needs_review').length
+    const suppressedCount = visiblePins.filter((pin) => pin.suppression_status !== 'clear').length
+    return {
+      title: 'Visible Bounds Summary',
+      subtitle: marketsInView.slice(0, 3).join(' • ') || 'National command view',
+      metrics: [
+        { label: 'Visible Pins', value: `${visiblePins.length}` },
+        { label: 'Markets', value: `${marketsInView.length}` },
+        { label: 'Hot Sellers', value: `${hotCount}` },
+        { label: 'New Replies', value: `${replyCount}` },
+        { label: 'Needs Review', value: `${reviewCount}` },
+        { label: 'Suppressed', value: `${suppressedCount}` },
+      ],
+    }
+  }, [visiblePins])
+
+  const censusPanelModel = useMemo(() => {
+    if (selectedThread && selectedThreadCensus) {
+      return {
+        title: 'Selected Property Census',
+        subtitle: resolveAddress(selectedHydratedThread ?? null, selectedPin),
+        data: selectedThreadCensus,
+        metrics: undefined,
+        emptyMessage: undefined,
+      }
+    }
+    if (selectedClusterSummary) {
+      return {
+        title: selectedClusterSummary.title,
+        subtitle: selectedClusterSummary.subtitle,
+        data: null,
+        metrics: selectedClusterSummary.metrics,
+        emptyMessage: 'Cluster census intelligence is summarized from visible mapped threads.',
+      }
+    }
+    if (hoveredClusterSummary) {
+      return {
+        title: hoveredClusterSummary.title,
+        subtitle: hoveredClusterSummary.subtitle,
+        data: null,
+        metrics: hoveredClusterSummary.metrics,
+        emptyMessage: 'Hover another cluster to inspect its live composition.',
+      }
+    }
+    return {
+      title: visibleBoundsCensusPanel.title,
+      subtitle: visibleBoundsCensusPanel.subtitle,
+      data: null,
+      metrics: visibleBoundsCensusPanel.metrics,
+      emptyMessage: 'Census metrics will hydrate when you select a property or inspect a cluster.',
+    }
+  }, [hoveredClusterSummary, selectedClusterSummary, selectedHydratedThread, selectedPin, selectedThread, selectedThreadCensus, visibleBoundsCensusPanel])
+
 
 
   // ── Buyer demand layer data loading ───────────────────────────────────────
@@ -3294,227 +3500,246 @@ export function InboxCommandMap({
         </div>
         {filtersOpen && (
           <div className="nx-icm__controls-popover">
-            <div className="nx-icm__controls-group">
-              <span className="nx-icm__controls-label">View Mode</span>
-              <div className="nx-icm__controls-segment">
-                {([
-                  ['all', 'All'],
-                  ['threads', 'Threads'],
-                  ['sends', 'Sends'],
-                  ['follow_ups', 'Follow-Ups'],
-                ] as Array<[InboxMapActivityMode, string]>).map(([value, label]) => (
-                  <button key={value} type="button" className={cls('nx-icm__mode-tab', activityMode === value && 'is-active')} onClick={() => setActivityMode(value)}>
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="nx-icm__controls-group">
-              <span className="nx-icm__controls-label">Pin Scope</span>
-              <div className="nx-icm__controls-segment">
-                <button type="button" className={cls('nx-icm__mode-tab', sourceMode === 'all_active_coordinate_threads' && 'is-active')} onClick={() => onSourceModeChange?.('all_active_coordinate_threads')}>
-                  All Pins
+            <div className="nx-icm__controls-tabs" role="tablist" aria-label="Map controls tabs">
+              {CONTROLS_TABS.map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  className={cls('nx-icm__controls-tab', activeControlsTab === tab.key && 'is-active')}
+                  onClick={() => setActiveControlsTab(tab.key)}
+                >
+                  {tab.label}
                 </button>
-                <button type="button" className={cls('nx-icm__mode-tab', sourceMode === 'visible_threads' && 'is-active')} onClick={() => onSourceModeChange?.('visible_threads')}>
-                  Filtered Pins
-                </button>
-              </div>
+              ))}
             </div>
-            <div className="nx-icm__controls-group">
-              <div className="nx-icm__controls-headerline">
-                <span className="nx-icm__controls-label">KPI Focus</span>
-                <label className="nx-icm__checkbox">
-                  <input type="checkbox" checked={showKpiBadges} onChange={(event) => setShowKpiBadges(event.target.checked)} />
-                  KPI Badges
-                </label>
-              </div>
-              <div className="nx-icm__controls-segment">
-                {kpiChips.map((chip) => (
-                  <button
-                    key={chip.key}
-                    type="button"
-                    className={cls('nx-icm__kpi-chip', activeKpiFilter === chip.key && 'is-active')}
-                    onClick={() => setActiveKpiFilter((current) => current === chip.key ? null : chip.key)}
-                    style={{ '--icm-kpi-tone': chip.tone } as CSSProperties}
-                  >
-                    <span>{chip.label}</span>
-                    <strong>{chip.count}</strong>
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="nx-icm__controls-group">
-              <span className="nx-icm__controls-label">Map View</span>
-              <div className="nx-icm__controls-segment">
-                <button type="button" className={cls('nx-icm__mode-tab', mapStyleMode === 'dark' && 'is-active')} onClick={() => setMapStyleMode('dark')}>
-                  Dark
-                </button>
-                <button type="button" className={cls('nx-icm__mode-tab', mapStyleMode === 'red' && 'is-active')} onClick={() => setMapStyleMode('red')}>
-                  Red Ops
-                </button>
-                <button type="button" className={cls('nx-icm__mode-tab', mapStyleMode === 'satellite' && 'is-active')} onClick={() => setMapStyleMode('satellite')}>
-                  Satellite
-                </button>
-                <button type="button" className={cls('nx-icm__mode-tab', mapDimension === '2d' && 'is-active')} onClick={() => setMapDimension('2d')}>
-                  2D
-                </button>
-                <button type="button" className={cls('nx-icm__mode-tab', mapDimension === '3d' && 'is-active')} onClick={() => setMapDimension('3d')}>
-                  3D
-                </button>
-              </div>
-            </div>
-            <div className="nx-icm__controls-group">
-              <span className="nx-icm__controls-label">Map Layers</span>
-              <div className="nx-icm__controls-segment">
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={mapOverlays.roads} onChange={(e) => setMapOverlays((current) => ({ ...current, roads: e.target.checked }))} />Roads</label>
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={mapOverlays.cities} onChange={(e) => setMapOverlays((current) => ({ ...current, cities: e.target.checked }))} />Cities</label>
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={mapOverlays.poi} onChange={(e) => setMapOverlays((current) => ({ ...current, poi: e.target.checked }))} />POI</label>
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={mapOverlays.zip} onChange={(e) => setMapOverlays((current) => ({ ...current, zip: e.target.checked }))} />ZIP</label>
-              </div>
-            </div>
-            <div className="nx-icm__controls-group">
-              <span className="nx-icm__controls-label">Census Intelligence</span>
-              <div className="nx-icm__controls-segment">
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={censusLayers.incomeHeat} onChange={(e) => setCensusLayers((c) => ({ ...c, incomeHeat: e.target.checked }))} />Income Heat</label>
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={censusLayers.vacancyHeat} onChange={(e) => setCensusLayers((c) => ({ ...c, vacancyHeat: e.target.checked }))} />Vacancy Heat</label>
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={censusLayers.renterDensity} onChange={(e) => setCensusLayers((c) => ({ ...c, renterDensity: e.target.checked }))} />Renter Density</label>
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={censusLayers.housingAge} onChange={(e) => setCensusLayers((c) => ({ ...c, housingAge: e.target.checked }))} />Housing Age</label>
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={censusLayers.acquisitionPressure} onChange={(e) => setCensusLayers((c) => ({ ...c, acquisitionPressure: e.target.checked }))} />Acquisition Pressure</label>
-              </div>
-            </div>
-            <div className="nx-icm__controls-group">
-              <span className="nx-icm__controls-label">Buyer Demand</span>
-              <div className="nx-icm__controls-segment">
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerDemandLayers.activity6mo} onChange={(e) => setBuyerDemandLayers((c) => ({ ...c, activity6mo: e.target.checked }))} />Buyer Activity 6mo</label>
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerDemandLayers.investorDemand} onChange={(e) => setBuyerDemandLayers((c) => ({ ...c, investorDemand: e.target.checked }))} />Investor Demand</label>
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerDemandLayers.buyerHeat} onChange={(e) => setBuyerDemandLayers((c) => ({ ...c, buyerHeat: e.target.checked }))} />Buyer Heat</label>
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerDemandLayers.soldPrice} onChange={(e) => setBuyerDemandLayers((c) => ({ ...c, soldPrice: e.target.checked }))} />Sold Price Labels</label>
-              </div>
-            </div>
-            <div className="nx-icm__controls-group">
-              <span className="nx-icm__controls-label">Buyer Intelligence Layers</span>
-              <div className="nx-icm__controls-segment">
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.sellerThreads} onChange={(e) => setBuyerLayers((current) => ({ ...current, sellerThreads: e.target.checked }))} />Seller Threads</label>
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.buyerMatches} onChange={(e) => setBuyerLayers((current) => ({ ...current, buyerMatches: e.target.checked }))} />Buyer Matches</label>
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.buyerRecentPurchases} onChange={(e) => setBuyerLayers((current) => ({ ...current, buyerRecentPurchases: e.target.checked }))} />Buyer Recent Purchases</label>
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.buyerHeatmap} onChange={(e) => setBuyerLayers((current) => ({ ...current, buyerHeatmap: e.target.checked }))} />Buyer Heatmap</label>
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.buyerProfiles} onChange={(e) => setBuyerLayers((current) => ({ ...current, buyerProfiles: e.target.checked }))} />Buyer Profiles</label>
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.recentSoldComps} onChange={(e) => setBuyerLayers((current) => ({ ...current, recentSoldComps: e.target.checked }))} />Recent Sold Comps</label>
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.institutional} onChange={(e) => setBuyerLayers((current) => ({ ...current, institutional: e.target.checked }))} />Hedge Fund / Institutional</label>
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.landlords} onChange={(e) => setBuyerLayers((current) => ({ ...current, landlords: e.target.checked }))} />Landlords</label>
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.flippers} onChange={(e) => setBuyerLayers((current) => ({ ...current, flippers: e.target.checked }))} />Flippers</label>
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.builders} onChange={(e) => setBuyerLayers((current) => ({ ...current, builders: e.target.checked }))} />Builders</label>
-              </div>
-            </div>
-            {selectedThread && buyerCommandData?.summary && (
-              <div className="nx-icm__controls-group">
-                <span className="nx-icm__controls-label">Buyer Demand Summary</span>
-                <div className="nx-icm__buyer-summary">
-                  <div><span>Buyer Demand</span><strong>{buyerCommandData.summary.demandLabel}</strong></div>
-                  <div><span>Top Match</span><strong>{buyerCommandData.summary.topBuyerMatch}</strong></div>
-                  <div><span>Active Matches</span><strong>{buyerCommandData.summary.activeBuyerMatches}</strong></div>
-                  <div><span>Avg Match Score</span><strong>{buyerCommandData.summary.averageMatchScore ?? '—'}</strong></div>
-                  <div><span>Nearby Purchases</span><strong>{buyerCommandData.summary.recentPurchasesNearby}</strong></div>
-                  <div><span>Dispo Confidence</span><strong>{buyerCommandData.summary.dispoConfidence}%</strong></div>
-                </div>
-                <p className="nx-icm__buyer-summary-note">{buyerCommandData.summary.recommendedAction}</p>
-              </div>
-            )}
-            {buyerFilters && (
-              <div className="nx-icm__controls-group">
-                <span className="nx-icm__controls-label">Buyer Filters</span>
-                <div className="nx-icm__filter-grid">
-                  <select value={buyerFilters.activityWindowDays} onChange={(e) => onBuyerFiltersChange?.({ activityWindowDays: Number(e.target.value) as BuyerMapFilters['activityWindowDays'] })}>
-                    {[30, 90, 180, 365].map((days) => <option key={days} value={days}>{days} days</option>)}
-                  </select>
-                  <select value={buyerFilters.radiusMiles} onChange={(e) => onBuyerFiltersChange?.({ radiusMiles: Number(e.target.value) as BuyerMapFilters['radiusMiles'] })}>
-                    {[1, 3, 5, 10].map((miles) => <option key={miles} value={miles}>{miles} miles</option>)}
-                  </select>
-                  <input type="number" min={0} value={buyerFilters.minPurchaseCount} onChange={(e) => onBuyerFiltersChange?.({ minPurchaseCount: Number(e.target.value) || 0 })} placeholder="Min purchases" />
-                  <input type="number" min={0} max={100} value={buyerFilters.minMatchScore} onChange={(e) => onBuyerFiltersChange?.({ minMatchScore: Number(e.target.value) || 0 })} placeholder="Min match" />
-                  <input type="number" min={0} max={100} value={buyerFilters.minDispoPriorityScore} onChange={(e) => onBuyerFiltersChange?.({ minDispoPriorityScore: Number(e.target.value) || 0 })} placeholder="Min dispo priority" />
-                  <input value={buyerFilters.market} onChange={(e) => onBuyerFiltersChange?.({ market: e.target.value })} placeholder="Market" />
-                  <input value={buyerFilters.state} onChange={(e) => onBuyerFiltersChange?.({ state: e.target.value })} placeholder="State" />
-                  <input value={buyerFilters.zip} onChange={(e) => onBuyerFiltersChange?.({ zip: e.target.value })} placeholder="ZIP" />
-                  <input value={buyerFilters.propertyType} onChange={(e) => onBuyerFiltersChange?.({ propertyType: e.target.value })} placeholder="Property type" />
-                </div>
-              </div>
-            )}
-            <div className="nx-icm__controls-group">
-              <span className="nx-icm__controls-label">Filters</span>
-              <div className="nx-icm__filter-grid">
-                <select value={filters.market} onChange={(e) => setFilters((current) => ({ ...current, market: e.target.value }))}>
-                  <option value="">All Markets</option>
-                  {markets.map((market) => <option key={market} value={market}>{market}</option>)}
-                </select>
-                <select value={filters.stage} onChange={(e) => setFilters((current) => ({ ...current, stage: e.target.value }))}>
-                  <option value="">All Stages</option>
-                  {stages.map((stage) => <option key={stage} value={stage}>{stage.replace(/_/g, ' ')}</option>)}
-                </select>
-                <select value={filters.status} onChange={(e) => setFilters((current) => ({ ...current, status: e.target.value }))}>
-                  <option value="">All Statuses</option>
-                  {statuses.map((status) => <option key={status} value={status}>{status.replace(/_/g, ' ')}</option>)}
-                </select>
-                <select value={filters.leadTemperature} onChange={(e) => setFilters((current) => ({ ...current, leadTemperature: e.target.value }))}>
-                  <option value="">All Temperatures</option>
-                  {temperatures.map((temperature) => <option key={temperature} value={temperature}>{temperature.replace(/_/g, ' ')}</option>)}
-                </select>
-                <select value={filters.automationStatus} onChange={(e) => setFilters((current) => ({ ...current, automationStatus: e.target.value }))}>
-                  <option value="">All Automation</option>
-                  {automationStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
-                </select>
-                <select value={filters.propertyType} onChange={(e) => setFilters((current) => ({ ...current, propertyType: e.target.value }))}>
-                  <option value="">All Property Types</option>
-                  {propertyTypes.map((type) => <option key={type} value={type}>{type}</option>)}
-                </select>
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={filters.unreadOnly} onChange={(e) => setFilters((current) => ({ ...current, unreadOnly: e.target.checked }))} />Unread</label>
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={filters.followUpDue} onChange={(e) => setFilters((current) => ({ ...current, followUpDue: e.target.checked }))} />Follow-Up Due</label>
-                <label className="nx-icm__checkbox"><input type="checkbox" checked={filters.highEquity} onChange={(e) => setFilters((current) => ({ ...current, highEquity: e.target.checked }))} />High Equity</label>
-              </div>
-            </div>
-            <div className="nx-icm__controls-group">
-              <span className="nx-icm__controls-label">Map Key</span>
-              <div className="nx-icm__legend-grid">
-                {(activityMode === 'threads'
-                  ? [
-                      ['New', '#97a3b6'],
-                      ['Interest', '#38bdf8'],
-                      ['Price', '#a855f7'],
-                      ['Offer', '#30d158'],
-                      ['Negotiation', '#ff9f0a'],
-                      ['Contract', '#14b8a6'],
-                      ['Suppressed', '#ff453a'],
-                    ]
-                  : activityMode === 'sends'
-                    ? [
-                        ['Queued', '#5d6a7b'],
-                        ['Sending', '#3b82f6'],
-                        ['Delivered', '#30d158'],
-                        ['Replied', '#38bdf8'],
-                        ['Failed', '#ff453a'],
-                      ]
-                    : activityMode === 'follow_ups'
-                      ? [
-                          ['Due Now', '#ffb000'],
-                          ['Later Today', '#5bb6ff'],
-                          ['Tomorrow', '#14b8a6'],
-                          ['Overdue', '#ff453a'],
-                          ['Stale', '#7d8795'],
-                        ]
-                      : [
-                          ['Replies', '#38bdf8'],
-                          ['Review', '#ffb000'],
-                          ['Queued', '#5d6a7b'],
-                          ['Offers', '#30d158'],
-                          ['Contracts', '#14b8a6'],
-                          ['Blocked', '#ff453a'],
-                        ]).map(([label, color]) => (
-                  <div key={label} className="nx-icm__legend-row">
-                    <span className="nx-icm__legend-chip" style={{ backgroundColor: color }} />
-                    <span className="nx-icm__legend-label">{label}</span>
+            <div className="nx-icm__controls-panel">
+              {activeControlsTab === 'view' && (
+                <>
+                  <div className="nx-icm__controls-group">
+                    <span className="nx-icm__controls-label">View Mode</span>
+                    <div className="nx-icm__controls-segment">
+                      {([
+                        ['all', 'All'],
+                        ['threads', 'Threads'],
+                        ['sends', 'Sends'],
+                        ['follow_ups', 'Follow-Ups'],
+                      ] as Array<[InboxMapActivityMode, string]>).map(([value, label]) => (
+                        <button key={value} type="button" className={cls('nx-icm__mode-tab', activityMode === value && 'is-active')} onClick={() => setActivityMode(value)}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                ))}
-              </div>
+                  <div className="nx-icm__controls-grid">
+                    <div className="nx-icm__controls-group">
+                      <span className="nx-icm__controls-label">Pin Scope</span>
+                      <div className="nx-icm__controls-segment">
+                        <button type="button" className={cls('nx-icm__mode-tab', sourceMode === 'all_active_coordinate_threads' && 'is-active')} onClick={() => onSourceModeChange?.('all_active_coordinate_threads')}>
+                          All Pins
+                        </button>
+                        <button type="button" className={cls('nx-icm__mode-tab', sourceMode === 'visible_threads' && 'is-active')} onClick={() => onSourceModeChange?.('visible_threads')}>
+                          Filtered Pins
+                        </button>
+                      </div>
+                    </div>
+                    <div className="nx-icm__controls-group">
+                      <div className="nx-icm__controls-headerline">
+                        <span className="nx-icm__controls-label">KPI Focus</span>
+                        <label className="nx-icm__checkbox">
+                          <input type="checkbox" checked={showKpiBadges} onChange={(event) => setShowKpiBadges(event.target.checked)} />
+                          KPI Badges
+                        </label>
+                      </div>
+                      <div className="nx-icm__controls-segment">
+                        {kpiChips.map((chip) => (
+                          <button
+                            key={chip.key}
+                            type="button"
+                            className={cls('nx-icm__kpi-chip', activeKpiFilter === chip.key && 'is-active')}
+                            onClick={() => setActiveKpiFilter((current) => current === chip.key ? null : chip.key)}
+                            style={{ '--icm-kpi-tone': chip.tone } as CSSProperties}
+                          >
+                            <span>{chip.label}</span>
+                            <strong>{chip.count}</strong>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="nx-icm__controls-group">
+                    <span className="nx-icm__controls-label">Map Legend</span>
+                    <div className="nx-icm__legend-grid is-expanded">
+                      {MAP_LEGEND_ITEMS.map((item) => (
+                        <div key={item.label} className="nx-icm__legend-row">
+                          <span className="nx-icm__legend-chip" style={{ backgroundColor: item.color }} />
+                          <span className="nx-icm__legend-label">{item.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+              {activeControlsTab === 'seller_layers' && (
+                <>
+                  <div className="nx-icm__controls-group">
+                    <span className="nx-icm__controls-label">Seller Thread Layers</span>
+                    <div className="nx-icm__controls-segment">
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.sellerThreads} onChange={(e) => setBuyerLayers((current) => ({ ...current, sellerThreads: e.target.checked }))} />Seller Threads</label>
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={mapOverlays.roads} onChange={(e) => setMapOverlays((current) => ({ ...current, roads: e.target.checked }))} />Roads</label>
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={mapOverlays.cities} onChange={(e) => setMapOverlays((current) => ({ ...current, cities: e.target.checked }))} />Cities</label>
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={mapOverlays.poi} onChange={(e) => setMapOverlays((current) => ({ ...current, poi: e.target.checked }))} />POI</label>
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={mapOverlays.zip} onChange={(e) => setMapOverlays((current) => ({ ...current, zip: e.target.checked }))} />ZIP</label>
+                    </div>
+                  </div>
+                </>
+              )}
+              {activeControlsTab === 'buyer_layers' && (
+                <>
+                  <div className="nx-icm__controls-group">
+                    <span className="nx-icm__controls-label">Buyer Intelligence Layers</span>
+                    <div className="nx-icm__controls-segment">
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.buyerMatches} onChange={(e) => setBuyerLayers((current) => ({ ...current, buyerMatches: e.target.checked }))} />Buyer Matches</label>
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.buyerRecentPurchases} onChange={(e) => setBuyerLayers((current) => ({ ...current, buyerRecentPurchases: e.target.checked }))} />Recent Purchases</label>
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.buyerHeatmap} onChange={(e) => setBuyerLayers((current) => ({ ...current, buyerHeatmap: e.target.checked }))} />Buyer Heatmap</label>
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.buyerProfiles} onChange={(e) => setBuyerLayers((current) => ({ ...current, buyerProfiles: e.target.checked }))} />Buyer Profiles</label>
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.recentSoldComps} onChange={(e) => setBuyerLayers((current) => ({ ...current, recentSoldComps: e.target.checked }))} />Sold Comps</label>
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.institutional} onChange={(e) => setBuyerLayers((current) => ({ ...current, institutional: e.target.checked }))} />Institutional</label>
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.landlords} onChange={(e) => setBuyerLayers((current) => ({ ...current, landlords: e.target.checked }))} />Landlords</label>
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.flippers} onChange={(e) => setBuyerLayers((current) => ({ ...current, flippers: e.target.checked }))} />Flippers</label>
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.builders} onChange={(e) => setBuyerLayers((current) => ({ ...current, builders: e.target.checked }))} />Builders</label>
+                    </div>
+                  </div>
+                  <div className="nx-icm__controls-group">
+                    <span className="nx-icm__controls-label">Buyer Demand Layers</span>
+                    <div className="nx-icm__controls-segment">
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerDemandLayers.activity6mo} onChange={(e) => setBuyerDemandLayers((c) => ({ ...c, activity6mo: e.target.checked }))} />Buyer Activity 6mo</label>
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerDemandLayers.investorDemand} onChange={(e) => setBuyerDemandLayers((c) => ({ ...c, investorDemand: e.target.checked }))} />Investor Demand</label>
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerDemandLayers.buyerHeat} onChange={(e) => setBuyerDemandLayers((c) => ({ ...c, buyerHeat: e.target.checked }))} />Buyer Heat</label>
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerDemandLayers.soldPrice} onChange={(e) => setBuyerDemandLayers((c) => ({ ...c, soldPrice: e.target.checked }))} />Sold Price Labels</label>
+                    </div>
+                  </div>
+                  {selectedThread && buyerCommandData?.summary && (
+                    <div className="nx-icm__controls-group">
+                      <span className="nx-icm__controls-label">Buyer Demand Summary</span>
+                      <div className="nx-icm__buyer-summary">
+                        <div><span>Buyer Demand</span><strong>{buyerCommandData.summary.demandLabel}</strong></div>
+                        <div><span>Top Match</span><strong>{buyerCommandData.summary.topBuyerMatch}</strong></div>
+                        <div><span>Active Matches</span><strong>{buyerCommandData.summary.activeBuyerMatches}</strong></div>
+                        <div><span>Avg Match Score</span><strong>{buyerCommandData.summary.averageMatchScore ?? '—'}</strong></div>
+                        <div><span>Nearby Purchases</span><strong>{buyerCommandData.summary.recentPurchasesNearby}</strong></div>
+                        <div><span>Dispo Confidence</span><strong>{buyerCommandData.summary.dispoConfidence}%</strong></div>
+                      </div>
+                      <p className="nx-icm__buyer-summary-note">{buyerCommandData.summary.recommendedAction}</p>
+                    </div>
+                  )}
+                  {buyerFilters && (
+                    <div className="nx-icm__controls-group">
+                      <span className="nx-icm__controls-label">Buyer Filters</span>
+                      <div className="nx-icm__filter-grid">
+                        <select className="nx-icm__field" value={buyerFilters.activityWindowDays} onChange={(e) => onBuyerFiltersChange?.({ activityWindowDays: Number(e.target.value) as BuyerMapFilters['activityWindowDays'] })}>
+                          {[30, 90, 180, 365].map((days) => <option key={days} value={days}>{days} days</option>)}
+                        </select>
+                        <select className="nx-icm__field" value={buyerFilters.radiusMiles} onChange={(e) => onBuyerFiltersChange?.({ radiusMiles: Number(e.target.value) as BuyerMapFilters['radiusMiles'] })}>
+                          {[1, 3, 5, 10].map((miles) => <option key={miles} value={miles}>{miles} miles</option>)}
+                        </select>
+                        <input className="nx-icm__field" type="number" min={0} value={buyerFilters.minPurchaseCount} onChange={(e) => onBuyerFiltersChange?.({ minPurchaseCount: Number(e.target.value) || 0 })} placeholder="Min purchases" />
+                        <input className="nx-icm__field" type="number" min={0} max={100} value={buyerFilters.minMatchScore} onChange={(e) => onBuyerFiltersChange?.({ minMatchScore: Number(e.target.value) || 0 })} placeholder="Min match" />
+                        <input className="nx-icm__field" type="number" min={0} max={100} value={buyerFilters.minDispoPriorityScore} onChange={(e) => onBuyerFiltersChange?.({ minDispoPriorityScore: Number(e.target.value) || 0 })} placeholder="Min dispo priority" />
+                        <input className="nx-icm__field" value={buyerFilters.market} onChange={(e) => onBuyerFiltersChange?.({ market: e.target.value })} placeholder="Market" />
+                        <input className="nx-icm__field" value={buyerFilters.state} onChange={(e) => onBuyerFiltersChange?.({ state: e.target.value })} placeholder="State" />
+                        <input className="nx-icm__field" value={buyerFilters.zip} onChange={(e) => onBuyerFiltersChange?.({ zip: e.target.value })} placeholder="ZIP" />
+                        <input className="nx-icm__field" value={buyerFilters.propertyType} onChange={(e) => onBuyerFiltersChange?.({ propertyType: e.target.value })} placeholder="Property type" />
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+              {activeControlsTab === 'census' && (
+                <>
+                  <div className="nx-icm__controls-group">
+                    <span className="nx-icm__controls-label">Census Layers</span>
+                    <div className="nx-icm__controls-segment">
+                      {CENSUS_TOGGLE_DEFS.map((def) => (
+                        <label key={def.key} className="nx-icm__checkbox">
+                          <input type="checkbox" checked={censusLayers[def.key]} onChange={(e) => setCensusLayers((c) => ({ ...c, [def.key]: e.target.checked }))} />
+                          {def.label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <CensusIntelPanel
+                    data={censusPanelModel.data}
+                    styleMode={mapStyleMode}
+                    title={censusPanelModel.title}
+                    subtitle={censusPanelModel.subtitle}
+                    metrics={censusPanelModel.metrics}
+                    emptyMessage={censusPanelModel.emptyMessage}
+                  />
+                </>
+              )}
+              {activeControlsTab === 'filters' && (
+                <div className="nx-icm__controls-group">
+                  <span className="nx-icm__controls-label">Thread Filters</span>
+                  <div className="nx-icm__filter-grid">
+                    <select className="nx-icm__field" value={filters.market} onChange={(e) => setFilters((current) => ({ ...current, market: e.target.value }))}>
+                      <option value="">All Markets</option>
+                      {markets.map((market) => <option key={market} value={market}>{market}</option>)}
+                    </select>
+                    <select className="nx-icm__field" value={filters.stage} onChange={(e) => setFilters((current) => ({ ...current, stage: e.target.value }))}>
+                      <option value="">All Stages</option>
+                      {stages.map((stage) => <option key={stage} value={stage}>{stage.replace(/_/g, ' ')}</option>)}
+                    </select>
+                    <select className="nx-icm__field" value={filters.status} onChange={(e) => setFilters((current) => ({ ...current, status: e.target.value }))}>
+                      <option value="">All Statuses</option>
+                      {statuses.map((status) => <option key={status} value={status}>{status.replace(/_/g, ' ')}</option>)}
+                    </select>
+                    <select className="nx-icm__field" value={filters.leadTemperature} onChange={(e) => setFilters((current) => ({ ...current, leadTemperature: e.target.value }))}>
+                      <option value="">All Temperatures</option>
+                      {temperatures.map((temperature) => <option key={temperature} value={temperature}>{temperature.replace(/_/g, ' ')}</option>)}
+                    </select>
+                    <select className="nx-icm__field" value={filters.automationStatus} onChange={(e) => setFilters((current) => ({ ...current, automationStatus: e.target.value }))}>
+                      <option value="">All Automation</option>
+                      {automationStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
+                    </select>
+                    <select className="nx-icm__field" value={filters.propertyType} onChange={(e) => setFilters((current) => ({ ...current, propertyType: e.target.value }))}>
+                      <option value="">All Property Types</option>
+                      {propertyTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+                    </select>
+                    <label className="nx-icm__checkbox"><input type="checkbox" checked={filters.unreadOnly} onChange={(e) => setFilters((current) => ({ ...current, unreadOnly: e.target.checked }))} />Unread</label>
+                    <label className="nx-icm__checkbox"><input type="checkbox" checked={filters.followUpDue} onChange={(e) => setFilters((current) => ({ ...current, followUpDue: e.target.checked }))} />Follow-Up Due</label>
+                    <label className="nx-icm__checkbox"><input type="checkbox" checked={filters.highEquity} onChange={(e) => setFilters((current) => ({ ...current, highEquity: e.target.checked }))} />High Equity</label>
+                  </div>
+                </div>
+              )}
+              {activeControlsTab === 'map_style' && (
+                <>
+                  <div className="nx-icm__controls-group">
+                    <span className="nx-icm__controls-label">Map Style</span>
+                    <div className="nx-icm__controls-segment">
+                      <button type="button" className={cls('nx-icm__mode-tab', mapStyleMode === 'dark' && 'is-active')} onClick={() => setMapStyleMode('dark')}>
+                        Dark
+                      </button>
+                      <button type="button" className={cls('nx-icm__mode-tab', mapStyleMode === 'red' && 'is-active')} onClick={() => setMapStyleMode('red')}>
+                        Red Ops
+                      </button>
+                      <button type="button" className={cls('nx-icm__mode-tab', mapStyleMode === 'satellite' && 'is-active')} onClick={() => setMapStyleMode('satellite')}>
+                        Satellite
+                      </button>
+                    </div>
+                  </div>
+                  <div className="nx-icm__controls-group">
+                    <span className="nx-icm__controls-label">Dimension</span>
+                    <div className="nx-icm__controls-segment">
+                      <button type="button" className={cls('nx-icm__mode-tab', mapDimension === '2d' && 'is-active')} onClick={() => setMapDimension('2d')}>
+                        2D
+                      </button>
+                      <button type="button" className={cls('nx-icm__mode-tab', mapDimension === '3d' && 'is-active')} onClick={() => setMapDimension('3d')}>
+                        3D
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
             <div className="nx-icm__controls-actions">
               <button type="button" className="nx-icm__mode-tab" onClick={() => {
@@ -3548,6 +3773,48 @@ export function InboxCommandMap({
             <button type="button" className={cls('nx-icm__mode-tab', buyerLayers.buyerHeatmap && 'is-active')} onClick={() => setBuyerLayers((current) => ({ ...current, buyerHeatmap: !current.buyerHeatmap }))}>
               Heatmap
             </button>
+          </div>
+        </aside>
+      )}
+
+      {!filtersOpen && layoutMode !== 'compact' && (
+        <aside className="nx-icm__census-dock nx-icm__buyer-demand-dock" style={{ top: buyerCommandData?.summary ? '324px' : '94px', maxHeight: 'calc(100vh - 350px)', overflowY: 'auto' }}>
+          <span className="nx-icm__buyer-demand-label" style={{ color: '#a78bfa' }}>Census Intelligence</span>
+          <div className="nx-icm__buyer-demand-actions" style={{ marginTop: '8px', marginBottom: '12px' }}>
+            {CENSUS_TOGGLE_DEFS.slice(0, 5).map((def) => (
+              <button
+                type="button"
+                key={def.key}
+                className={cls('nx-icm__mode-tab', censusLayers[def.key] && 'is-active')}
+                style={censusLayers[def.key] ? { borderColor: def.color, boxShadow: `0 0 10px ${def.color}44` } : undefined}
+                onClick={() => setCensusLayers((current) => ({ ...current, [def.key]: !current[def.key] }))}
+              >
+                <span className="nx-icm__census-legend-dot" style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', background: def.color, marginRight: '6px' }} />
+                {def.label}
+              </button>
+            ))}
+          </div>
+          <CensusIntelPanel
+            data={censusPanelModel.data}
+            styleMode={mapStyleMode}
+            title={censusPanelModel.title}
+            subtitle={censusPanelModel.subtitle}
+            metrics={censusPanelModel.metrics}
+            emptyMessage={censusPanelModel.emptyMessage}
+          />
+        </aside>
+      )}
+
+      {!filtersOpen && layoutMode !== 'compact' && (
+        <aside className="nx-icm__legend-panel">
+          <span className="nx-icm__buyer-demand-label">Map Legend</span>
+          <div className="nx-icm__legend-grid">
+            {MAP_LEGEND_ITEMS.map((item) => (
+              <div key={item.label} className="nx-icm__legend-row">
+                <span className="nx-icm__legend-chip" style={{ backgroundColor: item.color }} />
+                <span className="nx-icm__legend-label">{item.label}</span>
+              </div>
+            ))}
           </div>
         </aside>
       )}

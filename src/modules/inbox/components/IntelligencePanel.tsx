@@ -39,6 +39,8 @@ const GOOGLE_MAPS_API_KEY = (import.meta.env as Record<string, string | undefine
 
 import { detectPropertyCategory } from '../helpers/propertyHelpers'
 import { WatchBell } from '../../../shared/WatchBell'
+import { loadCensusForProperty, calculateInvestorOpportunityScore } from '../../../lib/data/censusData'
+import type { CensusData } from '../../../lib/data/censusData'
 
 const formatMoney = formatCurrency
 const fmtPhone = formatPhone
@@ -976,13 +978,101 @@ const PanelSection = ({ title, icon = 'grid', children }: { title: string; icon?
   </section>
 )
 
+// ── Census Property Panel ────────────────────────────────────────────────────
+const CensusPropertyPanel = ({ thread }: { thread: WorkflowThread }) => {
+  const [data, setData] = useState<CensusData | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    loadCensusForProperty(thread)
+      .then((res) => {
+        if (active) {
+          setData(res)
+          setLoading(false)
+        }
+      })
+      .catch(() => {
+        if (active) setLoading(false)
+      })
+    return () => { active = false }
+  }, [thread?.id])
+
+  if (loading) {
+    return (
+      <div className="nx-census-loading" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '32px', gap: '12px', color: '#94a3b8' }}>
+        <Icon name="refresh-cw" className="animate-spin" style={{ fontSize: '24px' }} />
+        <span style={{ fontSize: '12px', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Analyzing Census & Demographics...</span>
+      </div>
+    )
+  }
+
+  if (!data) {
+    return (
+      <div className="nx-census-empty" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '32px', gap: '12px', color: '#94a3b8' }}>
+        <Icon name="alert" style={{ fontSize: '24px', color: '#ef4444' }} />
+        <span style={{ fontSize: '13px' }}>No demographic data found for this property location.</span>
+      </div>
+    )
+  }
+
+  const { score, grade, summary } = calculateInvestorOpportunityScore(data)
+  const gradeColor: Record<string, string> = {
+    A: '#14b8a6', B: '#f59e0b', C: '#fb923c', Watchlist: '#6b7280',
+  }
+  const fmt = (n: number | undefined, prefix = '', suffix = '') =>
+    n != null && Number.isFinite(n) ? `${prefix}${n.toLocaleString()}${suffix}` : '—'
+  const fmtK = (n: number | undefined) =>
+    n != null && Number.isFinite(n) ? `$${Math.round(n / 1000)}K` : '—'
+  const fmtPct = (n: number | undefined) =>
+    n != null && Number.isFinite(n) ? `${Math.round(n)}%` : '—'
+
+  return (
+    <div className="nx-property-census-intel" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      <div className="nx-property-census-intel__hero nx-glass-surface" style={{ display: 'flex', alignItems: 'center', padding: '16px', borderRadius: '8px', gap: '16px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+        <div className="nx-property-census-intel__hero-score" style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <div className="nx-property-census-intel__score-dial" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', width: '64px', height: '64px', borderRadius: '50%', border: `3px solid ${gradeColor[grade]}`, color: '#fff' }}>
+            <strong style={{ fontSize: '20px', fontWeight: 700 }}>{score}</strong>
+            <span style={{ fontSize: '10px', opacity: 0.5 }}>/100</span>
+          </div>
+          <div className="nx-property-census-intel__hero-meta" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <span style={{ fontSize: '10px', letterSpacing: '0.05em', color: '#94a3b8' }}>INVESTOR OPPORTUNITY SCORE</span>
+            <span style={{ fontSize: '16px', fontWeight: 700, color: gradeColor[grade] }}>GRADE {grade}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="nx-intel-grid-v2">
+        <IntelField label="MEDIAN INCOME" value={data.median_household_income} render={fmtK(data.median_household_income)} />
+        <IntelField label="VACANCY RATE" value={data.vacancy_rate} render={fmtPct(data.vacancy_rate)} />
+        <IntelField label="RENTER DENSITY" value={data.renter_occupied_percent} render={fmtPct(data.renter_occupied_percent)} />
+        <IntelField label="OWNER OCCUPANCY" value={data.owner_occupied_percent} render={fmtPct(data.owner_occupied_percent)} />
+        <IntelField label="MEDIAN RENT" value={data.median_gross_rent} render={fmt(data.median_gross_rent, '$')} />
+        <IntelField label="MEDIAN HOME VALUE" value={data.median_home_value} render={fmtK(data.median_home_value)} />
+        <IntelField label="POPULATION DENSITY" value={data.population_density} render={fmt(data.population_density)} />
+        <IntelField label="MEDIAN AGE" value={data.median_age} render={fmt(data.median_age, '', ' YRS')} />
+      </div>
+
+      <div className="nx-property-census-intel__summary nx-glass-surface" style={{ display: 'flex', gap: '10px', padding: '12px', borderRadius: '8px', background: 'rgba(20,184,166,0.06)', border: '1px solid rgba(20,184,166,0.15)', color: '#14b8a6', fontSize: '12px', lineHeight: 1.4 }}>
+        <Icon name="spark" style={{ fontSize: '16px', flexShrink: 0, marginTop: '2px' }} />
+        <p style={{ margin: 0 }}>{summary}</p>
+      </div>
+    </div>
+  )
+}
+
 const PropertyIntelFields = ({
   thread,
   subTab,
 }: {
   thread: WorkflowThread
-  subTab: 'overview' | 'location' | 'property' | 'equity' | 'tax'
+  subTab: 'overview' | 'location' | 'property' | 'equity' | 'tax' | 'census'
 }) => {
+  if (subTab === 'census') {
+    return <CensusPropertyPanel thread={thread} />
+  }
+
   const address = thread.displayAddress || 'Property Unknown'
   const propertyType = thread.propertyType || 'Residential'
   const market = thread.displayMarket || 'Unknown Market'
@@ -2413,7 +2503,7 @@ const ContactIntelligenceCard = ({
   intelligence: ThreadIntelligenceRecord | null
 }) => {
   const [activeTab, setActiveTab] = useState<'prospect' | 'owner' | 'portfolio' | 'financial' | 'property' | 'phone' | 'email'>('prospect')
-  const [propertyTab, setPropertyTab] = useState<'overview' | 'location' | 'property' | 'equity' | 'tax'>('overview')
+  const [propertyTab, setPropertyTab] = useState<'overview' | 'location' | 'property' | 'equity' | 'tax' | 'census'>('overview')
 
   const sellerName = snapshot.ownerDisplayName || snapshot.ownerName || thread.displayName || thread.ownerDisplayName || thread.ownerName || 'Unknown seller'
   const initials = sellerName.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()
@@ -2595,6 +2685,7 @@ const ContactIntelligenceCard = ({
                   ['property', 'PROPERTY', 'grid'],
                   ['equity', 'EQUITY', 'trending-up'],
                   ['tax', 'TAX', 'briefing'],
+                  ['census', 'CENSUS INTEL', 'grid'],
                 ].map(([id, label, icon]) => (
                   <button type="button" key={id} className={cls('nx-segmented-control__btn', propertyTab === id && 'is-active')} onClick={() => setPropertyTab(id as any)}
                   >
