@@ -2265,6 +2265,7 @@ export default function InboxPage() {
             queueModel={queueModel}
             processorHealth={queueProcessorHealth}
             queueCommandMode={queueCommandMode}
+            layoutMode={layoutMode}
             onSelectItem={handleSelect}
           />
         </section>

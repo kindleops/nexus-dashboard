@@ -3,19 +3,87 @@ import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { formatCurrency, formatPercent, formatPhone, formatRelativeTime } from '../../../shared/formatters'
 import { buildConversationDecision } from '../inbox-decisioning'
 import type { ViewLayoutMode } from '../view-layout'
+import './pipeline-view.css'
 
-const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
+const cls = (...t: Array<string | false | null | undefined>) => t.filter(Boolean).join(' ')
 
-type StageTone = 'neutral' | 'cyan' | 'blue' | 'green' | 'gold' | 'orange' | 'red'
+// ── Stage definitions ─────────────────────────────────────────────────────────
 
-interface PipelineStageDefinition {
-  id: string
-  label: string
-  tone: StageTone
-  matches: string[]
+type StageTone = 'cyan' | 'blue' | 'gold' | 'orange' | 'green' | 'red' | 'neutral'
+
+interface StageDefinition { id: string; label: string; tone: StageTone; matches: string[] }
+
+const STAGES: StageDefinition[] = [
+  { id: 'ownership_check',      label: 'Ownership Check',      tone: 'cyan',    matches: ['ownership'] },
+  { id: 'interest_probe',       label: 'Interest Probe',       tone: 'blue',    matches: ['interest'] },
+  { id: 'active_communication', label: 'Active Communication', tone: 'blue',    matches: ['active', 'seller_response', 'communication'] },
+  { id: 'price_discovery',      label: 'Price Discovery',      tone: 'gold',    matches: ['price'] },
+  { id: 'condition_details',    label: 'Condition Details',    tone: 'orange',  matches: ['condition'] },
+  { id: 'underwriting',         label: 'Underwriting',         tone: 'orange',  matches: ['underwrit'] },
+  { id: 'offer_sent',           label: 'Offer Sent',           tone: 'green',   matches: ['offer', 'negotiat', 'counter'] },
+  { id: 'contract_sent',        label: 'Contract Sent',        tone: 'green',   matches: ['contract'] },
+  { id: 'title_closing',        label: 'Title / Closing',      tone: 'green',   matches: ['title', 'closing'] },
+  { id: 'dead_suppressed',      label: 'Dead / Suppressed',    tone: 'red',     matches: ['dead', 'suppressed', 'closed'] },
+]
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const norm = (v: unknown) => String(v ?? '').trim()
+
+const first = (...vals: unknown[]) => {
+  for (const v of vals) { const s = norm(v); if (s) return s }
+  return ''
 }
 
-interface PipelineCardModel {
+const num = (v: unknown): number | null => {
+  const n = Number(norm(v).replace(/[^\d.-]/g, ''))
+  return Number.isFinite(n) && !Number.isNaN(n) ? n : null
+}
+
+const stageFmt = (v: string) =>
+  v.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+
+const daysSince = (thread: InboxWorkflowThread): number => {
+  const iso = thread.lastInboundAt || thread.lastOutboundAt || thread.lastMessageAt || thread.updatedAt
+  if (!iso) return 0
+  const d = (Date.now() - new Date(iso).getTime()) / 86400000
+  return Number.isFinite(d) && d >= 0 ? d : 0
+}
+
+const ageLabel = (days: number) => {
+  if (!days || days < 0) return 'Fresh'
+  if (days < 1) return `${Math.round(days * 24)}h`
+  return `${Math.round(days)}d`
+}
+
+const deriveStageId = (thread: InboxWorkflowThread): string => {
+  const raw = norm(thread.conversationStage || thread.inboxStage).toLowerCase()
+  for (const s of STAGES) {
+    if (s.matches.some(m => raw.includes(m))) return s.id
+  }
+  return 'ownership_check'
+}
+
+const effectiveStageId = (thread: InboxWorkflowThread, overrides: Map<string, string>): string =>
+  overrides.get(thread.id) ?? deriveStageId(thread)
+
+const priorityWeight = (p: string) => {
+  if (p === 'urgent') return 4
+  if (p === 'high') return 3
+  if (p === 'normal') return 2
+  return 1
+}
+
+const priorityAccent = (p: string, hot: boolean): string => {
+  if (hot) return 'amber'
+  if (p === 'urgent') return 'red'
+  if (p === 'high') return 'orange'
+  return 'blue'
+}
+
+// ── Card model ────────────────────────────────────────────────────────────────
+
+interface DealCard {
   thread: InboxWorkflowThread
   sellerName: string
   address: string
@@ -24,49 +92,98 @@ interface PipelineCardModel {
   county: string
   phone: string
   status: string
-  stage: string
   priority: string
   automation: string
   lastIntent: string
   nextAction: string
   snippet: string
   value: number | null
-  equityPercent: number | null
+  equityPct: number | null
   repairs: number | null
   lastContact: string | null
   unread: boolean
   hot: boolean
   suppressed: boolean
   followUpDue: boolean
-  decisionConfidence: number
+  confidence: number
 }
 
-interface PipelineStageModel {
-  def: PipelineStageDefinition
-  cards: PipelineCardModel[]
+const buildCard = (thread: InboxWorkflowThread): DealCard => {
+  const dec = buildConversationDecision(thread)
+  const followUpIso = (thread as any).next_action_at ||
+    (thread as any).next_follow_up_at ||
+    dec.next_follow_up_at
+  return {
+    thread,
+    sellerName: first(thread.ownerDisplayName, thread.ownerName, thread.sellerName,
+      (thread as any).prospect_name) || 'Unknown Seller',
+    address: first(thread.propertyAddressFull, thread.propertyAddress, thread.subject) || 'Property Unknown',
+    market: first(thread.market, thread.marketName) || 'Market Unknown',
+    zip: first((thread as any).property_address_zip,
+      (thread as any).zip) || '—',
+    county: first((thread as any).property_address_county_name,
+      (thread as any).county) || '—',
+    phone: first(thread.phoneNumber, thread.canonicalE164, thread.displayPhone) || '—',
+    status: first(thread.inboxStatus, thread.status) || 'needs_review',
+    priority: first(thread.priority) || 'normal',
+    automation: first(thread.automationState, thread.autoReplyStatus) || dec.automation_status,
+    lastIntent: first((thread as any).last_intent, dec.seller_intent) || 'unknown',
+    nextAction: first((thread as any).next_action,
+      thread.nextSystemAction, dec.next_action) || 'Review conversation',
+    snippet: first(thread.lastMessageBody, thread.latestMessageBody, thread.preview) || 'No recent context.',
+    value: num(thread.estimatedValue ?? (thread as any).estimated_value),
+    equityPct: num(thread.equityPercent ?? (thread as any).equity_percent),
+    repairs: num(thread.estimatedRepairCost ?? (thread as any).estimated_repair_cost),
+    lastContact: thread.lastInboundAt || thread.lastOutboundAt || thread.lastMessageAt || thread.updatedAt || null,
+    unread: dec.unread,
+    hot: Boolean(thread.isHotLead || thread.sentiment === 'hot' ||
+      (thread as any).is_hot_lead),
+    suppressed: Boolean(thread.isSuppressed || thread.isOptOut ||
+      (thread as any).is_suppressed),
+    followUpDue: Boolean(followUpIso && new Date(String(followUpIso)).getTime() - Date.now() < 36 * 3600000),
+    confidence: dec.confidence,
+  }
+}
+
+// ── Stage model ───────────────────────────────────────────────────────────────
+
+interface StageModel {
+  def: StageDefinition
+  cards: DealCard[]
   count: number
   hotCount: number
-  followUpDueCount: number
+  dueCount: number
   unreadCount: number
-  automationCount: number
-  avgStageAge: string
+  autoCount: number
   stuckCount: number
+  avgAge: string
+  health: number
 }
+
+const buildStageModel = (def: StageDefinition, cards: DealCard[]): StageModel => {
+  const hotCount   = cards.filter(c => c.hot).length
+  const dueCount   = cards.filter(c => c.followUpDue).length
+  const unreadCount = cards.filter(c => c.unread).length
+  const autoCount  = cards.filter(c => c.automation.toLowerCase().includes('auto') || c.automation.toLowerCase().includes('active')).length
+  const stuckCount = cards.filter(c => daysSince(c.thread) >= 7).length
+  const ages       = cards.map(c => daysSince(c.thread))
+  const avgDays    = ages.length ? ages.reduce((a, b) => a + b, 0) / ages.length : 0
+  const signal     = hotCount + dueCount + unreadCount + autoCount
+  const health     = cards.length ? Math.min(100, Math.round((signal / Math.max(cards.length, 1)) * 45 + autoCount * 3)) : 0
+  return { def, cards, count: cards.length, hotCount, dueCount, unreadCount, autoCount, stuckCount, avgAge: ageLabel(avgDays), health }
+}
+
+// ── Summary ───────────────────────────────────────────────────────────────────
 
 interface PipelineSummary {
-  totalActive: number
-  hotDeals: number
-  newReplies: number
-  negotiating: number
-  contractSent: number
-  closing: number
-  deadSuppressed: number
-  followUpsDue: number
-  positiveIntentRate: string
-  averageStageAge: string
+  active: number; hot: number; replies: number
+  negotiating: number; contractSent: number; closing: number
+  dead: number; followUpsDue: number; positiveIntent: string; avgAge: string
 }
 
-type PipelineSortMode = 'priority' | 'recent' | 'value'
+type SortMode = 'priority' | 'recent' | 'value' | 'stage_age'
+
+// ── Props ─────────────────────────────────────────────────────────────────────
 
 interface InboxPipelineViewProps {
   threads: InboxWorkflowThread[]
@@ -78,777 +195,789 @@ interface InboxPipelineViewProps {
   onThreadAction: (id: string, action: string) => void | Promise<void>
 }
 
-const PIPELINE_STAGES: PipelineStageDefinition[] = [
-  { id: 'ownership_check', label: 'Ownership Check', tone: 'cyan', matches: ['ownership'] },
-  { id: 'interest_probe', label: 'Interest Probe', tone: 'blue', matches: ['interest'] },
-  { id: 'active_communication', label: 'Active Communication', tone: 'blue', matches: ['active', 'seller_response'] },
-  { id: 'price_discovery', label: 'Price Discovery', tone: 'gold', matches: ['price'] },
-  { id: 'condition_details', label: 'Condition Details', tone: 'orange', matches: ['condition'] },
-  { id: 'offer_stage', label: 'Offer Stage', tone: 'green', matches: ['offer'] },
-  { id: 'negotiation', label: 'Negotiation', tone: 'green', matches: ['negotiat', 'counter'] },
-  { id: 'contract_sent', label: 'Contract Sent', tone: 'green', matches: ['contract'] },
-  { id: 'title_closing', label: 'Title / Closing', tone: 'green', matches: ['title', 'closing'] },
-  { id: 'dead_suppressed', label: 'Dead / Suppressed', tone: 'red', matches: ['dead', 'suppressed', 'closed'] },
-]
-
-const formatStageText = (value: string) =>
-  value.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())
-
-const normalizeText = (value: unknown): string => String(value ?? '').trim()
-
-const numericValue = (value: unknown): number | null => {
-  const number = Number(String(value ?? '').replace(/[^\d.-]/g, ''))
-  return Number.isFinite(number) ? number : null
-}
-
-const firstText = (values: Array<unknown>): string => {
-  for (const value of values) {
-    const normalized = normalizeText(value)
-    if (normalized) return normalized
-  }
-  return ''
-}
-
-const toPipelineStageLabel = (thread: InboxWorkflowThread): string => {
-  const normalized = String(thread.conversationStage || thread.inboxStage || '').toLowerCase()
-  for (const stage of PIPELINE_STAGES) {
-    if (stage.matches.some((match) => normalized.includes(match))) return stage.label
-  }
-  return 'Ownership Check'
-}
-
-const toStageAgeDays = (thread: InboxWorkflowThread): number => {
-  const iso = thread.lastInboundAt || thread.lastOutboundAt || thread.lastMessageAt || thread.updatedAt
-  if (!iso) return 0
-  const diff = Date.now() - new Date(iso).getTime()
-  if (!Number.isFinite(diff) || diff < 0) return 0
-  return diff / 86400000
-}
-
-const formatAgeLabel = (days: number): string => {
-  if (!Number.isFinite(days) || days <= 0) return 'Fresh'
-  if (days < 1) return `${Math.round(days * 24)}h`
-  return `${Math.round(days)}d`
-}
-
-const toneForPriority = (priority: string): StageTone => {
-  const normalized = priority.toLowerCase()
-  if (normalized === 'urgent') return 'red'
-  if (normalized === 'high') return 'orange'
-  if (normalized === 'low') return 'neutral'
-  return 'blue'
-}
-
-const buildPipelineCard = (thread: InboxWorkflowThread): PipelineCardModel => {
-  const decision = buildConversationDecision(thread)
-  const sellerName =
-    firstText([thread.ownerDisplayName, thread.ownerName, thread.sellerName, (thread as any).prospect_name, (thread as any).contact_name]) ||
-    'Unknown Seller'
-  const address =
-    firstText([thread.propertyAddressFull, thread.propertyAddress, thread.subject, (thread as any).address, (thread as any).situs_address]) ||
-    'Property Unknown'
-  const market =
-    firstText([thread.market, thread.marketName, (thread as any).property_address_city && (thread as any).property_address_state ? `${(thread as any).property_address_city}, ${(thread as any).property_address_state}` : '', (thread as any).city && (thread as any).state ? `${(thread as any).city}, ${(thread as any).state}` : '']) ||
-    'Market Unknown'
-  const zip = firstText([(thread as any).property_address_zip, (thread as any).zip, (thread as any).postal_code]) || 'ZIP Pending'
-  const county = firstText([(thread as any).property_address_county_name, (thread as any).county]) || 'County Pending'
-  const phone = firstText([thread.phoneNumber, thread.canonicalE164, thread.displayPhone, (thread as any).prospect_best_phone]) || 'Phone Pending'
-  const status = firstText([thread.inboxStatus, thread.status]) || 'needs_review'
-  const stage = firstText([thread.conversationStage, thread.inboxStage]) || 'ownership_check'
-  const priority = firstText([thread.priority]) || 'normal'
-  const automation = firstText([thread.automationState, thread.autoReplyStatus, (thread as any).automation_status]) || decision.automation_status
-  const lastIntent = firstText([(thread as any).last_intent, decision.seller_intent]) || 'unknown'
-  const nextAction = firstText([(thread as any).next_action, thread.nextSystemAction, decision.next_action]) || 'Review conversation'
-  const snippet = firstText([thread.lastMessageBody, thread.latestMessageBody, thread.preview, (thread as any).latest_message_body]) || 'No recent seller context.'
-  const value = numericValue(thread.estimatedValue ?? (thread as any).estimated_value)
-  const equityPercent = numericValue(thread.equityPercent ?? (thread as any).equity_percent)
-  const repairs = numericValue(thread.estimatedRepairCost ?? (thread as any).estimated_repair_cost)
-  const lastContact = thread.lastInboundAt || thread.lastOutboundAt || thread.lastMessageAt || thread.updatedAt || null
-  const followUpIso = (thread as any).next_action_at || (thread as any).next_follow_up_at || decision.next_follow_up_at
-  const followUpDue = Boolean(followUpIso && new Date(followUpIso).getTime() - Date.now() < 36 * 60 * 60 * 1000)
-
-  return {
-    thread,
-    sellerName,
-    address,
-    market,
-    zip,
-    county,
-    phone,
-    status,
-    stage,
-    priority,
-    automation,
-    lastIntent,
-    nextAction,
-    snippet,
-    value,
-    equityPercent,
-    repairs,
-    lastContact,
-    unread: decision.unread,
-    hot: Boolean(thread.isHotLead || thread.sentiment === 'hot' || (thread as any).is_hot_lead),
-    suppressed: Boolean(thread.isSuppressed || thread.isOptOut || (thread as any).is_suppressed),
-    followUpDue,
-    decisionConfidence: decision.confidence,
-  }
-}
-
-const stageProgress = (stage: PipelineStageModel): number => {
-  if (!stage.count) return 0
-  const signal = stage.hotCount + stage.followUpDueCount + stage.unreadCount
-  return Math.min(100, Math.round((signal / Math.max(stage.count, 1)) * 38 + stage.automationCount * 2))
-}
-
-const actionLabel = (mode: ViewLayoutMode) => {
-  if (mode === 'compact') return 'Open Full Deal'
-  if (mode === 'medium') return 'Open Command View'
-  return 'Command View'
-}
+// ── Main component ────────────────────────────────────────────────────────────
 
 export function InboxPipelineView({
-  threads,
-  selectedId,
-  selectedThread,
-  layoutMode,
-  onSelect,
-  onOpenCommandView,
-  onThreadAction,
+  threads, selectedId, selectedThread, layoutMode,
+  onSelect, onOpenCommandView, onThreadAction,
 }: InboxPipelineViewProps) {
-  const [query, setQuery] = useState('')
-  const [sortMode, setSortMode] = useState<PipelineSortMode>('priority')
-  const [hotOnly, setHotOnly] = useState(false)
-  const [followUpOnly, setFollowUpOnly] = useState(false)
+  const [query,          setQuery]          = useState('')
+  const [sortMode,       setSortMode]       = useState<SortMode>('priority')
+  const [hotOnly,        setHotOnly]        = useState(false)
+  const [followUpOnly,   setFollowUpOnly]   = useState(false)
   const [automationOnly, setAutomationOnly] = useState(false)
-  const [showSuppressed, setShowSuppressed] = useState(layoutMode === 'full')
-  const [activeCompactStage, setActiveCompactStage] = useState<string>(PIPELINE_STAGES[0].id)
+  const [showSuppressed, setShowSuppressed] = useState(false)
+  const [activeStageId,  setActiveStageId]  = useState<string>(STAGES[0].id)
+  const [stageOverrides, setStageOverrides] = useState<Map<string, string>>(new Map())
+  const [dragCardId,     setDragCardId]     = useState<string | null>(null)
+  const [dragOverStage,  setDragOverStage]  = useState<string | null>(null)
+  const [showDetail,     setShowDetail]     = useState(true)
+  const [drawerOpen,     setDrawerOpen]     = useState(false)
 
-  const cards = useMemo(() => threads.map(buildPipelineCard), [threads])
+  const allCards = useMemo(() => threads.map(buildCard), [threads])
 
   const visibleCards = useMemo(() => {
-    const search = query.trim().toLowerCase()
-    return cards
-      .filter((card) => {
-        if (!showSuppressed && card.suppressed) return false
-        if (hotOnly && !card.hot) return false
-        if (followUpOnly && !card.followUpDue) return false
-        if (automationOnly && !card.automation.toLowerCase().includes('active') && !card.automation.toLowerCase().includes('auto')) return false
-        if (!search) return true
-        return [
-          card.sellerName,
-          card.address,
-          card.market,
-          card.lastIntent,
-          card.nextAction,
-          card.snippet,
-        ].some((value) => value.toLowerCase().includes(search))
+    const q = query.trim().toLowerCase()
+    return allCards
+      .filter(c => {
+        if (!showSuppressed && c.suppressed) return false
+        if (hotOnly && !c.hot) return false
+        if (followUpOnly && !c.followUpDue) return false
+        if (automationOnly && !c.automation.toLowerCase().includes('auto') &&
+            !c.automation.toLowerCase().includes('active')) return false
+        if (!q) return true
+        return [c.sellerName, c.address, c.market, c.lastIntent, c.nextAction, c.snippet]
+          .some(s => s.toLowerCase().includes(q))
       })
-      .sort((left, right) => {
-        if (sortMode === 'value') return (right.value ?? 0) - (left.value ?? 0)
-        if (sortMode === 'recent') {
-          return new Date(right.lastContact || 0).getTime() - new Date(left.lastContact || 0).getTime()
-        }
-        const priorityWeight = (value: string) => {
-          if (value === 'urgent') return 4
-          if (value === 'high') return 3
-          if (value === 'normal') return 2
-          return 1
-        }
-        return priorityWeight(right.priority) - priorityWeight(left.priority)
+      .sort((a, b) => {
+        if (sortMode === 'value')     return (b.value ?? 0) - (a.value ?? 0)
+        if (sortMode === 'recent')    return new Date(b.lastContact ?? 0).getTime() - new Date(a.lastContact ?? 0).getTime()
+        if (sortMode === 'stage_age') return daysSince(b.thread) - daysSince(a.thread)
+        return priorityWeight(b.priority) - priorityWeight(a.priority)
       })
-  }, [automationOnly, cards, followUpOnly, hotOnly, query, showSuppressed, sortMode])
+  }, [allCards, query, showSuppressed, hotOnly, followUpOnly, automationOnly, sortMode])
 
-  const stageModels = useMemo<PipelineStageModel[]>(() => {
-    return PIPELINE_STAGES.map((def) => {
-      const stageCards = visibleCards.filter((card) => toPipelineStageLabel(card.thread) === def.label)
-      const ages = stageCards.map((card) => toStageAgeDays(card.thread))
-      const avgDays = ages.length ? ages.reduce((sum, value) => sum + value, 0) / ages.length : 0
-      return {
-        def,
-        cards: stageCards,
-        count: stageCards.length,
-        hotCount: stageCards.filter((card) => card.hot).length,
-        followUpDueCount: stageCards.filter((card) => card.followUpDue).length,
-        unreadCount: stageCards.filter((card) => card.unread).length,
-        automationCount: stageCards.filter((card) => card.automation.toLowerCase().includes('active') || card.automation.toLowerCase().includes('auto')).length,
-        avgStageAge: formatAgeLabel(avgDays),
-        stuckCount: stageCards.filter((card) => toStageAgeDays(card.thread) >= 7).length,
-      }
-    })
-  }, [visibleCards])
-
-  useEffect(() => {
-    if (!selectedThread) return
-    const nextStage = PIPELINE_STAGES.find((stage) => stage.label === toPipelineStageLabel(selectedThread))?.id
-    if (nextStage) setActiveCompactStage(nextStage)
-  }, [selectedThread?.id])
+  const stageModels = useMemo(() =>
+    STAGES.map(def => {
+      const cards = visibleCards.filter(c => effectiveStageId(c.thread, stageOverrides) === def.id)
+      return buildStageModel(def, cards)
+    }),
+  [visibleCards, stageOverrides])
 
   const summary = useMemo<PipelineSummary>(() => {
-    const activeDeals = visibleCards.filter((card) => !card.suppressed)
-    const positiveIntentCount = visibleCards.filter((card) => ['seller_interested', 'price_interest'].includes(card.lastIntent)).length
-    const averageDays =
-      activeDeals.length > 0
-        ? activeDeals.reduce((sum, card) => sum + toStageAgeDays(card.thread), 0) / activeDeals.length
-        : 0
-
+    const active   = visibleCards.filter(c => !c.suppressed)
+    const avgDays  = active.length ? active.reduce((s, c) => s + daysSince(c.thread), 0) / active.length : 0
+    const posCount = visibleCards.filter(c => ['seller_interested', 'price_interest'].includes(c.lastIntent)).length
     return {
-      totalActive: activeDeals.length,
-      hotDeals: visibleCards.filter((card) => card.hot).length,
-      newReplies: visibleCards.filter((card) => card.status === 'new_reply' || card.unread).length,
-      negotiating: visibleCards.filter((card) => toPipelineStageLabel(card.thread) === 'Negotiation').length,
-      contractSent: visibleCards.filter((card) => toPipelineStageLabel(card.thread) === 'Contract Sent').length,
-      closing: visibleCards.filter((card) => toPipelineStageLabel(card.thread) === 'Title / Closing').length,
-      deadSuppressed: visibleCards.filter((card) => card.suppressed || toPipelineStageLabel(card.thread) === 'Dead / Suppressed').length,
-      followUpsDue: visibleCards.filter((card) => card.followUpDue).length,
-      positiveIntentRate: activeDeals.length ? `${Math.round((positiveIntentCount / activeDeals.length) * 100)}%` : '0%',
-      averageStageAge: formatAgeLabel(averageDays),
+      active:        active.length,
+      hot:           visibleCards.filter(c => c.hot).length,
+      replies:       visibleCards.filter(c => c.status === 'new_reply' || c.unread).length,
+      negotiating:   stageModels.find(s => s.def.id === 'offer_sent')?.count ?? 0,
+      contractSent:  stageModels.find(s => s.def.id === 'contract_sent')?.count ?? 0,
+      closing:       stageModels.find(s => s.def.id === 'title_closing')?.count ?? 0,
+      dead:          stageModels.find(s => s.def.id === 'dead_suppressed')?.count ?? 0,
+      followUpsDue:  visibleCards.filter(c => c.followUpDue).length,
+      positiveIntent: active.length ? `${Math.round((posCount / active.length) * 100)}%` : '0%',
+      avgAge:        ageLabel(avgDays),
     }
-  }, [visibleCards])
+  }, [visibleCards, stageModels])
 
-  const selectedCard =
-    visibleCards.find((card) => card.thread.id === selectedId) ??
-    (selectedThread ? buildPipelineCard(selectedThread) : visibleCards[0] ?? null)
+  const selectedCard = useMemo(() =>
+    visibleCards.find(c => c.thread.id === selectedId) ??
+    (selectedThread ? buildCard(selectedThread) : null),
+  [visibleCards, selectedId, selectedThread])
 
-  const compactStage = stageModels.find((stage) => stage.def.id === activeCompactStage) ?? stageModels[0]
+  // Sync active stage to selected thread
+  useEffect(() => {
+    if (!selectedThread) return
+    setActiveStageId(effectiveStageId(selectedThread, stageOverrides))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedThread?.id])
+
+  // Open drawer on selection at 50%
+  useEffect(() => {
+    if (selectedId && layoutMode === 'medium') setDrawerOpen(true)
+  }, [selectedId, layoutMode])
+
+  // ── DnD handlers ──────────────────────────────────────────────────────────
+
+  const handleDragStart = (e: React.DragEvent, cardId: string) => {
+    setDragCardId(cardId)
+    e.dataTransfer.setData('text/plain', cardId)
+    e.dataTransfer.effectAllowed = 'move'
+  }
+
+  const handleDragOver = (e: React.DragEvent, stageId: string) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (dragOverStage !== stageId) setDragOverStage(stageId)
+  }
+
+  const handleDrop = (e: React.DragEvent, stageId: string) => {
+    e.preventDefault()
+    const cardId = e.dataTransfer.getData('text/plain')
+    if (cardId) {
+      setStageOverrides(prev => { const m = new Map(prev); m.set(cardId, stageId); return m })
+      // TODO: wire stage update → onThreadAction(cardId, `move_stage:${stageId}`) when backend handler is ready
+    }
+    setDragCardId(null)
+    setDragOverStage(null)
+  }
+
+  const handleDragEnd = () => { setDragCardId(null); setDragOverStage(null) }
+
+  const hasFilters = !!(query || hotOnly || followUpOnly || automationOnly)
+  const clearFilters = () => { setQuery(''); setHotOnly(false); setFollowUpOnly(false); setAutomationOnly(false) }
+
+  const dnd = { handleDragStart, handleDragOver, handleDrop, handleDragEnd, dragCardId, dragOverStage }
+  const acts = { onSelect, onOpenCommandView, onThreadAction }
+
+  // ── 25% — Pipeline Rail ────────────────────────────────────────────────────
+  if (layoutMode === 'compact') {
+    return (
+      <div className="plv plv--rail">
+        <RailKpi summary={summary} />
+        <StageChips stages={stageModels} activeId={activeStageId} onSelect={setActiveStageId} size="sm" />
+        <CardRail
+          cards={stageModels.find(s => s.def.id === activeStageId)?.cards ?? []}
+          stageLabel={stageModels.find(s => s.def.id === activeStageId)?.def.label ?? ''}
+          selectedId={selectedId}
+          {...acts}
+        />
+      </div>
+    )
+  }
+
+  // ── 50% — Focused pipeline ─────────────────────────────────────────────────
+  if (layoutMode === 'medium') {
+    return (
+      <div className="plv plv--focused">
+        <KpiStrip summary={summary} compact />
+        <FilterBar
+          query={query} sortMode={sortMode} hotOnly={hotOnly}
+          followUpOnly={followUpOnly} automationOnly={automationOnly}
+          showSuppressed={showSuppressed} hasFilters={hasFilters} layoutMode={layoutMode}
+          onQueryChange={setQuery} onSortModeChange={setSortMode}
+          onHotOnly={setHotOnly} onFollowUpOnly={setFollowUpOnly}
+          onAutomationOnly={setAutomationOnly} onShowSuppressed={setShowSuppressed}
+          onClear={clearFilters}
+        />
+        <StageChips stages={stageModels} activeId={activeStageId} onSelect={setActiveStageId} size="md" />
+        <FocusedList
+          stage={stageModels.find(s => s.def.id === activeStageId) ?? stageModels[0]}
+          selectedId={selectedId}
+          {...acts}
+        />
+        {drawerOpen && selectedCard && (
+          <DealDrawer card={selectedCard} onClose={() => setDrawerOpen(false)} {...acts} />
+        )}
+      </div>
+    )
+  }
+
+  // ── 75% + 100% — Kanban board ──────────────────────────────────────────────
+  const isOps  = layoutMode === 'expanded'
+  const isFull = layoutMode === 'full'
 
   return (
-    <section className={cls('nx-pipeline-view', `is-layout-${layoutMode}`)}>
-      <PipelineSummaryBar summary={summary} layoutMode={layoutMode} />
-      <PipelineControls
-        layoutMode={layoutMode}
-        query={query}
-        sortMode={sortMode}
-        hotOnly={hotOnly}
-        followUpOnly={followUpOnly}
-        automationOnly={automationOnly}
-        showSuppressed={showSuppressed}
-        onQueryChange={setQuery}
-        onSortModeChange={setSortMode}
-        onHotOnlyChange={setHotOnly}
-        onFollowUpOnlyChange={setFollowUpOnly}
-        onAutomationOnlyChange={setAutomationOnly}
-        onShowSuppressedChange={setShowSuppressed}
-      />
-
-      {layoutMode === 'compact' ? (
-        <CompactPipelineLayout
-          stageModels={stageModels}
-          activeStageId={activeCompactStage}
-          onStageChange={setActiveCompactStage}
-          onSelect={onSelect}
-          onOpenCommandView={onOpenCommandView}
-          onThreadAction={onThreadAction}
+    <div className={cls('plv', isOps ? 'plv--ops' : 'plv--full')}>
+      <KpiStrip summary={summary} compact={isOps} />
+      <div className="plv-topbar">
+        <FilterBar
+          query={query} sortMode={sortMode} hotOnly={hotOnly}
+          followUpOnly={followUpOnly} automationOnly={automationOnly}
+          showSuppressed={showSuppressed} hasFilters={hasFilters} layoutMode={layoutMode}
+          onQueryChange={setQuery} onSortModeChange={setSortMode}
+          onHotOnly={setHotOnly} onFollowUpOnly={setFollowUpOnly}
+          onAutomationOnly={setAutomationOnly} onShowSuppressed={setShowSuppressed}
+          onClear={clearFilters}
         />
-      ) : layoutMode === 'medium' ? (
-        <MediumPipelineLayout
-          stageModels={stageModels}
-          selectedId={selectedId}
-          onSelect={onSelect}
-          onOpenCommandView={onOpenCommandView}
-          onThreadAction={onThreadAction}
-        />
-      ) : layoutMode === 'expanded' ? (
-        <ExpandedPipelineLayout
-          stageModels={stageModels}
-          selectedId={selectedId}
-          onSelect={onSelect}
-          onOpenCommandView={onOpenCommandView}
-          onThreadAction={onThreadAction}
-        />
-      ) : (
-        <FullPipelineLayout
-          stageModels={stageModels}
-          selectedId={selectedId}
-          selectedCard={selectedCard}
-          onSelect={onSelect}
-          onOpenCommandView={onOpenCommandView}
-          onThreadAction={onThreadAction}
-        />
-      )}
+        {isOps && (
+          <button
+            type="button"
+            className={cls('plv-detail-toggle', showDetail && 'is-active')}
+            onClick={() => setShowDetail(d => !d)}
+            title="Toggle deal detail panel"
+          >
+            {showDetail ? '⊠' : '⊡'} Detail
+          </button>
+        )}
+      </div>
 
-      {layoutMode !== 'compact' && (
-        <div className="nx-pipeline-dock-spacer" aria-hidden="true" />
-      )}
-
-      <section className="nx-pipeline-action-dock">
-        <div className="nx-pipeline-action-dock__group">
-          <span>Communication</span>
-          <button type="button">Draft Reply</button>
-          <button type="button">Send SMS</button>
-          <button type="button">Send Email</button>
+      <div className="plv-workspace">
+        <div className="plv-board">
+          {stageModels.map(stage => (
+            <PipelineLane
+              key={stage.def.id}
+              stage={stage}
+              selectedId={selectedId}
+              compact={isOps}
+              dnd={dnd}
+              {...acts}
+            />
+          ))}
         </div>
-        <div className="nx-pipeline-action-dock__group">
-          <span>Analysis</span>
-          <button type="button">Run Underwriting</button>
-          <button type="button">Open Comp Workspace</button>
-          <button type="button">Show Buyer Matches</button>
-        </div>
-        <div className="nx-pipeline-action-dock__group">
-          <span>Navigation</span>
-          <button type="button" onClick={() => selectedCard && onOpenCommandView(selectedCard.thread.id)}>Open Command View</button>
-          <button type="button">Open Map</button>
-          <button type="button">AI Assist</button>
-        </div>
-        <div className="nx-pipeline-action-dock__group is-safety">
-          <span>Safety</span>
-          <button type="button" onClick={() => selectedCard && onThreadAction(selectedCard.thread.id, 'pause_automation')}>Pause Automation</button>
-          <button type="button" onClick={() => selectedCard && onThreadAction(selectedCard.thread.id, 'suppress')}>Suppress</button>
-          <button type="button" onClick={() => selectedCard && onThreadAction(selectedCard.thread.id, 'archive')}>DNC</button>
-        </div>
-      </section>
-
-      {layoutMode === 'compact' && compactStage.cards.length === 0 && (
-        <div className="nx-pipeline-empty-state is-floating">
-          <strong>No active deals in this stage.</strong>
-          <span>Threads will appear here once they enter {compactStage.def.label}.</span>
-        </div>
-      )}
-    </section>
+        {(isFull || (isOps && showDetail)) && (
+          <aside className="plv-detail-panel">
+            {selectedCard ? (
+              <SelectedDealPanel card={selectedCard} {...acts} />
+            ) : (
+              <div className="plv-detail-empty">
+                <span className="plv-detail-empty__icon">◎</span>
+                <strong>Select a deal</strong>
+                <p>Snapshot, conversation intelligence, and next moves appear here.</p>
+              </div>
+            )}
+          </aside>
+        )}
+      </div>
+    </div>
   )
 }
 
-function PipelineSummaryBar({ summary, layoutMode }: { summary: PipelineSummary; layoutMode: ViewLayoutMode }) {
-  const items =
-    layoutMode === 'compact'
-      ? [
-          ['Active', summary.totalActive],
-          ['Hot', summary.hotDeals],
-          ['Due', summary.followUpsDue],
-          ['Replies', summary.newReplies],
-        ]
-      : [
-          ['Active Deals', summary.totalActive],
-          ['Hot Deals', summary.hotDeals],
-          ['New Replies', summary.newReplies],
-          ['Negotiating', summary.negotiating],
-          ['Contract Sent', summary.contractSent],
-          ['Closing', summary.closing],
-          ['Dead / Suppressed', summary.deadSuppressed],
-          ['Follow-Ups Due', summary.followUpsDue],
-          ['Positive Intent', summary.positiveIntentRate],
-          ['Avg Stage Age', summary.averageStageAge],
-        ]
+// ── KPI components ────────────────────────────────────────────────────────────
 
+function RailKpi({ summary }: { summary: PipelineSummary }) {
   return (
-    <section className="nx-pipeline-summary">
-      {items.map(([label, value]) => (
-        <div key={label} className="nx-pipeline-summary__item">
-          <span>{label}</span>
-          <strong>{String(value)}</strong>
+    <div className="plv-rail-kpi">
+      {([
+        ['Active', summary.active, 'blue'],
+        ['Hot',    summary.hot,    'amber'],
+        ['Due',    summary.followUpsDue, 'amber'],
+        ['Replies',summary.replies,'cyan'],
+      ] as [string, number, string][]).map(([label, value, tone]) => (
+        <div key={label} className="plv-rail-kpi__cell">
+          <strong className={`plv-rail-kpi__val is-${tone}`}>{value}</strong>
+          <span className="plv-rail-kpi__label">{label}</span>
         </div>
       ))}
-    </section>
+    </div>
   )
 }
 
-function PipelineControls(props: {
-  layoutMode: ViewLayoutMode
-  query: string
-  sortMode: PipelineSortMode
-  hotOnly: boolean
-  followUpOnly: boolean
-  automationOnly: boolean
-  showSuppressed: boolean
-  onQueryChange: (value: string) => void
-  onSortModeChange: (value: PipelineSortMode) => void
-  onHotOnlyChange: (value: boolean) => void
-  onFollowUpOnlyChange: (value: boolean) => void
-  onAutomationOnlyChange: (value: boolean) => void
-  onShowSuppressedChange: (value: boolean) => void
-}) {
-  const { layoutMode } = props
+function KpiStrip({ summary, compact }: { summary: PipelineSummary; compact?: boolean }) {
+  const items = compact
+    ? [
+        { label: 'Active',      value: String(summary.active),        tone: 'blue'    },
+        { label: 'Hot',         value: String(summary.hot),           tone: 'amber'   },
+        { label: 'Replies',     value: String(summary.replies),       tone: 'cyan'    },
+        { label: 'Negotiating', value: String(summary.negotiating),   tone: 'green'   },
+        { label: 'Contract',    value: String(summary.contractSent),  tone: 'green'   },
+        { label: 'Follow-Ups',  value: String(summary.followUpsDue),  tone: 'amber'   },
+      ]
+    : [
+        { label: 'Active Deals',   value: String(summary.active),        tone: 'blue'    },
+        { label: 'Hot Deals',      value: String(summary.hot),           tone: 'amber'   },
+        { label: 'New Replies',    value: String(summary.replies),       tone: 'cyan'    },
+        { label: 'Negotiating',    value: String(summary.negotiating),   tone: 'green'   },
+        { label: 'Contract Sent',  value: String(summary.contractSent),  tone: 'green'   },
+        { label: 'Closing',        value: String(summary.closing),       tone: 'green'   },
+        { label: 'Dead / Supp.',   value: String(summary.dead),          tone: 'red'     },
+        { label: 'Follow-Ups Due', value: String(summary.followUpsDue),  tone: 'amber'   },
+        { label: 'Intent+',        value: summary.positiveIntent,        tone: 'green'   },
+        { label: 'Avg Stage Age',  value: summary.avgAge,                tone: 'neutral' },
+      ]
   return (
-    <section className="nx-pipeline-controls">
-      <label className="nx-pipeline-search">
-        <span>Search Pipeline</span>
-        <input value={props.query} onChange={(event) => props.onQueryChange(event.target.value)} placeholder="Seller, address, action, intent..." />
-      </label>
-      <div className="nx-pipeline-controls__cluster">
-        <select value={props.sortMode} onChange={(event) => props.onSortModeChange(event.target.value as PipelineSortMode)}>
-          <option value="priority">Sort: Priority</option>
-          <option value="recent">Sort: Recent Activity</option>
-          <option value="value">Sort: Value</option>
-        </select>
-        <button type="button" className={cls(props.hotOnly && 'is-active')} onClick={() => props.onHotOnlyChange(!props.hotOnly)}>Hot Only</button>
-        <button type="button" className={cls(props.followUpOnly && 'is-active')} onClick={() => props.onFollowUpOnlyChange(!props.followUpOnly)}>Follow-Up Due</button>
-        {layoutMode !== 'compact' && (
-          <button type="button" className={cls(props.automationOnly && 'is-active')} onClick={() => props.onAutomationOnlyChange(!props.automationOnly)}>Automation Active</button>
+    <div className={cls('plv-kpi', compact && 'plv-kpi--compact')}>
+      {items.map(({ label, value, tone }) => (
+        <div key={label} className="plv-kpi__item">
+          <span className="plv-kpi__label">{label}</span>
+          <strong className={cls('plv-kpi__value', `is-${tone}`)}>{value}</strong>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── Filter bar ────────────────────────────────────────────────────────────────
+
+interface FilterBarProps {
+  query: string; sortMode: SortMode; hotOnly: boolean; followUpOnly: boolean
+  automationOnly: boolean; showSuppressed: boolean; hasFilters: boolean; layoutMode: ViewLayoutMode
+  onQueryChange: (v: string) => void; onSortModeChange: (v: SortMode) => void
+  onHotOnly: (v: boolean) => void; onFollowUpOnly: (v: boolean) => void
+  onAutomationOnly: (v: boolean) => void; onShowSuppressed: (v: boolean) => void; onClear: () => void
+}
+
+function FilterBar(p: FilterBarProps) {
+  return (
+    <div className="plv-filters">
+      <div className="plv-filters__search">
+        <span className="plv-filters__search-icon">⌕</span>
+        <input
+          type="search"
+          className="plv-filters__input"
+          value={p.query}
+          onChange={e => p.onQueryChange(e.target.value)}
+          placeholder={p.layoutMode === 'medium' ? 'Search pipeline…' : 'Seller, address, intent, action…'}
+        />
+        {p.hasFilters && (
+          <button type="button" className="plv-filters__clear" onClick={p.onClear} title="Clear filters">✕</button>
         )}
-        <button type="button" className={cls(props.showSuppressed && 'is-active')} onClick={() => props.onShowSuppressedChange(!props.showSuppressed)}>
-          {props.showSuppressed ? 'Hide Suppressed' : 'Show Suppressed'}
+      </div>
+      <div className="plv-filters__controls">
+        <select
+          className="plv-filters__sort"
+          value={p.sortMode}
+          onChange={e => p.onSortModeChange(e.target.value as SortMode)}
+        >
+          <option value="priority">Priority</option>
+          <option value="recent">Recent Activity</option>
+          <option value="value">Value</option>
+          <option value="stage_age">Stage Age</option>
+        </select>
+        <button type="button" className={cls('plv-filter-chip', p.hotOnly && 'is-active')} onClick={() => p.onHotOnly(!p.hotOnly)}>
+          🔥 Hot
+        </button>
+        <button type="button" className={cls('plv-filter-chip', p.followUpOnly && 'is-active')} onClick={() => p.onFollowUpOnly(!p.followUpOnly)}>
+          Due
+        </button>
+        {p.layoutMode !== 'compact' && (
+          <button type="button" className={cls('plv-filter-chip', p.automationOnly && 'is-active')} onClick={() => p.onAutomationOnly(!p.automationOnly)}>
+            Auto
+          </button>
+        )}
+        <button type="button" className={cls('plv-filter-chip', p.showSuppressed && 'is-active')} onClick={() => p.onShowSuppressed(!p.showSuppressed)}>
+          {p.showSuppressed ? 'Hide Supp.' : 'Show Supp.'}
         </button>
       </div>
-    </section>
-  )
-}
-
-function CompactPipelineLayout({
-  stageModels,
-  activeStageId,
-  onStageChange,
-  onSelect,
-  onOpenCommandView,
-  onThreadAction,
-}: {
-  stageModels: PipelineStageModel[]
-  activeStageId: string
-  onStageChange: (value: string) => void
-  onSelect: (id: string) => void
-  onOpenCommandView: (threadId?: string | null) => void
-  onThreadAction: (id: string, action: string) => void | Promise<void>
-}) {
-  const activeStage = stageModels.find((stage) => stage.def.id === activeStageId) ?? stageModels[0]
-  return (
-    <div className="nx-pipeline-compact">
-      <div className="nx-pipeline-stage-rail">
-        {stageModels.map((stage) => (
-          <button
-            key={stage.def.id}
-            type="button"
-            className={cls('nx-pipeline-stage-pill', `is-${stage.def.tone}`, activeStage.def.id === stage.def.id && 'is-active')}
-            onClick={() => onStageChange(stage.def.id)}
-          >
-            <strong>{stage.def.label}</strong>
-            <span>{stage.count}</span>
-          </button>
-        ))}
-      </div>
-      <div className="nx-pipeline-compact__list">
-        {activeStage.cards.length > 0 ? (
-          activeStage.cards.map((card) => (
-            <PipelineCompactCard key={card.thread.id} card={card} onSelect={onSelect} onOpenCommandView={onOpenCommandView} onThreadAction={onThreadAction} />
-          ))
-        ) : (
-          <div className="nx-pipeline-empty-state">
-            <strong>No active deals in this stage.</strong>
-            <span>Threads will appear here once they enter {activeStage.def.label}.</span>
-          </div>
-        )}
-      </div>
     </div>
   )
 }
 
-function MediumPipelineLayout({
-  stageModels,
-  selectedId,
-  onSelect,
-  onOpenCommandView,
-  onThreadAction,
-}: {
-  stageModels: PipelineStageModel[]
-  selectedId: string | null
-  onSelect: (id: string) => void
-  onOpenCommandView: (threadId?: string | null) => void
-  onThreadAction: (id: string, action: string) => void | Promise<void>
+// ── Stage chips ───────────────────────────────────────────────────────────────
+
+function StageChips({ stages, activeId, onSelect, size }: {
+  stages: StageModel[]; activeId: string; onSelect: (id: string) => void; size: 'sm' | 'md'
 }) {
   return (
-    <div className="nx-pipeline-columns is-medium">
-      {stageModels.map((stage) => (
-        <PipelineLane key={stage.def.id} stage={stage} selectedId={selectedId} cardMode="medium" onSelect={onSelect} onOpenCommandView={onOpenCommandView} onThreadAction={onThreadAction} />
+    <div className={cls('plv-stage-chips', `plv-stage-chips--${size}`)}>
+      {stages.map(s => (
+        <button
+          key={s.def.id}
+          type="button"
+          className={cls(
+            'plv-stage-chip',
+            `is-${s.def.tone}`,
+            s.def.id === activeId && 'is-active',
+            s.count === 0 && 'is-empty',
+          )}
+          onClick={() => onSelect(s.def.id)}
+        >
+          <span className="plv-stage-chip__label">{s.def.label}</span>
+          {s.count > 0 && <span className="plv-stage-chip__count">{s.count}</span>}
+          {s.hotCount > 0 && <span className="plv-stage-chip__hot">🔥</span>}
+        </button>
       ))}
     </div>
   )
 }
 
-function ExpandedPipelineLayout({
-  stageModels,
-  selectedId,
-  onSelect,
-  onOpenCommandView,
-  onThreadAction,
-}: {
-  stageModels: PipelineStageModel[]
-  selectedId: string | null
-  onSelect: (id: string) => void
-  onOpenCommandView: (threadId?: string | null) => void
+// ── Card rail (25%) ───────────────────────────────────────────────────────────
+
+function CardRail({ cards, stageLabel, selectedId, onSelect, onOpenCommandView }: {
+  cards: DealCard[]; stageLabel: string; selectedId: string | null
+  onSelect: (id: string) => void; onOpenCommandView: (id?: string | null) => void
   onThreadAction: (id: string, action: string) => void | Promise<void>
 }) {
+  if (!cards.length) {
+    return (
+      <div className="plv-empty plv-empty--rail">
+        <span className="plv-empty__icon">○</span>
+        <strong>No deals in {stageLabel}</strong>
+        <span>Deals will appear as they enter this stage.</span>
+      </div>
+    )
+  }
   return (
-    <div className="nx-pipeline-columns is-expanded">
-      {stageModels.map((stage) => (
-        <PipelineLane key={stage.def.id} stage={stage} selectedId={selectedId} cardMode="expanded" onSelect={onSelect} onOpenCommandView={onOpenCommandView} onThreadAction={onThreadAction} />
+    <div className="plv-card-rail">
+      {cards.map(card => (
+        <CompactCard
+          key={card.thread.id}
+          card={card}
+          selected={card.thread.id === selectedId}
+          onSelect={onSelect}
+          onOpenCommandView={onOpenCommandView}
+        />
       ))}
     </div>
   )
 }
 
-function FullPipelineLayout({
-  stageModels,
-  selectedId,
-  selectedCard,
-  onSelect,
-  onOpenCommandView,
-  onThreadAction,
-}: {
-  stageModels: PipelineStageModel[]
-  selectedId: string | null
-  selectedCard: PipelineCardModel | null
-  onSelect: (id: string) => void
-  onOpenCommandView: (threadId?: string | null) => void
+// ── Focused card list (50%) ───────────────────────────────────────────────────
+
+function FocusedList({ stage, selectedId, onSelect, onOpenCommandView, onThreadAction }: {
+  stage: StageModel; selectedId: string | null
+  onSelect: (id: string) => void; onOpenCommandView: (id?: string | null) => void
   onThreadAction: (id: string, action: string) => void | Promise<void>
 }) {
-  return (
-    <div className="nx-pipeline-full">
-      <div className="nx-pipeline-columns is-full">
-        {stageModels.map((stage) => (
-          <PipelineLane key={stage.def.id} stage={stage} selectedId={selectedId} cardMode="full" onSelect={onSelect} onOpenCommandView={onOpenCommandView} onThreadAction={onThreadAction} />
-        ))}
+  if (!stage.cards.length) {
+    return (
+      <div className="plv-empty plv-empty--focused">
+        <span className="plv-empty__icon">○</span>
+        <strong>No deals in {stage.def.label}</strong>
+        <span>Deals enter this stage automatically based on conversation progress.</span>
       </div>
-      <aside className="nx-pipeline-preview">
-        {selectedCard ? (
-          <>
-            <div className="nx-pipeline-preview__hero">
-              <span className={cls('nx-pipeline-priority-dot', `is-${toneForPriority(selectedCard.priority)}`)} />
-              <div>
-                <strong>{selectedCard.address}</strong>
-                <p>{selectedCard.sellerName} • {selectedCard.market}</p>
-              </div>
-            </div>
-            <div className="nx-pipeline-preview__grid">
-              <div><label>Status</label><strong>{formatStageText(selectedCard.status)}</strong></div>
-              <div><label>Stage</label><strong>{formatStageText(selectedCard.stage)}</strong></div>
-              <div><label>Priority</label><strong>{formatStageText(selectedCard.priority)}</strong></div>
-              <div><label>Last Contact</label><strong>{selectedCard.lastContact ? formatRelativeTime(selectedCard.lastContact) : 'Pending'}</strong></div>
-              <div><label>Phone</label><strong>{formatPhone(selectedCard.phone)}</strong></div>
-              <div><label>County</label><strong>{selectedCard.county}</strong></div>
-            </div>
-            <div className="nx-pipeline-preview__insight">
-              <span>Conversation Summary</span>
-              <p>{selectedCard.snippet}</p>
-            </div>
-            <div className="nx-pipeline-preview__insight">
-              <span>Next Action</span>
-              <p>{selectedCard.nextAction}</p>
-            </div>
-            <div className="nx-pipeline-preview__metrics">
-              <MetricChip label="Value" value={selectedCard.value ? formatCurrency(selectedCard.value) : 'Pending'} tone="green" />
-              <MetricChip label="Equity" value={selectedCard.equityPercent !== null ? formatPercent(selectedCard.equityPercent) : 'Pending'} tone="blue" />
-              <MetricChip label="Repairs" value={selectedCard.repairs ? formatCurrency(selectedCard.repairs) : 'Pending'} tone="orange" />
-            </div>
-            <div className="nx-pipeline-preview__timeline">
-              <span>Command Preview</span>
-              <ul>
-                <li>Intent: {formatStageText(selectedCard.lastIntent)}</li>
-                <li>Automation: {selectedCard.automation}</li>
-                <li>Follow-Up: {selectedCard.followUpDue ? 'Due soon' : 'Stable'}</li>
-                <li>Confidence: {Math.round(selectedCard.decisionConfidence * 100)}/100</li>
-              </ul>
-            </div>
-            <div className="nx-pipeline-preview__actions">
-              <button type="button" onClick={() => onOpenCommandView(selectedCard.thread.id)}>Open Command View</button>
-              <button type="button" onClick={() => onThreadAction(selectedCard.thread.id, 'pause_automation')}>Pause Auto</button>
-              <button type="button" onClick={() => onThreadAction(selectedCard.thread.id, 'snooze')}>Snooze</button>
-            </div>
-          </>
-        ) : (
-          <div className="nx-pipeline-empty-state">
-            <strong>Select a deal.</strong>
-            <span>Property snapshot, conversation intelligence, and next moves will appear here.</span>
-          </div>
-        )}
-      </aside>
+    )
+  }
+  return (
+    <div className="plv-focused-list">
+      {stage.cards.map(card => (
+        <FocusedCard
+          key={card.thread.id}
+          card={card}
+          selected={card.thread.id === selectedId}
+          onSelect={onSelect}
+          onOpenCommandView={onOpenCommandView}
+          onThreadAction={onThreadAction}
+        />
+      ))}
     </div>
   )
 }
 
-function PipelineLane({
-  stage,
-  selectedId,
-  cardMode,
-  onSelect,
-  onOpenCommandView,
-  onThreadAction,
-}: {
-  stage: PipelineStageModel
-  selectedId: string | null
-  cardMode: 'medium' | 'expanded' | 'full'
-  onSelect: (id: string) => void
-  onOpenCommandView: (threadId?: string | null) => void
+// ── Kanban lane (75/100%) ─────────────────────────────────────────────────────
+
+interface DndState {
+  handleDragStart: (e: React.DragEvent, cardId: string) => void
+  handleDragOver:  (e: React.DragEvent, stageId: string) => void
+  handleDrop:      (e: React.DragEvent, stageId: string) => void
+  handleDragEnd:   () => void
+  dragCardId:      string | null
+  dragOverStage:   string | null
+}
+
+function PipelineLane({ stage, selectedId, compact, dnd, onSelect, onOpenCommandView, onThreadAction }: {
+  stage: StageModel; selectedId: string | null; compact: boolean; dnd: DndState
+  onSelect: (id: string) => void; onOpenCommandView: (id?: string | null) => void
   onThreadAction: (id: string, action: string) => void | Promise<void>
 }) {
+  const isOver = dnd.dragOverStage === stage.def.id
   return (
-    <section className={cls('nx-pipeline-lane', `is-${stage.def.tone}`)}>
-      <header className="nx-pipeline-lane__header">
-        <div>
-          <span>{stage.def.label}</span>
-          <strong>{stage.count}</strong>
-        </div>
-        <div className="nx-pipeline-lane__meta">
-          <small>Hot {stage.hotCount}</small>
-          <small>Due {stage.followUpDueCount}</small>
-        </div>
-        <div className="nx-pipeline-lane__bar">
-          <i style={{ width: `${stageProgress(stage)}%` }} />
-        </div>
-        <div className="nx-pipeline-lane__analytics">
-          <small>Age {stage.avgStageAge}</small>
-          <small>Stuck {stage.stuckCount}</small>
-          <small>Auto {stage.automationCount}</small>
-        </div>
-      </header>
-      <div className="nx-pipeline-lane__body">
+    <div className={cls('plv-lane', `is-${stage.def.tone}`, compact && 'plv-lane--compact', isOver && 'is-drag-over')}>
+      <LaneHeader stage={stage} compact={compact} />
+      <div
+        className="plv-lane__body"
+        onDragOver={e => dnd.handleDragOver(e, stage.def.id)}
+        onDrop={e => dnd.handleDrop(e, stage.def.id)}
+        onDragLeave={e => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) dnd.handleDragEnd()
+        }}
+      >
         {stage.cards.length > 0 ? (
-          stage.cards.map((card) => (
-            <PipelineDealCard
+          stage.cards.map(card => (
+            <KanbanCard
               key={card.thread.id}
               card={card}
-              cardMode={cardMode}
-              selected={selectedId === card.thread.id}
+              selected={card.thread.id === selectedId}
+              isDragging={dnd.dragCardId === card.thread.id}
+              compact={compact}
+              onDragStart={dnd.handleDragStart}
+              onDragEnd={dnd.handleDragEnd}
               onSelect={onSelect}
               onOpenCommandView={onOpenCommandView}
               onThreadAction={onThreadAction}
             />
           ))
         ) : (
-          <div className="nx-pipeline-empty-state">
-            <strong>No active deals in this stage.</strong>
-            <span>Threads will appear here once they enter {stage.def.label}.</span>
-          </div>
+          <EmptyLane label={stage.def.label} />
         )}
       </div>
-    </section>
-  )
-}
-
-function PipelineCompactCard({
-  card,
-  onSelect,
-  onOpenCommandView,
-  onThreadAction,
-}: {
-  card: PipelineCardModel
-  onSelect: (id: string) => void
-  onOpenCommandView: (threadId?: string | null) => void
-  onThreadAction: (id: string, action: string) => void | Promise<void>
-}) {
-  return (
-    <article
-      className={cls('nx-pipeline-card', 'is-compact', `is-${toneForPriority(card.priority)}`)}
-      onClick={() => onSelect(card.thread.id)}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault()
-          onSelect(card.thread.id)
-        }
-      }}
-      role="button"
-      tabIndex={0}
-    >
-      <div className="nx-pipeline-card__top">
-        <strong>{card.sellerName}</strong>
-        <span>{card.stage.replace(/_/g, ' ')}</span>
-      </div>
-      <p>{card.address}</p>
-      <div className="nx-pipeline-card__meta">
-        <span>{card.nextAction}</span>
-        <small>{card.lastContact ? formatRelativeTime(card.lastContact) : 'Pending'}</small>
-      </div>
-      <div className="nx-pipeline-card__snippet">{card.snippet}</div>
-      <div className="nx-pipeline-card__badges">
-        {card.hot && <Badge label="Hot" tone="gold" />}
-        {card.unread && <Badge label="Unread" tone="blue" />}
-        {card.suppressed && <Badge label="Suppressed" tone="red" />}
-        {card.automation.toLowerCase().includes('auto') && <Badge label="Auto" tone="green" />}
-      </div>
-      <div className="nx-pipeline-card__quick">
-        <button type="button" onClick={(event) => { event.stopPropagation(); onOpenCommandView(card.thread.id) }}>{actionLabel('compact')}</button>
-        <button type="button" onClick={(event) => { event.stopPropagation(); onThreadAction(card.thread.id, 'pause_automation') }}>Pause Auto</button>
-      </div>
-    </article>
-  )
-}
-
-function PipelineDealCard({
-  card,
-  cardMode,
-  selected,
-  onSelect,
-  onOpenCommandView,
-  onThreadAction,
-}: {
-  card: PipelineCardModel
-  cardMode: 'medium' | 'expanded' | 'full'
-  selected: boolean
-  onSelect: (id: string) => void
-  onOpenCommandView: (threadId?: string | null) => void
-  onThreadAction: (id: string, action: string) => void | Promise<void>
-}) {
-  return (
-    <article
-      className={cls('nx-pipeline-card', `is-${cardMode}`, `is-${toneForPriority(card.priority)}`, selected && 'is-selected')}
-      onClick={() => onSelect(card.thread.id)}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault()
-          onSelect(card.thread.id)
-        }
-      }}
-      role="button"
-      tabIndex={0}
-    >
-      <div className="nx-pipeline-card__top">
-        <div>
-          <strong>{card.sellerName}</strong>
-          <p>{card.address}</p>
-        </div>
-        <div className="nx-pipeline-card__signal">
-          <span>{card.market}</span>
-          <small>{card.zip}</small>
-        </div>
-      </div>
-      <div className="nx-pipeline-card__badges">
-        <Badge label={formatStageText(card.status)} tone="neutral" />
-        <Badge label={formatStageText(card.stage)} tone="blue" />
-        {card.hot && <Badge label="Hot" tone="gold" />}
-        {card.unread && <Badge label="Unread" tone="cyan" />}
-        {card.followUpDue && <Badge label="Due" tone="orange" />}
-        {card.suppressed && <Badge label="Suppressed" tone="red" />}
-      </div>
-      <div className="nx-pipeline-card__grid">
-        <div>
-          <span>Intent</span>
-          <strong>{formatStageText(card.lastIntent)}</strong>
-        </div>
-        <div>
-          <span>Next</span>
-          <strong>{card.nextAction}</strong>
-        </div>
-        <div>
-          <span>Automation</span>
-          <strong>{card.automation}</strong>
-        </div>
-        <div>
-          <span>Last Contact</span>
-          <strong>{card.lastContact ? formatRelativeTime(card.lastContact) : 'Pending'}</strong>
-        </div>
-      </div>
-      <div className="nx-pipeline-card__snippet">{card.snippet}</div>
-      <div className="nx-pipeline-card__chips">
-        {card.value !== null && <MetricChip label="Value" value={formatCurrency(card.value)} tone="green" />}
-        {card.equityPercent !== null && <MetricChip label="Equity" value={formatPercent(card.equityPercent)} tone="blue" />}
-        {card.repairs !== null && <MetricChip label="Repairs" value={formatCurrency(card.repairs)} tone="orange" />}
-      </div>
-      <div className="nx-pipeline-card__quick">
-        <button type="button" onClick={(event) => { event.stopPropagation(); onSelect(card.thread.id) }}>Open Thread</button>
-        <button type="button" onClick={(event) => { event.stopPropagation(); onOpenCommandView(card.thread.id) }}>{actionLabel(cardMode === 'medium' ? 'medium' : 'full')}</button>
-        <button type="button" onClick={(event) => { event.stopPropagation(); onThreadAction(card.thread.id, 'snooze') }}>Snooze</button>
-        <button type="button" onClick={(event) => { event.stopPropagation(); onThreadAction(card.thread.id, 'pause_automation') }}>Pause Auto</button>
-        <button type="button" onClick={(event) => { event.stopPropagation(); onSelect(card.thread.id) }}>Follow-Up</button>
-      </div>
-    </article>
-  )
-}
-
-function Badge({ label, tone }: { label: string; tone: StageTone }) {
-  return <span className={cls('nx-pipeline-badge', `is-${tone}`)}>{label}</span>
-}
-
-function MetricChip({ label, value, tone }: { label: string; value: string; tone: StageTone }) {
-  return (
-    <div className={cls('nx-pipeline-metric-chip', `is-${tone}`)}>
-      <span>{label}</span>
-      <strong>{value}</strong>
     </div>
   )
 }
+
+function LaneHeader({ stage, compact }: { stage: StageModel; compact: boolean }) {
+  const healthPct = stage.health
+  const healthTone = healthPct > 60 ? 'green' : healthPct > 30 ? 'amber' : healthPct > 0 ? 'red' : 'muted'
+  return (
+    <header className="plv-lane__header">
+      <div className="plv-lane__title-row">
+        <span className="plv-lane__name">{stage.def.label}</span>
+        <span className={cls('plv-lane__count', stage.count > 0 && `is-${stage.def.tone}`)}>{stage.count}</span>
+      </div>
+      {stage.count > 0 && (
+        <div className="plv-lane__health-track">
+          <div className={cls('plv-lane__health-fill', `is-${healthTone}`)} style={{ width: `${healthPct}%` }} />
+        </div>
+      )}
+      {!compact && stage.count > 0 && (
+        <div className="plv-lane__stats">
+          {stage.hotCount > 0    && <span className="plv-lane__stat is-amber">🔥{stage.hotCount}</span>}
+          {stage.dueCount > 0    && <span className="plv-lane__stat is-amber">⏰{stage.dueCount}</span>}
+          {stage.stuckCount > 0  && <span className="plv-lane__stat is-red">⚑{stage.stuckCount}</span>}
+          {stage.autoCount > 0   && <span className="plv-lane__stat is-green">⚡{stage.autoCount}</span>}
+          <span className="plv-lane__stat is-muted">{stage.avgAge}</span>
+        </div>
+      )}
+    </header>
+  )
+}
+
+function EmptyLane({ label }: { label: string }) {
+  return (
+    <div className="plv-empty-lane">
+      <span className="plv-empty-lane__icon">·</span>
+      <span>No deals in {label}</span>
+    </div>
+  )
+}
+
+// ── Card components ───────────────────────────────────────────────────────────
+
+function CompactCard({ card, selected, onSelect, onOpenCommandView }: {
+  card: DealCard; selected: boolean
+  onSelect: (id: string) => void; onOpenCommandView: (id?: string | null) => void
+}) {
+  const accent = priorityAccent(card.priority, card.hot)
+  return (
+    <article
+      className={cls('plv-card plv-card--compact', `is-accent-${accent}`, selected && 'is-selected')}
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelect(card.thread.id)}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(card.thread.id) } }}
+    >
+      <div className="plv-card__accent" />
+      <div className="plv-card__body">
+        <div className="plv-card__seller">{card.sellerName}</div>
+        <div className="plv-card__address">{card.address}</div>
+        <div className="plv-card__chips-row">
+          {card.hot      && <span className="plv-chip is-hot">Hot</span>}
+          {card.unread   && <span className="plv-chip is-unread">New</span>}
+          {card.followUpDue && <span className="plv-chip is-due">Due</span>}
+        </div>
+        <div className="plv-card__snippet">{card.snippet}</div>
+        <div className="plv-card__footer">
+          <span className="plv-card__age">{card.lastContact ? formatRelativeTime(card.lastContact) : '—'}</span>
+          <button
+            type="button"
+            className="plv-card__open-btn"
+            onClick={e => { e.stopPropagation(); onOpenCommandView(card.thread.id) }}
+          >
+            ↗
+          </button>
+        </div>
+      </div>
+    </article>
+  )
+}
+
+function FocusedCard({ card, selected, onSelect, onOpenCommandView, onThreadAction }: {
+  card: DealCard; selected: boolean
+  onSelect: (id: string) => void; onOpenCommandView: (id?: string | null) => void
+  onThreadAction: (id: string, action: string) => void | Promise<void>
+}) {
+  const accent = priorityAccent(card.priority, card.hot)
+  return (
+    <article
+      className={cls('plv-card plv-card--focused', `is-accent-${accent}`, selected && 'is-selected')}
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelect(card.thread.id)}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(card.thread.id) } }}
+    >
+      <div className="plv-card__accent" />
+      <div className="plv-card__body">
+        <div className="plv-card__header-row">
+          <div>
+            <div className="plv-card__seller">{card.sellerName}</div>
+            <div className="plv-card__address">{card.address}</div>
+          </div>
+          <div className="plv-card__market">{card.market}</div>
+        </div>
+        <div className="plv-card__chips-row">
+          {card.hot         && <span className="plv-chip is-hot">Hot</span>}
+          {card.unread      && <span className="plv-chip is-unread">New Reply</span>}
+          {card.followUpDue && <span className="plv-chip is-due">Due</span>}
+          {(card.automation.toLowerCase().includes('auto') || card.automation.toLowerCase().includes('active')) &&
+            <span className="plv-chip is-auto">Auto</span>}
+          {card.suppressed  && <span className="plv-chip is-suppressed">Suppressed</span>}
+        </div>
+        <div className="plv-card__meta-row">
+          <span className="plv-card__meta-label">Intent</span>
+          <span className="plv-card__meta-val">{stageFmt(card.lastIntent)}</span>
+          <span className="plv-card__meta-label">Next</span>
+          <span className="plv-card__meta-val">{card.nextAction}</span>
+        </div>
+        <div className="plv-card__snippet">{card.snippet}</div>
+        <div className="plv-card__footer">
+          <span className="plv-card__age">{card.lastContact ? formatRelativeTime(card.lastContact) : '—'}</span>
+          {card.value !== null && (
+            <span className="plv-metric is-green">{formatCurrency(card.value)}</span>
+          )}
+          {card.equityPct !== null && (
+            <span className="plv-metric is-blue">{formatPercent(card.equityPct)} eq</span>
+          )}
+        </div>
+        <div className="plv-card__hover-actions">
+          <button type="button" className="plv-card__action-btn" onClick={e => { e.stopPropagation(); onOpenCommandView(card.thread.id) }}>
+            Command View
+          </button>
+          <button type="button" className="plv-card__action-btn" onClick={e => { e.stopPropagation(); onThreadAction(card.thread.id, 'pause_automation') }}>
+            Pause Auto
+          </button>
+        </div>
+      </div>
+    </article>
+  )
+}
+
+function KanbanCard({ card, selected, isDragging, compact, onDragStart, onDragEnd, onSelect, onOpenCommandView, onThreadAction }: {
+  card: DealCard; selected: boolean; isDragging: boolean; compact: boolean
+  onDragStart: (e: React.DragEvent, id: string) => void; onDragEnd: () => void
+  onSelect: (id: string) => void; onOpenCommandView: (id?: string | null) => void
+  onThreadAction: (id: string, action: string) => void | Promise<void>
+}) {
+  const accent = priorityAccent(card.priority, card.hot)
+  return (
+    <article
+      className={cls(
+        'plv-card', compact ? 'plv-card--kanban-sm' : 'plv-card--kanban',
+        `is-accent-${accent}`, selected && 'is-selected', isDragging && 'is-dragging',
+      )}
+      role="button"
+      tabIndex={0}
+      draggable
+      onDragStart={e => onDragStart(e, card.thread.id)}
+      onDragEnd={onDragEnd}
+      onClick={() => onSelect(card.thread.id)}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(card.thread.id) } }}
+    >
+      <div className="plv-card__accent" />
+      <div className="plv-card__body">
+        <div className="plv-card__seller">{card.sellerName}</div>
+        {!compact && <div className="plv-card__address">{card.address}</div>}
+        <div className="plv-card__chips-row">
+          {card.hot         && <span className="plv-chip is-hot">Hot</span>}
+          {card.unread      && <span className="plv-chip is-unread">New</span>}
+          {card.followUpDue && <span className="plv-chip is-due">Due</span>}
+          {(card.automation.toLowerCase().includes('auto') || card.automation.toLowerCase().includes('active')) &&
+            <span className="plv-chip is-auto">A</span>}
+        </div>
+        {!compact && <div className="plv-card__snippet">{card.snippet}</div>}
+        <div className="plv-card__footer">
+          <span className="plv-card__age">{card.lastContact ? formatRelativeTime(card.lastContact) : '—'}</span>
+          {card.value !== null && <span className="plv-metric is-green">{formatCurrency(card.value)}</span>}
+        </div>
+        <div className="plv-card__hover-actions">
+          <button type="button" className="plv-card__action-btn" onClick={e => { e.stopPropagation(); onOpenCommandView(card.thread.id) }}>
+            ↗ Open
+          </button>
+          <button type="button" className="plv-card__action-btn is-quiet" onClick={e => { e.stopPropagation(); onThreadAction(card.thread.id, 'pause_automation') }}>
+            Pause
+          </button>
+        </div>
+      </div>
+    </article>
+  )
+}
+
+// ── Selected deal panel (75/100%) ─────────────────────────────────────────────
+
+function SelectedDealPanel({ card, onOpenCommandView, onThreadAction }: {
+  card: DealCard
+  onOpenCommandView: (id?: string | null) => void
+  onThreadAction: (id: string, action: string) => void | Promise<void>
+}) {
+  const accent = priorityAccent(card.priority, card.hot)
+  return (
+    <div className="plv-deal-detail">
+      <div className={cls('plv-deal-detail__hero', `is-accent-${accent}`)}>
+        <div className="plv-deal-detail__address">{card.address}</div>
+        <div className="plv-deal-detail__seller">{card.sellerName} · {card.market}</div>
+        <div className="plv-deal-detail__chips">
+          {card.hot         && <span className="plv-chip is-hot">Hot</span>}
+          {card.unread      && <span className="plv-chip is-unread">New Reply</span>}
+          {card.followUpDue && <span className="plv-chip is-due">Follow-Up Due</span>}
+          {card.suppressed  && <span className="plv-chip is-suppressed">Suppressed</span>}
+        </div>
+      </div>
+
+      <div className="plv-deal-detail__grid">
+        <DetailRow label="Status"       value={stageFmt(card.status)} />
+        <DetailRow label="Stage"        value={stageFmt(card.priority)} />
+        <DetailRow label="Priority"     value={stageFmt(card.priority)} />
+        <DetailRow label="Last Contact" value={card.lastContact ? formatRelativeTime(card.lastContact) : 'Pending'} />
+        <DetailRow label="Phone"        value={formatPhone(card.phone)} />
+        <DetailRow label="County"       value={card.county} />
+      </div>
+
+      <div className="plv-deal-detail__section">
+        <span className="plv-deal-detail__section-label">Conversation</span>
+        <p className="plv-deal-detail__text">{card.snippet}</p>
+      </div>
+
+      <div className="plv-deal-detail__section">
+        <span className="plv-deal-detail__section-label">Next Action</span>
+        <p className="plv-deal-detail__text">{card.nextAction}</p>
+      </div>
+
+      <div className="plv-deal-detail__metrics">
+        {card.value !== null && <MetricBlock label="Est. Value" value={formatCurrency(card.value)} tone="green" />}
+        {card.equityPct !== null && <MetricBlock label="Equity" value={formatPercent(card.equityPct)} tone="blue" />}
+        {card.repairs !== null && <MetricBlock label="Repairs" value={formatCurrency(card.repairs)} tone="amber" />}
+      </div>
+
+      <div className="plv-deal-detail__section">
+        <span className="plv-deal-detail__section-label">Intelligence</span>
+        <div className="plv-deal-detail__intel">
+          <DetailRow label="Intent"      value={stageFmt(card.lastIntent)} />
+          <DetailRow label="Automation"  value={card.automation || '—'} />
+          <DetailRow label="Confidence"  value={`${Math.round(card.confidence * 100)}/100`} />
+          <DetailRow label="Stage Age"   value={ageLabel(daysSince(card.thread))} />
+        </div>
+      </div>
+
+      <div className="plv-deal-detail__actions">
+        <button type="button" className="plv-action-btn is-primary" onClick={() => onOpenCommandView(card.thread.id)}>
+          Open Command View
+        </button>
+        <button type="button" className="plv-action-btn" onClick={() => onOpenCommandView(card.thread.id)}>
+          Open Conversation
+        </button>
+        <button type="button" className="plv-action-btn" onClick={() => onOpenCommandView(card.thread.id)}>
+          Comp Intelligence
+        </button>
+        <div className="plv-deal-detail__actions-divider" />
+        <button type="button" className="plv-action-btn is-warning" onClick={() => onThreadAction(card.thread.id, 'pause_automation')}>
+          Pause Automation
+        </button>
+        <button type="button" className="plv-action-btn is-danger" onClick={() => onThreadAction(card.thread.id, 'suppress')}>
+          Suppress
+        </button>
+        <button type="button" className="plv-action-btn is-danger" onClick={() => onThreadAction(card.thread.id, 'archive')}>
+          DNC
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="plv-detail-row">
+      <span className="plv-detail-row__label">{label}</span>
+      <span className="plv-detail-row__value">{value}</span>
+    </div>
+  )
+}
+
+function MetricBlock({ label, value, tone }: { label: string; value: string; tone: string }) {
+  return (
+    <div className={cls('plv-metric-block', `is-${tone}`)}>
+      <span className="plv-metric-block__label">{label}</span>
+      <strong className="plv-metric-block__value">{value}</strong>
+    </div>
+  )
+}
+
+// ── Deal drawer (50% slide-up) ─────────────────────────────────────────────────
+
+function DealDrawer({ card, onClose, onOpenCommandView, onThreadAction }: {
+  card: DealCard; onClose: () => void
+  onOpenCommandView: (id?: string | null) => void
+  onThreadAction: (id: string, action: string) => void | Promise<void>
+}) {
+  return (
+    <div className="plv-drawer">
+      <div className="plv-drawer__header">
+        <div className="plv-drawer__title">
+          <strong>{card.sellerName}</strong>
+          <span>{card.address}</span>
+        </div>
+        <button type="button" className="plv-drawer__close" onClick={onClose} aria-label="Close detail">✕</button>
+      </div>
+      <div className="plv-drawer__body">
+        <SelectedDealPanel card={card} onOpenCommandView={onOpenCommandView} onThreadAction={onThreadAction} />
+      </div>
+    </div>
+  )
+}
+
+// ── Metric chip (inline) ──────────────────────────────────────────────────────
+
+// plv-metric is used inline in cards — keeping it simple
+// MetricBlock is used in detail panels
+
+// (All types are used above — nothing unused)

@@ -19,6 +19,7 @@ import type {
 } from '../buyer/buyerCommandData'
 import { loadCensusLayerPoints, type CensusMetric, type CensusLayerPoint } from '../../lib/data/censusMapData'
 import { loadBuyerDemandLayerPoints, type BuyerDemandMetric, type BuyerDemandLayerPoint, formatShortPrice } from '../../lib/data/buyerActivityMapData'
+import { loadCensusForProperty, loadCensusMockPoints, calculateInvestorOpportunityScore, type CensusData, type CensusMetricExtended } from '../../lib/data/censusData'
 
 const DARK_MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
 const CARTO_GLYPHS_URL = 'https://basemaps.cartocdn.com/gl/positron-gl-style/fonts/{fontstack}/{range}.pbf'
@@ -96,6 +97,11 @@ const CENSUS_LAYER_IDS = {
   renterDensity: 'census-renter-density',
   housingAge: 'census-housing-age',
   acquisitionPressure: 'census-acquisition-pressure',
+  ownerOccupancy: 'census-owner-occupancy',
+  medianHomeValue: 'census-median-home-value',
+  medianRent: 'census-median-rent',
+  investorOpportunity: 'census-investor-opportunity',
+  censusHeatmap: 'census-composite-heatmap',
 } as const
 const BUYER_DEMAND_LAYER_IDS = {
   activity6mo: 'buyer-demand-activity-6mo',
@@ -338,6 +344,11 @@ type CensusLayerToggles = {
   renterDensity: boolean
   housingAge: boolean
   acquisitionPressure: boolean
+  ownerOccupancy: boolean
+  medianHomeValue: boolean
+  medianRent: boolean
+  investorOpportunity: boolean
+  censusHeatmap: boolean
 }
 
 type BuyerDemandLayerToggles = {
@@ -353,7 +364,25 @@ const defaultCensusLayers: CensusLayerToggles = {
   renterDensity: false,
   housingAge: false,
   acquisitionPressure: false,
+  ownerOccupancy: false,
+  medianHomeValue: false,
+  medianRent: false,
+  investorOpportunity: false,
+  censusHeatmap: false,
 }
+
+// Census toggle definitions for UI dock
+const CENSUS_TOGGLE_DEFS: Array<{ key: keyof CensusLayerToggles; label: string; color: string }> = [
+  { key: 'censusHeatmap',      label: 'Heatmap',    color: '#a78bfa' },
+  { key: 'vacancyHeat',        label: 'Vacancy',    color: '#ef4444' },
+  { key: 'incomeHeat',         label: 'Income',     color: '#f59e0b' },
+  { key: 'renterDensity',      label: 'Renter%',    color: '#3b82f6' },
+  { key: 'ownerOccupancy',     label: 'Owner%',     color: '#10b981' },
+  { key: 'medianHomeValue',    label: 'Med Value',  color: '#06b6d4' },
+  { key: 'medianRent',         label: 'Med Rent',   color: '#8b5cf6' },
+  { key: 'housingAge',         label: 'Bldg Age',   color: '#94a3b8' },
+  { key: 'investorOpportunity',label: 'Opp Score',  color: '#22c55e' },
+]
 
 const defaultBuyerDemandLayers: BuyerDemandLayerToggles = {
   activity6mo: false,
@@ -1331,9 +1360,77 @@ const BuyerSelectionCard = ({
   )
 }
 
+// ── Census Intelligence Panel ──────────────────────────────────────────────────
+const CensusIntelPanel = ({ data, styleMode }: { data: CensusData; styleMode: MapStyleMode }) => {
+  const { score, grade, summary } = calculateInvestorOpportunityScore(data)
+  const gradeColor: Record<string, string> = {
+    A: '#14b8a6', B: '#f59e0b', C: '#fb923c', Watchlist: '#6b7280',
+  }
+  const fmt = (n: number | undefined, prefix = '', suffix = '') =>
+    n != null && Number.isFinite(n) ? `${prefix}${n.toLocaleString()}${suffix}` : '—'
+  const fmtK = (n: number | undefined) =>
+    n != null && Number.isFinite(n) ? `$${Math.round(n / 1000)}K` : '—'
+  const fmtPct = (n: number | undefined) =>
+    n != null && Number.isFinite(n) ? `${Math.round(n)}%` : '—'
+
+  return (
+    <div className="nx-icm__census-panel">
+      <div className="nx-icm__census-panel-head">
+        <span className="nx-icm__census-panel-title">
+          <span className="nx-icm__census-dot" />
+          Census Intel
+        </span>
+        <span
+          className="nx-icm__census-grade"
+          style={{ color: gradeColor[grade] ?? '#6b7280', borderColor: gradeColor[grade] ?? '#6b7280' }}
+        >
+          {grade}
+        </span>
+        <span className="nx-icm__census-score">{score}<span>/100</span></span>
+      </div>
+      <div className={cls('nx-icm__census-grid', `is-${styleMode}`)}>
+        <div className="nx-icm__census-stat">
+          <span>Med. Income</span>
+          <strong>{fmtK(data.median_household_income)}</strong>
+        </div>
+        <div className="nx-icm__census-stat">
+          <span>Vacancy</span>
+          <strong>{fmtPct(data.vacancy_rate)}</strong>
+        </div>
+        <div className="nx-icm__census-stat">
+          <span>Renter%</span>
+          <strong>{fmtPct(data.renter_occupied_percent)}</strong>
+        </div>
+        <div className="nx-icm__census-stat">
+          <span>Owner%</span>
+          <strong>{fmtPct(data.owner_occupied_percent)}</strong>
+        </div>
+        <div className="nx-icm__census-stat">
+          <span>Med. Rent</span>
+          <strong>{fmt(data.median_gross_rent, '$')}</strong>
+        </div>
+        <div className="nx-icm__census-stat">
+          <span>Med. Value</span>
+          <strong>{fmtK(data.median_home_value)}</strong>
+        </div>
+        <div className="nx-icm__census-stat">
+          <span>Pop/mi²</span>
+          <strong>{fmt(data.population_density)}</strong>
+        </div>
+        <div className="nx-icm__census-stat is-highlight">
+          <span>Opp Score</span>
+          <strong style={{ color: gradeColor[grade] }}>{score}</strong>
+        </div>
+      </div>
+      <p className="nx-icm__census-summary">◆ {summary}</p>
+    </div>
+  )
+}
+
 const MiniThreadPopup = ({
   thread,
   messages,
+
   loading,
   draftText,
   disabled,
@@ -1561,7 +1658,9 @@ export function InboxCommandMap({
   const [buyerDemandLayers, setBuyerDemandLayers] = useState<BuyerDemandLayerToggles>(defaultBuyerDemandLayers)
   const [censusGeojson, setCensusGeojson] = useState<FeatureCollection<Point, Record<string, unknown>>>(EMPTY_GEOJSON)
   const [buyerDemandGeojson, setBuyerDemandGeojson] = useState<FeatureCollection<Point, Record<string, unknown>>>(EMPTY_GEOJSON)
+  const [selectedThreadCensus, setSelectedThreadCensus] = useState<CensusData | null>(null)
   const [selectedBuyerPurchase, setSelectedBuyerPurchase] = useState<BuyerRecentPurchase | null>(null)
+
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [dockTier, setDockTier] = useState<'mini' | 'compact' | 'full'>('full')
   const [mapStyleMode, setMapStyleMode] = useState<MapStyleMode>(initialMapStyleMode)
@@ -2129,8 +2228,82 @@ export function InboxCommandMap({
           layout: { visibility: 'none' },
         })
       }
+      if (!map.getLayer(CENSUS_LAYER_IDS.ownerOccupancy)) {
+        map.addLayer({
+          id: CENSUS_LAYER_IDS.ownerOccupancy, type: 'circle', source: CENSUS_SOURCE_ID,
+          filter: ['==', ['get', 'metric'], 'owner_occupancy'],
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['get', 'score'], 0, 4, 100, 20],
+            'circle-color': '#10b981', 'circle-opacity': 0.52, 'circle-blur': 0.3,
+            'circle-stroke-width': 1, 'circle-stroke-color': 'rgba(16,185,129,0.35)',
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+      if (!map.getLayer(CENSUS_LAYER_IDS.medianHomeValue)) {
+        map.addLayer({
+          id: CENSUS_LAYER_IDS.medianHomeValue, type: 'circle', source: CENSUS_SOURCE_ID,
+          filter: ['==', ['get', 'metric'], 'median_home_value'],
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['get', 'score'], 0, 4, 100, 22],
+            'circle-color': '#06b6d4', 'circle-opacity': 0.52, 'circle-blur': 0.28,
+            'circle-stroke-width': 1, 'circle-stroke-color': 'rgba(6,182,212,0.35)',
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+      if (!map.getLayer(CENSUS_LAYER_IDS.medianRent)) {
+        map.addLayer({
+          id: CENSUS_LAYER_IDS.medianRent, type: 'circle', source: CENSUS_SOURCE_ID,
+          filter: ['==', ['get', 'metric'], 'median_rent'],
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['get', 'score'], 0, 4, 100, 20],
+            'circle-color': '#8b5cf6', 'circle-opacity': 0.52, 'circle-blur': 0.3,
+            'circle-stroke-width': 1, 'circle-stroke-color': 'rgba(139,92,246,0.35)',
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+      if (!map.getLayer(CENSUS_LAYER_IDS.investorOpportunity)) {
+        map.addLayer({
+          id: CENSUS_LAYER_IDS.investorOpportunity, type: 'circle', source: CENSUS_SOURCE_ID,
+          filter: ['==', ['get', 'metric'], 'investor_opportunity'],
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['get', 'score'], 0, 5, 100, 26],
+            'circle-color': ['interpolate', ['linear'], ['get', 'score'],
+              0, '#16a34a', 50, '#4ade80', 100, '#86efac',
+            ],
+            'circle-opacity': 0.60,
+            'circle-blur': 0.22,
+            'circle-stroke-width': 1.5, 'circle-stroke-color': 'rgba(34,197,94,0.5)',
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+      // Composite heatmap — rendered beneath all circle census layers
+      if (!map.getLayer(CENSUS_LAYER_IDS.censusHeatmap)) {
+        map.addLayer({
+          id: CENSUS_LAYER_IDS.censusHeatmap, type: 'heatmap', source: CENSUS_SOURCE_ID,
+          paint: {
+            'heatmap-weight': ['interpolate', ['linear'], ['get', 'score'], 0, 0, 100, 1],
+            'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 5, 0.6, 11, 1.4],
+            'heatmap-color': [
+              'interpolate', ['linear'], ['heatmap-density'],
+              0,    'rgba(0,0,0,0)',
+              0.15, 'rgba(67,56,202,0.4)',
+              0.4,  'rgba(124,58,237,0.5)',
+              0.65, 'rgba(236,72,153,0.55)',
+              0.85, 'rgba(245,158,11,0.65)',
+              1,    'rgba(239,68,68,0.7)',
+            ],
+            'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 5, 18, 11, 42],
+            'heatmap-opacity': 0.45,
+          },
+          layout: { visibility: 'none' },
+        }, CENSUS_LAYER_IDS.incomeHeat) // insert before circle layers
+      }
 
-      // ── Buyer Demand overlay source ────────────────────────────────
+
       if (!map.getSource(BUYER_DEMAND_SOURCE_ID)) {
         map.addSource(BUYER_DEMAND_SOURCE_ID, { type: 'geojson', data: EMPTY_GEOJSON })
       }
@@ -2852,18 +3025,23 @@ export function InboxCommandMap({
 
   // ── Census layer data loading ──────────────────────────────────────────────
   useEffect(() => {
+    // Map toggle keys → CensusMetricExtended values
+    const metricMap: Record<keyof CensusLayerToggles, CensusMetricExtended> = {
+      incomeHeat:          'income_heat',
+      vacancyHeat:         'vacancy_heat',
+      renterDensity:       'renter_density',
+      housingAge:          'housing_age',
+      acquisitionPressure: 'acquisition_pressure',
+      ownerOccupancy:      'owner_occupancy',
+      medianHomeValue:     'median_home_value',
+      medianRent:          'median_rent',
+      investorOpportunity: 'investor_opportunity',
+      censusHeatmap:       'census_heatmap',
+    }
+
     const activeMetrics = (Object.entries(censusLayers) as Array<[keyof CensusLayerToggles, boolean]>)
       .filter(([, on]) => on)
-      .map(([key]) => {
-        const metricMap: Record<keyof CensusLayerToggles, CensusMetric> = {
-          incomeHeat: 'income_heat',
-          vacancyHeat: 'vacancy_heat',
-          renterDensity: 'renter_density',
-          housingAge: 'housing_age',
-          acquisitionPressure: 'acquisition_pressure',
-        }
-        return metricMap[key]
-      })
+      .map(([key]) => metricMap[key])
 
     if (activeMetrics.length === 0) {
       setCensusGeojson(EMPTY_GEOJSON)
@@ -2871,18 +3049,62 @@ export function InboxCommandMap({
     }
 
     let cancelled = false
-    Promise.all(activeMetrics.map((m) => loadCensusLayerPoints(m))).then((results) => {
+
+    // For legacy CensusMetric (existing Supabase path), only the original 5 metrics can be queried
+    const supabaseMetrics = activeMetrics.filter((m): m is CensusMetric =>
+      ['income_heat', 'vacancy_heat', 'renter_density', 'housing_age', 'acquisition_pressure'].includes(m)
+    )
+    const mockOnlyMetrics = activeMetrics.filter((m) =>
+      !['income_heat', 'vacancy_heat', 'renter_density', 'housing_age', 'acquisition_pressure'].includes(m)
+    )
+
+    const supabasePromise = supabaseMetrics.length > 0
+      ? Promise.all(supabaseMetrics.map((m) => loadCensusLayerPoints(m as CensusMetric)))
+      : Promise.resolve([] as CensusLayerPoint[][])
+
+    supabasePromise.then((supabaseResults) => {
       if (cancelled) return
-      const allPoints: CensusLayerPoint[] = results.flat()
+      const supabasePoints = supabaseResults.flat()
+
+      // Collect mock points for new metrics + fallback for empty Supabase results
+      const mockPoints = mockOnlyMetrics.flatMap((m) => loadCensusMockPoints(m))
+
+      // Fallback: if Supabase returned nothing for a queried metric, fill with mocks
+      supabaseMetrics.forEach((m, idx) => {
+        if (!supabaseResults[idx]?.length) {
+          mockPoints.push(...loadCensusMockPoints(m))
+        }
+      })
+
+      const allPoints = [...supabasePoints, ...mockPoints]
       const features = allPoints.map((pt) => ({
         type: 'Feature' as const,
         geometry: { type: 'Point' as const, coordinates: [pt.lng, pt.lat] as [number, number] },
         properties: { id: pt.id, metric: pt.metric, score: pt.score, value: pt.value, label: pt.label, geo_key: pt.geo_key, geo_level: pt.geo_level },
       }))
       setCensusGeojson({ type: 'FeatureCollection', features })
-    }).catch(() => { /* silent — map just shows no census bubbles */ })
+    }).catch(() => {
+      if (cancelled) return
+      // Full fallback — render mocks for all active metrics
+      const fallbackPoints = activeMetrics.flatMap((m) => loadCensusMockPoints(m))
+      const features = fallbackPoints.map((pt) => ({
+        type: 'Feature' as const,
+        geometry: { type: 'Point' as const, coordinates: [pt.lng, pt.lat] as [number, number] },
+        properties: { id: pt.id, metric: pt.metric, score: pt.score, value: pt.value, label: pt.label, geo_key: pt.geo_key, geo_level: pt.geo_level },
+      }))
+      setCensusGeojson({ type: 'FeatureCollection', features })
+    })
+
     return () => { cancelled = true }
   }, [censusLayers])
+
+  // ── Census intelligence for selected thread ────────────────────────────────
+  useEffect(() => {
+    if (!selectedThread) { setSelectedThreadCensus(null); return }
+    loadCensusForProperty(selectedThread).then(setSelectedThreadCensus).catch(() => setSelectedThreadCensus(null))
+  }, [selectedThread?.id])
+
+
 
   // ── Buyer demand layer data loading ───────────────────────────────────────
   useEffect(() => {
@@ -2939,11 +3161,16 @@ export function InboxCommandMap({
     ALL_CENSUS_LAYER_IDS.forEach((layerId) => {
       if (map.getLayer(layerId)) {
         const metricMap: Record<string, keyof CensusLayerToggles> = {
-          [CENSUS_LAYER_IDS.incomeHeat]: 'incomeHeat',
-          [CENSUS_LAYER_IDS.vacancyHeat]: 'vacancyHeat',
-          [CENSUS_LAYER_IDS.renterDensity]: 'renterDensity',
-          [CENSUS_LAYER_IDS.housingAge]: 'housingAge',
+          [CENSUS_LAYER_IDS.incomeHeat]:          'incomeHeat',
+          [CENSUS_LAYER_IDS.vacancyHeat]:         'vacancyHeat',
+          [CENSUS_LAYER_IDS.renterDensity]:       'renterDensity',
+          [CENSUS_LAYER_IDS.housingAge]:          'housingAge',
           [CENSUS_LAYER_IDS.acquisitionPressure]: 'acquisitionPressure',
+          [CENSUS_LAYER_IDS.ownerOccupancy]:      'ownerOccupancy',
+          [CENSUS_LAYER_IDS.medianHomeValue]:     'medianHomeValue',
+          [CENSUS_LAYER_IDS.medianRent]:          'medianRent',
+          [CENSUS_LAYER_IDS.investorOpportunity]: 'investorOpportunity',
+          [CENSUS_LAYER_IDS.censusHeatmap]:       'censusHeatmap',
         }
         const key = metricMap[layerId]
         const visible = key ? censusLayers[key] : false
@@ -2951,6 +3178,7 @@ export function InboxCommandMap({
       }
     })
   }, [censusLayers])
+
 
   // ── Buyer demand layer visibility ─────────────────────────────────────────
   useEffect(() => {
