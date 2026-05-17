@@ -61,6 +61,7 @@ import { Composer } from './components/Composer'
 import { ComposerTranslationBar } from './components/ComposerTranslationBar'
 import { IntelligencePanel } from './components/IntelligencePanel'
 import { CompIntelligenceWorkspace } from './components/CompIntelligenceWorkspace'
+import { SendQueueDashboard } from './components/SendQueueDashboard'
 import { InboxPipelineView } from './components/InboxPipelineView'
 import type { TemplateActionPayload } from './components/TemplatePopover'
 import { InboxActivityPanel } from './components/InboxActivityPanel'
@@ -624,26 +625,6 @@ export default function InboxPage() {
     return `${selectedWorkspaceViews.length} Views Active`
   }, [activeWorkspaceView, selectedWorkspaceViews.length])
 
-  const queueRows = useMemo(() => {
-    return filtered
-      .map((thread) => {
-        const decision = buildConversationDecision(thread)
-        const queueStatus = String((thread as any).queueStatus || (thread as any).queue_status || thread.deliveryStatus || '').trim() || 'waiting'
-        const nextTouch = String((thread as any).next_follow_up_at || (thread as any).follow_up_at || thread.lastOutboundAt || '').trim()
-        return {
-          thread,
-          decision,
-          queueStatus,
-          nextTouch,
-        }
-      })
-      .sort((left, right) => {
-        const a = new Date(left.nextTouch || left.thread.updatedAt || 0).getTime()
-        const b = new Date(right.nextTouch || right.thread.updatedAt || 0).getTime()
-        return b - a
-      })
-      .slice(0, 40)
-  }, [filtered])
 
   const calendarEvents = useMemo(() => {
     return filtered
@@ -2280,17 +2261,12 @@ export default function InboxPage() {
     if (view === 'queue') {
       return (
         <section className="nx-workspace-surface nx-workspace-surface--queue">
-          {queueRows.map(({ thread, decision, queueStatus, nextTouch }) => (
-            <button key={thread.id} type="button" className={cls('nx-workspace-data-row', selected?.id === thread.id && 'is-active')} onClick={() => handleSelect(thread.id)}>
-              <div>
-                <strong>{thread.ownerName || 'Property Thread'}</strong>
-                <span>{thread.propertyAddress || thread.subject || 'Property Unknown'}</span>
-              </div>
-              <div><label>Queue</label><span>{queueStatus || 'waiting'}</span></div>
-              <div><label>Automation</label><span>{decision.automation_status}</span></div>
-              <div><label>Next Touch</label><span>{nextTouch ? formatRelativeTime(nextTouch) : '—'}</span></div>
-            </button>
-          ))}
+          <SendQueueDashboard
+            queueModel={queueModel}
+            processorHealth={queueProcessorHealth}
+            queueCommandMode={queueCommandMode}
+            onSelectItem={handleSelect}
+          />
         </section>
       )
     }

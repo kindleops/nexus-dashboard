@@ -261,20 +261,12 @@ export function SendQueueDashboard({
 
   // ── Render ──────────────────────────────────────────────────────────────
 
-  if (!queueModel) {
-    return (
-      <div className="sqd sqd--loading">
-        <div className="sqd-spinner" />
-        <span>Loading queue diagnostics…</span>
-      </div>
-    )
-  }
-
   const health         = processorHealth?.status ?? 'unknown'
   const healthTone     = health === 'healthy' ? 'green' : health === 'warning' ? 'amber' : health === 'critical' ? 'red' : 'muted'
   const modeTone       = queueCommandMode === 'live' ? 'green' : queueCommandMode === 'safe' ? 'blue' : 'muted'
   const modeLabel      = queueCommandMode === 'live' ? 'Live Autopilot' : queueCommandMode === 'safe' ? 'Safe Autopilot' : 'Off'
   const totalItems     = items.length
+  const isLoading      = !queueModel
 
   return (
     <div className="sqd">
@@ -302,7 +294,10 @@ export function SendQueueDashboard({
           })}
         </div>
         <div className="sqd-pipeline__footer">
-          <span>{totalItems.toLocaleString()} rows loaded</span>
+          {isLoading
+            ? <span className="sqd-pipeline__loading"><span className="sqd-spinner sqd-spinner--sm" />Loading queue data…</span>
+            : <span>{totalItems.toLocaleString()} rows loaded</span>
+          }
           {processorHealth?.checkedAt && (
             <span className="sqd-pipeline__checked">Last checked {relTime(processorHealth.checkedAt)}</span>
           )}
@@ -326,22 +321,22 @@ export function SendQueueDashboard({
 
         <div className="sqd-hcard">
           <span className="sqd-hcard__label">Ready to Send</span>
-          <strong className={`sqd-hcard__value${queueModel.readyCount > 0 ? ' is-cyan' : ''}`}>{queueModel.readyCount}</strong>
+          <strong className={`sqd-hcard__value${(queueModel?.readyCount ?? 0) > 0 ? ' is-cyan' : ''}`}>{queueModel?.readyCount ?? '—'}</strong>
         </div>
 
         <div className="sqd-hcard">
           <span className="sqd-hcard__label">Scheduled</span>
-          <strong className="sqd-hcard__value is-blue">{queueModel.scheduledCount}</strong>
+          <strong className="sqd-hcard__value is-blue">{queueModel?.scheduledCount ?? '—'}</strong>
         </div>
 
         <div className="sqd-hcard">
           <span className="sqd-hcard__label">Sent Today</span>
-          <strong className={`sqd-hcard__value${queueModel.sentTodayCount > 0 ? ' is-green' : ''}`}>{queueModel.sentTodayCount}</strong>
+          <strong className={`sqd-hcard__value${(queueModel?.sentTodayCount ?? 0) > 0 ? ' is-green' : ''}`}>{queueModel?.sentTodayCount ?? '—'}</strong>
         </div>
 
         <div className="sqd-hcard">
           <span className="sqd-hcard__label">Delivered Today</span>
-          <strong className={`sqd-hcard__value${queueModel.deliveredTodayCount > 0 ? ' is-green' : ''}`}>{queueModel.deliveredTodayCount}</strong>
+          <strong className={`sqd-hcard__value${(queueModel?.deliveredTodayCount ?? 0) > 0 ? ' is-green' : ''}`}>{queueModel?.deliveredTodayCount ?? '—'}</strong>
         </div>
 
         <div className="sqd-hcard">
