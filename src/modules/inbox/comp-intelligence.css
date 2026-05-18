@@ -1234,3 +1234,62 @@
   .ci-comp-row__thumb { flex: 0 0 84px; height: 58px; }
   .ci-subject-card__img { flex: 0 0 120px; height: 100px; }
 }
+
+/* ── Filters Bar ────────────────────────────────────────────────────────── */
+
+.ci-filters-bar {
+  display: flex;
+  gap: 16px;
+  padding: 12px 20px;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.ci-filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ci-filter-group label {
+  font-size: 8px;
+  font-weight: 900;
+  text-transform: uppercase;
+  color: rgba(125, 150, 200, 0.45);
+  letter-spacing: 0.12em;
+}
+
+.ci-filter-group select {
+  background: rgba(10, 16, 32, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: rgba(210, 225, 255, 0.85);
+  font-size: 11px;
+  padding: 5px 8px;
+  outline: none;
+  cursor: pointer;
+  min-width: 100px;
+}
+
+.ci-filter-group select:focus {
+  border-color: rgba(72, 138, 236, 0.4);
+}
+
+.ci-list-status {
+  padding: 60px 20px;
+  text-align: center;
+  color: rgba(130, 155, 200, 0.5);
+  font-size: 12.5px;
+}
+
+.ci-list-status.is-empty strong {
+  display: block;
+  font-size: 14px;
+  color: rgba(220, 235, 255, 0.85);
+  margin-bottom: 8px;
+}
+
+.ci-list-status.is-empty p {
+  margin: 0;
+  opacity: 0.7;
+}

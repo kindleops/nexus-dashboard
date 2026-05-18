@@ -146,7 +146,8 @@ interface SendQueueDashboardProps {
   processorHealth: QueueProcessorHealth | null
   queueCommandMode: QueueCommandMode
   layoutMode?: ViewLayoutMode
-  onSelectItem?: (linkedThreadId: string) => void
+  selectedQueueId?: string | null
+  onSelectItem?: (item: QueueItem) => void
 }
 
 export function SendQueueDashboard({
@@ -154,6 +155,7 @@ export function SendQueueDashboard({
   processorHealth,
   queueCommandMode,
   layoutMode = 'full',
+  selectedQueueId = null,
   onSelectItem,
 }: SendQueueDashboardProps) {
   const [searchQuery, setSearchQuery]     = useState('')
@@ -578,13 +580,14 @@ export function SendQueueDashboard({
                     className={[
                       'sqd-table__row sqd-table__row--compact',
                       `sqd-table__row--${item.status}`,
-                      item.linkedInboxThreadId && onSelectItem ? 'is-linked' : '',
+                      onSelectItem ? 'is-linked' : '',
+                      selectedQueueId === item.queueId ? 'is-selected' : '',
                     ].filter(Boolean).join(' ')}
-                    onClick={() => item.linkedInboxThreadId && onSelectItem?.(item.linkedInboxThreadId)}
+                    onClick={() => onSelectItem?.(item)}
                   >
                     <div className="sqd-cell sqd-cell--seller">
                       <strong>{truncate(item.sellerName, 18)}</strong>
-                      <small>{item.market || '—'}</small>
+                      <small>{item.missingMessageEvent ? 'Sent queue row missing message event.' : (item.market || '—')}</small>
                     </div>
                     <span className="sqd-cell">{item.market || '—'}</span>
                     <span className="sqd-cell">
@@ -1062,14 +1065,15 @@ export function SendQueueDashboard({
                   className={[
                     'sqd-table__row',
                     `sqd-table__row--${item.status}`,
-                    item.linkedInboxThreadId && onSelectItem ? 'is-linked' : '',
+                    onSelectItem ? 'is-linked' : '',
+                    selectedQueueId === item.queueId ? 'is-selected' : '',
                   ].filter(Boolean).join(' ')}
-                  onClick={() => item.linkedInboxThreadId && onSelectItem?.(item.linkedInboxThreadId)}
-                  title={item.linkedInboxThreadId ? 'Click to open thread' : undefined}
+                  onClick={() => onSelectItem?.(item)}
+                  title={onSelectItem ? 'Click to inspect queue context' : undefined}
                 >
                   <div className="sqd-cell sqd-cell--seller">
                     <strong>{truncate(item.sellerName, 20)}</strong>
-                    <small>{truncate(item.propertyAddress, 24)}</small>
+                    <small>{item.missingMessageEvent ? 'Sent queue row missing message event.' : truncate(item.propertyAddress, 24)}</small>
                   </div>
                   <span className="sqd-cell">{item.market || '—'}</span>
                   <span className="sqd-cell">

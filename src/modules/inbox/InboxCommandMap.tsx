@@ -345,6 +345,17 @@ type ClusterCensusSummary = {
   metrics: Array<{ label: string; value: string }>
 }
 
+type MapLoadStage = 'stage_1' | 'stage_2'
+
+type SellerPinsPerfSnapshot = {
+  shown: number
+  cap: number
+  capHit: boolean
+  cacheHit: boolean
+  loadedAt: number | null
+  sampled: boolean
+}
+
 type CensusOverlaySelection = {
   feature: CensusOverlayFeature
   mode: 'hover' | 'selected'
@@ -370,7 +381,7 @@ type SellerPinLayerToggles = {
 }
 
 const defaultSellerPinLayers: SellerPinLayerToggles = {
-  sellerPins: false,
+  sellerPins: true,
   notContacted: true,
   contacted: true,
   newReplies: true,
@@ -757,9 +768,9 @@ const getPinRenderCap = (
   const density = getDensityMultiplier(settings.markerDensity)
   const base =
     layer === 'seller'
-      ? zoom < 6 ? 520 : zoom < 10 ? 760 : 980
+      ? zoom < 5 ? 450 : zoom < 9 ? 1100 : zoom < 12 ? 2200 : 3800
       : layer === 'buyer'
-        ? zoom < 6 ? 180 : zoom < 10 ? 280 : 420
+        ? zoom < 6 ? 160 : zoom < 10 ? 240 : 340
         : zoom < 8 ? 280 : 520
   const modeFactor =
     settings.performanceMode === 'speed'
@@ -769,8 +780,22 @@ const getPinRenderCap = (
         : settings.performanceMode === 'quality'
           ? 1.16
           : 1
-  return Math.max(layer === 'seller' ? 180 : 80, Math.round(base * density * modeFactor))
+  return Math.max(layer === 'seller' ? 300 : 80, Math.round(base * density * modeFactor))
 }
+
+const roundBound = (value: number): string => value.toFixed(2)
+const buildViewportCacheKey = (
+  bounds: { minLng: number; minLat: number; maxLng: number; maxLat: number },
+  zoom: number,
+  suffix: string,
+): string => [
+  roundBound(bounds.minLng),
+  roundBound(bounds.minLat),
+  roundBound(bounds.maxLng),
+  roundBound(bounds.maxLat),
+  Math.floor(zoom),
+  suffix,
+].join(':')
 
 const sortPinsForPerformance = (pins: CommandMapPin[]): CommandMapPin[] =>
   pins
@@ -2250,6 +2275,44 @@ const MiniThreadPopup = ({
   </div>
 )
 
+const MiniSellerPinPopup = ({
+  pin,
+  layoutMode,
+  onClose,
+  onOpenProperty,
+  onOpenQueue,
+}: {
+  pin: CommandMapSellerPin
+  layoutMode: ViewLayoutMode
+  onClose: () => void
+  onOpenProperty?: () => void
+  onOpenQueue?: () => void
+}) => (
+  <div onClick={(event) => event.stopPropagation()}>
+    <SellerIntelligenceCard
+      record={pin as unknown as Record<string, unknown>}
+      layoutMode={layoutMode}
+      variant="selected"
+      messages={[]}
+      loading={false}
+      disabled
+      onClose={onClose}
+    />
+    <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: 10, background: 'rgba(15,23,38,0.94)', border: '1px solid rgba(148,163,184,0.28)' }}>
+      <p style={{ margin: 0, color: '#cbd5e1', fontSize: 12 }}>No SMS thread yet — seller not contacted</p>
+      <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+        <button type="button" className="nx-seller-card__mini-action is-primary" onClick={onOpenProperty}>Open Property</button>
+        <button type="button" className="nx-seller-card__mini-action" onClick={onOpenQueue} disabled={!onOpenQueue} title={onOpenQueue ? 'Open Queue' : 'No queue exists yet'}>
+          Open Queue
+        </button>
+        <button type="button" className="nx-seller-card__mini-action" disabled title="TODO: queue stage 1 handler not wired in Command Map">
+          Queue Stage 1
+        </button>
+      </div>
+    </div>
+  </div>
+)
+
 interface Props {
   threads: InboxWorkflowThread[]
   visibleThreads: InboxWorkflowThread[]
@@ -2269,6 +2332,13 @@ interface Props {
   sourceMode: MapSourceMode
   onSourceModeChange?: (mode: MapSourceMode) => void
   onSelectThreadId?: (threadId: string) => void
+  onSelectSellerContext?: (context: {
+    propertyId?: string
+    masterOwnerId?: string
+    sourceView: 'map'
+    intent: 'open_seller' | 'open_queue'
+  }) => void
+  onSelectActivity?: (event: CommandMapActivityEvent) => void
   onOpenDealIntelligence?: (threadId: string) => void
   onBackgroundClick?: () => void
   fullHeight?: boolean
@@ -2322,6 +2392,8 @@ export function InboxCommandMap({
   sourceMode,
   onSourceModeChange,
   onSelectThreadId,
+  onSelectSellerContext,
+  onSelectActivity,
   onOpenDealIntelligence,
   onBackgroundClick,
   fullHeight = false,
@@ -2345,6 +2417,7 @@ export function InboxCommandMap({
   const activeThreadPopupRef = useRef<{ id: string; coordinates: [number, number] } | null>(null)
   const activeKpiFilterRef = useRef<MapKpiFilterKey | null>(null)
   const onSelectThreadIdRef = useRef<Props['onSelectThreadId']>(onSelectThreadId)
+  const onSelectSellerContextRef = useRef<Props['onSelectSellerContext']>(onSelectSellerContext)
   const onOpenDealIntelligenceRef = useRef<Props['onOpenDealIntelligence']>(onOpenDealIntelligence)
   const onSelectBuyerKeyRef = useRef<Props['onSelectBuyerKey']>(onSelectBuyerKey)
   const onBackgroundClickRef = useRef<Props['onBackgroundClick']>(onBackgroundClick)
@@ -2383,6 +2456,18 @@ export function InboxCommandMap({
   const [sellerPinsGeojson, setSellerPinsGeojson] = useState<FeatureCollection<Point, Record<string, unknown>>>(EMPTY_GEOJSON)
   const [sellerPins, setSellerPins] = useState<CommandMapSellerPin[]>([])
   const [sellerPinsLoading, setSellerPinsLoading] = useState(false)
+  const [sellerPinsPerf, setSellerPinsPerf] = useState<SellerPinsPerfSnapshot>({
+    shown: 0,
+    cap: 0,
+    capHit: false,
+    cacheHit: false,
+    loadedAt: null,
+    sampled: false,
+  })
+  const sellerPinsCacheRef = useRef<Map<string, { ts: number; pins: CommandMapSellerPin[] }>>(new Map())
+  const sellerPinsRequestSeqRef = useRef(0)
+  const lastSellerPinsDataKeyRef = useRef<string>('')
+  const sellerPinsByPropertyIdRef = useRef<Map<string, CommandMapSellerPin>>(new Map())
   const [censusLayers, setCensusLayers] = useState<CensusLayerToggles>(defaultCensusLayers)
   const [buyerDemandLayers, setBuyerDemandLayers] = useState<BuyerDemandLayerToggles>(defaultBuyerDemandLayers)
   const [censusGeojson, setCensusGeojson] = useState<FeatureCollection<Polygon, GeoJsonProperties>>({ type: 'FeatureCollection', features: [] })
@@ -2411,6 +2496,7 @@ export function InboxCommandMap({
   const [mapDimension, setMapDimension] = useState<'2d' | '3d'>('2d')
   const [mapOverlays, setMapOverlays] = useState<MapOverlayToggles>({ ...defaultMapOverlays, ...initialMapOverlays })
   const [activeThreadPopup, setActiveThreadPopup] = useState<{ id: string; coordinates: [number, number] } | null>(null)
+  const [activeSellerPinPopup, setActiveSellerPinPopup] = useState<{ pin: CommandMapSellerPin; coordinates: [number, number] } | null>(null)
   const [showKpiBadges, setShowKpiBadges] = useState(true)
   const [activeKpiFilter, setActiveKpiFilter] = useState<MapKpiFilterKey | null>(null)
   const [viewportBounds, setViewportBounds] = useState<CommandMapBounds | null>(null)
@@ -2476,10 +2562,42 @@ export function InboxCommandMap({
     () => new Map(threads.map((thread) => [String((thread as any).threadKey || thread.id), thread])),
     [threads],
   )
+  const hydratedThreadsByPropertyId = useMemo(() => {
+    const map = new Map<string, InboxWorkflowThread>()
+    threads.forEach((thread) => {
+      const propertyId = text((thread as any).propertyId || (thread as any).property_id)
+      if (propertyId && !map.has(propertyId)) map.set(propertyId, thread)
+    })
+    return map
+  }, [threads])
   const visibleHydratedThreads = useMemo(() => (
     visibleThreads
       .map((thread) => hydratedThreadsById.get(thread.id) || hydratedThreadsByKey.get(String((thread as any).threadKey || thread.id)) || thread)
   ), [hydratedThreadsById, hydratedThreadsByKey, visibleThreads])
+  const hydratedThreadsByIdRef = useRef(hydratedThreadsById)
+  const hydratedThreadsByKeyRef = useRef(hydratedThreadsByKey)
+  const hydratedThreadsByPropertyIdRef = useRef(hydratedThreadsByPropertyId)
+  const visibleHydratedThreadsRef = useRef(visibleHydratedThreads)
+  useEffect(() => {
+    hydratedThreadsByIdRef.current = hydratedThreadsById
+  }, [hydratedThreadsById])
+  useEffect(() => {
+    hydratedThreadsByKeyRef.current = hydratedThreadsByKey
+  }, [hydratedThreadsByKey])
+  useEffect(() => {
+    hydratedThreadsByPropertyIdRef.current = hydratedThreadsByPropertyId
+  }, [hydratedThreadsByPropertyId])
+  useEffect(() => {
+    visibleHydratedThreadsRef.current = visibleHydratedThreads
+  }, [visibleHydratedThreads])
+  useEffect(() => {
+    const map = new Map<string, CommandMapSellerPin>()
+    sellerPins.forEach((pin) => {
+      const propertyId = text((pin as any).property_id)
+      if (propertyId) map.set(propertyId, pin)
+    })
+    sellerPinsByPropertyIdRef.current = map
+  }, [sellerPins])
   const selectedHydratedThread = useMemo(() => {
     if (!selectedThread) return null
     return hydratedThreadsById.get(selectedThread.id)
@@ -2638,6 +2756,7 @@ export function InboxCommandMap({
   performanceSettingsRef.current = performanceSettings
   reducedMotionRef.current = prefersReducedMotion || performanceSettings.animation !== 'full'
   onSelectThreadIdRef.current = onSelectThreadId
+  onSelectSellerContextRef.current = onSelectSellerContext
   onOpenDealIntelligenceRef.current = onOpenDealIntelligence
   onSelectBuyerKeyRef.current = onSelectBuyerKey
   onBackgroundClickRef.current = onBackgroundClick
@@ -2689,7 +2808,10 @@ export function InboxCommandMap({
 
   useEffect(() => {
     setSelectedPinId(selectedThread?.id ?? null)
-    if (selectedThread?.id) setSelectedClusterSummary(null)
+    if (selectedThread?.id) {
+      setSelectedClusterSummary(null)
+      setActiveSellerPinPopup(null)
+    }
   }, [selectedThread?.id])
 
   useEffect(() => {
@@ -2723,7 +2845,7 @@ export function InboxCommandMap({
 
   useEffect(() => {
     const map = mapRef.current
-    if (!map || !activeThreadPopup) {
+    if (!map || (!activeThreadPopup && !activeSellerPinPopup)) {
       threadPopupRootRef.current?.unmount()
       threadPopupRootRef.current = null
       threadPopupHostRef.current = null
@@ -2742,33 +2864,71 @@ export function InboxCommandMap({
     }
     if (!threadPopupRootRef.current || !threadPopupHostRef.current) return
 
-    const isSelectedThreadActive = selectedThread?.id === activeThreadPopup.id
+    const popupCoordinates = activeThreadPopup?.coordinates ?? activeSellerPinPopup?.coordinates
+    const isSelectedThreadActive = Boolean(activeThreadPopup && selectedThread?.id === activeThreadPopup.id)
     const popupMessages = isSelectedThreadActive ? selectedThreadMessages : []
     const popupLoading = isSelectedThreadActive ? selectedThreadMessagesLoading : true
     const popupDraft = isSelectedThreadActive ? quickReplyDraft : ''
     const popupDisabled = !isSelectedThreadActive || quickReplyDisabled
 
     if (!threadPopupRootRef.current) return
-    threadPopupRootRef.current.render(
-      <MiniThreadPopup
-        thread={popupThread}
-        messages={popupMessages}
-        loading={popupLoading}
-        draftText={popupDraft}
-        disabled={popupDisabled}
-        layoutMode={layoutMode}
-        onDraftChange={(value) => {
-          if (!isSelectedThreadActive) return
-          onQuickReplyDraftChange?.(value)
-        }}
-        onSend={() => {
-          if (!isSelectedThreadActive || !popupDraft.trim()) return
-          void onQuickReplySend?.(popupDraft)
-        }}
-        onClose={() => setActiveThreadPopup(null)}
-        onOpenDealIntelligence={popupThread ? () => onOpenDealIntelligenceRef.current?.(popupThread.id) : undefined}
-      />,
-    )
+    if (activeSellerPinPopup && !activeThreadPopup) {
+      const sellerPin = activeSellerPinPopup.pin
+      const hasQueue = Number(sellerPin.queued_count ?? 0) > 0
+        || Number(sellerPin.scheduled_count ?? 0) > 0
+        || Number(sellerPin.ready_count ?? 0) > 0
+        || lower(sellerPin.execution_state).includes('queue')
+        || lower(sellerPin.execution_state).includes('scheduled')
+        || lower(sellerPin.execution_state).includes('ready')
+      threadPopupRootRef.current.render(
+        <MiniSellerPinPopup
+          pin={sellerPin}
+          layoutMode={layoutMode}
+          onClose={() => setActiveSellerPinPopup(null)}
+          onOpenProperty={() => {
+            const propertyId = text((sellerPin as any).property_id)
+            const masterOwnerId = text((sellerPin as any).master_owner_id || (sellerPin as any).owner_id || (sellerPin as any).seller_id || (sellerPin as any).prospect_id)
+            onSelectSellerContextRef.current?.({
+              propertyId: propertyId || undefined,
+              masterOwnerId: masterOwnerId || undefined,
+              sourceView: 'map',
+              intent: 'open_seller',
+            })
+          }}
+          onOpenQueue={hasQueue ? () => {
+            const propertyId = text((sellerPin as any).property_id)
+            const masterOwnerId = text((sellerPin as any).master_owner_id || (sellerPin as any).owner_id || (sellerPin as any).seller_id || (sellerPin as any).prospect_id)
+            onSelectSellerContextRef.current?.({
+              propertyId: propertyId || undefined,
+              masterOwnerId: masterOwnerId || undefined,
+              sourceView: 'map',
+              intent: 'open_queue',
+            })
+          } : undefined}
+        />,
+      )
+    } else {
+      threadPopupRootRef.current.render(
+        <MiniThreadPopup
+          thread={popupThread}
+          messages={popupMessages}
+          loading={popupLoading}
+          draftText={popupDraft}
+          disabled={popupDisabled}
+          layoutMode={layoutMode}
+          onDraftChange={(value) => {
+            if (!isSelectedThreadActive) return
+            onQuickReplyDraftChange?.(value)
+          }}
+          onSend={() => {
+            if (!isSelectedThreadActive || !popupDraft.trim()) return
+            void onQuickReplySend?.(popupDraft)
+          }}
+          onClose={() => setActiveThreadPopup(null)}
+          onOpenDealIntelligence={popupThread ? () => onOpenDealIntelligenceRef.current?.(popupThread.id) : undefined}
+        />,
+      )
+    }
 
     const popup = threadPopupRef.current ?? new maplibregl.Popup({
       closeButton: false,
@@ -2781,13 +2941,14 @@ export function InboxCommandMap({
     })
 
     popup
-      .setLngLat(activeThreadPopup.coordinates)
+      .setLngLat(popupCoordinates as [number, number])
       .setDOMContent(threadPopupHostRef.current)
       .addTo(map)
 
     threadPopupRef.current = popup
   }, [
     activeThreadPopup,
+    activeSellerPinPopup,
     onQuickReplyDraftChange,
     onQuickReplySend,
     popupThread,
@@ -3709,6 +3870,7 @@ export function InboxCommandMap({
         threadPopupRef.current?.remove()
         setSelectedClusterSummary(null)
         setSelectedCensusFeature(null)
+        setActiveSellerPinPopup(null)
         setSelectedPinId(id)
         onSelectThreadIdRef.current?.(id)
         const coordinates = (feature.geometry as Point).coordinates as [number, number]
@@ -3722,6 +3884,7 @@ export function InboxCommandMap({
         const clusterId = Number(feature.properties?.cluster_id)
         const coordinates = (feature.geometry as Point).coordinates as [number, number]
         setActiveThreadPopup(null)
+        setActiveSellerPinPopup(null)
         setSelectedBuyerPurchase(null)
         setSelectedClusterSummary(null)
         if (Number.isFinite(clusterId)) {
@@ -3747,8 +3910,8 @@ export function InboxCommandMap({
         const feature = event.features?.[0]
         if (!feature?.properties) return
         const props = feature.properties as unknown as CommandMapPin
-        const hydratedThread = hydratedThreadsById.get(props.conversation_id)
-          || hydratedThreadsByKey.get(props.conversation_id)
+        const hydratedThread = hydratedThreadsByIdRef.current.get(props.conversation_id)
+          || hydratedThreadsByKeyRef.current.get(props.conversation_id)
           || null
         const sellerRecord = { ...((hydratedThread as Record<string, unknown> | null) ?? {}), ...props }
         const coordinates = (feature.geometry as Point).coordinates as [number, number]
@@ -3795,15 +3958,41 @@ export function InboxCommandMap({
 
       const handleSellerPinClick = (event: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
         const feature = event.features?.[0]
-        if (!feature) return
-        const id = String(feature.properties?.property_id || '')
-        if (!id) return
+        if (!feature?.properties) return
+        const props = feature.properties as unknown as CommandMapSellerPin
+        const propertyId = String(props.property_id || '')
+        if (!propertyId) return
         hoverPopupRef.current?.remove()
         threadPopupRef.current?.remove()
         setSelectedClusterSummary(null)
         setSelectedCensusFeature(null)
-        // Just focus the map since there's no native "thread_id" bound to seller pins directly without conversation_id
+        setSelectedBuyerPurchase(null)
+        setSelectedSoldComp(null)
         const coordinates = (feature.geometry as Point).coordinates as [number, number]
+        const matchedThread = hydratedThreadsByPropertyIdRef.current.get(propertyId)
+          || visibleHydratedThreadsRef.current.find((thread) => text((thread as any).propertyId || (thread as any).property_id) === propertyId)
+          || hydratedThreadsByIdRef.current.get(propertyId)
+          || hydratedThreadsByKeyRef.current.get(propertyId)
+
+        const masterOwnerId = text((props as any).master_owner_id || (props as any).owner_id || (props as any).seller_id || (props as any).prospect_id)
+        onSelectSellerContextRef.current?.({
+          propertyId,
+          masterOwnerId: masterOwnerId || undefined,
+          sourceView: 'map',
+          intent: 'open_seller',
+        })
+
+        if (matchedThread) {
+          setSelectedPinId(matchedThread.id)
+          onSelectThreadIdRef.current?.(matchedThread.id)
+          setActiveThreadPopup({ id: matchedThread.id, coordinates })
+          setActiveSellerPinPopup(null)
+        } else {
+          setSelectedPinId(propertyId)
+          setActiveThreadPopup(null)
+          setActiveSellerPinPopup({ pin: props, coordinates })
+        }
+
         map.easeTo({ center: coordinates, zoom: Math.max(map.getZoom(), 14), duration: 700 })
       }
 
@@ -3995,6 +4184,7 @@ export function InboxCommandMap({
         })
         if (rendered.length === 0) {
           setActiveThreadPopup(null)
+          setActiveSellerPinPopup(null)
           setSelectedBuyerPurchase(null)
           setSelectedSoldComp(null)
           setSelectedClusterSummary(null)
@@ -4290,6 +4480,8 @@ export function InboxCommandMap({
 
     let cancelled = false
     let timeout: ReturnType<typeof setTimeout> | null = null
+    const cache = new Map<string, { ts: number; features: CensusOverlayFeature[]; geojson: FeatureCollection<Polygon, GeoJsonProperties>; message: string }>()
+    let requestSeq = 0
 
     const loadOverlay = () => {
       const map = mapRef.current
@@ -4301,9 +4493,20 @@ export function InboxCommandMap({
         east: bounds.getEast(),
         north: bounds.getNorth(),
       }
+      const cacheKey = `${activeCensusMetric}:${buildViewportCacheKey({ minLng: queryBounds.west, minLat: queryBounds.south, maxLng: queryBounds.east, maxLat: queryBounds.north }, map.getZoom(), 'census')}`
+      const cached = cache.get(cacheKey)
+      if (cached && (Date.now() - cached.ts) < 120_000) {
+        setCensusGeojson(cached.geojson)
+        setCensusOverlayFeatures(cached.features)
+        setCensusOverlayLegend(getCensusOverlayLegend(activeCensusMetric))
+        setCensusOverlayMessage(cached.message)
+        setCensusOverlayLoading(false)
+        return
+      }
+      const seq = ++requestSeq
       setCensusOverlayLoading(true)
       void loadNationwideCensusOverlay(activeCensusMetric, queryBounds, map.getZoom()).then((result) => {
-        if (cancelled) return
+        if (cancelled || seq !== requestSeq) return
         const geojson = buildOverlayGeoJson(result.features, activeCensusMetric)
         const metricValues = result.features.map((feature) => {
           const properties = geojson.features.find((geoFeature) => String(geoFeature.properties?.id) === feature.id)?.properties
@@ -4312,17 +4515,19 @@ export function InboxCommandMap({
         const range = metricValues.length > 0
           ? { min: Math.min(...metricValues), max: Math.max(...metricValues) }
           : undefined
+        const emptyMessage = 'Census overlay not initialized — no census_geo_metrics loaded.'
         setCensusGeojson(geojson)
         setCensusOverlayFeatures(result.features)
         setCensusOverlayLegend(getCensusOverlayLegend(activeCensusMetric, range))
-        setCensusOverlayMessage(result.message || '')
+        setCensusOverlayMessage(result.features.length === 0 ? emptyMessage : (result.message || ''))
         setCensusOverlayLoading(false)
+        cache.set(cacheKey, { ts: Date.now(), features: result.features, geojson, message: result.features.length === 0 ? emptyMessage : (result.message || '') })
       }).catch(() => {
-        if (cancelled) return
+        if (cancelled || seq !== requestSeq) return
         setCensusGeojson({ type: 'FeatureCollection', features: [] })
         setCensusOverlayFeatures([])
         setCensusOverlayLegend(getCensusOverlayLegend(activeCensusMetric))
-        setCensusOverlayMessage('Nationwide Census overlay data not connected yet.')
+        setCensusOverlayMessage('Run Census Sync for selected viewport.')
         setCensusOverlayLoading(false)
       })
     }
@@ -4332,7 +4537,7 @@ export function InboxCommandMap({
     const map = mapRef.current
     const onMoveEnd = () => {
       if (timeout) clearTimeout(timeout)
-      timeout = setTimeout(loadOverlay, 180)
+      timeout = setTimeout(loadOverlay, 450)
     }
     map?.on('moveend', onMoveEnd)
 
@@ -4527,6 +4732,8 @@ export function InboxCommandMap({
 
     let cancelled = false
     let timeout: ReturnType<typeof setTimeout> | null = null
+    const cache = new Map<string, { ts: number; comps: RecentSoldComp[] }>()
+    let requestSeq = 0
 
     const loadComps = () => {
       const map = mapRef.current
@@ -4544,13 +4751,37 @@ export function InboxCommandMap({
         maxLng: bounds.getEast(),
         maxLat: bounds.getNorth(),
       }
+      const cacheKey = buildViewportCacheKey(queryBounds, map.getZoom(), `sold:${filters.market || 'all'}:${getPinRenderCap(map.getZoom(), performanceSettings, 'sold_comp')}`)
+      const cached = cache.get(cacheKey)
+      const now = Date.now()
+      const ttlMs = 90_000
+      if (cached && (now - cached.ts) < ttlMs) {
+        const features = cached.comps.slice(0, getPinRenderCap(map.getZoom(), performanceSettings, 'sold_comp')).map((comp) => {
+          const price = comp.sale_price ?? comp.mls_sold_price ?? 0
+          let sourceShort = ''
+          if (comp.sale_source === 'MLS Sold') sourceShort = 'MLS '
+          else if (comp.sale_source === 'Public Record Sold') sourceShort = 'PR '
+          else if (comp.sale_source === 'Off-Market Sold') sourceShort = 'OM '
+          return {
+            type: 'Feature' as const,
+            geometry: { type: 'Point' as const, coordinates: [comp.longitude, comp.latitude] as [number, number] },
+            properties: { ...comp, id: `sold-comp-${comp.property_id}`, layer: 'sold_comp', salePriceLabel: formatShortPrice(price), sourceShort },
+          }
+        })
+        setSoldComps(cached.comps)
+        setSoldCompsGeojson({ type: 'FeatureCollection', features })
+        setSoldCompsLoading(false)
+        return
+      }
+      const seq = ++requestSeq
       setSoldCompsLoading(true)
       loadSoldCompsInBounds(queryBounds, {
         monthsBack: 6,
         limit: getPinRenderCap(map.getZoom(), performanceSettings, 'sold_comp'),
         selectedMarket: filters.market || undefined,
       }).then((comps) => {
-        if (cancelled) return
+        if (cancelled || seq !== requestSeq) return
+        cache.set(cacheKey, { ts: Date.now(), comps })
         setSoldComps(comps)
         const features = comps.slice(0, getPinRenderCap(map.getZoom(), performanceSettings, 'sold_comp')).map((comp) => {
           const price = comp.sale_price ?? comp.mls_sold_price ?? 0
@@ -4574,7 +4805,7 @@ export function InboxCommandMap({
         setSoldCompsGeojson({ type: 'FeatureCollection', features })
         setSoldCompsLoading(false)
       }).catch(() => {
-        if (cancelled) return
+        if (cancelled || seq !== requestSeq) return
         setSoldCompsGeojson(EMPTY_GEOJSON)
         setSoldComps([])
         setSoldCompsLoading(false)
@@ -4586,7 +4817,7 @@ export function InboxCommandMap({
     const map = mapRef.current
     const onMoveEnd = () => {
       if (timeout) clearTimeout(timeout)
-      timeout = setTimeout(loadComps, 250)
+      timeout = setTimeout(loadComps, 420)
     }
     map?.on('moveend', onMoveEnd)
 
@@ -4602,16 +4833,17 @@ export function InboxCommandMap({
     if (!sellerPinLayers.sellerPins) {
       setSellerPinsGeojson(EMPTY_GEOJSON)
       setSellerPins([])
+      setSellerPinsPerf((current) => ({ ...current, shown: 0, capHit: false, cacheHit: false, loadedAt: Date.now(), sampled: false }))
       return
     }
 
     let cancelled = false
     let timeout: ReturnType<typeof setTimeout> | null = null
 
-    const loadPins = () => {
+    const loadPins = (stage: MapLoadStage = 'stage_2') => {
       const map = mapRef.current
       if (!map) return
-      
+
       const zoom = map.getZoom()
       const bounds = map.getBounds()
       const queryBounds = {
@@ -4620,17 +4852,21 @@ export function InboxCommandMap({
         maxLng: bounds.getEast(),
         maxLat: bounds.getNorth(),
       }
-      
-      let maxRows = 500
-      if (zoom >= 8 && zoom < 11) maxRows = 1000
-      if (zoom >= 11) maxRows = 2500
 
-      setSellerPinsLoading(true)
-      loadCommandMapSellerPins(queryBounds, zoom, maxRows).then((pins) => {
-        if (cancelled) return
-        
-        const filteredPins = pins.filter(pin => {
-          // Seller State Filter
+      const maxRows = Math.max(
+        300,
+        Math.min(
+          getPinRenderCap(zoom, performanceSettings, 'seller'),
+          stage === 'stage_1' ? 500 : 5000,
+        ),
+      )
+      const cacheKey = buildViewportCacheKey(queryBounds, zoom, `seller:${maxRows}`)
+      const now = Date.now()
+      const ttlMs = 60_000
+      const cached = sellerPinsCacheRef.current.get(cacheKey)
+      const requestSeq = ++sellerPinsRequestSeqRef.current
+      const applyPins = (pins: CommandMapSellerPin[], cacheHit: boolean) => {
+        const nextFilteredPins = pins.filter((pin) => {
           if (!sellerPinLayers.notContacted && pin.seller_state === 'not_contacted') return false
           if (!sellerPinLayers.contacted && pin.seller_state === 'contacted') return false
           if (!sellerPinLayers.newReplies && pin.seller_state === 'new_reply') return false
@@ -4639,8 +4875,6 @@ export function InboxCommandMap({
           if (!sellerPinLayers.hot && pin.seller_state === 'hot') return false
           if (!sellerPinLayers.issues && pin.seller_state === 'issue') return false
           if (!sellerPinLayers.blocked && pin.seller_state === 'blocked') return false
-          
-          // Execution State Filter
           if (!sellerPinLayers.queued && pin.execution_state === 'queued') return false
           if (!sellerPinLayers.scheduled && pin.execution_state === 'scheduled') return false
           if (!sellerPinLayers.ready && pin.execution_state === 'ready') return false
@@ -4648,48 +4882,93 @@ export function InboxCommandMap({
           if (!sellerPinLayers.sent && pin.execution_state === 'sent') return false
           if (!sellerPinLayers.delivered && pin.execution_state === 'delivered') return false
           if (!sellerPinLayers.failedIssue && pin.execution_state === 'issue') return false
-
           return true
         })
+        setSellerPins(nextFilteredPins)
 
-        setSellerPins(filteredPins)
-        
-        const features = filteredPins.map((pin) => {
-          return {
+        const sampled = pins.length >= maxRows
+        const dataKey = `${cacheKey}:${nextFilteredPins.length}:${nextFilteredPins[0]?.property_id || ''}:${nextFilteredPins[nextFilteredPins.length - 1]?.property_id || ''}`
+        if (dataKey !== lastSellerPinsDataKeyRef.current) {
+          const features = nextFilteredPins.map((pin) => ({
             type: 'Feature' as const,
+            id: `seller-pin-${pin.property_id}`,
             geometry: { type: 'Point' as const, coordinates: [pin.lng, pin.lat] as [number, number] },
             properties: {
-              ...pin,
               id: `seller-pin-${pin.property_id}`,
-              layer: 'seller_pin'
+              property_id: pin.property_id,
+              master_owner_id: (pin as any).master_owner_id ?? null,
+              thread_key: (pin as any).thread_key ?? null,
+              seller_name: pin.seller_name,
+              property_address_full: pin.property_address_full,
+              seller_state: pin.seller_state,
+              execution_state: pin.execution_state,
+              pin_color: pin.pin_color,
+              execution_ring_color: pin.execution_ring_color,
+              pin_shape: pin.pin_shape,
+              pulse_style: pin.pulse_style,
+              render_priority: pin.render_priority,
+              lat: pin.lat,
+              lng: pin.lng,
             },
-          }
+          }))
+          setSellerPinsGeojson({ type: 'FeatureCollection', features })
+          lastSellerPinsDataKeyRef.current = dataKey
+        }
+
+        setSellerPinsPerf({
+          shown: nextFilteredPins.length,
+          cap: maxRows,
+          capHit: sampled,
+          cacheHit,
+          loadedAt: now,
+          sampled,
         })
-        setSellerPinsGeojson({ type: 'FeatureCollection', features })
+      }
+
+      if (cached && (now - cached.ts) < ttlMs) {
+        applyPins(cached.pins, true)
+        setSellerPinsLoading(false)
+        return
+      }
+
+      setSellerPinsLoading(true)
+      loadCommandMapSellerPins(queryBounds, zoom, maxRows).then((pins) => {
+        if (cancelled || requestSeq !== sellerPinsRequestSeqRef.current) return
+        sellerPinsCacheRef.current.set(cacheKey, { ts: Date.now(), pins })
+        if (sellerPinsCacheRef.current.size > 24) {
+          const firstKey = sellerPinsCacheRef.current.keys().next().value
+          if (firstKey) sellerPinsCacheRef.current.delete(firstKey)
+        }
+        applyPins(pins, false)
         setSellerPinsLoading(false)
       }).catch(() => {
-        if (cancelled) return
+        if (cancelled || requestSeq !== sellerPinsRequestSeqRef.current) return
         setSellerPinsGeojson(EMPTY_GEOJSON)
         setSellerPins([])
+        setSellerPinsPerf((current) => ({ ...current, shown: 0, capHit: false, cacheHit: false, loadedAt: Date.now(), sampled: false }))
         setSellerPinsLoading(false)
       })
     }
 
-    loadPins()
+    loadPins('stage_1')
+    const stage2Timer = setTimeout(() => {
+      if (!cancelled) loadPins('stage_2')
+    }, 180)
 
     const map = mapRef.current
     const onMoveEnd = () => {
       if (timeout) clearTimeout(timeout)
-      timeout = setTimeout(loadPins, 300)
+      timeout = setTimeout(() => loadPins('stage_2'), 420)
     }
     map?.on('moveend', onMoveEnd)
 
     return () => {
       cancelled = true
+      clearTimeout(stage2Timer)
       if (timeout) clearTimeout(timeout)
       map?.off('moveend', onMoveEnd)
     }
-  }, [sellerPinLayers, performanceSettings])
+  }, [sellerPinLayers, performanceSettings.markerDensity, performanceSettings.performanceMode])
 
   // ── Push census + buyer demand GeoJSON to map sources ─────────────────────
   useEffect(() => {
@@ -4722,6 +5001,32 @@ export function InboxCommandMap({
       }
     })
   }, [sellerPinLayers.sellerPins])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !sellerPinLayers.sellerPins) return
+    const z = viewportZoom
+    const priorityFilter =
+      z < 5
+        ? ['any',
+            ['in', ['coalesce', ['get', 'seller_state'], ''], ['literal', ['new_reply', 'hot', 'positive_intent']]],
+            ['in', ['coalesce', ['get', 'execution_state'], ''], ['literal', ['ready', 'active', 'issue']]],
+            ['>=', ['coalesce', ['get', 'render_priority'], 0], 80],
+          ] as any
+        : z < 8
+          ? ['any',
+              ['in', ['coalesce', ['get', 'seller_state'], ''], ['literal', ['new_reply', 'hot', 'positive_intent', 'negotiating']]],
+              ['in', ['coalesce', ['get', 'execution_state'], ''], ['literal', ['queued', 'scheduled', 'ready', 'active', 'issue']]],
+              ['>=', ['coalesce', ['get', 'render_priority'], 0], 55],
+            ] as any
+          : true
+    if (map.getLayer(SELLER_PINS_LAYER_IDS.core)) map.setFilter(SELLER_PINS_LAYER_IDS.core, priorityFilter)
+    if (map.getLayer(SELLER_PINS_LAYER_IDS.glow)) map.setFilter(SELLER_PINS_LAYER_IDS.glow, priorityFilter)
+    if (map.getLayer(SELLER_PINS_LAYER_IDS.ring)) map.setFilter(SELLER_PINS_LAYER_IDS.ring, priorityFilter)
+    if (map.getLayer(SELLER_PINS_LAYER_IDS.pulse)) {
+      map.setFilter(SELLER_PINS_LAYER_IDS.pulse, ['in', ['coalesce', ['get', 'pulse_style'], 'none'], ['literal', ['pulse_strong', 'pulse_warning', 'pulse_rotating']]])
+    }
+  }, [sellerPinLayers.sellerPins, viewportZoom])
 
   // ── Census layer visibility + hovered outline ─────────────────────────────
   useEffect(() => {
@@ -4799,7 +5104,7 @@ export function InboxCommandMap({
       duration: 550,
       maxZoom: zoomedIn ? 13 : 11,
     })
-  }, [dockTier, selectedPin, visiblePins, zoomedIn])
+  }, [dockTier, selectedPin?.conversation_id, visiblePins.length > 0, zoomedIn])
 
   const markets = Array.from(new Set(allPins.map((pin) => pin.market).filter(Boolean))).sort()
   const stages = Array.from(new Set(allPins.map((pin) => pin.conversation_stage).filter(Boolean))).sort()
@@ -4827,9 +5132,11 @@ export function InboxCommandMap({
   }, [allPins.length, filteredPins.length, pinPipeline.unmapped.length, visiblePins.length, sellerPins.length, sellerPinLayers.sellerPins])
 
   const handleActivitySelect = (event: CommandMapActivityEvent) => {
+    onSelectActivity?.(event)
     const center = centerMapOnActivity(event)
     if (event.targetType === 'seller' && event.targetId) {
       setSelectedPinId(event.targetId)
+      setActiveSellerPinPopup(null)
       onSelectThreadId?.(event.targetId)
       if (center) setActiveThreadPopup({ id: event.targetId, coordinates: center })
     }
@@ -5423,8 +5730,16 @@ export function InboxCommandMap({
             <div className="nx-icm__census-legend-card" style={{ marginBottom: 12 }}>
               <strong>Seller Pins: {sellerPins.length.toLocaleString()} shown</strong>
               <div className="nx-icm__census-legend-scale" style={{ flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
-                <span style={{ opacity: 0.8 }}>Bounds loaded · Zoom {mapRef.current?.getZoom().toFixed(1) || '--'}</span>
+                <span style={{ opacity: 0.8 }}>
+                  Zoom {mapRef.current?.getZoom().toFixed(1) || '--'} · {sellerPinsPerf.cacheHit ? 'Cached' : 'Live'} · {sellerPinsPerf.loadedAt ? `${Math.max(0, Math.round((Date.now() - sellerPinsPerf.loadedAt) / 1000))}s ago` : '—'}
+                </span>
+                <span style={{ opacity: 0.8 }}>
+                  Cap {sellerPinsPerf.cap.toLocaleString()} · {sellerPinsPerf.capHit ? 'Cap hit' : 'Under cap'}
+                </span>
                 {sellerPinsLoading && <span style={{ color: '#38bdf8' }}>Loading new area...</span>}
+                {sellerPinsPerf.sampled && !sellerPinsLoading && (
+                  <span style={{ color: '#f59e0b' }}>Showing top {sellerPinsPerf.cap.toLocaleString()} sellers in viewport. Zoom in for more.</span>
+                )}
               </div>
             </div>
           )}

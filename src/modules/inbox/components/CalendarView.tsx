@@ -43,6 +43,7 @@ type InboxCalendarViewProps = {
   selectedId: string | null
   layoutMode: ViewLayoutMode
   onSelectThread: (id: string) => void
+  onSelectEvent?: (event: CalendarEvent) => void
   onOpenDealIntelligence?: (threadId?: string | null) => void
 }
 
@@ -237,6 +238,7 @@ export function CalendarView({
   selectedId,
   layoutMode,
   onSelectThread,
+  onSelectEvent,
   onOpenDealIntelligence,
 }: InboxCalendarViewProps) {
   const [viewMode, setViewMode] = useState<CalendarViewMode>('week')
@@ -405,6 +407,7 @@ export function CalendarView({
 
   const handleSelectEvent = (event: CalendarEvent) => {
     setSelectedEvent(event)
+    onSelectEvent?.(event)
     const targetThreadId = event.threadId || selectedId
     if (targetThreadId) onSelectThread(targetThreadId)
   }

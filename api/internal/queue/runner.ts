@@ -262,7 +262,7 @@ export const runQueueBatch = async (caps: Partial<QueueRunCaps> = {}): Promise<a
     const { data: recentInbound } = await supabase
       .from('message_events')
       .select('id')
-      .or(`from_phone_number.eq.${phoneE164},phone.eq.${phoneE164}`)
+      .or(`from_phone_number.eq.${phoneE164},to_phone_number.eq.${phoneE164}`)
       .eq('direction', 'inbound')
       .gt('created_at', queueCreatedAt)
       .limit(1)
@@ -324,6 +324,8 @@ export const runQueueBatch = async (caps: Partial<QueueRunCaps> = {}): Promise<a
       continue
     }
 
+    const threadKeyToPersist = asString(hydrated.thread_key || item.thread_key) || `${phoneE164}|${routingResult.from_phone_number}`
+
     const updatePayload: Record<string, unknown> = {
       queue_status: 'sent',
       sent_at: now,
@@ -335,12 +337,15 @@ export const runQueueBatch = async (caps: Partial<QueueRunCaps> = {}): Promise<a
       market: asString(hydrated.market || item.market) || null,
       market_id: asString(hydrated.market_id || item.market_id) || null,
       property_address_state: asString(hydrated.property_address_state || item.property_address_state) || null,
-      thread_key: asString(hydrated.thread_key || item.thread_key) || null,
+      thread_key: threadKeyToPersist,
       from_phone_number: routingResult.from_phone_number,
       textgrid_number_id: routingResult.textgrid_number_id,
       routing_tier: routingResult.routing_tier,
       routing_reason: routingResult.routing_reason,
       guard_reason: null,
+      // Provider ID persistence (Phase 3)
+      provider_message_id: item.provider_message_id || null,
+      textgrid_message_id: item.textgrid_message_id || null,
       metadata: {
         ...currentMetadata,
         seller_name: asString(hydrated.seller_name || item.seller_display_name || item.seller_first_name) || null,
@@ -348,7 +353,7 @@ export const runQueueBatch = async (caps: Partial<QueueRunCaps> = {}): Promise<a
         property_id: asString(hydrated.property_id || item.property_id) || null,
         market: asString(hydrated.market || item.market) || null,
         property_address_state: asString(hydrated.property_address_state || item.property_address_state) || null,
-        thread_key: asString(hydrated.thread_key || item.thread_key) || null,
+        thread_key: threadKeyToPersist,
         route_input_state: routingResult.route_input_state || null,
         route_input_market: routingResult.route_input_market || null,
         route_input_property_id: routingResult.route_input_property_id || null,
@@ -368,7 +373,7 @@ export const runQueueBatch = async (caps: Partial<QueueRunCaps> = {}): Promise<a
     if (!isDryRun) {
       await logInboxActivity({
         event_type: 'message_sent',
-        thread_key: threadKey,
+        thread_key: threadKeyToPersist,
         actor: 'Queue Command Center',
         title: 'Message Sent',
         description: `Successfully sent ${item.type || 'queue'} touch #${item.touch_number || 1}`,
@@ -376,35 +381,95 @@ export const runQueueBatch = async (caps: Partial<QueueRunCaps> = {}): Promise<a
           queue_id: itemId,
           to: phone,
           from: routingResult.from_phone_number,
-          message_body: item.message_body,
+          message_body: body,
         },
         undo_payload: null,
       })
 
-      await supabase.from('message_events').insert({
-        thread_id: null,
+      // Fix message_events insert with correct columns (Priority A)
+      const eventKey = `outbound:${itemId}`
+      const sellerDisplayName = asString(hydrated.seller_name || item.seller_display_name || item.seller_first_name) || null
+      const marketName = asString(hydrated.market || item.market || market) || null
+
+      const { data: eventData, error: eventError } = await supabase.from('message_events').upsert({
+        message_event_key: eventKey,
         direction: 'outbound',
-        phone: phoneE164,
+        event_type: 'sms_sent',
         from_phone_number: routingResult.from_phone_number,
         to_phone_number: phoneE164,
-        body: item.message_body,
-        status: 'pending',
+        message_body: body,
+        delivery_status: 'sent',
+        provider_delivery_status: 'sent',
+        provider_message_sid: item.provider_message_id || item.textgrid_message_id || null,
+        sent_at: now,
         created_at: now,
+        event_timestamp: now,
         master_owner_id: item.master_owner_id,
         property_id: item.property_id,
         prospect_id: item.prospect_id,
         queue_id: itemId,
+        template_id: item.selected_template_id || item.template_id || null,
+        thread_key: threadKeyToPersist,
+        seller_display_name: sellerDisplayName,
+        market: marketName,
+        market_id: asString(hydrated.market_id || item.market_id) || null,
+        property_address: asString(hydrated.property_address || item.property_address) || null,
+        stage_before: item.stage_before || null,
+        stage_after: item.stage_after || null,
+        current_stage: item.current_stage || null,
+        source_app: 'nexus_queue_runner',
         metadata: {
           source: 'queue_command_center',
           textgrid_number_id: routingResult.textgrid_number_id,
+          queue_id: itemId,
+          provider_message_id: item.provider_message_id,
+          textgrid_message_id: item.textgrid_message_id,
         },
-      })
+      }, { onConflict: 'message_event_key' }).select('id').single()
+
+      if (eventError) {
+        console.error(`[QueueRunner] Failed to insert message_event for queue_id ${itemId}:`, eventError)
+        pushResult('sent', 'partial_success', `Queue updated but message_event failed: ${eventError.message}`, routingResult.from_phone_number)
+      } else {
+        const eventId = (eventData as any)?.id
+        const lastResult = results[results.length - 1]
+        if (lastResult) {
+          lastResult.action = 'send'
+          lastResult.message_event_id = eventId
+        }
+
+        // Fix inbox_thread_state update (Priority A)
+        const { error: stateError } = await supabase.from('inbox_thread_state').upsert({
+          thread_key: threadKeyToPersist,
+          latest_message_event_id: eventId,
+          latest_message_body: body,
+          latest_message_at: now,
+          latest_direction: 'outbound',
+          latest_event_type: 'sms_sent',
+          latest_delivery_status: 'sent',
+          last_outbound_at: now,
+          updated_at: now,
+          master_owner_id: item.master_owner_id,
+          property_id: item.property_id,
+          prospect_id: item.prospect_id,
+          seller_phone: phone,
+          canonical_e164: phoneE164,
+          our_number: routingResult.from_phone_number,
+          market: marketName,
+          seller_display_name: sellerDisplayName,
+        }, { onConflict: 'thread_key' })
+
+        if (stateError) {
+          console.error(`[QueueRunner] Failed to update inbox_thread_state for thread ${threadKeyToPersist}:`, stateError)
+        }
+      }
+    } else {
+      pushResult('sent', 'simulated', null, routingResult.from_phone_number)
     }
 
     processed_count++
     sentPerNumber.set(phoneE164, (sentPerNumber.get(phoneE164) ?? 0) + 1)
     sentPerMarket.set(market, (sentPerMarket.get(market) ?? 0) + 1)
-    pushResult('sent', 'send', null, routingResult.from_phone_number)
   }
 
   const response: any = { 

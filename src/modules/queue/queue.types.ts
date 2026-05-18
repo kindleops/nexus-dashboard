@@ -1,4 +1,22 @@
-export type QueueItemStatus = 'ready' | 'scheduled' | 'sent' | 'delivered' | 'failed' | 'held' | 'approval' | 'retry' | 'queued' | 'sending' | 'blocked' | 'cancelled' | 'replied_before_send'
+export type QueueItemStatus =
+  | 'ready'
+  | 'scheduled'
+  | 'sent'
+  | 'delivered'
+  | 'failed'
+  | 'held'
+  | 'approval'
+  | 'retry'
+  | 'queued'
+  | 'sending'
+  | 'blocked'
+  | 'cancelled'
+  | 'replied_before_send'
+  | 'paused_name_missing'
+  | 'paused_duplicate'
+  | 'paused_invalid_queue_row'
+  | 'paused_global_lock'
+  | 'paused_max_retries'
 export type QueueItemPriority = 'P0' | 'P1' | 'P2' | 'P3'
 export type DeliveryStatus = 'pending' | 'sent' | 'delivered' | 'failed' | 'bounced' | 'rejected'
 export type FailureReason =
@@ -19,29 +37,42 @@ export interface QueueItem {
   id: string
   queueId: string
   sellerName: string
+  sellerDisplayName: string
   propertyAddress: string
   market: string
   phone: string
+  toPhoneNumber: string
+  fromPhoneNumber: string
   agent: string
   templateName: string
+  templateId: string | null
+  selectedTemplateId: string | null
   templateSource: 'system' | 'custom' | 'ai'
   useCase: string
   stage: string
+  stageBefore: string | null
+  stageAfter: string | null
   messageText: string
   scheduledForLocal: string // ISO string in local tz
   scheduledForUtc: string // ISO string in UTC
   timezone: string
   contactWindow: 'morning' | 'afternoon' | 'evening' | 'flexible'
   status: QueueItemStatus
+  statusLabel: string
   priority: QueueItemPriority
   touchNumber: number
   language: 'en' | 'es'
   retryCount: number
   maxRetries: number
   failureReason: FailureReason | null
+  failedReason: string | null
+  pausedReason: string | null
+  blockedReason: string | null
   deliveryStatus: DeliveryStatus
   createdAt: string
+  updatedAt: string
   sentAt: string | null
+  deliveredAt: string | null
   approvedByOperator: string | null
   requiresApproval: boolean
   riskLevel: RiskLevel
@@ -51,6 +82,16 @@ export interface QueueItem {
   linkedInboxThreadId: string | null
   linkedPropertyId: string | null
   linkedOwnerId: string | null
+  propertyType: string | null
+  safetyStatus: string | null
+  routingAllowed: boolean | null
+  smsEligible: boolean | null
+  providerMessageId: string | null
+  textgridMessageId: string | null
+  messageEventId: string | null
+  missingMessageEvent: boolean
+  missingProviderMessageId: boolean
+  overdue: boolean
   metadata?: Record<string, any>
 
   // Tactical Intelligence Fields

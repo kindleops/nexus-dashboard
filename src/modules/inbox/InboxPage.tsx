@@ -99,6 +99,15 @@ import {
   type MapSourceMode,
 } from './inbox-layout-state'
 import {
+  buildContextFromActivityEvent,
+  buildContextFromCalendarEvent,
+  buildContextFromQueueItem,
+  buildContextFromThread,
+  type ActiveInboxContext,
+  type InboxWorkspaceView,
+  type SetActiveContextOptions,
+} from './active-context'
+import {
   applyInboxFilters,
   getAdvancedFilterOptions,
   getInboxViewCounts,
@@ -134,18 +143,6 @@ const LANGUAGE_LABELS: Record<string, string> = {
 }
 
 type ThreadTranslateViewMode = 'original' | 'translated'
-type InboxWorkspaceView =
-  | 'thread'
-  | 'sms_thread'
-  | 'list'
-  | 'deal_intelligence'
-  | 'command_map'
-  | 'pipeline'
-  | 'queue'
-  | 'calendar'
-  | 'metrics'
-  | 'comp_intelligence'
-  | 'buyer_match'
 type TableDensityMode = 'comfortable' | 'compact' | 'ultra_compact'
 const DEFAULT_QUEUE_COMMAND_CAPS: QueueCommandCaps = {
   sends_per_run: 10,
@@ -177,8 +174,8 @@ const isEnglishLanguage = (languageCode: string | null): boolean => {
 }
 
 const WORKSPACE_VIEW_OPTIONS: Array<{ key: InboxWorkspaceView; label: string; description: string }> = [
-  { key: 'thread', label: 'Inbox Thread View', description: 'Acquisition thread rail with priority buckets and live sellers.' },
-  { key: 'sms_thread', label: 'SMS Thread View', description: 'Full seller SMS conversation with quick actions and composer.' },
+  { key: 'thread', label: 'Inbox', description: 'Acquisition thread rail with priority buckets and live sellers.' },
+  { key: 'sms_thread', label: 'Conversation View', description: 'Full seller conversation with quick actions and composer.' },
   { key: 'list', label: 'List View', description: 'Dense sortable thread list across the acquisition inbox.' },
   { key: 'deal_intelligence', label: 'Deal Intelligence', description: 'Full-screen seller, property, offer, and timeline intelligence.' },
   { key: 'command_map', label: 'Command Map View', description: 'Cinematic acquisition map with ticker, pins, and live activity.' },
@@ -287,6 +284,7 @@ export default function InboxPage() {
   const DEV = Boolean(import.meta.env.DEV)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null)
+  const [activeContext, setActiveContextState] = useState<ActiveInboxContext>({ sourceView: 'inbox' })
   const [stageFilter, setStageFilter] = useState<InboxStageSelectValue>('all_stages')
   const [viewFilter, setViewFilter] = useState<InboxViewSelectValue>('priority')
   const [savedPreset, setSavedPreset] = useState<InboxSavedFilterPreset>('my_priority')
@@ -570,6 +568,28 @@ export default function InboxPage() {
   }, [selected, selectedId, selectedThreadKey])
 
   useEffect(() => {
+    if (!activeContext.threadKey && !activeContext.propertyId && !activeContext.sellerId) return
+    if (selected && (
+      (activeContext.threadKey && (selected.threadKey || selected.id) === activeContext.threadKey)
+      || (activeContext.propertyId && selected.propertyId === activeContext.propertyId)
+      || (activeContext.sellerId && selected.ownerId === activeContext.sellerId)
+    )) {
+      return
+    }
+
+    const match = threads.find((thread) =>
+      (activeContext.threadKey && (thread.threadKey || thread.id) === activeContext.threadKey)
+      || (activeContext.propertyId && thread.propertyId === activeContext.propertyId)
+      || (activeContext.sellerId && thread.ownerId === activeContext.sellerId),
+    )
+
+    if (!match) return
+    setSelectedId(match.id)
+    setSelectedThreadKey(match.threadKey || match.id)
+    setLayoutState((current) => ({ ...current, selectedThreadId: match.id }))
+  }, [activeContext.propertyId, activeContext.sellerId, activeContext.threadKey, selected, threads])
+
+  useEffect(() => {
     if (!DEV) return
     const first = filtered[0] as unknown as { uiIntent?: string; ui_intent?: string; priorityBucket?: string; priority_bucket?: string } | undefined
     console.log('[NEXUS Inbox Diagnostics]', {
@@ -627,7 +647,7 @@ export default function InboxPage() {
       return 'Metrics View'
     }
     if (selectedWorkspaceViews.length <= 1) {
-      return WORKSPACE_VIEW_OPTIONS.find((option) => option.key === activeWorkspaceView)?.label ?? 'Inbox Thread View'
+      return WORKSPACE_VIEW_OPTIONS.find((option) => option.key === activeWorkspaceView)?.label ?? 'Conversation View'
     }
     return `${selectedWorkspaceViews.length} Views Active`
   }, [activeWorkspaceView, selectedWorkspaceViews])
@@ -777,6 +797,44 @@ export default function InboxPage() {
       return nextViews
     })
   }, [])
+
+  const focusWorkspaceView = useCallback((view: InboxWorkspaceView) => {
+    handleFocusWorkspaceView(view)
+  }, [handleFocusWorkspaceView])
+
+  const setActiveContext = useCallback((nextContext: ActiveInboxContext, options?: SetActiveContextOptions) => {
+    setActiveContextState((current) => ({ ...current, ...nextContext }))
+
+    const nextThreadKey = nextContext.threadKey ?? null
+    if (nextThreadKey) {
+      const match = threads.find((thread) => (thread.threadKey || thread.id) === nextThreadKey || thread.id === nextThreadKey)
+      if (match) {
+        setSelectedId(match.id)
+        setSelectedThreadKey(match.threadKey || match.id)
+        setLayoutState((current) => ({ ...current, selectedThreadId: match.id }))
+      } else {
+        setSelectedThreadKey(nextThreadKey)
+      }
+    }
+
+    const focusTarget = options?.focusView
+      || (options?.openThread ? 'sms_thread' : undefined)
+      || (nextContext.intent === 'open_queue' ? 'queue' : undefined)
+      || (nextContext.intent === 'open_calendar' ? 'calendar' : undefined)
+      || (nextContext.intent === 'focus_map' ? 'command_map' : undefined)
+
+    if (focusTarget) {
+      if (options?.preserveCurrentViews === false) {
+        setSelectedWorkspaceViews([focusTarget])
+      } else {
+        focusWorkspaceView(focusTarget)
+      }
+    }
+
+    if (options?.openThread) {
+      focusWorkspaceView('sms_thread')
+    }
+  }, [focusWorkspaceView, threads])
 
   const handleSetWorkspaceWidth = useCallback((view: InboxWorkspaceView, width: ViewWidthPercent) => {
     setWorkspaceWidthOverrides((current) => sanitizeWorkspaceWidthOverrides(selectedWorkspaceViews, { ...current, [view]: width }))
@@ -1633,10 +1691,30 @@ export default function InboxPage() {
 
   const handleSelect = useCallback((id: string) => {
     const thread = threads.find((candidate) => candidate.id === id)
+    setActiveContext(buildContextFromThread(thread ?? null, 'inbox'), { preserveCurrentViews: true })
     setSelectedId(id)
     setSelectedThreadKey(thread?.threadKey || thread?.id || null)
     setLayoutState((current) => ({ ...current, selectedThreadId: id }))
-  }, [threads])
+  }, [setActiveContext, threads])
+
+  const handleMapSellerContext = useCallback((context: {
+    propertyId?: string
+    masterOwnerId?: string
+    sourceView: 'map'
+    intent: 'open_seller' | 'open_queue'
+  }) => {
+    setActiveContext({
+      propertyId: context.propertyId,
+      masterOwnerId: context.masterOwnerId,
+      sellerId: context.masterOwnerId,
+      sourceView: context.sourceView,
+      intent: context.intent,
+    }, {
+      preserveCurrentViews: true,
+      focusView: context.intent === 'open_queue' ? 'queue' : undefined,
+      addViewIfMissing: context.intent === 'open_queue',
+    })
+  }, [setActiveContext])
 
   const handleOperatorAction = useCallback(async (id: string, action: string) => {
     const thread = threads.find((t) => t.id === id)
@@ -1826,6 +1904,50 @@ export default function InboxPage() {
       setDraftText('')
     }
   }, [selected, threadContext])
+
+  const handleSelectQueueItem = useCallback((item: import('../../lib/data/queueData').QueueItem) => {
+    setActiveContext(buildContextFromQueueItem(item, 'queue'), { preserveCurrentViews: true })
+    if (item.linkedInboxThreadId) {
+      const match = threads.find((thread) => thread.id === item.linkedInboxThreadId || (thread.threadKey || thread.id) === item.linkedInboxThreadId)
+      if (match) {
+        setSelectedId(match.id)
+        setSelectedThreadKey(match.threadKey || match.id)
+      }
+    }
+  }, [setActiveContext, threads])
+
+  const handleSelectCalendarEvent = useCallback((event: import('../../lib/data/calendarData').CalendarEvent) => {
+    setActiveContext(buildContextFromCalendarEvent(event), { preserveCurrentViews: true })
+    if (event.threadId) {
+      const match = threads.find((thread) => thread.id === event.threadId || (thread.threadKey || thread.id) === event.threadId)
+      if (match) {
+        setSelectedId(match.id)
+        setSelectedThreadKey(match.threadKey || match.id)
+      }
+    }
+  }, [setActiveContext, threads])
+
+  const handleActivityNavigation = useCallback((event: import('./commandMapLiveActivity').CommandMapActivityEvent) => {
+    const openThread = event.targetView === 'thread' || event.type === 'new_reply' || event.type === 'positive_reply'
+    const focusView: InboxWorkspaceView =
+      event.targetView === 'queue'
+        ? 'queue'
+        : event.targetView === 'calendar'
+        ? 'calendar'
+        : event.targetView === 'deal'
+        ? 'deal_intelligence'
+        : openThread
+        ? 'sms_thread'
+        : 'command_map'
+
+    setActiveContext(buildContextFromActivityEvent(event), {
+      focusView,
+      openThread,
+      focusMap: true,
+      centerMap: true,
+      openSellerCard: true,
+    })
+  }, [setActiveContext])
 
   const handleScheduleTemplate = useCallback((payload: TemplateActionPayload) => {
     setScheduledTemplatePayload(payload)
@@ -2147,6 +2269,41 @@ export default function InboxPage() {
     </section>
   )
 
+  const renderInboxRailPane = (
+    paneMode: 'single' | 'multi' = 'single',
+    paneWidth: ViewWidthPercent = '100',
+  ) => (
+    <section
+      className={cls(
+        'nx-workspace-pane-surface',
+        'nx-workspace-pane-surface--thread-rail',
+        paneMode === 'single' ? 'is-pane-single' : 'is-pane-multi',
+        `is-width-${paneWidth}`,
+      )}
+    >
+      <InboxSidebar
+        threads={threads}
+        selectedId={selected?.id ?? null}
+        activeViewFilter={viewFilter}
+        onSelect={handleSelect}
+        onThreadAction={handleThreadAction}
+        savedPreset={savedPreset}
+        onApplySavedPreset={applySavedPreset}
+        viewCounts={viewCounts}
+        onOpenAdvancedFilters={() => setActiveOverlay('filters')}
+        onClearFilters={handleResetFilters}
+        onLoadMore={handleLoadMore}
+        canLoadMore={Boolean(data.pagination?.hasMore)}
+        recentlyUpdatedThreadIds={recentlyUpdatedThreadIds}
+        searchQuery={searchQuery}
+        onSearchQueryChange={setSearchQuery}
+        visibleThreadCount={visibleThreadCount}
+        loadingError={data.liveFetchError}
+        densityMode={paneMode === 'single' || paneWidth === '75' || paneWidth === '100' ? 'full' : 'compact'}
+      />
+    </section>
+  )
+
   const renderWorkspacePane = (
     view: InboxWorkspaceView,
     paneMode: 'single' | 'multi' = 'single',
@@ -2154,7 +2311,11 @@ export default function InboxPage() {
   ) => {
     const layoutMode = getViewLayoutMode(paneWidth)
 
-    if (view === 'thread' || view === 'sms_thread') {
+    if (view === 'thread') {
+      return renderInboxRailPane(paneMode, paneWidth)
+    }
+
+    if (view === 'sms_thread') {
       return renderSmsThreadPane(layoutMode)
     }
 
@@ -2192,6 +2353,8 @@ export default function InboxPage() {
               sourceMode={mapSourceMode}
               onSourceModeChange={setMapSourceMode}
               onSelectThreadId={handleSelect}
+              onSelectSellerContext={handleMapSellerContext}
+              onSelectActivity={handleActivityNavigation}
               onBackgroundClick={() => {}}
               onOpenDealIntelligence={handleOpenDealIntelligence}
               buyerCommandData={buyerCommandData}
@@ -2233,6 +2396,7 @@ export default function InboxPage() {
           selectedThread={selected}
           layoutMode={layoutMode}
           onSelect={handleSelect}
+          onActivateThread={(thread) => setActiveContext(buildContextFromThread(thread, 'pipeline'), { preserveCurrentViews: true })}
           onOpenCommandView={handleOpenDealIntelligence}
           onThreadAction={handleOperatorAction}
         />
@@ -2247,7 +2411,8 @@ export default function InboxPage() {
             processorHealth={queueProcessorHealth}
             queueCommandMode={queueCommandMode}
             layoutMode={layoutMode}
-            onSelectItem={handleSelect}
+            selectedQueueId={activeContext.queueId ?? null}
+            onSelectItem={handleSelectQueueItem}
           />
         </section>
       )
@@ -2262,6 +2427,7 @@ export default function InboxPage() {
             selectedId={selected?.id ?? null}
             layoutMode={layoutMode}
             onSelectThread={handleSelect}
+            onSelectEvent={handleSelectCalendarEvent}
             onOpenDealIntelligence={handleOpenDealIntelligence}
           />
         </section>
@@ -2494,7 +2660,7 @@ export default function InboxPage() {
               })}
             </section>
           ) : isDefaultWorkspaceShell ? (
-            renderWorkspacePane('thread', 'single')
+            renderWorkspacePane('sms_thread', 'single')
           ) : (
             renderWorkspacePane(activeWorkspaceView, 'single')
           )}
@@ -2542,6 +2708,7 @@ export default function InboxPage() {
                 sourceMode={mapSourceMode}
                 onSourceModeChange={setMapSourceMode}
               onSelectThreadId={handleSelect}
+              onSelectSellerContext={handleMapSellerContext}
               onBackgroundClick={() => {}}
               onOpenDealIntelligence={handleOpenDealIntelligence}
               buyerCommandData={buyerCommandData}

@@ -91,7 +91,7 @@ export const NexusTopBar = ({
   autonomyModel,
   theme,
   activeViewKey,
-  activeViewLabel = 'Inbox Thread View',
+  activeViewLabel = 'Conversation View',
   viewOptions = [],
   selectedViewKeys = [],
   selectedViewWidths = {},

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
-import { loadSubjectComps } from '../../../lib/data/commandMapData'
+import { loadSubjectComps, loadMarketComps } from '../../../lib/data/commandMapData'
 import '../comp-intelligence.css'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ interface ConfidenceExplanation {
 }
 
 type MapMode = 'sold_comps' | 'heat_map' | 'hybrid'
-type RadiusMiles = 0.25 | 0.5 | 1 | 1.5
+type RadiusMiles = 0.25 | 0.5 | 1 | 1.5 | 3 | 5
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -752,7 +752,10 @@ export function CompIntelligenceWorkspace({ thread }: { thread: InboxWorkflowThr
 
   const [mapMode, setMapMode] = useState<MapMode>('sold_comps')
   const [radius, setRadius] = useState<RadiusMiles>(0.5)
+  const [monthsBack, setMonthsBack] = useState<number>(6)
+  const [assetClass, setAssetClass] = useState<string | undefined>(t?.normalized_asset_class as string || undefined)
   const [comps, setComps] = useState<SoldComp[]>([])
+  const [loading, setLoading] = useState(false)
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [openCompId, setOpenCompId] = useState<string | null>(null)
   const [lastCalcTime, setLastCalcTime] = useState<Date | null>(null)
@@ -760,13 +763,23 @@ export function CompIntelligenceWorkspace({ thread }: { thread: InboxWorkflowThr
   useEffect(() => {
     let cancelled = false
     const propertyId = String(t?.propertyId || t?.property_id || '')
-    if (!propertyId || !lat || !lng) {
+    const market = String(t?.market || '')
+    const zip = String(t?.zip || t?.property_zip || '')
+
+    if (!propertyId) {
       setComps([])
       return
     }
     
-    loadSubjectComps(propertyId, radius).then((data) => {
+    setLoading(true)
+    
+    const fetchPromise = hasCoords
+      ? loadSubjectComps(propertyId, radius, monthsBack, 100, { assetClass })
+      : loadMarketComps(market, zip, 100, { assetClass, monthsBack })
+
+    fetchPromise.then((data) => {
       if (cancelled) return
+      setLoading(false)
       
       const mappedComps: SoldComp[] = data.map((d, i) => {
         const salePrice = d.mls_sold_price ?? d.sale_price ?? 0
@@ -774,15 +787,18 @@ export function CompIntelligenceWorkspace({ thread }: { thread: InboxWorkflowThr
         const daysAgo = Math.round((Date.now() - new Date(saleDateStr).getTime()) / 86400000)
         
         // Approximate distance if API didn't return it
-        const R = 3958.8 // Radius of the Earth in miles
-        const dLat = (d.latitude - lat) * Math.PI / 180
-        const dLon = (d.longitude - lng) * Math.PI / 180
-        const a = 
-          Math.sin(dLat/2) * Math.sin(dLat/2) +
-          Math.cos(lat * Math.PI / 180) * Math.cos(d.latitude * Math.PI / 180) * 
-          Math.sin(dLon/2) * Math.sin(dLon/2)
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
-        const distance = R * c
+        let distance = 0
+        if (hasCoords && d.latitude && d.longitude) {
+          const R = 3958.8 // Radius of the Earth in miles
+          const dLat = (d.latitude - lat) * Math.PI / 180
+          const dLon = (d.longitude - lng) * Math.PI / 180
+          const a = 
+            Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.cos(lat * Math.PI / 180) * Math.cos(d.latitude * Math.PI / 180) * 
+            Math.sin(dLon/2) * Math.sin(dLon/2)
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+          distance = R * c
+        }
 
         return {
           id: d.property_id || `comp-${i}`,
@@ -806,13 +822,14 @@ export function CompIntelligenceWorkspace({ thread }: { thread: InboxWorkflowThr
         }
       })
       
-      // If we don't have enough comps, we could optionally fallback to generateComps here,
-      // but the prompt explicitly says "We now have real recent sold comp data".
       setComps(mappedComps.sort((a, b) => b.similarity - a.similarity))
-    }).catch(console.error)
+    }).catch(err => {
+      console.error(err)
+      if (!cancelled) setLoading(false)
+    })
     
     return () => { cancelled = true }
-  }, [t?.propertyId, t?.property_id, lat, lng, radius])
+  }, [t?.propertyId, t?.property_id, lat, lng, radius, monthsBack, assetClass, hasCoords])
 
   const arvStats = useMemo(() => computeArvStats(comps, sqft), [comps, sqft])
   const prevArv = useRef<number | null>(null)
@@ -936,13 +953,13 @@ export function CompIntelligenceWorkspace({ thread }: { thread: InboxWorkflowThr
 
   // ── Empty state ─────────────────────────────────────────────────────────
 
-  if (!arv) {
+  if (!thread) {
     return (
       <div className="ci-workspace ci-workspace--empty">
         <div className="ci-empty-state">
-          <div className="ci-empty-state__icon">◉</div>
-          <strong>Comp Workspace Staged</strong>
-          <p>Set an estimated value (ARV) on this deal to unlock the sold comp workspace — interactive map, heat map, ARV engine, and distribution charts.</p>
+          <div className="ci-empty-state__icon">⌖</div>
+          <strong>No Subject Selected</strong>
+          <p>Select a thread with an associated property to generate comp intelligence for that location.</p>
         </div>
       </div>
     )
@@ -1010,6 +1027,38 @@ export function CompIntelligenceWorkspace({ thread }: { thread: InboxWorkflowThr
         {/* Subject property strip */}
         <SubjectPropertyStrip t={t} arv={arv} sqft={sqft} beds={beds} baths={baths} address={address} lat={lat} lng={lng} />
 
+        {/* Global Filters */}
+        <div className="ci-filters-bar">
+          <div className="ci-filter-group">
+            <label>Lookback</label>
+            <select value={monthsBack} onChange={e => setMonthsBack(Number(e.target.value))}>
+              <option value={3}>Last 3 Months</option>
+              <option value={6}>Last 6 Months</option>
+              <option value={12}>Last 12 Months</option>
+              <option value={24}>Last 24 Months</option>
+            </select>
+          </div>
+          <div className="ci-filter-group">
+            <label>Asset Class</label>
+            <select value={assetClass || ''} onChange={e => setAssetClass(e.target.value || undefined)}>
+              <option value="">All Types</option>
+              <option value="single_family">Single Family</option>
+              <option value="multifamily">Multifamily</option>
+            </select>
+          </div>
+          <div className="ci-filter-group">
+            <label>Radius</label>
+            <select value={radius} onChange={e => setRadius(Number(e.target.value) as RadiusMiles)}>
+              <option value={0.25}>0.25 mi</option>
+              <option value={0.5}>0.5 mi</option>
+              <option value={1}>1.0 mi</option>
+              <option value={1.5}>1.5 mi</option>
+              <option value={3}>3.0 mi</option>
+              <option value={5}>5.0 mi</option>
+            </select>
+          </div>
+        </div>
+
         {/* ARV engine panel */}
         <ArvEnginePanel comps={comps} arvStats={arvStats} sqft={sqft} radius={radius} lastCalcTime={lastCalcTime} />
 
@@ -1017,9 +1066,18 @@ export function CompIntelligenceWorkspace({ thread }: { thread: InboxWorkflowThr
         <div className="ci-list-section">
           <div className="ci-list-head">
             <span>SOLD COMPS</span>
-            <span>{comps.length} total · {comps.filter(c => c.selected && !c.excluded).length} in ARV</span>
+            {loading ? <span>Loading...</span> : <span>{comps.length} total · {comps.filter(c => c.selected && !c.excluded).length} in ARV</span>}
           </div>
           <div className="ci-list">
+            {loading && comps.length === 0 && (
+              <div className="ci-list-status">Fetching comparable sales data...</div>
+            )}
+            {!loading && comps.length === 0 && (
+              <div className="ci-list-status is-empty">
+                <strong>No comps found</strong>
+                <p>Try expanding your search radius or lookback period.</p>
+              </div>
+            )}
             {comps.map(comp => (
               <SoldCompRow
                 key={comp.id}

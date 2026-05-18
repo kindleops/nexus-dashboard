@@ -13,6 +13,13 @@ const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filt
 const DISPLAY_MODE_OPTIONS: LiveActivityDisplayMode[] = ['minimal', 'compact', 'expanded', 'docked', 'hidden']
 const SPEED_OPTIONS: LiveActivitySpeed[] = ['paused', 'slow', 'normal', 'fast']
 const EVENT_TYPE_OPTIONS: Array<{ key: CommandMapActivityType; label: string }> = [
+  { key: 'message_sent', label: 'Message Sent' },
+  { key: 'message_delivered', label: 'Delivered' },
+  { key: 'message_failed', label: 'Failed' },
+  { key: 'queue_scheduled', label: 'Scheduled' },
+  { key: 'queue_ready', label: 'Queue Ready' },
+  { key: 'queue_blocked', label: 'Queue Blocked' },
+  { key: 'queue_paused', label: 'Queue Paused' },
   { key: 'new_reply', label: 'New Replies' },
   { key: 'positive_reply', label: 'Positive Replies' },
   { key: 'hot_lead', label: 'Hot Leads' },
@@ -26,6 +33,8 @@ const EVENT_TYPE_OPTIONS: Array<{ key: CommandMapActivityType; label: string }> 
   { key: 'routing_block', label: 'Routing Blocks' },
   { key: 'opt_out', label: 'DNC / Opt-Outs' },
   { key: 'automation_block', label: 'Automation Blocks' },
+  { key: 'missing_message_event', label: 'Missing Event' },
+  { key: 'provider_id_missing', label: 'Provider ID Missing' },
 ]
 
 type Props = {

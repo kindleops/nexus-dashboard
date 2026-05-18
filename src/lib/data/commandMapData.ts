@@ -195,16 +195,68 @@ function enrichSoldComp(comp: RecentSoldComp): RecentSoldComp {
   return comp
 }
 
-export const loadSubjectComps = async (propertyId: string, radiusMiles = 1.0, monthsBack = 12, limit = 50): Promise<RecentSoldComp[]> => {
+export const loadSubjectComps = async (
+  propertyId: string, 
+  radiusMiles = 1.0, 
+  monthsBack = 12, 
+  limit = 50,
+  filters?: SoldCompFilters
+): Promise<RecentSoldComp[]> => {
   const supabase = getSupabaseClient()
   const { data, error } = await supabase.rpc('get_comp_candidates_for_subject', {
     p_subject_property_id: propertyId,
     p_radius_miles: radiusMiles,
-    p_months_back: monthsBack,
-    p_limit: limit
+    p_months_back: filters?.monthsBack ?? monthsBack,
+    p_limit: filters?.limit ?? limit
   })
   if (error || !data) {
     console.error('Failed to load subject comps', error)
+    return []
+  }
+  
+  let results = (data as RecentSoldComp[]).map(enrichSoldComp)
+  
+  // Apply additional frontend filters if they are not handled by the RPC yet
+  if (filters?.assetClass) {
+    results = results.filter(r => r.normalized_asset_class === filters.assetClass)
+  }
+  if (filters?.minSalePrice) {
+    results = results.filter(r => (r.mls_sold_price ?? r.sale_price ?? 0) >= filters.minSalePrice!)
+  }
+  if (filters?.maxSalePrice) {
+    results = results.filter(r => (r.mls_sold_price ?? r.sale_price ?? 0) <= filters.maxSalePrice!)
+  }
+  
+  return results
+}
+
+export const loadMarketComps = async (
+  market?: string,
+  zip?: string,
+  limit = 100,
+  filters?: SoldCompFilters
+): Promise<RecentSoldComp[]> => {
+  const supabase = getSupabaseClient()
+  let query = supabase.from('v_recent_sold_comps').select('*').limit(limit)
+  
+  if (market) query = query.eq('market', market)
+  else if (zip) query = query.eq('property_address_zip', zip)
+  else return []
+
+  if (filters?.assetClass) {
+    query = query.eq('normalized_asset_class', filters.assetClass)
+  }
+  
+  const months = filters?.monthsBack ?? 6
+  const dateLimit = new Date()
+  dateLimit.setMonth(dateLimit.getMonth() - months)
+  query = query.gte('sale_date', dateLimit.toISOString().split('T')[0])
+  
+  query = query.order('sale_date', { ascending: false })
+
+  const { data, error } = await query
+  if (error || !data) {
+    console.error('Failed to load market comps', error)
     return []
   }
   return (data as RecentSoldComp[]).map(enrichSoldComp)

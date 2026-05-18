@@ -1139,6 +1139,31 @@
   background: #040912;
 }
 
+.plv--rail .plv-filters {
+  padding: 10px 10px 8px;
+  gap: 6px;
+}
+
+.plv--rail .plv-filters__search {
+  min-width: 0;
+  max-width: none;
+  flex: 1 1 100%;
+}
+
+.plv--rail .plv-filters__controls {
+  width: 100%;
+}
+
+.plv--rail .plv-filters__sort {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
+.plv--rail .plv-filter-chip {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
 /* 50% Focused */
 .plv--focused {
   position: relative;   /* needed for absolute drawer */

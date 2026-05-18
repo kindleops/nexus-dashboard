@@ -300,22 +300,12 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       if (!events || events.length === 0) continue
 
       const state = stateRows?.[0]
-      
-      step = `check_prospect_suppression_for_${tk}`
-      let suppressionData = null
       const firstEv = events[0]
-      if (firstEv?.prospect_id) {
-         // Use sms_eligible instead of is_opt_out, is_dnc
-         const { data: prospects, error: prospectsError } = await supabase.from('prospects').select('sms_eligible').eq('prospect_id', firstEv.prospect_id).limit(1)
-         if (prospectsError) {
-             console.warn(`Could not fetch prospect ${firstEv.prospect_id}:`, prospectsError.message)
-         } else if (prospects?.[0]) {
-             suppressionData = {
-               is_opt_out: prospects[0].sms_eligible === false,
-               is_dnc: prospects[0].sms_eligible === false
-             }
-         }
-      }
+
+      // prospects.sms_eligible is a data-quality/contactability flag, not a consent signal.
+      // Real opt-out signals come from message_events.is_opt_out on individual events (handled in processThread).
+      // suppressionData stays null — no external suppression source currently has consent-level columns.
+      const suppressionData = null
 
       if (!include_suppressed && state?.is_suppressed) {
         results.skipped_threads++

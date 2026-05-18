@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react'
+import { memo, useMemo, useState } from 'react'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { formatInboxThreadTimestamp } from '../../../shared/formatters'
 import { resolveThreadAddressLine, resolveThreadMarketBadge, resolveThreadPrimaryName } from '../inbox-ui-helpers'
@@ -25,6 +25,9 @@ interface InboxConversationTableProps {
   onDensityChange: (density: 'comfortable' | 'compact' | 'ultra_compact') => void
   onSelect: (id: string) => void
 }
+
+type LocalStatusFilter = 'all' | 'unread' | 'hot' | 'suppressed'
+type LocalReplyFilter = 'all' | 'needs_reply' | 'waiting' | 'follow_up_due'
 
 const sorters: Record<ConversationTableSort, (a: RowModel, b: RowModel) => number> = {
   last_activity_desc: (a, b) => b.lastActivityMs - a.lastActivityMs,
@@ -74,6 +77,11 @@ export const InboxConversationTable = memo(({
   onDensityChange,
   onSelect,
 }: InboxConversationTableProps) => {
+  const [query, setQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<LocalStatusFilter>('all')
+  const [replyFilter, setReplyFilter] = useState<LocalReplyFilter>('all')
+  const [marketFilter, setMarketFilter] = useState<string>('all')
+
   const rows = useMemo(() => {
     return threads
       .map((thread) => {
@@ -114,8 +122,32 @@ export const InboxConversationTable = memo(({
           followUpMs,
         }
       })
+      .filter((row) => {
+        const search = query.trim().toLowerCase()
+        if (search) {
+          const haystack = [row.seller, row.address, row.market, row.lastIntent, row.lastMessagePreview, row.thread.phoneNumber || row.thread.canonicalE164 || '']
+            .join(' ')
+            .toLowerCase()
+          if (!haystack.includes(search)) return false
+        }
+        if (statusFilter === 'unread' && !row.isUnread) return false
+        if (statusFilter === 'hot' && !row.isHot) return false
+        if (statusFilter === 'suppressed' && !row.isSuppressed) return false
+        if (replyFilter === 'needs_reply' && !row.isUnread) return false
+        if (replyFilter === 'waiting' && row.thread.inboxStatus !== 'waiting') return false
+        if (replyFilter === 'follow_up_due' && !row.decision.next_follow_up_at) return false
+        if (marketFilter !== 'all' && row.market !== marketFilter) return false
+        return true
+      })
       .sort(sorters[sort])
-  }, [sort, threads])
+  }, [marketFilter, query, replyFilter, sort, statusFilter, threads])
+
+  const markets = useMemo(
+    () => Array.from(new Set(threads.map((thread) => resolveThreadMarketBadge(thread) || 'Market Unknown'))).sort(),
+    [threads],
+  )
+
+  const hasLocalFilters = query.trim().length > 0 || statusFilter !== 'all' || replyFilter !== 'all' || marketFilter !== 'all'
 
   const renderStatusBadges = (row: RowModel) => (
     <div className="nx-thread-card__badges">
@@ -128,6 +160,53 @@ export const InboxConversationTable = memo(({
     </div>
   )
 
+  const controlRow = (
+    <div className="nx-inbox-list-toolbar">
+      <input
+        type="search"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        className="nx-inbox-list-toolbar__search"
+        placeholder="Search seller, phone, address, message, market…"
+      />
+      <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as LocalStatusFilter)}>
+        <option value="all">All Status</option>
+        <option value="unread">Unread</option>
+        <option value="hot">Hot</option>
+        <option value="suppressed">Suppressed</option>
+      </select>
+      <select value={replyFilter} onChange={(event) => setReplyFilter(event.target.value as LocalReplyFilter)}>
+        <option value="all">All Reply States</option>
+        <option value="needs_reply">Needs Reply</option>
+        <option value="waiting">Awaiting Response</option>
+        <option value="follow_up_due">Follow-Up Due</option>
+      </select>
+      <select value={marketFilter} onChange={(event) => setMarketFilter(event.target.value)}>
+        <option value="all">All Markets</option>
+        {markets.map((market) => (
+          <option key={market} value={market}>{market}</option>
+        ))}
+      </select>
+      <select value={sort} onChange={(event) => onSortChange(event.target.value as ConversationTableSort)}>
+        <option value="last_activity_desc">Latest Activity</option>
+        <option value="priority_desc">Priority</option>
+        <option value="seller_asc">Seller</option>
+        <option value="temperature_desc">Temperature</option>
+        <option value="follow_up_asc">Follow-Up</option>
+      </select>
+      {hasLocalFilters ? (
+        <button type="button" className="nx-inbox-list-toolbar__clear" onClick={() => {
+          setQuery('')
+          setStatusFilter('all')
+          setReplyFilter('all')
+          setMarketFilter('all')
+        }}>
+          Clear
+        </button>
+      ) : null}
+    </div>
+  )
+
   if (layoutMode === 'compact' || layoutMode === 'medium') {
     return (
       <section className={cls('nx-inbox-table-view', `is-${density}`, `is-layout-${layoutMode}`)}>
@@ -136,16 +215,10 @@ export const InboxConversationTable = memo(({
             <span className="nx-section-label">LIST VIEW</span>
             <h2>Operational Conversations</h2>
           </div>
-          <div className="nx-inbox-table-view__controls">
-            <select value={sort} onChange={(event) => onSortChange(event.target.value as ConversationTableSort)}>
-              <option value="last_activity_desc">Last Activity</option>
-              <option value="priority_desc">Priority Score</option>
-              <option value="seller_asc">Seller</option>
-              <option value="temperature_desc">Temperature</option>
-              <option value="follow_up_asc">Next Follow-Up</option>
-            </select>
-          </div>
+          <div className="nx-inbox-table-view__controls" />
         </header>
+
+        {controlRow}
 
         <div className="nx-inbox-stat-strip" aria-label="List view stats">
           {statCounts.map((item) => (
@@ -199,16 +272,9 @@ export const InboxConversationTable = memo(({
             <span className="nx-section-label">LIST VIEW</span>
             <h2>Operational Conversations</h2>
           </div>
-          <div className="nx-inbox-table-view__controls">
-            <select value={sort} onChange={(event) => onSortChange(event.target.value as ConversationTableSort)}>
-              <option value="last_activity_desc">Last Activity</option>
-              <option value="priority_desc">Priority Score</option>
-              <option value="seller_asc">Seller</option>
-              <option value="temperature_desc">Temperature</option>
-              <option value="follow_up_asc">Next Follow-Up</option>
-            </select>
-          </div>
+          <div className="nx-inbox-table-view__controls" />
         </header>
+        {controlRow}
         <div className="nx-inbox-stat-strip" aria-label="List view stats">
           {statCounts.map((item) => (
             <div key={item.label} className="nx-inbox-stat-strip__item">
@@ -279,13 +345,6 @@ export const InboxConversationTable = memo(({
           <h2>Operational Conversations</h2>
         </div>
         <div className="nx-inbox-table-view__controls">
-          <select value={sort} onChange={(event) => onSortChange(event.target.value as ConversationTableSort)}>
-            <option value="last_activity_desc">Last Activity</option>
-            <option value="priority_desc">Priority Score</option>
-            <option value="seller_asc">Seller</option>
-            <option value="temperature_desc">Temperature</option>
-            <option value="follow_up_asc">Next Follow-Up</option>
-          </select>
           <div className="nx-inbox-density-switch" role="tablist" aria-label="Table density">
             {([
               ['comfortable', 'Comfortable'],
@@ -299,6 +358,8 @@ export const InboxConversationTable = memo(({
           </div>
         </div>
       </header>
+
+      {controlRow}
 
       <div className="nx-inbox-stat-strip" aria-label="List view stats">
         {statCounts.map((item) => (

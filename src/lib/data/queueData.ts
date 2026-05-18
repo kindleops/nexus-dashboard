@@ -45,6 +45,11 @@ const toQueueStatus = (value: unknown): QueueItemStatus => {
   if (status === 'blocked') return 'blocked'
   if (status === 'cancelled') return 'cancelled'
   if (status === 'replied_before_send') return 'replied_before_send'
+  if (status === 'paused_name_missing') return 'paused_name_missing'
+  if (status === 'paused_duplicate') return 'paused_duplicate'
+  if (status === 'paused_invalid_queue_row') return 'paused_invalid_queue_row'
+  if (status === 'paused_global_lock') return 'paused_global_lock'
+  if (status === 'paused_max_retries') return 'paused_max_retries'
   return 'scheduled'
 }
 
@@ -88,10 +93,12 @@ const deliveryFromStatus = (status: QueueItemStatus): DeliveryStatus => {
   return 'pending'
 }
 
+const statusLabelFor = (status: QueueItemStatus): string => status.replace(/_/g, ' ')
+
 export const fetchQueueModel = async (): Promise<QueueModel> => {
   const supabase = getSupabaseClient()
 
-  const [queueResult, ownerResult, propertyResult, phoneResult, marketResult] = await Promise.all([
+  const [queueResult, ownerResult, propertyResult, phoneResult, marketResult, messageEventResult] = await Promise.all([
     supabase
       .from('send_queue')
       .select(`
@@ -117,9 +124,11 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
         phone_number_id,
         market_id,
         market,
+        property_type,
         retry_count,
         max_retries,
         failed_reason,
+        blocked_reason,
         paused_reason,
         created_at,
         updated_at,
@@ -152,6 +161,11 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
       .from('markets')
       .select('id,name')
       .limit(100),
+    supabase
+      .from('message_events')
+      .select('id,queue_id,property_id,thread_key,provider_message_sid,textgrid_message_id,created_at,delivered_at,status,event_type')
+      .order('created_at', { ascending: false })
+      .limit(5000),
   ])
 
   if (queueResult.error) throw new Error(mapErrorMessage(queueResult.error))
@@ -159,12 +173,14 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
   if (propertyResult.error) throw new Error(mapErrorMessage(propertyResult.error))
   if (phoneResult.error) throw new Error(mapErrorMessage(phoneResult.error))
   if (marketResult.error) throw new Error(mapErrorMessage(marketResult.error))
+  if (messageEventResult.error) throw new Error(mapErrorMessage(messageEventResult.error))
 
   const queueRows = safeArray(queueResult.data as AnyRecord[])
   const ownerRows = safeArray(ownerResult.data as AnyRecord[])
   const propertyRows = safeArray(propertyResult.data as AnyRecord[])
   const phoneRows = safeArray(phoneResult.data as AnyRecord[])
   const marketRows = safeArray(marketResult.data as AnyRecord[])
+  const messageEventRows = safeArray(messageEventResult.data as AnyRecord[])
 
   const ownerById = new Map<string, AnyRecord>()
   for (const row of ownerRows) {
@@ -189,6 +205,13 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
     const ownerId = asString(getFirst(row, ['owner_id', 'master_owner_id']), '')
     if (!ownerId || phonesByOwner.has(ownerId)) continue
     phonesByOwner.set(ownerId, asString(getFirst(row, ['phone', 'phone_number']), ''))
+  }
+
+  const messageEventByQueueId = new Map<string, AnyRecord>()
+  for (const row of messageEventRows) {
+    const queueId = asString(getFirst(row, ['queue_id']), '')
+    if (!queueId || messageEventByQueueId.has(queueId)) continue
+    messageEventByQueueId.set(queueId, row)
   }
 
   const items: QueueItem[] = queueRows.map((row, index) => {
@@ -231,6 +254,19 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
     const maxRetries = Math.max(asNumber(getFirst(row, ['max_retries']), 3), retryCount || 0)
 
     const metadata = (row['metadata'] as AnyRecord) || {}
+    const linkedEvent = messageEventByQueueId.get(queueId) ?? null
+    const sentAt = asIso(getFirst(row, ['sent_at']))
+    const deliveredAt = asIso(getFirst(linkedEvent ?? {}, ['delivered_at'])) || asIso(getFirst(metadata, ['delivered_at']))
+    const providerMessageId =
+      asString(getFirst(row, ['provider_message_sid']), '') ||
+      asString(getFirst(metadata, ['provider_message_sid', 'provider_message_id']), '') ||
+      asString(getFirst(linkedEvent ?? {}, ['provider_message_sid']), '') ||
+      null
+    const textgridMessageId =
+      asString(getFirst(row, ['textgrid_message_id']), '') ||
+      asString(getFirst(metadata, ['textgrid_message_id']), '') ||
+      asString(getFirst(linkedEvent ?? {}, ['textgrid_message_id']), '') ||
+      null
 
     // Tactical Intelligence Extraction
     const sellerTemperatureRaw = asString(getFirst(row, ['seller_temperature']), asString(metadata.seller_temperature, 'unknown'))
@@ -258,30 +294,42 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
       id,
       queueId,
       sellerName,
+      sellerDisplayName: sellerName,
       propertyAddress,
       market,
       phone,
+      toPhoneNumber: asString(getFirst(row, ['to_phone_number', 'phone']), ''),
+      fromPhoneNumber: asString(getFirst(row, ['from_phone_number']), ''),
       agent: asString(getFirst(row, ['selected_agent_id', 'agent_name', 'agent']), 'NEXUS'),
       templateName: asString(getFirst(row, ['template_name', 'use_case_template']), 'Template not attached'),
+      templateId: asString(getFirst(row, ['selected_template_id']), '') || null,
+      selectedTemplateId: asString(getFirst(row, ['selected_template_id']), '') || null,
       templateSource: 'system',
       useCase: asString(getFirst(row, ['message_type', 'use_case']), 'listing'),
       stage: asString(getFirst(row, ['stage', 'seller_stage']), 'lead'),
+      stageBefore: asString(getFirst(row, ['stage_before']), asString(metadata.stage_before, '')) || null,
+      stageAfter: asString(getFirst(row, ['stage_after']), asString(metadata.stage_after, '')) || null,
       messageText: asString(getFirst(row, ['message_body', 'message_text', 'message']), ''),
       scheduledForLocal: localScheduledIso,
       scheduledForUtc: scheduledIso,
       timezone: asString(getFirst(row, ['timezone']), 'America/Chicago'),
       contactWindow: 'flexible',
       status,
+      statusLabel: statusLabelFor(status),
       priority: toPriority(getFirst(row, ['priority'])),
       touchNumber: Math.max(asNumber(getFirst(row, ['touch_number']), 1), 1),
       language: asString(getFirst(row, ['language']), 'en') === 'es' ? 'es' : 'en',
       retryCount,
       maxRetries,
       failureReason,
+      failedReason: asString(getFirst(row, ['failed_reason']), '') || null,
+      pausedReason: asString(getFirst(row, ['paused_reason']), '') || null,
+      blockedReason: asString(getFirst(row, ['blocked_reason']), asString(metadata.blocked_reason, '')) || null,
       deliveryStatus: deliveryFromStatus(status),
       createdAt: asIso(getFirst(row, ['created_at'])) ?? new Date().toISOString(),
       updatedAt: asIso(getFirst(row, ['updated_at'])) ?? new Date().toISOString(),
-      sentAt: asIso(getFirst(row, ['sent_at'])),
+      sentAt,
+      deliveredAt,
       approvedByOperator: asIso(getFirst(row, ['approved_at'])) ? 'operator' : null,
       requiresApproval: status === 'approval' || asBoolean(getFirst(row, ['requires_approval']), false),
       riskLevel: toRisk(getFirst(row, ['risk_level'])),
@@ -291,6 +339,16 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
       linkedInboxThreadId: asString(getFirst(metadata, ['thread_id', 'conversation_id', 'thread_key']), '') || null,
       linkedPropertyId: propertyId || null,
       linkedOwnerId: ownerId || null,
+      propertyType: asString(getFirst(row, ['property_type']), asString(metadata.property_type, '')) || null,
+      safetyStatus: asString(getFirst(row, ['safety_status']), asString(metadata.safety_status, '')) || null,
+      routingAllowed: asBoolean(getFirst(row, ['routing_allowed']), asBoolean(metadata.routing_allowed, false)),
+      smsEligible: asBoolean(getFirst(row, ['sms_eligible']), asBoolean(metadata.sms_eligible, false)),
+      providerMessageId,
+      textgridMessageId,
+      messageEventId: asString(getFirst(linkedEvent ?? {}, ['id']), '') || null,
+      missingMessageEvent: status === 'sent' && !linkedEvent,
+      missingProviderMessageId: status === 'sent' && !providerMessageId && !textgridMessageId,
+      overdue: ['scheduled', 'queued', 'ready'].includes(status) && new Date(scheduledIso).getTime() < Date.now(),
       metadata,
 
       // New Tactical Intelligence Fields

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { formatCurrency, formatPercent, formatPhone, formatRelativeTime } from '../../../shared/formatters'
 import { buildConversationDecision } from '../inbox-decisioning'
@@ -9,11 +9,11 @@ const cls = (...t: Array<string | false | null | undefined>) => t.filter(Boolean
 
 // ── Stage definitions ─────────────────────────────────────────────────────────
 
-type StageTone = 'cyan' | 'blue' | 'gold' | 'orange' | 'green' | 'red' | 'neutral'
+type StageTone = 'cyan' | 'blue' | 'gold' | 'orange' | 'green' | 'red' | 'neutral' | 'amber'
 
 interface StageDefinition { id: string; label: string; tone: StageTone; matches: string[] }
 
-const STAGES: StageDefinition[] = [
+const STAGE_GROUPS: StageDefinition[] = [
   { id: 'ownership_check',      label: 'Ownership Check',      tone: 'cyan',    matches: ['ownership'] },
   { id: 'interest_probe',       label: 'Interest Probe',       tone: 'blue',    matches: ['interest'] },
   { id: 'active_communication', label: 'Active Communication', tone: 'blue',    matches: ['active', 'seller_response', 'communication'] },
@@ -24,6 +24,48 @@ const STAGES: StageDefinition[] = [
   { id: 'contract_sent',        label: 'Contract Sent',        tone: 'green',   matches: ['contract'] },
   { id: 'title_closing',        label: 'Title / Closing',      tone: 'green',   matches: ['title', 'closing'] },
   { id: 'dead_suppressed',      label: 'Dead / Suppressed',    tone: 'red',     matches: ['dead', 'suppressed', 'closed'] },
+]
+
+type GroupByMode = 'stage' | 'status' | 'market' | 'property_type' | 'queue_status'
+const GROUP_BY_OPTIONS: Array<{ value: GroupByMode; label: string }> = [
+  { value: 'stage', label: 'Stage' },
+  { value: 'status', label: 'Status' },
+  { value: 'queue_status', label: 'Queue Status' },
+  { value: 'market', label: 'Market' },
+  { value: 'property_type', label: 'Property Type' },
+]
+
+const STATUS_GROUPS: StageDefinition[] = [
+  { id: 'new', label: 'New', tone: 'cyan', matches: ['new'] },
+  { id: 'not_contacted', label: 'Not Contacted', tone: 'neutral', matches: ['not_contacted'] },
+  { id: 'ownership_check_sent', label: 'Ownership Check Sent', tone: 'blue', matches: ['ownership_check_sent'] },
+  { id: 'message_sent', label: 'Message Sent', tone: 'blue', matches: ['message_sent', 'sent_message'] },
+  { id: 'awaiting_response', label: 'Awaiting Response', tone: 'blue', matches: ['waiting', 'awaiting_response'] },
+  { id: 'seller_replied', label: 'Seller Replied', tone: 'cyan', matches: ['new_reply', 'seller_replied'] },
+  { id: 'positive_intent', label: 'Positive Intent', tone: 'green', matches: ['positive', 'interested'] },
+  { id: 'asking_price_provided', label: 'Asking Price Provided', tone: 'gold', matches: ['asking_price'] },
+  { id: 'needs_follow_up', label: 'Needs Follow-Up', tone: 'amber', matches: ['follow_up'] },
+  { id: 'negotiating', label: 'Negotiating', tone: 'green', matches: ['negotiat'] },
+  { id: 'offer_sent', label: 'Offer Sent', tone: 'green', matches: ['offer_sent'] },
+  { id: 'contract_sent', label: 'Contract Sent', tone: 'green', matches: ['contract_sent'] },
+  { id: 'review_required', label: 'Review Required', tone: 'amber', matches: ['review'] },
+  { id: 'auto_blocked', label: 'Auto Blocked', tone: 'red', matches: ['auto_blocked'] },
+  { id: 'suppressed', label: 'Suppressed', tone: 'red', matches: ['suppressed'] },
+  { id: 'wrong_number', label: 'Wrong Number', tone: 'red', matches: ['wrong_number'] },
+  { id: 'failed', label: 'Failed', tone: 'red', matches: ['failed'] },
+]
+
+const QUEUE_GROUPS: StageDefinition[] = [
+  { id: 'scheduled', label: 'Scheduled', tone: 'blue', matches: ['scheduled'] },
+  { id: 'queued', label: 'Queued', tone: 'blue', matches: ['queued'] },
+  { id: 'ready', label: 'Ready', tone: 'cyan', matches: ['ready'] },
+  { id: 'sending', label: 'Sending', tone: 'blue', matches: ['sending'] },
+  { id: 'sent', label: 'Sent', tone: 'blue', matches: ['sent'] },
+  { id: 'delivered', label: 'Delivered', tone: 'green', matches: ['delivered'] },
+  { id: 'failed', label: 'Failed', tone: 'red', matches: ['failed'] },
+  { id: 'blocked', label: 'Blocked', tone: 'red', matches: ['blocked'] },
+  { id: 'cancelled', label: 'Cancelled', tone: 'neutral', matches: ['cancelled'] },
+  { id: 'paused', label: 'Paused', tone: 'amber', matches: ['paused'] },
 ]
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -58,7 +100,7 @@ const ageLabel = (days: number) => {
 
 const deriveStageId = (thread: InboxWorkflowThread): string => {
   const raw = norm(thread.conversationStage || thread.inboxStage).toLowerCase()
-  for (const s of STAGES) {
+  for (const s of STAGE_GROUPS) {
     if (s.matches.some(m => raw.includes(m))) return s.id
   }
   return 'ownership_check'
@@ -66,6 +108,9 @@ const deriveStageId = (thread: InboxWorkflowThread): string => {
 
 const effectiveStageId = (thread: InboxWorkflowThread, overrides: Map<string, string>): string =>
   overrides.get(thread.id) ?? deriveStageId(thread)
+
+const toneForIndex = (index: number): StageTone =>
+  (['cyan', 'blue', 'gold', 'orange', 'green', 'red', 'neutral'] as StageTone[])[index % 7] ?? 'neutral'
 
 const priorityWeight = (p: string) => {
   if (p === 'urgent') return 4
@@ -88,6 +133,8 @@ interface DealCard {
   sellerName: string
   address: string
   market: string
+  propertyType: string
+  queueStatus: string
   zip: string
   county: string
   phone: string
@@ -119,6 +166,8 @@ const buildCard = (thread: InboxWorkflowThread): DealCard => {
       (thread as any).prospect_name) || 'Unknown Seller',
     address: first(thread.propertyAddressFull, thread.propertyAddress, thread.subject) || 'Property Unknown',
     market: first(thread.market, thread.marketName) || 'Market Unknown',
+    propertyType: first((thread as any).propertyType, (thread as any).property_type) || 'Unknown',
+    queueStatus: first((thread as any).queueStatus, (thread as any).queue_status, thread.autoReplyStatus) || 'Unknown',
     zip: first((thread as any).property_address_zip,
       (thread as any).zip) || '—',
     county: first((thread as any).property_address_county_name,
@@ -191,6 +240,7 @@ interface InboxPipelineViewProps {
   selectedThread: InboxWorkflowThread | null
   layoutMode: ViewLayoutMode
   onSelect: (id: string) => void
+  onActivateThread?: (thread: InboxWorkflowThread) => void
   onOpenCommandView: (threadId?: string | null) => void
   onThreadAction: (id: string, action: string) => void | Promise<void>
 }
@@ -199,15 +249,16 @@ interface InboxPipelineViewProps {
 
 export function InboxPipelineView({
   threads, selectedId, selectedThread, layoutMode,
-  onSelect, onOpenCommandView, onThreadAction,
+  onSelect, onActivateThread, onOpenCommandView, onThreadAction,
 }: InboxPipelineViewProps) {
   const [query,          setQuery]          = useState('')
+  const [groupBy,        setGroupBy]        = useState<GroupByMode>('stage')
   const [sortMode,       setSortMode]       = useState<SortMode>('priority')
   const [hotOnly,        setHotOnly]        = useState(false)
   const [followUpOnly,   setFollowUpOnly]   = useState(false)
   const [automationOnly, setAutomationOnly] = useState(false)
   const [showSuppressed, setShowSuppressed] = useState(false)
-  const [activeStageId,  setActiveStageId]  = useState<string>(STAGES[0].id)
+  const [activeStageId,  setActiveStageId]  = useState<string>(STAGE_GROUPS[0].id)
   const [stageOverrides, setStageOverrides] = useState<Map<string, string>>(new Map())
   const [dragCardId,     setDragCardId]     = useState<string | null>(null)
   const [dragOverStage,  setDragOverStage]  = useState<string | null>(null)
@@ -237,12 +288,41 @@ export function InboxPipelineView({
       })
   }, [allCards, query, showSuppressed, hotOnly, followUpOnly, automationOnly, sortMode])
 
+  const groupDefinitions = useMemo<StageDefinition[]>(() => {
+    if (groupBy === 'stage') return STAGE_GROUPS
+    if (groupBy === 'status') return STATUS_GROUPS
+    if (groupBy === 'queue_status') return QUEUE_GROUPS
+    if (groupBy === 'market') {
+      const counts = new Map<string, number>()
+      visibleCards.forEach((card) => counts.set(card.market, (counts.get(card.market) ?? 0) + 1))
+      return Array.from(counts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(([label], index) => ({ id: label, label, tone: toneForIndex(index), matches: [label] }))
+    }
+    const propertyOrder = ['Single Family', 'Multifamily', 'Apartment', 'Duplex/Triplex/Quadplex', 'Land', 'Commercial', 'Unknown']
+    return propertyOrder.map((label, index) => ({ id: label, label, tone: toneForIndex(index), matches: [label] }))
+  }, [groupBy, visibleCards])
+
+  const groupKeyForCard = useCallback((card: DealCard): string => {
+    if (groupBy === 'stage') return effectiveStageId(card.thread, stageOverrides)
+    if (groupBy === 'status') {
+      const raw = `${card.status} ${(card.thread as any).status ?? ''}`.toLowerCase()
+      return STATUS_GROUPS.find((group) => group.matches.some((match) => raw.includes(match)))?.id ?? 'new'
+    }
+    if (groupBy === 'queue_status') {
+      const raw = card.queueStatus.toLowerCase()
+      return QUEUE_GROUPS.find((group) => group.matches.some((match) => raw.includes(match)))?.id ?? 'scheduled'
+    }
+    if (groupBy === 'market') return card.market
+    return card.propertyType
+  }, [groupBy, stageOverrides])
+
   const stageModels = useMemo(() =>
-    STAGES.map(def => {
-      const cards = visibleCards.filter(c => effectiveStageId(c.thread, stageOverrides) === def.id)
+    groupDefinitions.map(def => {
+      const cards = visibleCards.filter(c => groupKeyForCard(c) === def.id)
       return buildStageModel(def, cards)
     }),
-  [visibleCards, stageOverrides])
+  [groupDefinitions, groupKeyForCard, visibleCards])
 
   const summary = useMemo<PipelineSummary>(() => {
     const active   = visibleCards.filter(c => !c.suppressed)
@@ -267,12 +347,15 @@ export function InboxPipelineView({
     (selectedThread ? buildCard(selectedThread) : null),
   [visibleCards, selectedId, selectedThread])
 
-  // Sync active stage to selected thread
   useEffect(() => {
     if (!selectedThread) return
-    setActiveStageId(effectiveStageId(selectedThread, stageOverrides))
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedThread?.id])
+    setActiveStageId(groupKeyForCard(buildCard(selectedThread)))
+  }, [groupKeyForCard, selectedThread])
+
+  useEffect(() => {
+    if (stageModels.some((stage) => stage.def.id === activeStageId)) return
+    setActiveStageId(stageModels[0]?.def.id ?? '')
+  }, [activeStageId, stageModels])
 
   // Open drawer on selection at 50%
   useEffect(() => {
@@ -306,17 +389,36 @@ export function InboxPipelineView({
 
   const handleDragEnd = () => { setDragCardId(null); setDragOverStage(null) }
 
-  const hasFilters = !!(query || hotOnly || followUpOnly || automationOnly)
-  const clearFilters = () => { setQuery(''); setHotOnly(false); setFollowUpOnly(false); setAutomationOnly(false) }
+  const hasFilters = !!(query || hotOnly || followUpOnly || automationOnly || groupBy !== 'stage')
+  const clearFilters = () => { setQuery(''); setHotOnly(false); setFollowUpOnly(false); setAutomationOnly(false); setGroupBy('stage') }
 
   const dnd = { handleDragStart, handleDragOver, handleDrop, handleDragEnd, dragCardId, dragOverStage }
-  const acts = { onSelect, onOpenCommandView, onThreadAction }
+  const acts = { onSelect, onActivateThread, onOpenCommandView, onThreadAction }
 
   // ── 25% — Pipeline Rail ────────────────────────────────────────────────────
   if (layoutMode === 'compact') {
     return (
       <div className="plv plv--rail">
         <RailKpi summary={summary} />
+        <FilterBar
+          query={query}
+          sortMode={sortMode}
+          groupBy={groupBy}
+          hotOnly={hotOnly}
+          followUpOnly={followUpOnly}
+          automationOnly={automationOnly}
+          showSuppressed={showSuppressed}
+          hasFilters={hasFilters}
+          layoutMode={layoutMode}
+          onQueryChange={setQuery}
+          onSortModeChange={setSortMode}
+          onGroupByChange={setGroupBy}
+          onHotOnly={setHotOnly}
+          onFollowUpOnly={setFollowUpOnly}
+          onAutomationOnly={setAutomationOnly}
+          onShowSuppressed={setShowSuppressed}
+          onClear={clearFilters}
+        />
         <StageChips stages={stageModels} activeId={activeStageId} onSelect={setActiveStageId} size="sm" />
         <CardRail
           cards={stageModels.find(s => s.def.id === activeStageId)?.cards ?? []}
@@ -334,10 +436,10 @@ export function InboxPipelineView({
       <div className="plv plv--focused">
         <KpiStrip summary={summary} compact />
         <FilterBar
-          query={query} sortMode={sortMode} hotOnly={hotOnly}
+          query={query} sortMode={sortMode} groupBy={groupBy} hotOnly={hotOnly}
           followUpOnly={followUpOnly} automationOnly={automationOnly}
           showSuppressed={showSuppressed} hasFilters={hasFilters} layoutMode={layoutMode}
-          onQueryChange={setQuery} onSortModeChange={setSortMode}
+          onQueryChange={setQuery} onSortModeChange={setSortMode} onGroupByChange={setGroupBy}
           onHotOnly={setHotOnly} onFollowUpOnly={setFollowUpOnly}
           onAutomationOnly={setAutomationOnly} onShowSuppressed={setShowSuppressed}
           onClear={clearFilters}
@@ -364,10 +466,10 @@ export function InboxPipelineView({
       <KpiStrip summary={summary} compact={isOps} />
       <div className="plv-topbar">
         <FilterBar
-          query={query} sortMode={sortMode} hotOnly={hotOnly}
+          query={query} sortMode={sortMode} groupBy={groupBy} hotOnly={hotOnly}
           followUpOnly={followUpOnly} automationOnly={automationOnly}
           showSuppressed={showSuppressed} hasFilters={hasFilters} layoutMode={layoutMode}
-          onQueryChange={setQuery} onSortModeChange={setSortMode}
+          onQueryChange={setQuery} onSortModeChange={setSortMode} onGroupByChange={setGroupBy}
           onHotOnly={setHotOnly} onFollowUpOnly={setFollowUpOnly}
           onAutomationOnly={setAutomationOnly} onShowSuppressed={setShowSuppressed}
           onClear={clearFilters}
@@ -472,9 +574,9 @@ function KpiStrip({ summary, compact }: { summary: PipelineSummary; compact?: bo
 // ── Filter bar ────────────────────────────────────────────────────────────────
 
 interface FilterBarProps {
-  query: string; sortMode: SortMode; hotOnly: boolean; followUpOnly: boolean
+  query: string; sortMode: SortMode; groupBy: GroupByMode; hotOnly: boolean; followUpOnly: boolean
   automationOnly: boolean; showSuppressed: boolean; hasFilters: boolean; layoutMode: ViewLayoutMode
-  onQueryChange: (v: string) => void; onSortModeChange: (v: SortMode) => void
+  onQueryChange: (v: string) => void; onSortModeChange: (v: SortMode) => void; onGroupByChange: (v: GroupByMode) => void
   onHotOnly: (v: boolean) => void; onFollowUpOnly: (v: boolean) => void
   onAutomationOnly: (v: boolean) => void; onShowSuppressed: (v: boolean) => void; onClear: () => void
 }
@@ -496,6 +598,15 @@ function FilterBar(p: FilterBarProps) {
         )}
       </div>
       <div className="plv-filters__controls">
+        <select
+          className="plv-filters__sort"
+          value={p.groupBy}
+          onChange={e => p.onGroupByChange(e.target.value as GroupByMode)}
+        >
+          {GROUP_BY_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
         <select
           className="plv-filters__sort"
           value={p.sortMode}

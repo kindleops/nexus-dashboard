@@ -3,6 +3,13 @@ import type { BuyerRecentPurchase } from '../buyer/buyerCommandData'
 import type { RecentSoldComp } from '../../lib/data/commandMapData'
 
 export type CommandMapActivityType =
+  | 'message_sent'
+  | 'message_delivered'
+  | 'message_failed'
+  | 'queue_scheduled'
+  | 'queue_ready'
+  | 'queue_blocked'
+  | 'queue_paused'
   | 'new_reply'
   | 'positive_reply'
   | 'hot_lead'
@@ -16,6 +23,8 @@ export type CommandMapActivityType =
   | 'routing_block'
   | 'opt_out'
   | 'automation_block'
+  | 'missing_message_event'
+  | 'provider_id_missing'
 
 export type CommandMapActivityPriority = 'critical' | 'hot' | 'normal' | 'info' | 'muted'
 
@@ -40,6 +49,13 @@ export type CommandMapActivityEvent = {
   lng?: number
   targetType?: CommandMapActivityTargetType
   targetId?: string
+  propertyId?: string
+  masterOwnerId?: string
+  prospectId?: string
+  threadKey?: string
+  queueId?: string
+  messageEventId?: string
+  targetView?: 'thread' | 'queue' | 'calendar' | 'map' | 'deal'
   actionLabel?: string
   badgeLabel?: string
   accentTone?: string
@@ -109,6 +125,7 @@ export type CommandMapActivityPinSource = {
   suppression_status: string
   automation_status: string
   queue_status: string | null
+  delivery_status?: string | null
   latest_message_body: string | null
   activity_state: string
   property_address_full?: string | null
@@ -124,6 +141,13 @@ export const LIVE_ACTIVITY_SETTINGS_STORAGE_KEY = 'nexus.commandMap.liveActivity
 export const PERFORMANCE_SETTINGS_STORAGE_KEY = 'nexus.commandMap.performanceSettings'
 
 const DEFAULT_EVENT_FILTERS: LiveActivityEventTypeFilters = {
+  message_sent: true,
+  message_delivered: true,
+  message_failed: true,
+  queue_scheduled: true,
+  queue_ready: true,
+  queue_blocked: true,
+  queue_paused: true,
   new_reply: true,
   positive_reply: true,
   hot_lead: true,
@@ -137,6 +161,8 @@ const DEFAULT_EVENT_FILTERS: LiveActivityEventTypeFilters = {
   routing_block: true,
   opt_out: true,
   automation_block: true,
+  missing_message_event: true,
+  provider_id_missing: true,
 }
 
 const text = (value: unknown): string => String(value ?? '').trim()
@@ -200,10 +226,10 @@ const isWithinBounds = (lat: number | undefined, lng: number | undefined, bounds
 }
 
 export const getActivityPriority = (event: Pick<CommandMapActivityEvent, 'type' | 'createdAt'>): CommandMapActivityPriority => {
-  if (event.type === 'contract' || event.type === 'closing' || event.type === 'routing_block' || event.type === 'opt_out' || event.type === 'automation_block' || event.type === 'system_alert') {
+  if (event.type === 'contract' || event.type === 'closing' || event.type === 'routing_block' || event.type === 'opt_out' || event.type === 'automation_block' || event.type === 'system_alert' || event.type === 'message_failed' || event.type === 'queue_blocked' || event.type === 'missing_message_event' || event.type === 'provider_id_missing') {
     return 'critical'
   }
-  if (event.type === 'new_reply' || event.type === 'positive_reply' || event.type === 'hot_lead' || event.type === 'offer' || event.type === 'follow_up_due') {
+  if (event.type === 'new_reply' || event.type === 'positive_reply' || event.type === 'hot_lead' || event.type === 'offer' || event.type === 'follow_up_due' || event.type === 'queue_ready') {
     return 'hot'
   }
   if (event.type === 'buyer_activity' || event.type === 'sold_comp') return 'info'
@@ -211,6 +237,12 @@ export const getActivityPriority = (event: Pick<CommandMapActivityEvent, 'type' 
 }
 
 export const getActivityVisualType = (event: Pick<CommandMapActivityEvent, 'type' | 'priority'>): string => {
+  if (event.type === 'message_sent') return 'blue'
+  if (event.type === 'message_delivered') return 'green'
+  if (event.type === 'message_failed') return 'red'
+  if (event.type === 'queue_scheduled') return 'blue'
+  if (event.type === 'queue_ready') return 'cyan'
+  if (event.type === 'queue_blocked' || event.type === 'queue_paused') return 'red'
   if (event.type === 'new_reply') return 'cyan'
   if (event.type === 'positive_reply') return 'green'
   if (event.type === 'hot_lead') return 'amber'
@@ -322,14 +354,65 @@ const maybeBuildPinEvent = (
   const stage = lower(pin.conversation_stage)
   const status = lower(pin.conversation_status)
   const queueStatus = lower(pin.queue_status)
+  const deliveryStatus = lower((thread as any)?.deliveryStatus || (thread as any)?.delivery_status || pin.delivery_status)
   const automation = lower(pin.automation_status)
   const suppression = lower(pin.suppression_status)
   const createdAt = pin.last_inbound_at || pin.next_follow_up_at || pin.last_activity_at
+  const baseContext = {
+    propertyId: text((thread as any)?.propertyId),
+    masterOwnerId: text((thread as any)?.ownerId),
+    prospectId: text((thread as any)?.prospectId),
+    threadKey: text((thread as any)?.threadKey || (thread as any)?.id || pin.conversation_id),
+    queueId: text((thread as any)?.queueId),
+    messageEventId: text((thread as any)?.latestMessageEventId),
+  }
+
+  if (queueStatus === 'sent' && !(thread as any)?.latestMessageEventId && !(thread as any)?.message_event_id) {
+    return normalizeLiveActivityEvent({
+      id: `missing-event-${pin.conversation_id}-${createdAt}`,
+      type: 'missing_message_event',
+      priority: 'critical',
+      title: sellerName,
+      subtitle: market,
+      address,
+      detail: 'Sent queue row missing message event.',
+      createdAt,
+      lat: pin.lat,
+      lng: pin.lng,
+      targetType: 'seller',
+      targetId: pin.conversation_id,
+      targetView: 'queue',
+      actionLabel: 'Open Queue',
+      badgeLabel: 'Missing Event',
+      ...baseContext,
+    })
+  }
+
+  if (queueStatus === 'sent' && !(thread as any)?.providerMessageSid && !(thread as any)?.provider_message_sid) {
+    return normalizeLiveActivityEvent({
+      id: `provider-missing-${pin.conversation_id}-${createdAt}`,
+      type: 'provider_id_missing',
+      priority: 'critical',
+      title: sellerName,
+      subtitle: market,
+      address,
+      detail: 'Sent queue row missing provider ID.',
+      createdAt,
+      lat: pin.lat,
+      lng: pin.lng,
+      targetType: 'seller',
+      targetId: pin.conversation_id,
+      targetView: 'queue',
+      actionLabel: 'Open Queue',
+      badgeLabel: 'Provider Missing',
+      ...baseContext,
+    })
+  }
 
   if (queueStatus.includes('blocked') || pin.activity_state === 'queue_blocked') {
     return normalizeLiveActivityEvent({
       id: `routing-${pin.conversation_id}-${createdAt}`,
-      type: 'routing_block',
+      type: 'queue_blocked',
       priority: 'critical',
       title: sellerName,
       subtitle: market,
@@ -340,9 +423,137 @@ const maybeBuildPinEvent = (
       lng: pin.lng,
       targetType: 'seller',
       targetId: pin.conversation_id,
+      targetView: 'queue',
       actionLabel: 'Open Thread',
       badgeLabel: 'Routing Block',
       scoreLabel: pin.queue_status || undefined,
+      ...baseContext,
+    })
+  }
+
+  if (queueStatus.includes('paused')) {
+    return normalizeLiveActivityEvent({
+      id: `queue-paused-${pin.conversation_id}-${createdAt}`,
+      type: 'queue_paused',
+      priority: 'critical',
+      title: sellerName,
+      subtitle: market,
+      address,
+      detail: pin.next_action || pin.queue_status || 'Queue row is paused.',
+      createdAt,
+      lat: pin.lat,
+      lng: pin.lng,
+      targetType: 'seller',
+      targetId: pin.conversation_id,
+      targetView: 'queue',
+      actionLabel: 'Open Queue',
+      badgeLabel: 'Queue Paused',
+      ...baseContext,
+    })
+  }
+
+  if (queueStatus === 'scheduled' || queueStatus === 'queued') {
+    return normalizeLiveActivityEvent({
+      id: `queue-scheduled-${pin.conversation_id}-${createdAt}`,
+      type: 'queue_scheduled',
+      priority: 'normal',
+      title: sellerName,
+      subtitle: market,
+      address,
+      detail: pin.next_action || latestMessage || 'Scheduled queue activity is waiting to send.',
+      createdAt,
+      lat: pin.lat,
+      lng: pin.lng,
+      targetType: 'seller',
+      targetId: pin.conversation_id,
+      targetView: 'queue',
+      actionLabel: 'Open Queue',
+      badgeLabel: 'Queue Scheduled',
+      ...baseContext,
+    })
+  }
+
+  if (queueStatus === 'ready' || queueStatus === 'sending') {
+    return normalizeLiveActivityEvent({
+      id: `queue-ready-${pin.conversation_id}-${createdAt}`,
+      type: 'queue_ready',
+      priority: queueStatus === 'sending' ? 'hot' : 'normal',
+      title: sellerName,
+      subtitle: market,
+      address,
+      detail: pin.next_action || 'Queue row is ready to send.',
+      createdAt,
+      lat: pin.lat,
+      lng: pin.lng,
+      targetType: 'seller',
+      targetId: pin.conversation_id,
+      targetView: 'queue',
+      actionLabel: 'Open Queue',
+      badgeLabel: queueStatus === 'sending' ? 'Sending' : 'Queue Ready',
+      ...baseContext,
+    })
+  }
+
+  if (queueStatus === 'sent') {
+    return normalizeLiveActivityEvent({
+      id: `message-sent-${pin.conversation_id}-${createdAt}`,
+      type: 'message_sent',
+      priority: 'normal',
+      title: sellerName,
+      subtitle: market,
+      address,
+      detail: latestMessage || 'Outbound message sent.',
+      createdAt: pin.last_outbound_at || createdAt,
+      lat: pin.lat,
+      lng: pin.lng,
+      targetType: 'seller',
+      targetId: pin.conversation_id,
+      targetView: 'thread',
+      actionLabel: 'Open Thread',
+      badgeLabel: 'Message Sent',
+      ...baseContext,
+    })
+  }
+
+  if (queueStatus === 'delivered' || deliveryStatus === 'delivered') {
+    return normalizeLiveActivityEvent({
+      id: `message-delivered-${pin.conversation_id}-${createdAt}`,
+      type: 'message_delivered',
+      priority: 'normal',
+      title: sellerName,
+      subtitle: market,
+      address,
+      detail: latestMessage || 'Outbound message delivered.',
+      createdAt: pin.last_outbound_at || createdAt,
+      lat: pin.lat,
+      lng: pin.lng,
+      targetType: 'seller',
+      targetId: pin.conversation_id,
+      targetView: 'thread',
+      actionLabel: 'Open Thread',
+      badgeLabel: 'Delivered',
+      ...baseContext,
+    })
+  }
+
+  if (queueStatus === 'failed' || deliveryStatus === 'failed') {
+    return normalizeLiveActivityEvent({
+      id: `message-failed-${pin.conversation_id}-${createdAt}`,
+      type: 'message_failed',
+      priority: 'critical',
+      title: sellerName,
+      subtitle: market,
+      address,
+      detail: latestMessage || 'Outbound message failed.',
+      createdAt,
+      lat: pin.lat,
+      lng: pin.lng,
+      targetType: 'seller',
+      targetId: pin.conversation_id,
+      targetView: 'queue',
+      actionLabel: 'Open Queue',
+      badgeLabel: 'Failed',
+      ...baseContext,
     })
   }
 
@@ -531,7 +742,20 @@ export const loadLiveActivityFeed = ({
   bounds,
   selectedThread,
 }: LiveActivityFeedArgs): CommandMapActivityEvent[] => {
-  const pinEvents = pins
+  const prioritizedPins = pins
+    .slice()
+    .sort((left, right) => {
+      const lp = Number(left.priority_score ?? 0)
+      const rp = Number(right.priority_score ?? 0)
+      if (rp !== lp) return rp - lp
+      const lHot = left.activity_state === 'hot' || left.activity_state === 'replied' || left.activity_state === 'needs_review' ? 1 : 0
+      const rHot = right.activity_state === 'hot' || right.activity_state === 'replied' || right.activity_state === 'needs_review' ? 1 : 0
+      if (rHot !== lHot) return rHot - lHot
+      return new Date(right.last_activity_at || 0).getTime() - new Date(left.last_activity_at || 0).getTime()
+    })
+    .slice(0, 240)
+
+  const pinEvents = prioritizedPins
     .map((pin) => maybeBuildPinEvent(pin, threadsById.get(pin.conversation_id) || null))
     .filter((event): event is CommandMapActivityEvent => Boolean(event))
 
@@ -596,7 +820,7 @@ export const loadLiveActivityFeed = ({
       if (weightDelta !== 0) return weightDelta
       return new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime()
     })
-    .slice(0, Math.max(8, settings.maxCardsVisible))
+    .slice(0, Math.min(100, Math.max(8, settings.maxCardsVisible)))
 }
 
 const haversineMiles = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
