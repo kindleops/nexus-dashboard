@@ -51,7 +51,6 @@ import { getSupabaseClient } from '../../lib/supabaseClient'
 import { WatchlistProvider } from '../../lib/watchlistContext'
 import { emitNotification } from '../../shared/NotificationToast'
 import { Icon } from '../../shared/icons'
-import { formatRelativeTime } from '../../shared/formatters'
 import { NexusTopBar } from './components/NexusTopBar'
 import { type QueueCommandCaps, type QueueCommandMode } from './components/QueueCommandCenter'
 import { InboxSidebar } from './components/InboxSidebar'
@@ -61,6 +60,7 @@ import { Composer } from './components/Composer'
 import { ComposerTranslationBar } from './components/ComposerTranslationBar'
 import { IntelligencePanel } from './components/IntelligencePanel'
 import { CompIntelligenceWorkspace } from './components/CompIntelligenceWorkspace'
+import { BuyerMatchWorkspace } from './components/BuyerMatchWorkspace'
 import { SendQueueDashboard } from './components/SendQueueDashboard'
 import { InboxPipelineView } from './components/InboxPipelineView'
 import { InboxCalendarView } from './components/InboxCalendarView'
@@ -115,6 +115,7 @@ import { getViewLayoutMode, type ViewWidthPercent } from './view-layout'
 import './inbox-premium.css'
 import './inbox-rebuild.css'
 import './inbox-polish.css'
+import './buyer-intel-upgrade.css'
 import './copilot/copilot.css'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
@@ -2146,11 +2147,6 @@ export default function InboxPage() {
     </section>
   )
 
-  const formatMoney = (value: number | null | undefined): string => {
-    if (!Number.isFinite(value ?? NaN)) return '—'
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value as number)
-  }
-
   const renderWorkspacePane = (
     view: InboxWorkspaceView,
     paneMode: 'single' | 'multi' = 'single',
@@ -2285,109 +2281,27 @@ export default function InboxPage() {
     }
 
     if (view === 'buyer_match') {
-      const selectedBuyer =
-        buyerCommandData.profiles.find((profile) => profile.buyerKey === selectedBuyerKey)
-        || buyerCommandData.profilePoints.find((profile) => profile.buyerKey === selectedBuyerKey)
-        || null
-      const selectedBuyerMatches = buyerCommandData.matches.filter((match) => !selectedBuyerKey || match.buyerKey === selectedBuyerKey)
-      const selectedBuyerPurchases = buyerCommandData.recentPurchases.filter((purchase) => !selectedBuyerKey || purchase.buyerKey === selectedBuyerKey)
       return (
         <section className="nx-workspace-surface nx-workspace-surface--intel-grid">
-          <div className="nx-workspace-card">
-            <div className="nx-workspace-card__title"><Icon name="users" /><span>Buyer Demand Summary</span></div>
-            <div className="nx-workspace-metric-row"><span>Demand</span><strong>{buyerCommandData.summary?.demandLabel || 'Limited'}</strong></div>
-            <div className="nx-workspace-metric-row"><span>Top Match</span><strong>{buyerCommandData.summary?.topBuyerMatch || 'No live buyer yet'}</strong></div>
-            <div className="nx-workspace-metric-row"><span>Active Buyer Matches</span><strong>{String(buyerCommandData.summary?.activeBuyerMatches ?? 0)}</strong></div>
-            <div className="nx-workspace-metric-row"><span>Avg Match Score</span><strong>{buyerCommandData.summary?.averageMatchScore ?? '—'}</strong></div>
-            <div className="nx-workspace-metric-row"><span>Recent Purchases Nearby</span><strong>{String(buyerCommandData.summary?.recentPurchasesNearby ?? 0)}</strong></div>
-            <div className="nx-workspace-metric-row"><span>Dispo Confidence</span><strong>{buyerCommandData.summary ? `${buyerCommandData.summary.dispoConfidence}%` : '—'}</strong></div>
-            <p className="nx-workspace-card__body">{buyerCommandData.summary?.recommendedAction || 'Select a mapped seller property to hydrate buyer demand from Supabase sold-property intelligence.'}</p>
-          </div>
-          <div className="nx-workspace-card">
-            <div className="nx-workspace-card__title"><Icon name="filter" /><span>Buyer Filters</span></div>
-            <div className="nx-workspace-card-grid">
-              <label className="nx-workspace-field">
-                <span>Activity Window</span>
-                <select value={buyerFilters.activityWindowDays} onChange={(event) => setBuyerFilters((current) => ({ ...current, activityWindowDays: Number(event.target.value) as BuyerMapFilters['activityWindowDays'] }))}>
-                  {[30, 90, 180, 365].map((value) => <option key={value} value={value}>{value} days</option>)}
-                </select>
-              </label>
-              <label className="nx-workspace-field">
-                <span>Radius</span>
-                <select value={buyerFilters.radiusMiles} onChange={(event) => setBuyerFilters((current) => ({ ...current, radiusMiles: Number(event.target.value) as BuyerMapFilters['radiusMiles'] }))}>
-                  {[1, 3, 5, 10].map((value) => <option key={value} value={value}>{value} miles</option>)}
-                </select>
-              </label>
-              <label className="nx-workspace-field">
-                <span>Min Match</span>
-                <input type="number" min={0} max={100} value={buyerFilters.minMatchScore} onChange={(event) => setBuyerFilters((current) => ({ ...current, minMatchScore: Number(event.target.value) || 0 }))} />
-              </label>
-              <label className="nx-workspace-field">
-                <span>Min Purchases</span>
-                <input type="number" min={0} value={buyerFilters.minPurchaseCount} onChange={(event) => setBuyerFilters((current) => ({ ...current, minPurchaseCount: Number(event.target.value) || 0 }))} />
-              </label>
-            </div>
-            <p className="nx-workspace-card__body">Live filters apply to Command Map buyer layers and Buyer Match View together so the selected property, market, zip, and radius stay in sync.</p>
-          </div>
-          <div className="nx-workspace-card">
-            <div className="nx-workspace-card__title"><Icon name="target" /><span>Top Buyer Pool</span></div>
-            <div className="nx-workspace-lane__body">
-              {buyerCommandData.profilePoints.slice(0, paneMode === 'multi' && paneWidth === '25' ? 4 : 8).map((profile) => (
-                <button key={profile.buyerKey} type="button" className={cls('nx-workspace-thread-chip', selectedBuyerKey === profile.buyerKey && 'is-active')} onClick={() => setSelectedBuyerKey(profile.buyerKey)}>
-                  <strong>{profile.buyerName}</strong>
-                  <span>{profile.market || 'Market Unknown'} • {profile.purchaseCount} purchases</span>
-                  <small>{profile.category} • {formatMoney(profile.avgPurchasePrice)}</small>
-                </button>
-              ))}
-              {buyerCommandData.profilePoints.length === 0 && (
-                <p className="nx-workspace-card__body">No buyer profile rows are populated yet. Recent sold-property intelligence is still live below.</p>
-              )}
-            </div>
-          </div>
-          <div className="nx-workspace-card">
-            <div className="nx-workspace-card__title"><Icon name="briefing" /><span>Selected Buyer</span></div>
-            {selectedBuyer ? (
-              <>
-                <div className="nx-workspace-metric-row"><span>Name</span><strong>{'buyerName' in selectedBuyer ? selectedBuyer.buyerName : 'Property Buyer'}</strong></div>
-                <div className="nx-workspace-metric-row"><span>Type</span><strong>{'buyerType' in selectedBuyer ? selectedBuyer.buyerType : 'Unknown'}</strong></div>
-                <div className="nx-workspace-metric-row"><span>Tier</span><strong>{'buyerTier' in selectedBuyer ? selectedBuyer.buyerTier : 'Unknown'}</strong></div>
-                <div className="nx-workspace-metric-row"><span>Recent Purchases</span><strong>{selectedBuyerPurchases.length}</strong></div>
-                <div className="nx-workspace-metric-row"><span>Live Matches</span><strong>{selectedBuyerMatches.length}</strong></div>
-              </>
-            ) : (
-              <p className="nx-workspace-card__body">Select a buyer pin or buyer profile to review market demand and purchase history.</p>
-            )}
-          </div>
-          <div className="nx-workspace-card">
-            <div className="nx-workspace-card__title"><Icon name="zap" /><span>Live Buyer Matches</span></div>
-            <div className="nx-workspace-lane__body">
-              {selectedBuyerMatches.slice(0, 8).map((match) => (
-                <button key={match.matchKey} type="button" className="nx-workspace-thread-chip" onClick={() => setSelectedBuyerKey(match.buyerKey)}>
-                  <strong>{match.buyerName}</strong>
-                  <span>{match.matchScore ?? '—'} match • {match.dispositionStrategy || 'Unknown strategy'}</span>
-                  <small>{match.reasonForMatch || match.recommendedAction}</small>
-                </button>
-              ))}
-              {selectedBuyerMatches.length === 0 && (
-                <p className="nx-workspace-card__body">No live buyer-match rows are currently present for this property. Supabase recently sold-property demand still remains active.</p>
-              )}
-            </div>
-          </div>
-          <div className="nx-workspace-card">
-            <div className="nx-workspace-card__title"><Icon name="map" /><span>Recent Buyer Purchases</span></div>
-            <div className="nx-workspace-lane__body">
-              {selectedBuyerPurchases.slice(0, 8).map((purchase) => (
-                <button key={`${purchase.buyerKey}-${purchase.propertyId}`} type="button" className="nx-workspace-thread-chip" onClick={() => setSelectedBuyerKey(purchase.buyerKey)}>
-                  <strong>{purchase.buyerName}</strong>
-                  <span>{purchase.propertyAddressFull}</span>
-                  <small>{formatMoney(purchase.salePrice)} • {purchase.saleDate ? formatRelativeTime(purchase.saleDate) : 'Unknown timing'} • {purchase.category}</small>
-                </button>
-              ))}
-              {selectedBuyerPurchases.length === 0 && (
-                <p className="nx-workspace-card__body">No recent buyer purchases are in the current market/radius window.</p>
-              )}
-            </div>
-          </div>
+          <BuyerMatchWorkspace
+            buyerCommandData={buyerCommandData}
+            buyerFilters={buyerFilters}
+            onBuyerFiltersChange={setBuyerFilters}
+            selectedBuyerKey={selectedBuyerKey}
+            onSelectBuyerKey={setSelectedBuyerKey}
+            paneMode={paneMode}
+            paneWidth={paneWidth}
+            selectedPropertyLabel={
+              selected?.propertyAddressFull
+              || (selected as Record<string, unknown> | null)?.property_address_full as string
+              || (selected as Record<string, unknown> | null)?.property_address as string
+              || ((selected as Record<string, unknown> | null)?.address as string)
+              || 'Property Unknown'
+            }
+            selectedMarket={selected?.market || ((selected as Record<string, unknown> | null)?.property_address_city as string) || 'Market Unknown'}
+            selectedZip={((selected as Record<string, unknown> | null)?.property_address_zip as string) || ''}
+            selectedPropertyType={selected?.propertyType || ((selected as Record<string, unknown> | null)?.property_type as string) || ''}
+          />
         </section>
       )
     }

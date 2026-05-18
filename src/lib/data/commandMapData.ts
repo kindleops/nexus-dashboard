@@ -226,6 +226,8 @@ export const loadSoldCompsInBounds = async (
     .lte('latitude', bounds.maxLat)
     .gte('longitude', bounds.minLng)
     .lte('longitude', bounds.maxLng)
+    .order('sale_date', { ascending: false, nullsFirst: false })
+    .order('mls_sold_date', { ascending: false, nullsFirst: false })
     .limit(limit)
 
   if (filters?.assetClass) {

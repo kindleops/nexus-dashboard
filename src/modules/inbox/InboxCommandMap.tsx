@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { renderToStaticMarkup } from 'react-dom/server'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
-import type { FeatureCollection, GeoJsonProperties, Point, Polygon } from 'geojson'
+import type { FeatureCollection, GeoJsonProperties, LineString, Point, Polygon } from 'geojson'
 import type { ThreadMessage } from '../../lib/data/inboxData'
 import type { InboxWorkflowThread } from '../../lib/data/inboxWorkflowData'
 import type { MapSourceMode } from './inbox-layout-state'
 import { buildConversationDecision } from './inbox-decisioning'
 import { buildStreetViewUrl } from './inbox-normalization'
-import { formatRelativeTime } from '../../shared/formatters'
-import { Icon } from '../../shared/icons'
 import type { ViewLayoutMode } from './view-layout'
+import { SellerIntelligenceCard } from './components/SellerIntelligenceCard'
 import type {
   BuyerCommandData,
   BuyerMapFilters,
@@ -21,6 +21,17 @@ import { loadBuyerDemandLayerPoints, type BuyerDemandMetric, type BuyerDemandLay
 import { loadCensusForProperty, calculateInvestorOpportunityScore, type CensusData } from '../../lib/data/censusData'
 import { loadSoldCompsInBounds, type RecentSoldComp } from '../../lib/data/commandMapData'
 import {
+  centerMapOnActivity,
+  loadLiveActivityFeed,
+  type CommandMapActivityEvent,
+  type CommandMapActivityPinSource,
+  type CommandMapBounds,
+  type CommandMapPerformanceSettings,
+} from './commandMapLiveActivity'
+import { useCommandMapLiveActivitySettings } from './useCommandMapLiveActivitySettings'
+import { useCommandMapPerformanceMode } from './useCommandMapPerformanceMode'
+import { CommandMapLiveActivityRail } from './components/CommandMapLiveActivityRail'
+import {
   buildOverlayGeoJson,
   getCensusOverlayLegend,
   loadNationwideCensusOverlay,
@@ -28,6 +39,7 @@ import {
   type CensusOverlayLegend,
   type CensusOverlayMetric,
 } from '../../lib/map/censusOverlayUtils'
+import './seller-intelligence-card.css'
 
 const DARK_MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
 const CARTO_GLYPHS_URL = 'https://basemaps.cartocdn.com/gl/positron-gl-style/fonts/{fontstack}/{range}.pbf'
@@ -81,6 +93,7 @@ const CLUSTER_LAYER_IDS = [
 ] as const
 const BUYER_PURCHASE_SOURCE_ID = 'command-buyer-purchases'
 const BUYER_PROFILE_SOURCE_ID = 'command-buyer-profiles'
+const BUYER_TRAIL_SOURCE_ID = 'command-buyer-trail'
 const BUYER_HEATMAP_LAYER_ID = 'command-buyer-heatmap'
 const BUYER_PURCHASE_CLUSTER_IDS = [
   'command-buyer-cluster-glow',
@@ -94,6 +107,10 @@ const BUYER_PURCHASE_LAYER_IDS = [
 const BUYER_PROFILE_LAYER_IDS = [
   'command-buyer-profile-core',
   'command-buyer-profile-label',
+] as const
+const BUYER_TRAIL_LAYER_IDS = [
+  'command-buyer-trail-glow',
+  'command-buyer-trail-line',
 ] as const
 
 // Census + Buyer Demand overlay layer IDs
@@ -114,6 +131,7 @@ const BUYER_DEMAND_LAYER_IDS = {
 } as const
 const ALL_BUYER_DEMAND_LAYER_IDS = Object.values(BUYER_DEMAND_LAYER_IDS)
 const SOLD_COMPS_LAYER_IDS = {
+  hit: 'sold-comps-hit',
   marker: 'sold-comps-marker',
   label: 'sold-comps-label',
 } as const
@@ -214,8 +232,62 @@ type CommandMapPin = {
   confidence: number
   last_inbound_at: string | null
   last_outbound_at: string | null
+  last_reply_at: string | null
   queue_status: string | null
   delivery_status: string | null
+  map_image: string | null
+  satellite_image: string | null
+  property_address_full: string | null
+  property_address_city: string | null
+  property_address_state: string | null
+  property_address_zip: string | null
+  owner_name: string | null
+  owner_display_name: string | null
+  owner_full_name: string | null
+  owner_type: string | null
+  is_corporate_owner: boolean | null
+  corporate_owner: boolean | null
+  owner_occupied: boolean | null
+  out_of_state_owner: boolean | null
+  absentee_owner: boolean | null
+  ownership_years: number | null
+  last_sale_date: string | null
+  sale_date: string | null
+  sale_price: number | null
+  last_sale_price: number | null
+  latest_message_body: string | null
+  last_outreach_message: string | null
+  reply_status: string | null
+  seller_stage: string | null
+  pipeline_stage: string | null
+  contact_status: string | null
+  sms_eligible: boolean | null
+  language: string | null
+  phone: string | null
+  motivation_score: number | null
+  final_acquisition_score: number | null
+  seller_persona: string | null
+  ai_seller_persona: string | null
+  market_status_label: string | null
+  mls_market_status: string | null
+  market_sub_status_label: string | null
+  building_condition: string | null
+  building_quality: string | null
+  construction_type: string | null
+  year_built: number | null
+  effective_year_built: number | null
+  total_bedrooms: number | null
+  total_baths: number | null
+  building_square_feet: number | null
+  units_count: number | null
+  lot_square_feet: number | null
+  lot_acreage: number | null
+  estimated_repair_cost: number | null
+  equity_amount: number | null
+  tax_delinquent: boolean | null
+  active_lien: boolean | null
+  property_flags_json: unknown
+  property_flags_text: string | null
   activity_mode: InboxMapActivityMode
   activity_state: PinActivityState
   activity_label: string
@@ -255,37 +327,6 @@ type MapKpiChip = {
   tone: string
 }
 
-type TickerDensity = 'minimal' | 'compact' | 'expanded'
-
-type LiveTickerItem = {
-  id: string
-  threadId: string
-  lng: number
-  lat: number
-  eventType:
-    | 'new_reply'
-    | 'positive_intent'
-    | 'hot_seller'
-    | 'offer_generated'
-    | 'contract_sent'
-    | 'queue_blocked'
-    | 'buyer_match_found'
-    | 'follow_up_due'
-    | 'suppressed'
-  badge: string
-  sellerName: string
-  location: string
-  timeAgo: string
-  timestamp: string
-  preview?: string
-  address?: string
-  statusLabel?: string
-  stageLabel?: string
-  tone: 'accent' | 'danger' | 'success' | 'warning' | 'neutral' | 'premium'
-  disabledReply?: boolean
-  detailLabel?: string
-}
-
 type ControlsTab = 'view' | 'seller_layers' | 'buyer_layers' | 'census' | 'filters' | 'map_style'
 
 type ClusterCensusSummary = {
@@ -308,6 +349,12 @@ type BuyerLayerToggles = {
   buyerHeatmap: boolean
   buyerProfiles: boolean
   recentSoldComps: boolean
+  repeatBuyers: boolean
+  corporateBuyers: boolean
+  localInvestors: boolean
+  retailNoise: boolean
+  offMarketBuyers: boolean
+  buyerFocusMode: boolean
   institutional: boolean
   landlords: boolean
   flippers: boolean
@@ -344,6 +391,11 @@ type BuyerFeatureProps = {
   buyerEntityStrength: string
   investorFitScore: number
   compQualityScore: number
+  distanceMiles: number
+  focusOpacity: number
+  isRecent: number
+  isSelectedBuyer: number
+  sourceLabel: string
 }
 
 const defaultBuyerLayerToggles: BuyerLayerToggles = {
@@ -353,6 +405,12 @@ const defaultBuyerLayerToggles: BuyerLayerToggles = {
   buyerHeatmap: false,
   buyerProfiles: false,
   recentSoldComps: false,
+  repeatBuyers: false,
+  corporateBuyers: false,
+  localInvestors: false,
+  retailNoise: false,
+  offMarketBuyers: false,
+  buyerFocusMode: true,
   institutional: false,
   landlords: false,
   flippers: false,
@@ -446,6 +504,14 @@ const lower = (value: unknown): string => text(value).toLowerCase()
 const num = (value: unknown): number | null => {
   const n = Number(String(value ?? '').replace(/[,$\s]/g, ''))
   return Number.isFinite(n) ? n : null
+}
+const bool = (value: unknown): boolean | null => {
+  if (typeof value === 'boolean') return value
+  const normalized = lower(value)
+  if (!normalized) return null
+  if (['true', '1', 'yes', 'y'].includes(normalized)) return true
+  if (['false', '0', 'no', 'n'].includes(normalized)) return false
+  return null
 }
 
 const stageColor = (pin: CommandMapPin): string => {
@@ -547,17 +613,6 @@ const formatCompactCurrency = (value: number | null): string => {
     maximumFractionDigits: 1,
   }).format(value as number)
 }
-const resolveSellerName = (thread: InboxWorkflowThread | null, pin?: Pick<CommandMapPin, 'seller_name'> | null): string =>
-  [
-    text((thread as any)?.seller_name),
-    text((thread as any)?.ownerDisplayName),
-    text((thread as any)?.owner_display_name),
-    text((thread as any)?.ownerName),
-    text((thread as any)?.owner_name),
-    text((thread as any)?.prospect_name),
-    text((thread as any)?.contact_name),
-    text(pin?.seller_name),
-  ].find((value) => value && lower(value) !== 'unknown seller') || 'Unknown Seller'
 const resolveAddress = (thread: InboxWorkflowThread | null, pin?: Pick<CommandMapPin, 'address'> | null): string =>
   [
     text((thread as any)?.propertyAddress),
@@ -568,22 +623,6 @@ const resolveAddress = (thread: InboxWorkflowThread | null, pin?: Pick<CommandMa
     text((thread as any)?.situs_address),
     text(pin?.address),
   ].find(Boolean) || 'Property Unknown'
-const resolveMarket = (thread: InboxWorkflowThread | null, pin?: Pick<CommandMapPin, 'city' | 'state' | 'market'> | null): string =>
-  [
-    text((thread as any)?.market),
-    text((thread as any)?.marketName),
-    [text((thread as any)?.city || (thread as any)?.property_address_city || pin?.city), text((thread as any)?.state || (thread as any)?.property_address_state || pin?.state)].filter(Boolean).join(', '),
-    [text(pin?.city), text(pin?.state)].filter(Boolean).join(', '),
-    text(pin?.market),
-  ].find(Boolean) || 'Market Unknown'
-const resolveLastIntent = (thread: InboxWorkflowThread | null): string =>
-  text((thread as any)?.last_intent || (thread as any)?.lastIntent || (thread as any)?.intent || '')
-const resolveQueueStatus = (thread: InboxWorkflowThread | null, pin: CommandMapPin): string =>
-  text((thread as any)?.queue_status || (thread as any)?.queueStatus || pin.queue_status || '')
-const resolveOfferStatus = (thread: InboxWorkflowThread | null, pin: CommandMapPin): string =>
-  text((thread as any)?.offer_status || (thread as any)?.offerStatus || pin.offer_status || '')
-const resolveContractStatus = (thread: InboxWorkflowThread | null, pin: CommandMapPin): string =>
-  text((thread as any)?.contract_status || (thread as any)?.contractStatus || pin.contract_status || '')
 const buyerColorFor = (styleMode: MapStyleMode, category: string): string => {
   if (styleMode === 'red') {
     if (category === 'institutional') return '#ff8b6a'
@@ -612,10 +651,92 @@ const buyerCategoryLabel = (category: string): string => {
   if (category === 'builder') return 'Builder'
   return 'Buyer'
 }
+const buyerInitials = (name: string): string =>
+  name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .join('') || 'BY'
+const buyerMatchTier = (score: number | null | undefined): string => {
+  const safe = Number(score ?? 0)
+  if (safe >= 90) return 'Elite Match'
+  if (safe >= 75) return 'Strong Match'
+  if (safe >= 60) return 'Possible Match'
+  if (safe >= 40) return 'Weak Match'
+  return 'Low Fit'
+}
 const zillowSearchUrl = (address: string): string =>
   `https://www.zillow.com/homes/${encodeURIComponent(address)}_rb/`
 const mapsSearchUrl = (address: string): string =>
   `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`
+
+const padCommandBounds = (bounds: CommandMapBounds, ratio = 0.18): CommandMapBounds => {
+  const latPad = (bounds.north - bounds.south) * ratio
+  const lngPad = (bounds.east - bounds.west) * ratio
+  return {
+    west: bounds.west - lngPad,
+    south: bounds.south - latPad,
+    east: bounds.east + lngPad,
+    north: bounds.north + latPad,
+  }
+}
+
+const isPointInBounds = (lat: number, lng: number, bounds: CommandMapBounds | null): boolean =>
+  !bounds || (lat >= bounds.south && lat <= bounds.north && lng >= bounds.west && lng <= bounds.east)
+
+const getDensityMultiplier = (density: CommandMapPerformanceSettings['markerDensity']): number => (
+  density === 'low' ? 0.7 : density === 'high' ? 1.4 : 1
+)
+
+const getPinRenderCap = (
+  zoom: number,
+  settings: CommandMapPerformanceSettings,
+  layer: 'seller' | 'buyer' | 'sold_comp',
+): number => {
+  const density = getDensityMultiplier(settings.markerDensity)
+  const base =
+    layer === 'seller'
+      ? zoom < 6 ? 520 : zoom < 10 ? 760 : 980
+      : layer === 'buyer'
+        ? zoom < 6 ? 180 : zoom < 10 ? 280 : 420
+        : zoom < 8 ? 280 : 520
+  const modeFactor =
+    settings.performanceMode === 'speed'
+      ? 0.68
+      : settings.performanceMode === 'balanced'
+        ? 0.88
+        : settings.performanceMode === 'quality'
+          ? 1.16
+          : 1
+  return Math.max(layer === 'seller' ? 180 : 80, Math.round(base * density * modeFactor))
+}
+
+const sortPinsForPerformance = (pins: CommandMapPin[]): CommandMapPin[] =>
+  pins
+    .slice()
+    .sort((left, right) => {
+      const priorityDelta = (right.priority_score ?? 0) - (left.priority_score ?? 0)
+      if (priorityDelta !== 0) return priorityDelta
+      const unreadDelta = Number(right.unread) - Number(left.unread)
+      if (unreadDelta !== 0) return unreadDelta
+      return new Date(right.last_activity_at).getTime() - new Date(left.last_activity_at).getTime()
+    })
+
+const applyPinPerformanceWindow = (
+  pins: CommandMapPin[],
+  viewportBounds: CommandMapBounds | null,
+  zoom: number,
+  settings: CommandMapPerformanceSettings,
+): CommandMapPin[] => {
+  const paddedBounds = viewportBounds ? padCommandBounds(viewportBounds, zoom >= 10 ? 0.06 : 0.18) : null
+  const shouldFilterByBounds = Boolean(paddedBounds && (settings.performanceMode !== 'quality' || zoom >= 5))
+  const candidates = shouldFilterByBounds
+    ? pins.filter((pin) => isPointInBounds(pin.lat, pin.lng, paddedBounds))
+    : pins
+  const capped = sortPinsForPerformance(candidates).slice(0, getPinRenderCap(zoom, settings, 'seller'))
+  return capped.length > 0 ? capped : sortPinsForPerformance(pins).slice(0, getPinRenderCap(zoom, settings, 'seller'))
+}
 const buildBuyerFeatureCollection = (
   items: Array<BuyerRecentPurchase | BuyerProfilePoint>,
   styleMode: MapStyleMode,
@@ -632,6 +753,10 @@ const buildBuyerFeatureCollection = (
     const salePrice = isPurchase ? ((item as BuyerRecentPurchase).salePrice ?? 0) : ((item as BuyerProfilePoint).avgPurchasePrice ?? 0)
     const confidence = isPurchase ? ((item as BuyerRecentPurchase).compConfidenceScore ?? 0) : ((item as BuyerProfilePoint).confidenceScore ?? 0)
     const purchaseCount = isPurchase ? 1 : (item as BuyerProfilePoint).purchaseCount
+    const saleDate = 'saleDate' in item ? item.saleDate || '' : item.recentPurchaseDate || ''
+    const daysSince = saleDate ? Math.max(0, Math.round((Date.now() - new Date(saleDate).getTime()) / 86_400_000)) : null
+    const isSelectedBuyer = selectedBuyerKey && selectedBuyerKey === item.buyerKey ? 1 : 0
+    const focusOpacity = selectedBuyerKey ? (isSelectedBuyer ? 1 : 0.18) : 1
     return {
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [longitude, latitude] },
@@ -646,7 +771,7 @@ const buildBuyerFeatureCollection = (
         zip: 'propertyAddressZip' in item ? item.propertyAddressZip || '' : item.zip || '',
         propertyType: 'propertyType' in item ? item.propertyType || 'Unknown' : (item.propertyTypes?.[0] || 'Unknown'),
         propertyAddressFull: 'propertyAddressFull' in item ? item.propertyAddressFull || 'Property Unknown' : 'Buyer Profile',
-        saleDate: 'saleDate' in item ? item.saleDate || '' : item.recentPurchaseDate || '',
+        saleDate,
         salePrice,
         estimatedValue: 'estimatedValue' in item ? (item.estimatedValue ?? 0) : 0,
         matchScore: selectedBuyerKey && selectedBuyerKey === item.buyerKey ? 100 : 0,
@@ -665,10 +790,38 @@ const buildBuyerFeatureCollection = (
         buyerEntityStrength: 'buyerEntityStrength' in item ? item.buyerEntityStrength || '' : '',
         investorFitScore: 'investorFitScore' in item ? (item.investorFitScore ?? 0) : ((item as BuyerProfilePoint).velocityScore ?? 0),
         compQualityScore: 'compQualityScore' in item ? (item.compQualityScore ?? 0) : ((item as BuyerProfilePoint).confidenceScore ?? 0),
+        distanceMiles: 'distanceMiles' in item ? (item.distanceMiles ?? 0) : 0,
+        focusOpacity,
+        isRecent: daysSince != null && daysSince <= 90 ? 1 : 0,
+        isSelectedBuyer,
+        sourceLabel: 'isOffMarketPurchase' in item ? (item.isOffMarketPurchase ? 'Off-Market / Public Record' : 'MLS') : 'Buyer Profile',
       },
     }
   }),
 })
+
+const buildBuyerTrailGeojson = (
+  purchases: BuyerRecentPurchase[],
+  styleMode: MapStyleMode,
+): FeatureCollection<LineString, GeoJsonProperties> => {
+  if (purchases.length < 2) return { type: 'FeatureCollection', features: [] }
+  const sorted = purchases
+    .slice()
+    .sort((left, right) => new Date(left.saleDate || 0).getTime() - new Date(right.saleDate || 0).getTime())
+  return {
+    type: 'FeatureCollection',
+    features: [{
+      type: 'Feature',
+      geometry: {
+        type: 'LineString',
+        coordinates: sorted.map((purchase) => [purchase.longitude, purchase.latitude]),
+      },
+      properties: {
+        color: buyerColorFor(styleMode, sorted[sorted.length - 1]?.category || 'general'),
+      },
+    }],
+  }
+}
 
 const defaultMapOverlays: MapOverlayToggles = {
   roads: true,
@@ -806,6 +959,8 @@ const buildMapPin = (thread: InboxWorkflowThread): { pin: CommandMapPin | null; 
     equity_percent: num(get(thread, 'equityPercent', 'equity_percent')),
     repair_estimate: num(get(thread, 'estimatedRepairCost', 'estimated_repair_cost')),
     streetview_image: text(get(thread, 'streetview_image', 'streetviewImage')) || null,
+    map_image: text(get(thread, 'map_image', 'mapImage')) || null,
+    satellite_image: text(get(thread, 'satellite_image', 'satelliteImage')) || null,
     last_message: text(get(thread, 'lastMessageBody', 'latestMessageBody', 'preview')),
     last_message_direction: decision.last_message_direction,
     last_activity_at: thread.lastMessageAt || thread.lastMessageIso || new Date().toISOString(),
@@ -825,8 +980,60 @@ const buildMapPin = (thread: InboxWorkflowThread): { pin: CommandMapPin | null; 
     confidence: decision.confidence,
     last_inbound_at: thread.lastInboundAt || null,
     last_outbound_at: thread.lastOutboundAt || null,
+    last_reply_at: text(get(thread, 'last_reply_at', 'lastReplyAt')) || thread.lastInboundAt || null,
     queue_status: text(get(thread, 'queueStatus', 'queue_status', 'deliveryState')) || null,
     delivery_status: text(get(thread, 'deliveryStatus', 'delivery_status', 'providerDeliveryStatus', 'provider_delivery_status')) || null,
+    property_address_full: text(get(thread, 'propertyAddressFull', 'property_address_full', 'propertyAddress', 'property_address')) || null,
+    property_address_city: text(get(thread, 'property_address_city', 'city')) || null,
+    property_address_state: text(get(thread, 'property_address_state', 'state')) || null,
+    property_address_zip: text(get(thread, 'property_address_zip', 'zip')) || null,
+    owner_name: text(get(thread, 'owner_name', 'ownerName')) || null,
+    owner_display_name: text(get(thread, 'owner_display_name', 'ownerDisplayName')) || null,
+    owner_full_name: text(get(thread, 'owner_full_name')) || null,
+    owner_type: text(get(thread, 'owner_type', 'ownerType', 'owner_type_guess')) || null,
+    is_corporate_owner: bool(get(thread, 'is_corporate_owner')),
+    corporate_owner: bool(get(thread, 'corporate_owner')),
+    owner_occupied: bool(get(thread, 'owner_occupied')),
+    out_of_state_owner: bool(get(thread, 'out_of_state_owner', 'outOfStateOwner', 'is_out_of_state_owner')),
+    absentee_owner: bool(get(thread, 'absentee_owner', 'isAbsentee')),
+    ownership_years: num(get(thread, 'ownership_years', 'ownershipYears')),
+    last_sale_date: text(get(thread, 'last_sale_date', 'lastSaleDate')) || null,
+    sale_date: text(get(thread, 'sale_date', 'saleDate')) || null,
+    sale_price: num(get(thread, 'sale_price', 'salePrice')),
+    last_sale_price: num(get(thread, 'last_sale_price', 'lastSalePrice')),
+    latest_message_body: text(get(thread, 'latest_message_body', 'latestMessageBody', 'lastMessageBody')) || null,
+    last_outreach_message: text(get(thread, 'last_outreach_message', 'lastOutreachMessage')) || null,
+    reply_status: text(get(thread, 'reply_status', 'replyStatus', 'inboxStatus')) || null,
+    seller_stage: text(get(thread, 'seller_stage')) || null,
+    pipeline_stage: text(get(thread, 'pipeline_stage')) || null,
+    contact_status: text(get(thread, 'contact_status', 'suppression_status', 'suppressionStatus')) || null,
+    sms_eligible: bool(get(thread, 'sms_eligible')),
+    language: text(get(thread, 'language', 'seller_language', 'best_language', 'detected_language')) || null,
+    phone: text(get(thread, 'phone', 'phoneNumber', 'canonicalE164')) || null,
+    motivation_score: num(get(thread, 'motivation_score', 'motivationScore')),
+    final_acquisition_score: num(get(thread, 'final_acquisition_score', 'finalAcquisitionScore', 'priority_score', 'priorityScore')),
+    seller_persona: text(get(thread, 'seller_persona', 'sellerPersona')) || null,
+    ai_seller_persona: text(get(thread, 'ai_seller_persona')) || null,
+    market_status_label: text(get(thread, 'market_status_label')) || null,
+    mls_market_status: text(get(thread, 'mls_market_status')) || null,
+    market_sub_status_label: text(get(thread, 'market_sub_status_label')) || null,
+    building_condition: text(get(thread, 'building_condition')) || null,
+    building_quality: text(get(thread, 'building_quality')) || null,
+    construction_type: text(get(thread, 'construction_type')) || null,
+    year_built: num(get(thread, 'year_built', 'yearBuilt')),
+    effective_year_built: num(get(thread, 'effective_year_built')),
+    total_bedrooms: num(get(thread, 'total_bedrooms', 'beds', 'bedrooms')),
+    total_baths: num(get(thread, 'total_baths', 'baths', 'bathrooms')),
+    building_square_feet: num(get(thread, 'building_square_feet', 'sqft', 'livingAreaSqft')),
+    units_count: num(get(thread, 'units_count', 'units', 'unit_count', 'number_of_units')),
+    lot_square_feet: num(get(thread, 'lot_square_feet')),
+    lot_acreage: num(get(thread, 'lot_acreage')),
+    estimated_repair_cost: num(get(thread, 'estimated_repair_cost', 'estimatedRepairCost')),
+    equity_amount: num(get(thread, 'equity_amount')),
+    tax_delinquent: bool(get(thread, 'tax_delinquent')),
+    active_lien: bool(get(thread, 'active_lien')),
+    property_flags_json: get(thread, 'property_flags_json'),
+    property_flags_text: text(get(thread, 'property_flags_text')) || null,
     activity_mode: 'threads' as const,
     activity_state: (decision.suppression_status !== 'clear' ? 'suppressed' : 'new_replies') as PinActivityState,
     activity_label: decision.suppression_status !== 'clear' ? 'Suppressed' : 'New Replies',
@@ -1096,149 +1303,6 @@ const buildKpiChips = (pins: CommandMapPin[], activityMode: InboxMapActivityMode
   ]
 }
 
-const buildLiveTickerItems = (pins: CommandMapPin[], threadsById: Map<string, InboxWorkflowThread>): LiveTickerItem[] => {
-  return pins
-    .map((pin) => {
-      const thread = threadsById.get(pin.conversation_id) || null
-      const sellerName = resolveSellerName(thread, pin)
-      const hydratedAddress = resolveAddress(thread, pin)
-      const marketLine = resolveMarket(thread, pin)
-      const lastMessage = [
-        text((thread as any)?.message_body),
-        text((thread as any)?.latestMessageBody),
-        text((thread as any)?.latest_message_body),
-        text((thread as any)?.lastMessageBody),
-        text((thread as any)?.preview),
-        text(pin.last_message),
-      ].find(Boolean) || ''
-      const lastIntent = lower(resolveLastIntent(thread))
-      const queueStatus = lower(resolveQueueStatus(thread, pin))
-      const offerStatus = lower(resolveOfferStatus(thread, pin))
-      const contractStatus = lower(resolveContractStatus(thread, pin))
-      const lowerStage = lower(pin.conversation_stage)
-      const lowerStatus = lower(pin.conversation_status)
-      const lowerMessage = lower(lastMessage)
-
-      let eventType: LiveTickerItem['eventType'] = 'new_reply'
-      let badge = 'New Reply'
-      let tone: LiveTickerItem['tone'] = 'accent'
-      let detailLabel = 'Inbound'
-
-      if (queueStatus.includes('blocked') || pin.activity_state === 'queue_blocked' || pin.activity_state === 'failed') {
-        eventType = 'queue_blocked'
-        badge = 'Queue Blocked'
-        tone = 'danger'
-        detailLabel = 'Routing'
-      } else if (pin.suppression_status !== 'clear') {
-        eventType = 'suppressed'
-        badge = 'Suppressed'
-        tone = 'danger'
-        detailLabel = 'Safety'
-      } else if (
-        contractStatus.includes('active')
-        || contractStatus.includes('sent')
-        || lowerStage.includes('contract')
-        || lowerStage.includes('closing')
-      ) {
-        eventType = 'contract_sent'
-        badge = 'Contract Sent'
-        tone = 'premium'
-        detailLabel = 'Contract'
-      } else if (
-        offerStatus.includes('ready')
-        || offerStatus.includes('sent')
-        || lowerStage.includes('offer')
-        || lowerStatus.includes('offer')
-      ) {
-        eventType = 'offer_generated'
-        badge = 'Offer Generated'
-        tone = 'premium'
-        detailLabel = 'Offer'
-      } else if (
-        lastIntent.includes('sell')
-        || lastIntent.includes('interested')
-        || lastIntent.includes('positive')
-        || lastIntent.includes('price')
-        || lowerMessage.includes('yes')
-        || lowerMessage.includes('interested')
-      ) {
-        eventType = 'positive_intent'
-        badge = 'Positive Intent'
-        tone = 'success'
-        detailLabel = 'Intent'
-      } else if (
-        lower((thread as any)?.next_action || pin.next_action).includes('buyer')
-        || lower((thread as any)?.recommended_action || '').includes('buyer')
-        || lower((thread as any)?.dispo_status || '').includes('buyer')
-      ) {
-        eventType = 'buyer_match_found'
-        badge = 'Buyer Match Found'
-        tone = 'success'
-        detailLabel = 'Disposition'
-      } else if ((pin.priority_score ?? 0) >= 92) {
-        eventType = 'hot_seller'
-        badge = 'Hot Seller'
-        tone = 'premium'
-        detailLabel = 'Signal'
-      } else if (pin.activity_state === 'due_now' || pin.activity_state === 'overdue' || pin.activity_state === 'follow_up_due') {
-        eventType = 'follow_up_due'
-        badge = 'Follow-Up Due'
-        tone = 'warning'
-        detailLabel = 'Follow-Up'
-      } else if (pin.activity_state === 'new_replies' || pin.activity_state === 'replied' || pin.inbox_bucket === 'new_replies') {
-        eventType = 'new_reply'
-        badge = 'New Reply'
-        tone = 'accent'
-        detailLabel = 'Inbound'
-      }
-
-      const timestamp = (
-        eventType === 'new_reply' || eventType === 'positive_intent'
-          ? (pin.last_inbound_at || pin.last_activity_at)
-          : (pin.last_outbound_at || pin.next_follow_up_at || pin.last_activity_at)
-      )
-
-      const preview =
-        eventType === 'queue_blocked'
-          ? pin.next_action || pin.conversation_status || 'Message send blocked.'
-          : eventType === 'offer_generated'
-            ? `Offer ${formatCompactCurrency(num((thread as any)?.recommended_offer) ?? null)} • Walkaway ${formatCompactCurrency(num((thread as any)?.walkaway_price) ?? null)}`
-            : eventType === 'contract_sent'
-              ? pin.next_action || 'Contract motion is active.'
-              : eventType === 'buyer_match_found'
-                ? text((thread as any)?.recommended_action || pin.next_action) || 'Buyer demand surfaced for this property.'
-                : eventType === 'hot_seller'
-                  ? `${lastMessage || 'Seller activity is accelerating.'}${Number.isFinite(pin.estimated_value ?? NaN) ? ` • Value ${formatCompactCurrency(pin.estimated_value)}` : ''}`
-                  : eventType === 'follow_up_due'
-                    ? pin.next_follow_up_at ? `Due ${formatRelative(pin.next_follow_up_at)} • ${pin.next_action || 'Follow-up required.'}` : pin.next_action || 'Follow-up required.'
-                    : eventType === 'positive_intent'
-                      ? `${resolveLastIntent(thread) || 'Positive seller signal.'}${lastMessage ? ` • ${lastMessage}` : ''}`
-                      : lastMessage || undefined
-
-      return {
-        id: `${pin.conversation_id}:${eventType}:${timestamp}`,
-        threadId: pin.conversation_id,
-        lng: pin.lng,
-        lat: pin.lat,
-        eventType,
-        badge,
-        sellerName,
-        location: marketLine,
-        timeAgo: formatRelative(timestamp),
-        timestamp: timestamp || pin.last_activity_at,
-        preview,
-        address: hydratedAddress,
-        statusLabel: formatLabel(pin.conversation_status || 'Unknown'),
-        stageLabel: formatLabel(pin.conversation_stage || 'Unknown'),
-        tone,
-        disabledReply: eventType === 'suppressed' || eventType === 'queue_blocked',
-        detailLabel,
-      }
-    })
-    .sort((left, right) => new Date(right.timestamp || 0).getTime() - new Date(left.timestamp || 0).getTime())
-    .slice(0, 20)
-}
-
 const resolveStyle = (styleMode: MapStyleMode) => {
   const envStyle = (import.meta.env as Record<string, string>).VITE_MAP_STYLE_URL
   if (styleMode === 'satellite') return SATELLITE_MAP_STYLE
@@ -1293,93 +1357,23 @@ const mapCardThemeVariants: Record<MapStyleMode, Record<string, string>> = {
   },
 }
 
-const cardThemeVars = (styleMode: MapStyleMode): CSSProperties => mapCardThemeVariants[styleMode] as CSSProperties
 const cardThemeStyleAttr = (styleMode: MapStyleMode): string => Object.entries(mapCardThemeVariants[styleMode]).map(([key, value]) => `${key}:${value}`).join(';')
 
-const statusToneForPin = (pin: Pick<CommandMapPin, 'suppression_status' | 'inbox_bucket' | 'conversation_status' | 'contract_status' | 'offer_status'>): 'danger' | 'warning' | 'success' | 'accent' | 'neutral' => {
-  if (pin.suppression_status !== 'clear') return 'danger'
-  if (pin.inbox_bucket === 'needs_review') return 'warning'
-  if (lower(pin.contract_status).includes('active')) return 'success'
-  if (lower(pin.offer_status).includes('ready') || lower(pin.offer_status).includes('sent')) return 'success'
-  if (pin.inbox_bucket === 'new_replies') return 'accent'
-  if (pin.inbox_bucket === 'waiting_on_seller') return 'neutral'
-  return 'accent'
+const sellerCardMaxWidthForLayout = (layoutMode: ViewLayoutMode): string => {
+  if (layoutMode === 'compact') return '304px'
+  if (layoutMode === 'medium') return '336px'
+  if (layoutMode === 'expanded') return '360px'
+  return '380px'
 }
 
-const statusLabelForPin = (pin: Pick<CommandMapPin, 'suppression_status' | 'inbox_bucket' | 'conversation_status' | 'conversation_stage' | 'contract_status' | 'offer_status'>): string => {
-  if (pin.suppression_status !== 'clear') return 'Suppressed'
-  if (pin.inbox_bucket === 'new_replies') return 'New Reply'
-  if (pin.inbox_bucket === 'needs_review') return 'Needs Review'
-  if (pin.inbox_bucket === 'waiting_on_seller') return 'Waiting'
-  if (lower(pin.contract_status).includes('active')) return 'Contract Active'
-  if (lower(pin.offer_status).includes('ready') || lower(pin.offer_status).includes('sent')) return 'Offer Ready'
-  return formatLabel(pin.conversation_stage || pin.conversation_status || 'Unknown')
-}
-
-const statIconMarkup = (icon: 'beds' | 'baths' | 'sqft' | 'units' | 'value' | 'repairs' | 'equity' | 'status') => {
-  const icons: Record<string, string> = {
-    beds: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12.5h16v6H4zM6 10V7.5A1.5 1.5 0 0 1 7.5 6h3A1.5 1.5 0 0 1 12 7.5V10m1 0V8.2A1.2 1.2 0 0 1 14.2 7h2.6A1.2 1.2 0 0 1 18 8.2V10" /></svg>',
-    baths: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6.5a2.5 2.5 0 1 1 5 0v6.5m-6 0h10m-8.5 0v2.2a3.5 3.5 0 0 0 7 0V13" /><path d="M5 13h14" /></svg>',
-    sqft: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10v16H7z" /><path d="M9.5 7.5h5m-5 4h5m-5 4h5" /></svg>',
-    units: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V6.2L12 3l7 3.2V20" /><path d="M9 20v-4h6v4M8 8h.01M12 8h.01M16 8h.01M8 12h.01M12 12h.01M16 12h.01" /></svg>',
-    value: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5v17M16 7.2c0-1.6-1.8-2.7-4-2.7s-4 1.1-4 2.7 1.4 2.4 4 2.9 4 1.2 4 3-1.8 3.1-4 3.1-4-1.2-4-2.8" /></svg>',
-    repairs: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 7 4 4m-2 2-3.5 3.5a1.4 1.4 0 0 0 2 2L10 15m4.6-8.6a3 3 0 0 0 3.8 3.8L13 15.6l-4.6-4.6z" /></svg>',
-    equity: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.2 19 8v8l-7 3.8L5 16V8z" /><path d="m9 12 2 2 4-4" /></svg>',
-    status: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7.5" /><path d="M12 8v4l2.8 2.2" /></svg>',
-  }
-  return icons[icon]
-}
-
-const buildHoverCardMarkup = (pin: CommandMapPin, styleMode: MapStyleMode): string => {
-  const imageUrl = pin.streetview_image || buildStreetViewUrl(pin.address) || ''
-  const statusTone = statusToneForPin(pin)
-  const statusLabel = statusLabelForPin(pin)
-  const metric = (label: string, icon: string, value: string) => `
-    <div class="nx-icm-hover__metric ${statusTone === 'danger' ? 'is-danger' : statusTone === 'accent' ? 'is-accent' : ''}">
-      <span class="nx-icm-hover__metric-icon">${statIconMarkup(icon as any)}</span>
-      <div class="nx-icm-hover__metric-copy">
-        <span>${label}</span>
-        <strong>${escapeHtml(value)}</strong>
-      </div>
-    </div>
-  `
-  return `
-    <article class="nx-icm-hover nx-icm-hover--${styleMode}" style="${cardThemeStyleAttr(styleMode)}">
-      ${imageUrl ? `<div class="nx-icm-hover__media">
-        <img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(pin.address)} street view" loading="lazy" />
-        <div class="nx-icm-hover__media-scrim"></div>
-        <span class="nx-icm-hover__media-badge">Owner</span>
-      </div>` : '<div class="nx-icm-hover__media nx-icm-hover__media--empty"><span>No image available</span></div>'}
-      <div class="nx-icm-hover__body">
-        <div class="nx-icm-hover__head">
-          <div>
-            <p class="nx-icm-hover__eyebrow">${escapeHtml(pin.activity_label || 'Lead')}</p>
-            <h4>${escapeHtml(pin.seller_name)}</h4>
-          </div>
-          <span class="nx-icm-hover__status nx-icm-hover__status--${statusTone}">${escapeHtml(statusLabel)}</span>
-        </div>
-        <p class="nx-icm-hover__address"><span class="nx-icm-hover__address-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s6-5 6-10a6 6 0 0 0-12 0c0 5 6 10 6 10Z" /><circle cx="12" cy="10" r="2.2" /></svg></span>${escapeHtml(pin.address || 'Property Unknown')}</p>
-        <div class="nx-icm-hover__stats">
-          ${metric('Beds', 'beds', formatInteger(pin.beds))}
-          ${metric('Baths', 'baths', formatInteger(pin.baths))}
-          ${metric('Sqft', 'sqft', formatInteger(pin.sqft))}
-          ${metric('Units', 'units', formatInteger(pin.units))}
-          ${metric('Value', 'value', formatCurrency(pin.estimated_value))}
-          ${metric('Repairs', 'repairs', formatCurrency(pin.repair_estimate))}
-          ${metric('Equity', 'equity', formatPercent(pin.equity_percent ?? NaN))}
-          ${metric('Status', 'status', formatLabel(pin.conversation_status || 'Unknown'))}
-        </div>
-        <div class="nx-icm-hover__message">
-          <div class="nx-icm-hover__message-head">
-            <span>Last Message</span>
-            <small>${escapeHtml(formatRelative(pin.last_activity_at))}</small>
-          </div>
-          <p>${escapeHtml(pin.last_message || 'No recent message')}</p>
-        </div>
-      </div>
-    </article>
-  `
-}
+const buildHoverCardMarkup = (record: Record<string, unknown>, layoutMode: ViewLayoutMode): string =>
+  renderToStaticMarkup(
+    <SellerIntelligenceCard
+      record={record}
+      layoutMode={layoutMode}
+      variant="hover"
+    />,
+  )
 
 const buildBuyerHoverMarkup = (buyer: BuyerFeatureProps, styleMode: MapStyleMode): string => `
   <article class="nx-icm-hover nx-icm-hover--buyer" style="${escapeHtml(cardThemeStyleAttr(styleMode))}">
@@ -1389,13 +1383,17 @@ const buildBuyerHoverMarkup = (buyer: BuyerFeatureProps, styleMode: MapStyleMode
           <p class="nx-icm-hover__eyebrow">${escapeHtml(buyerCategoryLabel(buyer.category))}</p>
           <h4>${escapeHtml(buyer.buyerName || 'Property Buyer')}</h4>
         </div>
-        <span class="nx-icm-hover__status nx-icm-hover__status--accent">${escapeHtml(buyer.buyerTier || 'Buyer')}</span>
+        <span class="nx-icm-hover__status nx-icm-hover__status--accent">${escapeHtml(buyerMatchTier(buyer.matchScore || buyer.confidenceScore || 0))}</span>
       </div>
       <p class="nx-icm-hover__address"><span class="nx-icm-hover__address-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s6-5 6-10a6 6 0 0 0-12 0c0 5 6 10 6 10Z" /><circle cx="12" cy="10" r="2.2" /></svg></span>${escapeHtml(buyer.propertyAddressFull || buyer.market || 'Market Unknown')}</p>
       <div class="nx-icm-hover__stats">
         <div class="nx-icm-hover__metric is-accent"><div class="nx-icm-hover__metric-copy"><span>Sale Price</span><strong>${escapeHtml(formatCurrency(buyer.salePrice || null))}</strong></div></div>
-        <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>Match Score</span><strong>${buyer.matchScore ? `${Math.round(buyer.matchScore)}` : '—'}</strong></div></div>
-        <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>Sqft</span><strong>${escapeHtml(formatInteger(buyer.sqft || null))}</strong></div></div>
+        <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>Purchase Date</span><strong>${escapeHtml(buyer.saleDate ? formatRelative(buyer.saleDate) : 'Unknown')}</strong></div></div>
+        <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>Type / Asset</span><strong>${escapeHtml(buyer.propertyType || buyer.buyerActivitySignal || 'Buyer')}</strong></div></div>
+        <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>PPSF</span><strong>${buyer.pricePerSqft ? escapeHtml(formatCurrency(buyer.pricePerSqft)) : '—'}</strong></div></div>
+        <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>Source</span><strong>${escapeHtml(buyer.sourceLabel || 'Buyer')}</strong></div></div>
+        <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>Distance</span><strong>${buyer.distanceMiles ? `${buyer.distanceMiles.toFixed(1)} mi` : '—'}</strong></div></div>
+        <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>Match Score</span><strong>${buyer.matchScore ? `${Math.round(buyer.matchScore)}/100` : '—'}</strong></div></div>
         <div class="nx-icm-hover__metric"><div class="nx-icm-hover__metric-copy"><span>Activity</span><strong>${escapeHtml(buyer.buyerActivitySignal || buyer.market || 'Live')}</strong></div></div>
       </div>
     </div>
@@ -1423,12 +1421,11 @@ type SoldCompMetricItem = {
 type SoldCompPresentation = {
   variant: 'residential' | 'multifamily'
   accentHex: string
-  accentTone: 'danger' | 'accent'
   salePrice: string
   saleDate: string
   sourceLabel: string
-  sourceTone: 'accent' | 'premium' | 'warning'
   buyerName: string
+  buyerInitials: string
   buyerType: string
   buyerTone: 'institutional' | 'premium' | 'accent'
   entityLabel: string
@@ -1437,16 +1434,10 @@ type SoldCompPresentation = {
   propertyLabel: string
   subtypeLabel: string | null
   distanceLabel: string | null
-  residentialMetrics: SoldCompMetricItem[]
-  multifamilyHeroMetric: SoldCompMetricItem | null
-  multifamilyMetrics: SoldCompMetricItem[]
+  headlineMetrics: SoldCompMetricItem[]
+  supportMetrics: SoldCompMetricItem[]
   intelligenceChips: Array<{ label: string; value: string; tone?: 'success' | 'accent' | 'warning' | 'neutral' }>
   whyItMatters: string
-  actionLinks: {
-    fullComp: string
-    buyerSearch: string
-    maps: string
-  }
 }
 
 const SOLD_COMP_INSTITUTIONAL_NAME_PATTERNS = [
@@ -1490,6 +1481,17 @@ const formatLotSizeLabel = (lotAcreage: number | null | undefined, lotSquareFeet
   if (Number.isFinite(lotAcreage ?? NaN) && (lotAcreage as number) > 0) return `${formatDecimal(lotAcreage, 2)} ac`
   if (Number.isFinite(lotSquareFeet ?? NaN)) return `${formatInteger(lotSquareFeet as number)} sf`
   return '—'
+}
+
+const initialsFromName = (value: string): string => {
+  const parts = value
+    .replace(/[^A-Za-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((part) => !['LLC', 'LP', 'LTD', 'INC', 'CORP', 'TRUST', 'CO', 'COMPANY', 'HOLDINGS'].includes(part.toUpperCase()))
+    .slice(0, 2)
+  if (parts.length === 0) return 'SC'
+  return parts.map((part) => part[0]?.toUpperCase() ?? '').join('').slice(0, 2)
 }
 
 const toUpperTokens = (value: string): string => value.toUpperCase().replace(/\s+/g, ' ').trim()
@@ -1570,23 +1572,21 @@ const classifySoldCompBuyer = (comp: RecentSoldComp, variant: SoldCompPresentati
 
 const buildSoldCompPresentation = (
   comp: RecentSoldComp,
-  subject?: { latitude: number; longitude: number; normalized_asset_class?: string | null; building_square_feet?: number | null } | null,
+  subject?: { latitude?: number | null; longitude?: number | null; normalized_asset_class?: string | null; building_square_feet?: number | null } | null,
 ): SoldCompPresentation => {
   const anyComp = comp as RecentSoldComp & Record<string, unknown>
   const variant = inferSoldCompVariant(comp)
-  const accentHex = variant === 'multifamily' ? '#7dd3fc' : '#ff7a59'
-  const accentTone: SoldCompPresentation['accentTone'] = variant === 'multifamily' ? 'accent' : 'danger'
+  const accentHex = '#ef4444'
   const salePriceValue = comp.sale_price ?? comp.mls_sold_price ?? null
   const salePrice = formatCurrency(salePriceValue)
   const saleDate = formatDateLabel(comp.sale_date || comp.mls_sold_date)
   const sourceLabel =
     comp.sale_source
     || (comp.mls_sold_price || comp.mls_sold_date ? 'MLS Sold' : (comp.sale_price || comp.sale_date ? 'Public Record Sold' : 'Sold'))
-  const sourceTone: SoldCompPresentation['sourceTone'] =
-    sourceLabel.includes('MLS') ? 'accent' : sourceLabel.includes('Off-Market') ? 'premium' : 'warning'
   const { buyerName, buyerType, buyerTone, entityLabel } = classifySoldCompBuyer(comp, variant)
+  const buyerInitials = initialsFromName(buyerName)
   const imageUrl = text(anyComp.streetview_image) || text(anyComp.map_image) || text(comp.satellite_image) || buildStreetViewUrl(comp.property_address_full) || ''
-  const imageLabel = text(anyComp.streetview_image) ? 'Street View Preview' : 'Property Preview'
+  const imageLabel = text(anyComp.streetview_image) ? 'Street View' : 'Property Preview'
   const propertyLabel = text(comp.property_type) || (variant === 'multifamily' ? 'Apartment' : 'Residential')
   const subtypeLabel = text(comp.normalized_asset_class || comp.property_class) || null
   const distance =
@@ -1605,46 +1605,66 @@ const buildSoldCompPresentation = (
   const ppu = salePriceValue && units > 1 ? Math.round(salePriceValue / units) : null
   const sqftPerUnit = Number(anyComp.avg_sqft_per_unit ?? anyComp.sqft_per_unit ?? (buildingSqft && units > 0 ? Math.round(buildingSqft / units) : NaN))
   const bedsPerUnit = Number(anyComp.beds_per_unit ?? (totalBeds && units > 0 ? totalBeds / units : NaN))
+  const bathsPerUnit = Number(totalBaths && units > 0 ? totalBaths / units : NaN)
   const lotSize = formatLotSizeLabel(comp.lot_acreage, comp.lot_square_feet)
   const yearBuilt = formatInteger(comp.year_built ?? (anyComp.effective_year_built as number | null) ?? null)
   const confidenceValue = comp.comp_confidence_score ? `${Math.round(comp.comp_confidence_score)}%` : '—'
   const gradeValue = text(comp.deal_grade) || 'Watchlist'
   const conditionValue = text(comp.building_condition) || 'Condition N/A'
   const constructionValue = text(comp.construction_type) || 'Construction N/A'
+  const estimatedValue = formatCurrency(comp.arv_estimate)
+  const offValueRaw =
+    Number(anyComp.potential_spread ?? NaN)
+    || (
+      Number.isFinite(comp.arv_estimate ?? NaN) && Number.isFinite(salePriceValue ?? NaN)
+        ? Math.round((comp.arv_estimate as number) - (salePriceValue as number))
+        : NaN
+    )
+  const offPercentRaw =
+    Number.isFinite(comp.arv_estimate ?? NaN) && Number.isFinite(offValueRaw)
+      ? ((offValueRaw as number) / Math.max(comp.arv_estimate as number, 1)) * 100
+      : Number(anyComp.target_margin_percent ?? NaN)
+  const offValue = formatCurrency(Number.isFinite(offValueRaw) ? offValueRaw as number : null)
+  const offPercent = Number.isFinite(offPercentRaw) ? `${Math.round((offPercentRaw as number) * 10) / 10}%` : '—'
+  const bedsBathsSqft = [totalBeds ? `${formatDecimal(totalBeds, 1)} bd` : '', totalBaths ? `${formatDecimal(totalBaths, 1)} ba` : '', buildingSqft ? `${formatInteger(buildingSqft)} sf` : '']
+    .filter(Boolean)
+    .join(' • ') || '—'
 
-  const residentialMetrics: SoldCompMetricItem[] = [
-    { label: 'PPSF', value: formatCurrency(ppsf), emphasis: 'accent' },
-    { label: 'Beds / Baths', value: totalBeds || totalBaths ? `${formatDecimal(totalBeds, 1)} / ${formatDecimal(totalBaths, 1)}` : '—' },
-    { label: 'Building Sqft', value: formatInteger(buildingSqft) },
-    { label: 'Built', value: yearBuilt },
-    { label: 'Lot Size', value: lotSize },
-    { label: 'Construction', value: constructionValue },
-    { label: 'Condition', value: conditionValue },
-    { label: 'Grade / Confidence', value: `${gradeValue} • ${confidenceValue}` },
-  ]
+  const headlineMetrics: SoldCompMetricItem[] = variant === 'multifamily'
+    ? [
+        { label: 'Units', value: formatInteger(units || null), emphasis: 'hero' },
+        { label: 'Avg SF/Unit', value: formatInteger(Number.isFinite(sqftPerUnit) ? sqftPerUnit : null) },
+        { label: 'Beds/Unit', value: Number.isFinite(bedsPerUnit) ? formatDecimal(bedsPerUnit, 1) : '—' },
+        { label: 'Baths/Unit', value: Number.isFinite(bathsPerUnit) ? formatDecimal(bathsPerUnit, 1) : '—' },
+      ]
+    : [
+        { label: 'Beds / Baths / Sqft', value: bedsBathsSqft, emphasis: 'hero' },
+        { label: 'Year Built', value: yearBuilt },
+        { label: 'Condition', value: conditionValue },
+        { label: 'Construction', value: constructionValue },
+      ]
 
-  const multifamilyHeroMetric =
-    units > 0
-      ? { label: 'Units Count', value: formatInteger(units), emphasis: 'hero' as const }
-      : null
+  const supportMetrics: SoldCompMetricItem[] = variant === 'multifamily'
+    ? [
+        { label: ppu ? 'Price / Unit' : 'PPSF', value: ppu ? formatCurrency(ppu) : formatCurrency(ppsf), emphasis: 'accent' },
+        { label: 'Total Sqft', value: formatInteger(buildingSqft) },
+        { label: 'Est. Value', value: estimatedValue },
+        { label: 'Off Value', value: offValue },
+        { label: '% Off', value: offPercent },
+        { label: 'Built / Cond.', value: `${yearBuilt} • ${conditionValue}` },
+      ]
+    : [
+        { label: 'PPSF', value: formatCurrency(ppsf), emphasis: 'accent' },
+        { label: 'Est. Value', value: estimatedValue },
+        { label: 'Off Value', value: offValue },
+        { label: '% Off', value: offPercent },
+        ...(lotSize !== '—' ? [{ label: 'Lot Size', value: lotSize }] : []),
+      ]
 
-  const multifamilyMetrics: SoldCompMetricItem[] = [
-    { label: 'Price / Unit', value: formatCurrency(ppu), emphasis: 'accent' },
-    { label: 'Avg Sqft / Unit', value: formatInteger(Number.isFinite(sqftPerUnit) ? sqftPerUnit : null) },
-    { label: 'Beds / Unit', value: Number.isFinite(bedsPerUnit) ? formatDecimal(bedsPerUnit, 1) : '—' },
-    { label: 'Building Sqft', value: formatInteger(buildingSqft) },
-    { label: 'Lot Size', value: lotSize },
-    { label: 'Built', value: yearBuilt },
-    { label: 'Construction', value: constructionValue },
-    { label: 'Condition', value: conditionValue },
-  ]
-
-  const intelligenceChips = [
+  const intelligenceChips: SoldCompPresentation['intelligenceChips'] = [
     { label: 'Grade', value: gradeValue, tone: 'success' as const },
     { label: 'Confidence', value: confidenceValue, tone: 'accent' as const },
-    ...(text(comp.building_condition) ? [{ label: 'Condition', value: text(comp.building_condition), tone: 'neutral' as const }] : []),
-    ...(text(comp.construction_type) ? [{ label: 'Construction', value: text(comp.construction_type), tone: 'neutral' as const }] : []),
-    { label: 'Buyer', value: buyerType, tone: buyerTone === 'institutional' ? 'warning' : 'neutral' as const },
+    { label: 'Buyer', value: buyerType, tone: buyerTone === 'institutional' ? 'warning' : 'neutral' },
   ]
 
   const sameAssetClass =
@@ -1671,12 +1691,11 @@ const buildSoldCompPresentation = (
   return {
     variant,
     accentHex,
-    accentTone,
     salePrice,
     saleDate,
     sourceLabel,
-    sourceTone,
     buyerName,
+    buyerInitials,
     buyerType,
     buyerTone,
     entityLabel,
@@ -1685,68 +1704,61 @@ const buildSoldCompPresentation = (
     propertyLabel,
     subtypeLabel,
     distanceLabel,
-    residentialMetrics,
-    multifamilyHeroMetric,
-    multifamilyMetrics,
+    headlineMetrics,
+    supportMetrics,
     intelligenceChips,
     whyItMatters,
-    actionLinks: {
-      fullComp: zillowSearchUrl(comp.property_address_full || ''),
-      buyerSearch: `https://www.google.com/search?q=${encodeURIComponent(buyerName)}`,
-      maps: mapsSearchUrl(comp.property_address_full || ''),
-    },
   }
 }
 
-const buildSoldCompHoverMarkup = (comp: RecentSoldComp, styleMode: MapStyleMode, subject?: { latitude: number, longitude: number } | null): string => {
+const buildSoldCompHoverMarkup = (comp: RecentSoldComp, styleMode: MapStyleMode, subject?: { latitude?: number | null; longitude?: number | null } | null): string => {
   const intelligence = buildSoldCompPresentation(comp, subject)
   const themeStyle = cardThemeStyleAttr(styleMode)
-  const metrics = intelligence.variant === 'multifamily' ? intelligence.multifamilyMetrics : intelligence.residentialMetrics
   return `
   <article class="nx-icm-hover nx-icm-hover--sold-comp ${intelligence.variant === 'multifamily' ? 'is-multifamily' : 'is-residential'}" style="${escapeHtml(themeStyle)} --nx-sold-comp-accent:${escapeHtml(intelligence.accentHex)};">
-    ${intelligence.imageUrl ? `
-      <div class="nx-sold-comp__media">
-        <img src="${escapeHtml(intelligence.imageUrl)}" alt="${escapeHtml(comp.property_address_full || 'Sold comp')} preview" loading="lazy" />
-        <div class="nx-sold-comp__media-scrim"></div>
-        <span class="nx-sold-comp__media-badge">${escapeHtml(intelligence.imageLabel)}</span>
-      </div>
-    ` : ''}
     <div class="nx-sold-comp__body">
-      <div class="nx-sold-comp__hero">
-        <div>
-          <p class="nx-sold-comp__eyebrow">Sold ${escapeHtml(intelligence.saleDate)}</p>
+      <div class="nx-sold-comp__sold-header">
+        <div class="nx-sold-comp__sold-type">${escapeHtml(intelligence.sourceLabel.toUpperCase())}</div>
+        <div class="nx-sold-comp__hero">
+          <div>
           <div class="nx-sold-comp__price">${escapeHtml(intelligence.salePrice)}</div>
-        </div>
-        <div class="nx-sold-comp__badge-stack">
-          <span class="nx-icm-hover__status nx-icm-hover__status--${intelligence.sourceTone}">${escapeHtml(intelligence.sourceLabel)}</span>
-          <span class="nx-icm-hover__status nx-icm-hover__status--${intelligence.buyerTone}">${escapeHtml(intelligence.buyerType)}</span>
-          <span class="nx-sold-comp__micro-pill">${escapeHtml(intelligence.entityLabel)}</span>
+            <p class="nx-sold-comp__eyebrow">Sold ${escapeHtml(intelligence.saleDate)}</p>
+          </div>
         </div>
       </div>
 
-      <section class="nx-sold-comp__buyer-block">
-        <div class="nx-sold-comp__section-label">Buyer Identity</div>
-        <div class="nx-sold-comp__buyer-name">${escapeHtml(intelligence.buyerName)}</div>
-      </section>
-
-      <section class="nx-sold-comp__address-block">
-        <div class="nx-sold-comp__address">${escapeHtml(comp.property_address_full || 'Property Unknown')}</div>
-        <div class="nx-sold-comp__meta-row">
-          <span>${escapeHtml(intelligence.propertyLabel)}</span>
-          ${intelligence.subtypeLabel ? `<span class="nx-sold-comp__dot"></span><span>${escapeHtml(intelligence.subtypeLabel)}</span>` : ''}
-          ${intelligence.distanceLabel ? `<span class="nx-sold-comp__dot"></span><span class="nx-sold-comp__distance">${escapeHtml(intelligence.distanceLabel)}</span>` : ''}
+      ${intelligence.imageUrl ? `
+        <div class="nx-sold-comp__media">
+          <img src="${escapeHtml(intelligence.imageUrl)}" alt="${escapeHtml(comp.property_address_full || 'Sold comp')} preview" loading="lazy" />
+          <div class="nx-sold-comp__media-scrim"></div>
+          <span class="nx-sold-comp__media-badge">${escapeHtml(intelligence.imageLabel)}</span>
         </div>
-      </section>
-
-      ${intelligence.variant === 'multifamily' && intelligence.multifamilyHeroMetric ? `
-        <section class="nx-sold-comp__hero-metric">
-          <span>${escapeHtml(intelligence.multifamilyHeroMetric.label)}</span>
-          <strong>${escapeHtml(intelligence.multifamilyHeroMetric.value)}</strong>
-        </section>
       ` : ''}
 
+      <section class="nx-sold-comp__address-block">
+        <div class="nx-sold-comp__address-topline">
+          <div class="nx-sold-comp__address">${escapeHtml(comp.property_address_full || 'Property Unknown')}</div>
+          <span class="nx-sold-comp__property-badge">${escapeHtml(intelligence.propertyLabel)}</span>
+        </div>
+        <div class="nx-sold-comp__meta-row">
+          ${intelligence.distanceLabel ? `<span class="nx-sold-comp__distance">${escapeHtml(intelligence.distanceLabel)}</span>` : ''}
+          ${intelligence.subtypeLabel ? `<span class="nx-sold-comp__dot"></span><span>${escapeHtml(intelligence.subtypeLabel)}</span>` : ''}
+        </div>
+      </section>
+
+      <section class="nx-sold-comp__buyer-row">
+        <div class="nx-sold-comp__buyer-avatar">${escapeHtml(intelligence.buyerInitials)}</div>
+        <div class="nx-sold-comp__buyer-copy">
+          <div class="nx-sold-comp__buyer-name">${escapeHtml(intelligence.buyerName)}</div>
+          <div class="nx-sold-comp__badge-stack">
+            <span class="nx-icm-hover__status nx-icm-hover__status--${intelligence.buyerTone}">${escapeHtml(intelligence.buyerType)}</span>
+            <span class="nx-sold-comp__micro-pill">${escapeHtml(intelligence.entityLabel)}</span>
+          </div>
+        </div>
+      </section>
+
       <section class="nx-sold-comp__metrics ${intelligence.variant === 'multifamily' ? 'is-multifamily' : 'is-residential'}">
-        ${metrics.map((metric) => `
+        ${intelligence.headlineMetrics.map((metric) => `
           <div class="nx-sold-comp__metric ${metric.emphasis === 'accent' ? 'is-accent' : ''} ${metric.emphasis === 'hero' ? 'is-hero' : ''}">
             <span>${escapeHtml(metric.label)}</span>
             <strong>${escapeHtml(metric.value)}</strong>
@@ -1754,8 +1766,16 @@ const buildSoldCompHoverMarkup = (comp: RecentSoldComp, styleMode: MapStyleMode,
         `).join('')}
       </section>
 
+      <section class="nx-sold-comp__metrics is-support ${intelligence.variant === 'multifamily' ? 'is-multifamily' : 'is-residential'}">
+        ${intelligence.supportMetrics.map((metric) => `
+          <div class="nx-sold-comp__metric ${metric.emphasis === 'accent' ? 'is-accent' : ''}">
+            <span>${escapeHtml(metric.label)}</span>
+            <strong>${escapeHtml(metric.value)}</strong>
+          </div>
+        `).join('')}
+      </section>
+
       <section class="nx-sold-comp__chip-section">
-        <div class="nx-sold-comp__section-label">Comp Intelligence</div>
         <div class="nx-sold-comp__chips">
           ${intelligence.intelligenceChips.map((chip) => `
             <div class="nx-sold-comp__chip ${chip.tone ? `is-${chip.tone}` : ''}">
@@ -1765,14 +1785,6 @@ const buildSoldCompHoverMarkup = (comp: RecentSoldComp, styleMode: MapStyleMode,
           `).join('')}
         </div>
         <p class="nx-sold-comp__why">${escapeHtml(intelligence.whyItMatters)}</p>
-      </section>
-
-      <section class="nx-sold-comp__actions">
-        <a href="${escapeHtml(intelligence.actionLinks.fullComp)}" target="_blank" rel="noreferrer">Open Full Comp</a>
-        <a href="${escapeHtml(intelligence.actionLinks.buyerSearch)}" target="_blank" rel="noreferrer">View Buyer</a>
-        <a href="${escapeHtml(intelligence.actionLinks.maps)}" target="_blank" rel="noreferrer">Nearby Comps</a>
-        <span aria-disabled="true">Find Similar Sellers</span>
-        <span aria-disabled="true">Add to Buyer Cluster</span>
       </section>
     </div>
   </article>
@@ -1791,144 +1803,184 @@ const SoldCompSelectionCard = ({
   onClose: () => void
 }) => {
   if (!comp) return null
-  const intelligence = buildSoldCompPresentation(comp, subject)
-  const anyComp = comp as RecentSoldComp & Record<string, unknown>
-  const price = comp.sale_price ?? comp.mls_sold_price ?? 0
-  const metrics = intelligence.variant === 'multifamily' ? intelligence.multifamilyMetrics : intelligence.residentialMetrics
-  const propertyFacts = [
-    { label: 'Property Type', value: intelligence.propertyLabel },
-    ...(intelligence.subtypeLabel ? [{ label: 'Subtype / Class', value: intelligence.subtypeLabel }] : []),
-    { label: 'Sale Source', value: intelligence.sourceLabel },
-    { label: 'Buyer Type', value: intelligence.buyerType },
-    { label: 'Entity', value: intelligence.entityLabel },
-    ...(intelligence.distanceLabel ? [{ label: 'Distance', value: intelligence.distanceLabel }] : []),
-  ]
-  const saleFacts = [
-    { label: 'Sale Price', value: intelligence.salePrice },
-    { label: 'Sale Date', value: intelligence.saleDate },
-    { label: 'MLS Sold Price', value: formatCurrency(comp.mls_sold_price) },
-    { label: 'Public Record Price', value: formatCurrency(comp.sale_price) },
-  ]
-  const buyerFacts = [
-    { label: 'Buyer Name', value: intelligence.buyerName },
-    { label: 'Buyer Type', value: intelligence.buyerType },
-    { label: 'Corporate Flag', value: comp.is_corporate_owner === null ? '—' : comp.is_corporate_owner ? 'Yes' : 'No' },
-    ...(text(comp.institutional_match_name) ? [{ label: 'Institution Match', value: text(comp.institutional_match_name) }] : []),
-    ...(text(comp.institutional_match_method) ? [{ label: 'Match Method', value: `${text(comp.institutional_match_method)}${text(comp.institutional_match_confidence) ? ` • ${text(comp.institutional_match_confidence)}` : ''}` }] : []),
-  ]
+  const imageUrl = comp.streetview_image || comp.satellite_image || buildStreetViewUrl(comp.property_address_full) || ''
+  
+  const price = comp.mls_sold_price ?? comp.sale_price ?? 0
+  const priceLabel = formatCurrency(price)
+  const ppsf = comp.computed_ppsf ?? comp.arv_ppsf ?? (price && comp.building_square_feet ? Math.round(price / comp.building_square_feet) : null)
+  
+  const sourceLabel = comp.sale_source || 'Unknown Sale Source'
+  const ownerLabel = comp.owner_type_label || 'Unknown Owner Type'
+  const buyerLabel = comp.buyer_type_label || 'Unknown Buyer Type'
+
+  const sectionLabelStyle: React.CSSProperties = {
+    fontSize: '10px',
+    fontWeight: 700,
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+    color: 'rgba(255,255,255,0.4)',
+    marginBottom: '12px',
+    borderBottom: '1px solid rgba(255,255,255,0.1)',
+    paddingBottom: '4px',
+    display: 'block'
+  }
+
+  const dataRowStyle: React.CSSProperties = {
+    display: 'flex',
+    justifyContent: 'space-between',
+    padding: '6px 0',
+    borderBottom: '1px solid rgba(255,255,255,0.05)',
+    fontSize: '13px'
+  }
+
+  const dataLabelStyle: React.CSSProperties = {
+    opacity: 0.6
+  }
+
+  const dataValueStyle: React.CSSProperties = {
+    fontWeight: 600
+  }
+
+  const distance = (subject?.latitude && subject?.longitude) 
+    ? haversineMiles(subject.latitude, subject.longitude, comp.latitude, comp.longitude)
+    : null
 
   return (
-    <article
-      className={cls('nx-icm-buyer-card', 'nx-sold-comp-card', intelligence.variant === 'multifamily' ? 'is-multifamily' : 'is-residential')}
-      style={{ ['--nx-sold-comp-accent' as any]: intelligence.accentHex }}
-    >
-      <div className="nx-sold-comp-card__hero">
-        {intelligence.imageUrl ? (
-          <img src={intelligence.imageUrl} alt={comp.property_address_full || 'Sold comp'} loading="lazy" />
+    <article className="nx-icm-buyer-card" style={{ 
+      borderColor: '#ef4444', 
+      width: '420px', 
+      maxHeight: '90vh', 
+      overflowY: 'auto',
+      background: 'rgba(15, 12, 12, 0.98)',
+      backdropFilter: 'blur(10px)',
+      boxShadow: '0 20px 50px rgba(0,0,0,0.5)',
+      padding: 0
+    }}>
+      <div style={{ position: 'relative', height: '180px', width: '100%' }}>
+        {imageUrl ? (
+          <img src={imageUrl} alt="Property" style={{ width: '100%', height: '100%', objectFit: 'cover' }} loading="lazy" />
         ) : (
-          <div className="nx-sold-comp-card__empty-media">No Preview Available</div>
+          <div style={{ width: '100%', height: '100%', background: '#1a1a1a', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.2)' }}>No Preview Available</div>
         )}
-        <div className="nx-sold-comp-card__hero-scrim" />
-        <button type="button" className="nx-sold-comp-card__close" onClick={onClose}>
+        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, background: 'linear-gradient(to bottom, rgba(0,0,0,0.4), transparent 40%, rgba(0,0,0,0.9))' }} />
+        <button 
+          type="button" 
+          onClick={onClose}
+          style={{ position: 'absolute', top: '12px', right: '12px', background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', padding: '4px 12px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer', zIndex: 10 }}
+        >
           Close
         </button>
-        <span className="nx-sold-comp-card__hero-badge">{intelligence.imageLabel}</span>
-        <div className="nx-sold-comp-card__hero-copy">
-          <div className="nx-sold-comp__badge-stack">
-            <span className={`nx-icm-hover__status nx-icm-hover__status--${intelligence.sourceTone}`}>{intelligence.sourceLabel}</span>
-            <span className={`nx-icm-hover__status nx-icm-hover__status--${intelligence.buyerTone}`}>{intelligence.buyerType}</span>
-            <span className="nx-sold-comp__micro-pill">{intelligence.entityLabel}</span>
+        <div style={{ position: 'absolute', bottom: '16px', left: '20px', zIndex: 5 }}>
+          <div style={{ color: '#ef4444', fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', marginBottom: '4px' }}>
+            {sourceLabel} • {comp.sale_date ? new Date(comp.sale_date).toLocaleDateString() : 'Unknown Date'}
           </div>
-          <p className="nx-sold-comp__eyebrow">Sold {intelligence.saleDate}</p>
-          <div className="nx-sold-comp__price">{intelligence.salePrice}</div>
-          <div className="nx-sold-comp__address">{comp.property_address_full || 'Property Unknown'}</div>
-          <div className="nx-sold-comp__meta-row">
-            <span>{intelligence.propertyLabel}</span>
-            {intelligence.subtypeLabel ? <><span className="nx-sold-comp__dot" /><span>{intelligence.subtypeLabel}</span></> : null}
-            {intelligence.distanceLabel ? <><span className="nx-sold-comp__dot" /><span className="nx-sold-comp__distance">{intelligence.distanceLabel}</span></> : null}
-          </div>
+          <div style={{ fontSize: '32px', fontWeight: 900, color: '#fff', letterSpacing: '-0.02em', lineHeight: 1 }}>{priceLabel}</div>
+          <div style={{ fontSize: '14px', color: 'rgba(255,255,255,0.7)', marginTop: '4px' }}>{comp.property_address_full}</div>
         </div>
       </div>
 
-      <div className="nx-sold-comp-card__body">
-        <section className="nx-sold-comp__buyer-block">
-          <div className="nx-sold-comp__section-label">Buyer Identity</div>
-          <div className="nx-sold-comp__buyer-name">{intelligence.buyerName}</div>
-          <div className="nx-sold-comp__buyer-subline">
-            <span>{intelligence.buyerType}</span>
-            <span className="nx-sold-comp__dot" />
-            <span>{intelligence.entityLabel}</span>
+      <div style={{ padding: '24px' }}>
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '24px' }}>
+          <span style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', padding: '4px 8px', borderRadius: '2px', fontSize: '10px', fontWeight: 700, border: '1px solid rgba(239, 68, 68, 0.3)' }}>{ownerLabel}</span>
+          <span style={{ background: comp.is_institutional_buyer ? 'rgba(168, 85, 247, 0.1)' : 'rgba(59, 130, 246, 0.1)', color: comp.is_institutional_buyer ? '#a855f7' : '#3b82f6', padding: '4px 8px', borderRadius: '2px', fontSize: '10px', fontWeight: 700, border: comp.is_institutional_buyer ? '1px solid rgba(168, 85, 247, 0.3)' : '1px solid rgba(59, 130, 246, 0.3)' }}>{buyerLabel}</span>
+          {distance !== null && (
+            <span style={{ background: 'rgba(255, 255, 255, 0.05)', color: 'rgba(255,255,255,0.6)', padding: '4px 8px', borderRadius: '2px', fontSize: '10px', fontWeight: 700, border: '1px solid rgba(255, 255, 255, 0.1)' }}>{distance.toFixed(2)} mi away</span>
+          )}
+        </div>
+
+        <section style={{ marginBottom: '24px' }}>
+          <label style={sectionLabelStyle}>Property Profile</label>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 24px' }}>
+            <div style={dataRowStyle}><span style={dataLabelStyle}>Type</span><span style={dataValueStyle}>{comp.property_type || '—'}</span></div>
+            <div style={dataRowStyle}><span style={dataLabelStyle}>Class</span><span style={dataValueStyle}>{comp.normalized_asset_class || '—'}</span></div>
+            <div style={dataRowStyle}><span style={dataLabelStyle}>Beds / Baths</span><span style={dataValueStyle}>{comp.total_bedrooms ?? '—'} / {comp.total_baths ?? '—'}</span></div>
+            <div style={dataRowStyle}><span style={dataLabelStyle}>Sqft</span><span style={dataValueStyle}>{formatInteger(comp.building_square_feet)}</span></div>
+            <div style={dataRowStyle}><span style={dataLabelStyle}>Units</span><span style={dataValueStyle}>{comp.units_count ?? 1}</span></div>
+            <div style={dataRowStyle}><span style={dataLabelStyle}>Year Built</span><span style={dataValueStyle}>{comp.year_built ?? '—'}</span></div>
+            <div style={dataRowStyle}><span style={dataLabelStyle}>Lot Size</span><span style={dataValueStyle}>{comp.lot_acreage ? `${comp.lot_acreage} ac` : comp.lot_square_feet ? `${formatInteger(comp.lot_square_feet)} sqft` : '—'}</span></div>
+            <div style={dataRowStyle}><span style={dataLabelStyle}>Condition</span><span style={dataValueStyle}>{comp.building_condition || 'Average'}</span></div>
           </div>
         </section>
 
-        {intelligence.variant === 'multifamily' && intelligence.multifamilyHeroMetric ? (
-          <section className="nx-sold-comp__hero-metric is-card">
-            <span>{intelligence.multifamilyHeroMetric.label}</span>
-            <strong>{intelligence.multifamilyHeroMetric.value}</strong>
+        <section style={{ marginBottom: '24px' }}>
+          <label style={sectionLabelStyle}>Sale Intelligence</label>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 24px' }}>
+            <div style={dataRowStyle}><span style={dataLabelStyle}>MLS Sold Price</span><span style={dataValueStyle}>{formatCurrency(comp.mls_sold_price)}</span></div>
+            <div style={dataRowStyle}><span style={dataLabelStyle}>Public Sale Price</span><span style={dataValueStyle}>{formatCurrency(comp.sale_price)}</span></div>
+            <div style={dataRowStyle}><span style={dataLabelStyle}>Price / Sqft</span><span style={dataValueStyle}>{formatCurrency(ppsf)}</span></div>
+            <div style={dataRowStyle}><span style={dataLabelStyle}>Deal Grade</span><span style={{ ...dataValueStyle, color: '#22c55e' }}>{comp.deal_grade || 'A'}</span></div>
+            <div style={dataRowStyle}><span style={dataLabelStyle}>Confidence</span><span style={dataValueStyle}>{comp.comp_confidence_score ? `${Math.round(comp.comp_confidence_score)}/100` : '—'}</span></div>
+            <div style={dataRowStyle}><span style={dataLabelStyle}>ARV Estimate</span><span style={dataValueStyle}>{formatCurrency(comp.arv_estimate)}</span></div>
+          </div>
+        </section>
+
+        <section style={{ marginBottom: '24px' }}>
+          <label style={sectionLabelStyle}>Buyer Intelligence</label>
+          <div style={dataRowStyle}><span style={dataLabelStyle}>Owner/Buyer Name</span><span style={dataValueStyle}>{comp.owner_name || '—'}</span></div>
+          <div style={dataRowStyle}><span style={dataLabelStyle}>Buyer Type</span><span style={dataValueStyle}>{buyerLabel}</span></div>
+          {comp.is_institutional_buyer && (
+            <>
+              <div style={dataRowStyle}><span style={dataLabelStyle}>Institution Match</span><span style={{ ...dataValueStyle, color: '#a855f7' }}>{comp.institutional_match_name}</span></div>
+              <div style={dataRowStyle}><span style={dataLabelStyle}>Match Method</span><span style={dataValueStyle}>{comp.institutional_match_method} ({comp.institutional_match_confidence})</span></div>
+            </>
+          )}
+          <div style={dataRowStyle}><span style={dataLabelStyle}>Corporate Owner</span><span style={dataValueStyle}>{comp.is_corporate_owner ? 'YES' : 'NO'}</span></div>
+        </section>
+
+        {subject && (
+          <section style={{ marginBottom: '24px' }}>
+            <label style={sectionLabelStyle}>Comp Matching</label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 24px' }}>
+              <div style={dataRowStyle}><span style={dataLabelStyle}>Distance</span><span style={dataValueStyle}>{distance?.toFixed(2)} mi</span></div>
+              <div style={dataRowStyle}><span style={dataLabelStyle}>Similarity</span><span style={dataValueStyle}>{comp.comp_confidence_score ? `${Math.round(comp.comp_confidence_score)}%` : '—'}</span></div>
+              <div style={dataRowStyle}><span style={dataLabelStyle}>Asset Class</span><span style={{ ...dataValueStyle, color: subject.normalized_asset_class === comp.normalized_asset_class ? '#22c55e' : '#ef4444' }}>{subject.normalized_asset_class === comp.normalized_asset_class ? 'MATCH' : 'MISMATCH'}</span></div>
+              <div style={dataRowStyle}><span style={dataLabelStyle}>Sqft Delta</span><span style={dataValueStyle}>{Math.abs((subject.building_square_feet || 0) - (comp.building_square_feet || 0))} sqft</span></div>
+              <div style={dataRowStyle}><span style={dataLabelStyle}>Beds Match</span><span style={dataValueStyle}>{subject.total_bedrooms === comp.total_bedrooms ? 'YES' : 'NO'}</span></div>
+              <div style={dataRowStyle}><span style={dataLabelStyle}>Year Delta</span><span style={dataValueStyle}>{comp.year_built && subject.year_built ? Math.abs(comp.year_built - subject.year_built) : '—'} yrs</span></div>
+            </div>
           </section>
-        ) : null}
+        )}
 
-        <section>
-          <div className="nx-sold-comp__section-label">Key Metrics</div>
-          <div className={cls('nx-sold-comp__metrics', intelligence.variant === 'multifamily' ? 'is-multifamily' : 'is-residential')}>
-            {metrics.map((metric) => (
-              <div key={`${metric.label}-${metric.value}`} className={cls('nx-sold-comp__metric', metric.emphasis === 'accent' && 'is-accent', metric.emphasis === 'hero' && 'is-hero')}>
-                <span>{metric.label}</span>
-                <strong>{metric.value}</strong>
-              </div>
-            ))}
+        {!subject && (
+          <div style={{ padding: '12px', background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '4px', fontSize: '11px', color: '#3b82f6', marginBottom: '24px', textAlign: 'center' }}>
+            Select a property to use this comp in ARV analysis.
           </div>
-        </section>
+        )}
 
-        <section>
-          <div className="nx-sold-comp__section-label">Comp Intelligence</div>
-          <div className="nx-sold-comp__chips">
-            {intelligence.intelligenceChips.map((chip) => (
-              <div key={`${chip.label}-${chip.value}`} className={cls('nx-sold-comp__chip', chip.tone && `is-${chip.tone}`)}>
-                <span>{chip.label}</span>
-                <strong>{chip.value}</strong>
-              </div>
-            ))}
-          </div>
-          <p className="nx-sold-comp__why">{intelligence.whyItMatters}</p>
-        </section>
-
-        <section className="nx-sold-comp-card__fact-grid">
-          <div className="nx-sold-comp-card__fact-panel">
-            <div className="nx-sold-comp__section-label">Property Profile</div>
-            {propertyFacts.map((item) => (
-              <div key={item.label} className="nx-sold-comp-card__fact-row"><span>{item.label}</span><strong>{item.value}</strong></div>
-            ))}
-          </div>
-          <div className="nx-sold-comp-card__fact-panel">
-            <div className="nx-sold-comp__section-label">Sale Intelligence</div>
-            {saleFacts.map((item) => (
-              <div key={item.label} className="nx-sold-comp-card__fact-row"><span>{item.label}</span><strong>{item.value}</strong></div>
-            ))}
-          </div>
-          <div className="nx-sold-comp-card__fact-panel">
-            <div className="nx-sold-comp__section-label">Buyer Intelligence</div>
-            {buyerFacts.map((item) => (
-              <div key={item.label} className="nx-sold-comp-card__fact-row"><span>{item.label}</span><strong>{item.value}</strong></div>
-            ))}
-          </div>
-          <div className="nx-sold-comp-card__fact-panel">
-            <div className="nx-sold-comp__section-label">Extra Context</div>
-            <div className="nx-sold-comp-card__fact-row"><span>ARV Estimate</span><strong>{formatCurrency(comp.arv_estimate)}</strong></div>
-            <div className="nx-sold-comp-card__fact-row"><span>Potential Spread</span><strong>{formatCurrency(anyComp.potential_spread as number | null)}</strong></div>
-            <div className="nx-sold-comp-card__fact-row"><span>Target Margin</span><strong>{Number.isFinite(anyComp.target_margin_percent as number) ? `${Math.round((anyComp.target_margin_percent as number) * 10) / 10}%` : '—'}</strong></div>
-            <div className="nx-sold-comp-card__fact-row"><span>Search Profile</span><strong>{text(comp.comp_search_profile_hash).slice(0, 10) || '—'}</strong></div>
-          </div>
-        </section>
-
-        {!subject ? <div className="nx-sold-comp-card__empty-state">Select a subject property to compare distance and similarity context.</div> : null}
-
-        <div className="nx-sold-comp-card__actions">
-          <a href={intelligence.actionLinks.fullComp} target="_blank" rel="noreferrer">Open Full Comp</a>
-          <a href={intelligence.actionLinks.buyerSearch} target="_blank" rel="noreferrer">View Buyer</a>
-          <button type="button" onClick={() => onCenterMap(comp.longitude, comp.latitude)}>Nearby Comps</button>
-          <button type="button" onClick={() => alert('TODO: Find similar sellers workflow')}>Find Similar Sellers</button>
-          <button type="button" onClick={() => alert('TODO: Add to buyer cluster workflow')}>Add to Buyer Cluster</button>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '32px' }}>
+          <button 
+            type="button" 
+            className="nx-icm__mode-tab" 
+            style={{ width: '100%', height: '40px', background: '#ef4444', color: '#fff', fontWeight: 700, border: 'none', opacity: subject ? 1 : 0.5 }}
+            disabled={!subject}
+            onClick={() => alert('TODO: Add ARV/Comp Intelligence UI connection')}
+          >
+            ADD TO ARV
+          </button>
+          <button 
+            type="button" 
+            className="nx-icm__mode-tab" 
+            style={{ width: '100%', height: '40px', background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', color: 'rgba(255,255,255,0.6)' }}
+            onClick={() => alert('TODO: Add Exclude Comp UI connection')}
+          >
+            EXCLUDE COMP
+          </button>
+          <button 
+            type="button" 
+            className="nx-icm__mode-tab" 
+            style={{ width: '100%', height: '40px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff' }}
+            onClick={() => alert('TODO: Open Comp Intelligence View')}
+          >
+            INTEL VIEW
+          </button>
+          <button 
+            type="button" 
+            className="nx-icm__mode-tab" 
+            style={{ width: '100%', height: '40px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff' }}
+            onClick={() => onCenterMap(comp.longitude, comp.latitude)}
+          >
+            CENTER MAP
+          </button>
         </div>
       </div>
     </article>
@@ -1937,45 +1989,84 @@ const SoldCompSelectionCard = ({
 
 const BuyerSelectionCard = ({
   purchase,
+  purchases,
   matches,
+  profile,
   onSelectBuyer,
 }: {
   purchase: BuyerRecentPurchase | null
+  purchases: BuyerRecentPurchase[]
   matches: BuyerCommandData['matches']
+  profile: BuyerCommandData['profiles'][number] | null
   onSelectBuyer: (buyerKey: string | null) => void
 }) => {
   if (!purchase) return null
   const match = matches.find((item) => item.buyerKey === purchase.buyerKey) || null
+  const recentTrail = purchases
+    .slice()
+    .sort((left, right) => new Date(right.saleDate || 0).getTime() - new Date(left.saleDate || 0).getTime())
+    .slice(0, 4)
+  const badges = [
+    profile?.buyerGrade ? `${profile.buyerGrade}-Tier Buyer` : null,
+    profile?.isRepeatBuyer ? 'Repeat Buyer' : null,
+    profile?.isCorporateBuyer ? 'Corporate Buyer' : null,
+    profile?.isLocalBuyer ? 'Local Investor' : null,
+    profile?.isOffMarketBuyer ? 'Off-Market Buyer' : null,
+    profile?.category === 'institutional' ? 'Institutional' : null,
+  ].filter(Boolean) as string[]
   return (
-    <article className="nx-icm-buyer-card">
-      <div className="nx-icm-buyer-card__head">
-        <div>
+    <article className="nx-icm-buyer-card nx-icm-buyer-card--premium">
+      <div className="nx-icm-buyer-card__head nx-icm-buyer-card__head--premium">
+        <div className="nx-icm-buyer-card__hero">
+          <div className="nx-icm-buyer-card__avatar">{buyerInitials(purchase.buyerName || 'Buyer')}</div>
+          <div>
           <span className="nx-icm-buyer-card__eyebrow">{buyerCategoryLabel(purchase.category)}</span>
           <strong>{purchase.buyerName || 'Property Buyer'}</strong>
-          <small>{purchase.market || 'Market Unknown'}</small>
+            <small>{purchase.market || 'Market Unknown'} • {purchase.saleDate ? formatRelative(purchase.saleDate) : 'Unknown'}</small>
+          </div>
         </div>
         <button type="button" className="nx-icm__mode-tab" onClick={() => onSelectBuyer(purchase.buyerKey || null)}>
           Open Buyer
         </button>
       </div>
-      <div className="nx-icm-buyer-card__grid">
-        <div><span>Address</span><strong>{purchase.propertyAddressFull || 'Property Unknown'}</strong></div>
-        <div><span>Sale Price</span><strong>{formatCurrency(purchase.salePrice)}</strong></div>
-        <div><span>Price / Sqft</span><strong>{formatCurrency(purchase.pricePerSqft)}</strong></div>
-        <div><span>Built</span><strong>{formatInteger(purchase.yearBuilt)}</strong></div>
-        <div><span>Investor Fit</span><strong>{purchase.investorFitScore ?? '—'}</strong></div>
-        <div><span>Comp Quality</span><strong>{purchase.compQualityScore ?? '—'}</strong></div>
+      <div className="nx-icm-buyer-card__badges">
+        {badges.map((badge) => <span key={badge}>{badge}</span>)}
+      </div>
+      <div className="nx-icm-buyer-card__grid nx-icm-buyer-card__grid--premium">
+        <div className="nx-icm-buyer-card__metric"><span>Address</span><strong>{purchase.propertyAddressFull || 'Property Unknown'}</strong></div>
+        <div className="nx-icm-buyer-card__metric"><span>Sale Price</span><strong>{formatCurrency(purchase.salePrice)}</strong></div>
+        <div className="nx-icm-buyer-card__metric"><span>Price / Sqft</span><strong>{formatCurrency(purchase.pricePerSqft)}</strong></div>
+        <div className="nx-icm-buyer-card__metric"><span>Source</span><strong>{purchase.isOffMarketPurchase ? 'Off-Market / Public Record' : 'MLS'}</strong></div>
+        <div className="nx-icm-buyer-card__metric"><span>Distance</span><strong>{purchase.distanceMiles != null ? `${purchase.distanceMiles.toFixed(1)} mi` : '—'}</strong></div>
+        <div className="nx-icm-buyer-card__metric"><span>Purchase Trail</span><strong>{recentTrail.length} visible purchases</strong></div>
       </div>
       {match ? (
         <div className="nx-icm-buyer-card__summary">
-          <span>Live Match</span>
-          <strong>{match.matchScore ?? '—'} score • {match.dispositionStrategy || 'Unknown strategy'}</strong>
+          <span className="nx-icm-buyer-card__section-label">Live Match</span>
+          <strong>{buyerMatchTier(match.matchScore)} • {match.matchScore ?? '—'}/100</strong>
           <p>{match.reasonForMatch || match.recommendedAction}</p>
         </div>
       ) : null}
-      <div className="nx-icm-buyer-card__actions">
+      <div className="nx-icm-buyer-card__trail">
+        {recentTrail.map((item) => (
+          <div key={`${item.buyerKey}-${item.propertyId}`} className="nx-icm-buyer-card__trail-item">
+            <div className="nx-icm-buyer-card__trail-item-head">
+              <strong>{item.propertyAddressFull || 'Property Unknown'}</strong>
+              <span>{item.saleDate ? formatRelative(item.saleDate) : 'Unknown'}</span>
+            </div>
+            <div className="nx-icm-buyer-card__trail-item-meta">
+              <span>{formatCurrency(item.salePrice)}</span>
+              <span>{item.propertyType || 'Unknown type'}</span>
+              <span>{item.pricePerSqft ? `${formatCurrency(item.pricePerSqft)} ppsf` : '—'}</span>
+              <span>{item.isOffMarketPurchase ? 'Off-Market' : 'MLS'}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="nx-icm-buyer-card__actions nx-icm-buyer-card__actions--premium">
         <a href={zillowSearchUrl(purchase.propertyAddressFull)} target="_blank" rel="noreferrer">Open Zillow</a>
         <a href={mapsSearchUrl(purchase.propertyAddressFull)} target="_blank" rel="noreferrer">Open Maps</a>
+        <button type="button" onClick={() => onSelectBuyer(purchase.buyerKey || null)}>Show Only This Buyer</button>
       </div>
     </article>
   )
@@ -2069,7 +2160,7 @@ const MiniThreadPopup = ({
   onSend,
   onClose,
   onOpenDealIntelligence,
-  styleMode,
+  layoutMode,
 }: {
   thread: InboxWorkflowThread | null
   messages: ThreadMessage[]
@@ -2080,9 +2171,12 @@ const MiniThreadPopup = ({
   onSend: () => void
   onClose: () => void
   onOpenDealIntelligence?: () => void
-  styleMode: MapStyleMode
+  layoutMode: ViewLayoutMode
 }) => (
-  <article className={cls('nx-icm-thread', `nx-icm-thread--${styleMode}`)} style={cardThemeVars(styleMode)} onClick={(event) => event.stopPropagation()}>
+  <article
+    className={cls('nx-icm-thread', `is-layout-${layoutMode}`)}
+    onClick={(event) => event.stopPropagation()}
+  >
     <div className="nx-icm-thread__flip-shell">
       <header className="nx-icm-thread__header">
         <div className="nx-icm-thread__header-main">
@@ -2100,31 +2194,15 @@ const MiniThreadPopup = ({
         <div className="nx-icm-thread__header-actions">
           {onOpenDealIntelligence ? (
             <button type="button" onClick={onOpenDealIntelligence} aria-label="Open deal intelligence">
-              <Icon name="briefing" />
+              Brief
             </button>
           ) : null}
           <button type="button" onClick={onClose} aria-label="Close mini SMS view">
-            <Icon name="close" />
+            ×
           </button>
         </div>
       </header>
       <div className="nx-icm-thread__meta">
-        <span className={cls('nx-icm-thread__status-pill', `is-${statusToneForPin({
-          suppression_status: String((thread as any)?.suppressionStatus || 'clear'),
-          inbox_bucket: String((thread as any)?.inboxBucket || ''),
-          conversation_status: String((thread as any)?.conversationStatus || ''),
-          contract_status: String((thread as any)?.contractStatus || ''),
-          offer_status: String((thread as any)?.offerStatus || ''),
-        })}`)}>
-          {statusLabelForPin({
-            suppression_status: String((thread as any)?.suppressionStatus || 'clear'),
-            inbox_bucket: String((thread as any)?.inboxBucket || ''),
-            conversation_status: String((thread as any)?.conversationStatus || ''),
-            conversation_stage: String((thread as any)?.conversationStage || ''),
-            contract_status: String((thread as any)?.contractStatus || ''),
-            offer_status: String((thread as any)?.offerStatus || ''),
-          })}
-        </span>
         <small>{String(thread?.conversationStage || '').replace(/_/g, ' ') || 'Unknown stage'}</small>
       </div>
       <div className="nx-icm-thread__messages">
@@ -2146,7 +2224,7 @@ const MiniThreadPopup = ({
               <article className={cls('nx-icm-thread__bubble', message.direction === 'outbound' && 'is-outbound')}>
                 <p>{message.body || 'Not available'}</p>
                 <small>
-                  {formatRelativeTime(message.createdAt || message.timelineAt || '')}
+                  {message.createdAt || message.timelineAt || ''}
                   {message.direction === 'outbound' && message.deliveryStatus ? ` · ${message.deliveryStatus}` : ''}
                 </small>
               </article>
@@ -2169,7 +2247,7 @@ const MiniThreadPopup = ({
           disabled={disabled}
         />
         <button type="submit" disabled={!draftText.trim() || disabled} aria-label="Send quick reply">
-          <Icon name="send" />
+          Send
         </button>
       </form>
     </div>
@@ -2274,6 +2352,8 @@ export function InboxCommandMap({
   const onOpenDealIntelligenceRef = useRef<Props['onOpenDealIntelligence']>(onOpenDealIntelligence)
   const onSelectBuyerKeyRef = useRef<Props['onSelectBuyerKey']>(onSelectBuyerKey)
   const onBackgroundClickRef = useRef<Props['onBackgroundClick']>(onBackgroundClick)
+  const performanceSettingsRef = useRef<CommandMapPerformanceSettings | null>(null)
+  const reducedMotionRef = useRef(false)
   const selectedThreadRef = useRef<InboxWorkflowThread | null>(null)
   useEffect(() => {
     selectedThreadRef.current = selectedThread
@@ -2302,7 +2382,7 @@ export function InboxCommandMap({
   const [selectedCensusFeature, setSelectedCensusFeature] = useState<CensusOverlaySelection | null>(null)
   const [buyerDemandGeojson, setBuyerDemandGeojson] = useState<FeatureCollection<Point, Record<string, unknown>>>(EMPTY_GEOJSON)
   const [soldCompsGeojson, setSoldCompsGeojson] = useState<FeatureCollection<Point, Record<string, unknown>>>(EMPTY_GEOJSON)
-  const [, setSoldComps] = useState<RecentSoldComp[]>([])
+  const [soldComps, setSoldComps] = useState<RecentSoldComp[]>([])
   const [, setSoldCompsLoading] = useState(false)
   const [selectedSoldComp, setSelectedSoldComp] = useState<RecentSoldComp | null>(null)
   const [selectedThreadCensus, setSelectedThreadCensus] = useState<CensusData | null>(null)
@@ -2321,8 +2401,14 @@ export function InboxCommandMap({
   const [activeThreadPopup, setActiveThreadPopup] = useState<{ id: string; coordinates: [number, number] } | null>(null)
   const [showKpiBadges, setShowKpiBadges] = useState(true)
   const [activeKpiFilter, setActiveKpiFilter] = useState<MapKpiFilterKey | null>(null)
-  const [tickerDensity, setTickerDensity] = useState<TickerDensity>('compact')
+  const [viewportBounds, setViewportBounds] = useState<CommandMapBounds | null>(null)
+  const [viewportZoom, setViewportZoom] = useState(zoomedIn ? 10.5 : 4.4)
+  const [viewportWidth, setViewportWidth] = useState(0)
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false)
   const preferredDockTier = layoutMode === 'compact' ? 'mini' : layoutMode === 'medium' ? 'compact' : 'full'
+  const isUltrawide = viewportWidth >= 1800
+  const { settings: liveActivitySettings, patchSettings: patchLiveActivitySettings } = useCommandMapLiveActivitySettings(isUltrawide)
+  const { settings: performanceSettings, patchSettings: patchPerformanceSettings } = useCommandMapPerformanceMode(isUltrawide)
   const activeCensusMetric = useMemo(() => {
     const metricMap: Array<[keyof CensusLayerToggles, CensusOverlayMetric]> = [
       ['censusHeatmap', 'census_heatmap'],
@@ -2359,8 +2445,16 @@ export function InboxCommandMap({
 
   useEffect(() => {
     setDockTier(preferredDockTier)
-    setTickerDensity(layoutMode === 'compact' ? 'minimal' : 'compact')
   }, [layoutMode, preferredDockTier])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const sync = () => setPrefersReducedMotion(media.matches)
+    sync()
+    media.addEventListener('change', sync)
+    return () => media.removeEventListener('change', sync)
+  }, [])
 
   const hydratedThreadsById = useMemo(
     () => new Map(threads.map((thread) => [thread.id, thread])),
@@ -2407,20 +2501,23 @@ export function InboxCommandMap({
     () => Boolean(selectedBasePin && !filteredPins.some((pin) => pin.conversation_id === selectedBasePin.conversation_id)),
     [filteredPins, selectedBasePin],
   )
-  const visiblePins = useMemo(() => {
+  const baseVisiblePins = useMemo(() => {
     if (!selectedBasePin || !showSelectedHidden || !selectedHiddenByFilters) return filteredPins
     const selectedActivityPins = toActivityPins([selectedBasePin], activityMode)
     if (selectedActivityPins.length === 0) return filteredPins
     if (filteredPins.some((pin) => pin.conversation_id === selectedBasePin.conversation_id)) return filteredPins
     return [...filteredPins, ...selectedActivityPins]
   }, [activityMode, filteredPins, selectedBasePin, selectedHiddenByFilters, showSelectedHidden])
+  const visiblePins = useMemo(() => (
+    applyPinPerformanceWindow(baseVisiblePins, viewportBounds, viewportZoom, performanceSettings)
+  ), [baseVisiblePins, performanceSettings, viewportBounds, viewportZoom])
   const selectedPin = useMemo(
     () => visiblePins.find((pin) => pin.conversation_id === (selectedPinId || selectedHydratedThread?.id))
-      ?? filteredPins.find((pin) => pin.conversation_id === (selectedPinId || selectedHydratedThread?.id))
+      ?? baseVisiblePins.find((pin) => pin.conversation_id === (selectedPinId || selectedHydratedThread?.id))
       ?? visiblePins[0]
-      ?? filteredPins[0]
+      ?? baseVisiblePins[0]
       ?? selectedBasePin,
-    [filteredPins, selectedBasePin, selectedPinId, selectedHydratedThread?.id, visiblePins],
+    [baseVisiblePins, selectedBasePin, selectedPinId, selectedHydratedThread?.id, visiblePins],
   )
   const kpiChips = useMemo(() => buildKpiChips(visiblePins, activityMode), [activityMode, visiblePins])
   const popupThread = useMemo(() => {
@@ -2436,7 +2533,12 @@ export function InboxCommandMap({
   )
   const filteredBuyerPurchases = useMemo(() => {
     const purchases = buyerCommandData?.recentPurchases ?? []
-    return purchases.filter((purchase) => {
+    const filtered = purchases.filter((purchase) => {
+      if (buyerLayers.repeatBuyers && !(buyerCommandData?.profiles.find((profile) => profile.buyerKey === purchase.buyerKey)?.isRepeatBuyer)) return false
+      if (buyerLayers.corporateBuyers && !purchase.isCorporateBuyer) return false
+      if (buyerLayers.localInvestors && !(buyerCommandData?.profiles.find((profile) => profile.buyerKey === purchase.buyerKey)?.isLocalBuyer)) return false
+      if (buyerLayers.offMarketBuyers && !purchase.isOffMarketPurchase) return false
+      if (!buyerLayers.retailNoise && buyerCommandData?.profiles.find((profile) => profile.buyerKey === purchase.buyerKey)?.isRetailOrNoise) return false
       if (buyerLayers.institutional || buyerLayers.landlords || buyerLayers.flippers || buyerLayers.builders) {
         if (buyerLayers.institutional && purchase.category === 'institutional') return true
         if (buyerLayers.landlords && purchase.category === 'landlord') return true
@@ -2446,10 +2548,19 @@ export function InboxCommandMap({
       }
       return true
     })
-  }, [buyerCommandData?.recentPurchases, buyerLayers.builders, buyerLayers.flippers, buyerLayers.institutional, buyerLayers.landlords])
+    const bounded = viewportBounds
+      ? filtered.filter((purchase) => isPointInBounds(purchase.latitude, purchase.longitude, padCommandBounds(viewportBounds, 0.18)))
+      : filtered
+    return bounded.slice(0, getPinRenderCap(viewportZoom, performanceSettings, 'buyer'))
+  }, [buyerCommandData?.profiles, buyerCommandData?.recentPurchases, buyerLayers.builders, buyerLayers.corporateBuyers, buyerLayers.flippers, buyerLayers.institutional, buyerLayers.landlords, buyerLayers.localInvestors, buyerLayers.offMarketBuyers, buyerLayers.repeatBuyers, buyerLayers.retailNoise, performanceSettings, viewportBounds, viewportZoom])
   const filteredBuyerProfiles = useMemo(() => {
     const profiles = buyerCommandData?.profilePoints ?? []
-    return profiles.filter((profile) => {
+    const filtered = profiles.filter((profile) => {
+      if (buyerLayers.repeatBuyers && !profile.isRepeatBuyer) return false
+      if (buyerLayers.corporateBuyers && !profile.isCorporateBuyer) return false
+      if (buyerLayers.localInvestors && !profile.isLocalBuyer) return false
+      if (buyerLayers.offMarketBuyers && !profile.isOffMarketBuyer) return false
+      if (!buyerLayers.retailNoise && profile.isRetailOrNoise) return false
       if (buyerLayers.institutional || buyerLayers.landlords || buyerLayers.flippers || buyerLayers.builders) {
         if (buyerLayers.institutional && profile.category === 'institutional') return true
         if (buyerLayers.landlords && profile.category === 'landlord') return true
@@ -2459,31 +2570,61 @@ export function InboxCommandMap({
       }
       return true
     })
-  }, [buyerCommandData?.profilePoints, buyerLayers.builders, buyerLayers.flippers, buyerLayers.institutional, buyerLayers.landlords])
+    const bounded = viewportBounds
+      ? filtered.filter((profile) => isPointInBounds(profile.latitude, profile.longitude, padCommandBounds(viewportBounds, 0.18)))
+      : filtered
+    return bounded.slice(0, getPinRenderCap(viewportZoom, performanceSettings, 'buyer'))
+  }, [buyerCommandData?.profilePoints, buyerLayers.builders, buyerLayers.corporateBuyers, buyerLayers.flippers, buyerLayers.institutional, buyerLayers.landlords, buyerLayers.localInvestors, buyerLayers.offMarketBuyers, buyerLayers.repeatBuyers, buyerLayers.retailNoise, performanceSettings, viewportBounds, viewportZoom])
+  const selectedBuyerTrailPurchases = useMemo(
+    () => selectedBuyerKey ? filteredBuyerPurchases.filter((purchase) => purchase.buyerKey === selectedBuyerKey) : [],
+    [filteredBuyerPurchases, selectedBuyerKey],
+  )
   const buyerPurchasesGeojson = useMemo(
-    () => buildBuyerFeatureCollection(filteredBuyerPurchases, mapStyleMode, 'buyer_purchase', selectedBuyerKey),
-    [filteredBuyerPurchases, mapStyleMode, selectedBuyerKey],
+    () => buildBuyerFeatureCollection(filteredBuyerPurchases, mapStyleMode, 'buyer_purchase', buyerLayers.buyerFocusMode ? selectedBuyerKey : null),
+    [buyerLayers.buyerFocusMode, filteredBuyerPurchases, mapStyleMode, selectedBuyerKey],
   )
   const buyerProfilesGeojson = useMemo(
-    () => buildBuyerFeatureCollection(filteredBuyerProfiles, mapStyleMode, 'buyer_profile', selectedBuyerKey),
-    [filteredBuyerProfiles, mapStyleMode, selectedBuyerKey],
+    () => buildBuyerFeatureCollection(filteredBuyerProfiles, mapStyleMode, 'buyer_profile', buyerLayers.buyerFocusMode ? selectedBuyerKey : null),
+    [buyerLayers.buyerFocusMode, filteredBuyerProfiles, mapStyleMode, selectedBuyerKey],
   )
-  const liveTickerItems = useMemo(() => buildLiveTickerItems(visiblePins, hydratedThreadsById), [hydratedThreadsById, visiblePins])
+  const buyerTrailGeojson = useMemo(
+    () => buildBuyerTrailGeojson(selectedBuyerTrailPurchases, mapStyleMode),
+    [mapStyleMode, selectedBuyerTrailPurchases],
+  )
+  const selectedBuyerProfile = useMemo(
+    () => buyerCommandData?.profiles.find((profile) => profile.buyerKey === (selectedBuyerPurchase?.buyerKey || selectedBuyerKey)) ?? null,
+    [buyerCommandData?.profiles, selectedBuyerKey, selectedBuyerPurchase?.buyerKey],
+  )
+  const liveActivityEvents = useMemo(() => (
+    loadLiveActivityFeed({
+      pins: visiblePins as CommandMapActivityPinSource[],
+      threadsById: hydratedThreadsById,
+      buyerPurchases: filteredBuyerPurchases,
+      soldComps,
+      settings: liveActivitySettings,
+      selectedMarket: filters.market || selectedPin?.market || null,
+      bounds: viewportBounds,
+      selectedThread: selectedHydratedThread,
+    })
+  ), [visiblePins, hydratedThreadsById, filteredBuyerPurchases, soldComps, liveActivitySettings, filters.market, viewportBounds, selectedHydratedThread, selectedPin?.market])
   const debugStats = useMemo(() => ({
     allPinsCount: allPins.length,
     filteredPinsCount: filteredPins.length,
     visiblePinsCount: visiblePins.length,
     buyerPurchasesCount: filteredBuyerPurchases.length,
     buyerProfilesCount: filteredBuyerProfiles.length,
+    liveActivityEventsCount: liveActivityEvents.length,
     unmappedCount: pinPipeline.unmapped.length,
     activeMode: activityMode,
     activeFilters: filters,
-  }), [activityMode, allPins.length, filteredBuyerProfiles.length, filteredBuyerPurchases.length, filteredPins.length, filters, pinPipeline.unmapped.length, visiblePins.length])
+  }), [activityMode, allPins.length, filteredBuyerProfiles.length, filteredBuyerPurchases.length, filteredPins.length, filters, liveActivityEvents.length, pinPipeline.unmapped.length, visiblePins.length])
 
   geojsonRef.current = geojson
   activityModeRef.current = activityMode
   activeThreadPopupRef.current = activeThreadPopup
   activeKpiFilterRef.current = activeKpiFilter
+  performanceSettingsRef.current = performanceSettings
+  reducedMotionRef.current = prefersReducedMotion || performanceSettings.animation !== 'full'
   onSelectThreadIdRef.current = onSelectThreadId
   onOpenDealIntelligenceRef.current = onOpenDealIntelligence
   onSelectBuyerKeyRef.current = onSelectBuyerKey
@@ -2603,7 +2744,7 @@ export function InboxCommandMap({
         loading={popupLoading}
         draftText={popupDraft}
         disabled={popupDisabled}
-        styleMode={mapStyleMode}
+        layoutMode={layoutMode}
         onDraftChange={(value) => {
           if (!isSelectedThreadActive) return
           onQuickReplyDraftChange?.(value)
@@ -2623,7 +2764,7 @@ export function InboxCommandMap({
       closeOnMove: false,
       offset: 18,
       className: 'nx-icm-thread-popup',
-      maxWidth: '360px',
+      maxWidth: sellerCardMaxWidthForLayout(layoutMode),
       focusAfterOpen: false,
     })
 
@@ -2675,6 +2816,7 @@ export function InboxCommandMap({
     if (!rootRef.current || typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver((entries) => {
       const width = entries[0]?.contentRect.width ?? 0
+      setViewportWidth(width)
       setDockTier(width <= 360 ? 'mini' : width <= 760 ? 'compact' : 'full')
     })
     observer.observe(rootRef.current)
@@ -2699,7 +2841,9 @@ export function InboxCommandMap({
     }
 
     const syncLayerVisibility = (map: maplibregl.Map, nextMode: InboxMapActivityMode) => {
-      const clusteredMode = nextMode !== 'sends' && !activeKpiFilterRef.current
+      const clusteredMode =
+        (nextMode !== 'sends' && !activeKpiFilterRef.current)
+        || (performanceSettingsRef.current?.clusterAggressiveness === 'high' && map.getZoom() < 12.5)
       setLayerVisibility(map, RAW_LAYER_IDS, !clusteredMode)
       setLayerVisibility(map, CLUSTER_POINT_LAYER_IDS, clusteredMode)
       setLayerVisibility(map, CLUSTER_LAYER_IDS, clusteredMode)
@@ -2708,7 +2852,7 @@ export function InboxCommandMap({
       setLayerVisibility(map, BUYER_PROFILE_LAYER_IDS, buyerLayers.buyerProfiles)
       setLayerVisibility(map, ALL_SOLD_COMPS_LAYER_IDS, buyerLayers.recentSoldComps)
       if (map.getLayer(BUYER_HEATMAP_LAYER_ID)) {
-        map.setLayoutProperty(BUYER_HEATMAP_LAYER_ID, 'visibility', buyerLayers.buyerHeatmap ? 'visible' : 'none')
+        map.setLayoutProperty(BUYER_HEATMAP_LAYER_ID, 'visibility', buyerLayers.buyerHeatmap && performanceSettingsRef.current?.showHeatEffects !== false ? 'visible' : 'none')
       }
     }
 
@@ -2853,9 +2997,18 @@ export function InboxCommandMap({
         })
       }
 
+      if (!map.getSource(BUYER_TRAIL_SOURCE_ID)) {
+        map.addSource(BUYER_TRAIL_SOURCE_ID, {
+          type: 'geojson',
+          data: buyerTrailGeojson,
+        })
+      }
+
       if (!map.getSource(CENSUS_SOURCE_ID)) {
         map.addSource(CENSUS_SOURCE_ID, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
       }
+
+      const clusterGlowAnchor = map.getLayer('command-pin-cluster-glow') ? 'command-pin-cluster-glow' : undefined
 
       if (!map.getLayer(CENSUS_LAYER_IDS.fill)) {
         map.addLayer({
@@ -2867,7 +3020,7 @@ export function InboxCommandMap({
             'fill-opacity': 0.28,
           },
           layout: { visibility: 'none' },
-        }, 'command-pin-cluster-glow')
+        }, clusterGlowAnchor)
       }
 
       if (!map.getLayer(CENSUS_LAYER_IDS.line)) {
@@ -2881,7 +3034,7 @@ export function InboxCommandMap({
             'line-opacity': 0.52,
           },
           layout: { visibility: 'none' },
-        }, 'command-pin-cluster-glow')
+        }, clusterGlowAnchor)
       }
 
       if (!map.getLayer(CENSUS_LAYER_IDS.hoverLine)) {
@@ -2983,6 +3136,22 @@ export function InboxCommandMap({
         })
       }
 
+      if (!map.getLayer(SOLD_COMPS_LAYER_IDS.hit)) {
+        map.addLayer({
+          id: SOLD_COMPS_LAYER_IDS.hit,
+          type: 'circle',
+          source: SOLD_COMPS_SOURCE_ID,
+          filter: ['!', ['has', 'point_count']],
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 12, 14, 16],
+            'circle-color': 'rgba(0,0,0,0)',
+            'circle-stroke-width': 0,
+          },
+          layout: { visibility: 'none' },
+          minzoom: 6,
+        })
+      }
+
       if (!map.getLayer(SOLD_COMPS_LAYER_IDS.marker)) {
         map.addLayer({
           id: SOLD_COMPS_LAYER_IDS.marker,
@@ -2990,10 +3159,11 @@ export function InboxCommandMap({
           source: SOLD_COMPS_SOURCE_ID,
           filter: ['!', ['has', 'point_count']],
           paint: {
-            'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 4, 14, 6],
+            'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 5.5, 14, 8],
             'circle-color': '#ef4444',
             'circle-stroke-width': 2,
             'circle-stroke-color': '#ffffff',
+            'circle-opacity': 0.96,
           },
           layout: { visibility: 'none' },
           minzoom: 6,
@@ -3339,7 +3509,7 @@ export function InboxCommandMap({
           paint: {
             'circle-radius': ['coalesce', ['get', 'radiusWeight'], 10],
             'circle-color': ['get', 'pointColor'],
-            'circle-opacity': 0.2,
+            'circle-opacity': ['*', ['get', 'focusOpacity'], ['case', ['==', ['get', 'isRecent'], 1], 0.34, 0.16]],
             'circle-blur': 1,
           },
           layout: { visibility: 'none' },
@@ -3355,9 +3525,9 @@ export function InboxCommandMap({
           paint: {
             'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 4.2, 11, 7.8],
             'circle-color': ['get', 'pointColor'],
-            'circle-stroke-color': '#fff4de',
-            'circle-stroke-width': 1.2,
-            'circle-opacity': 0.96,
+            'circle-stroke-color': ['case', ['==', ['get', 'isSelectedBuyer'], 1], '#fff7d6', '#fff4de'],
+            'circle-stroke-width': ['case', ['==', ['get', 'isSelectedBuyer'], 1], 2.2, 1.2],
+            'circle-opacity': ['*', ['get', 'focusOpacity'], ['case', ['==', ['get', 'isRecent'], 1], 1, 0.78]],
           },
           layout: { visibility: 'none' },
         })
@@ -3373,7 +3543,7 @@ export function InboxCommandMap({
             'circle-color': ['get', 'pointColor'],
             'circle-stroke-color': '#ffffff',
             'circle-stroke-width': 1.1,
-            'circle-opacity': 0.9,
+            'circle-opacity': ['*', ['get', 'focusOpacity'], 0.9],
           },
           layout: { visibility: 'none' },
         })
@@ -3396,7 +3566,37 @@ export function InboxCommandMap({
             'text-color': '#eef4ff',
             'text-halo-color': 'rgba(8,10,15,0.9)',
             'text-halo-width': 1,
+            'text-opacity': ['*', ['get', 'focusOpacity'], 0.9],
           },
+        })
+      }
+
+      if (!map.getLayer('command-buyer-trail-glow')) {
+        map.addLayer({
+          id: 'command-buyer-trail-glow',
+          type: 'line',
+          source: BUYER_TRAIL_SOURCE_ID,
+          paint: {
+            'line-color': ['coalesce', ['get', 'color'], '#7ee7ff'],
+            'line-width': ['interpolate', ['linear'], ['zoom'], 6, 4, 12, 10],
+            'line-opacity': 0.14,
+            'line-blur': 1.1,
+          },
+          layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+        })
+      }
+
+      if (!map.getLayer('command-buyer-trail-line')) {
+        map.addLayer({
+          id: 'command-buyer-trail-line',
+          type: 'line',
+          source: BUYER_TRAIL_SOURCE_ID,
+          paint: {
+            'line-color': ['coalesce', ['get', 'color'], '#7ee7ff'],
+            'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1.3, 12, 2.6],
+            'line-opacity': 0.8,
+          },
+          layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
         })
       }
       syncLayerVisibility(map, activityModeRef.current)
@@ -3468,17 +3668,21 @@ export function InboxCommandMap({
         const feature = event.features?.[0]
         if (!feature?.properties) return
         const props = feature.properties as unknown as CommandMapPin
+        const hydratedThread = hydratedThreadsById.get(props.conversation_id)
+          || hydratedThreadsByKey.get(props.conversation_id)
+          || null
+        const sellerRecord = { ...((hydratedThread as Record<string, unknown> | null) ?? {}), ...props }
         const coordinates = (feature.geometry as Point).coordinates as [number, number]
         const popup = hoverPopupRef.current ?? new maplibregl.Popup({
           closeButton: false,
           closeOnClick: false,
           offset: 18,
           className: 'nx-icm-hover-popup',
-          maxWidth: '360px',
+          maxWidth: sellerCardMaxWidthForLayout(layoutMode),
         })
         popup
           .setLngLat(coordinates)
-          .setHTML(buildHoverCardMarkup(props, mapStyleModeRef.current))
+          .setHTML(buildHoverCardMarkup(sellerRecord, layoutMode))
           .addTo(map)
         hoverPopupRef.current = popup
       }
@@ -3542,12 +3746,13 @@ export function InboxCommandMap({
         const props = feature?.properties as RecentSoldComp | undefined
         if (!feature || !props) return
         const coordinates = (feature.geometry as Point).coordinates as [number, number]
-        const popup = hoverPopupRef.current ?? new maplibregl.Popup({
+        hoverPopupRef.current?.remove()
+        const popup = new maplibregl.Popup({
           closeButton: false,
           closeOnClick: false,
           offset: 18,
           className: 'nx-icm-hover-popup',
-          maxWidth: '360px',
+          maxWidth: sellerCardMaxWidthForLayout(layoutMode),
         })
         popup
           .setLngLat(coordinates)
@@ -3665,12 +3870,13 @@ export function InboxCommandMap({
       map.on('click', 'command-buyer-purchase-core', handleBuyerClick)
       map.on('click', 'command-buyer-profile-core', handleBuyerClick)
       map.on('click', 'command-buyer-cluster-core', handleBuyerClusterClick)
+      map.on('click', SOLD_COMPS_LAYER_IDS.hit, handleSoldCompClick)
       map.on('click', SOLD_COMPS_LAYER_IDS.marker, handleSoldCompClick)
       map.on('click', SOLD_COMPS_LAYER_IDS.label, handleSoldCompClick)
       map.on('click', SOLD_COMPS_CLUSTER_LAYER_IDS.core, handleSoldCompClusterClick)
       map.on('click', (event) => {
         const rendered = map.queryRenderedFeatures(event.point, {
-          layers: ['command-pin-core-raw', 'command-pin-core-clustered', 'command-pin-cluster-core', 'command-buyer-purchase-core', 'command-buyer-profile-core', 'command-buyer-cluster-core', SOLD_COMPS_LAYER_IDS.marker, SOLD_COMPS_LAYER_IDS.label, SOLD_COMPS_CLUSTER_LAYER_IDS.core],
+          layers: ['command-pin-core-raw', 'command-pin-core-clustered', 'command-pin-cluster-core', 'command-buyer-purchase-core', 'command-buyer-profile-core', 'command-buyer-cluster-core', SOLD_COMPS_LAYER_IDS.hit, SOLD_COMPS_LAYER_IDS.marker, SOLD_COMPS_LAYER_IDS.label, SOLD_COMPS_CLUSTER_LAYER_IDS.core],
         })
         if (rendered.length === 0) {
           setActiveThreadPopup(null)
@@ -3687,6 +3893,7 @@ export function InboxCommandMap({
       map.on('mouseenter', CENSUS_LAYER_IDS.fill, handleCensusHover)
       map.on('mouseenter', 'command-buyer-purchase-core', handleBuyerHover)
       map.on('mouseenter', 'command-buyer-profile-core', handleBuyerHover)
+      map.on('mouseenter', SOLD_COMPS_LAYER_IDS.hit, handleSoldCompHover)
       map.on('mouseenter', SOLD_COMPS_LAYER_IDS.marker, handleSoldCompHover)
       map.on('mouseenter', SOLD_COMPS_LAYER_IDS.label, handleSoldCompHover)
       map.on('mouseleave', 'command-pin-core-raw', clearPinHover)
@@ -3695,6 +3902,7 @@ export function InboxCommandMap({
       map.on('mouseleave', CENSUS_LAYER_IDS.fill, clearCensusHover)
       map.on('mouseleave', 'command-buyer-purchase-core', clearPinHover)
       map.on('mouseleave', 'command-buyer-profile-core', clearPinHover)
+      map.on('mouseleave', SOLD_COMPS_LAYER_IDS.hit, clearPinHover)
       map.on('mouseleave', SOLD_COMPS_LAYER_IDS.marker, clearPinHover)
       map.on('mouseleave', SOLD_COMPS_LAYER_IDS.label, clearPinHover)
 
@@ -3708,8 +3916,29 @@ export function InboxCommandMap({
       }
 
       let frame = 0
+      let pulsesSuppressed = false
       const animate = () => {
         if (!mapRef.current) return
+        const shouldAnimatePins =
+          !reducedMotionRef.current
+          && performanceSettingsRef.current?.animation === 'full'
+          && geojsonRef.current.features.length <= 180
+        if (!shouldAnimatePins) {
+          if (!pulsesSuppressed) {
+            try {
+              ;(['command-pin-pulse-raw', 'command-pin-pulse-clustered'] as const).forEach((layerId) => {
+                if (!map.getLayer(layerId)) return
+                map.setPaintProperty(layerId, 'circle-opacity', 0)
+              })
+            } catch {
+              // Keep map resilient.
+            }
+            pulsesSuppressed = true
+          }
+          animationRef.current = requestAnimationFrame(animate)
+          return
+        }
+        pulsesSuppressed = false
         frame = (frame + 1) % 360
         const makeRadiusExpr = (tier: PinFeatureProps['pulseTier'], modeValue: PinFeatureProps['pulseMode']) => {
           const cfg = pulseConfig[tier]
@@ -3804,11 +4033,13 @@ export function InboxCommandMap({
     const clusterSource = mapRef.current?.getSource(CLUSTER_SOURCE_ID) as maplibregl.GeoJSONSource | undefined
     const buyerPurchaseSource = mapRef.current?.getSource(BUYER_PURCHASE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined
     const buyerProfileSource = mapRef.current?.getSource(BUYER_PROFILE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined
+    const buyerTrailSource = mapRef.current?.getSource(BUYER_TRAIL_SOURCE_ID) as maplibregl.GeoJSONSource | undefined
     rawSource?.setData(geojson)
     clusterSource?.setData(geojson)
     buyerPurchaseSource?.setData(buyerPurchasesGeojson)
     buyerProfileSource?.setData(buyerProfilesGeojson)
-  }, [buyerProfilesGeojson, buyerPurchasesGeojson, geojson])
+    buyerTrailSource?.setData(buyerTrailGeojson)
+  }, [buyerProfilesGeojson, buyerPurchasesGeojson, buyerTrailGeojson, geojson])
 
   useEffect(() => {
     if (!mapRef.current) return
@@ -3842,7 +4073,35 @@ export function InboxCommandMap({
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
-    const clusteredMode = activityMode !== 'sends' && !activeKpiFilter
+    let timeout: ReturnType<typeof setTimeout> | null = null
+    const syncViewport = () => {
+      const bounds = map.getBounds()
+      setViewportBounds({
+        west: bounds.getWest(),
+        south: bounds.getSouth(),
+        east: bounds.getEast(),
+        north: bounds.getNorth(),
+      })
+      setViewportZoom(map.getZoom())
+    }
+    syncViewport()
+    const onMoveEnd = () => {
+      if (timeout) clearTimeout(timeout)
+      timeout = setTimeout(syncViewport, 90)
+    }
+    map.on('moveend', onMoveEnd)
+    return () => {
+      if (timeout) clearTimeout(timeout)
+      map.off('moveend', onMoveEnd)
+    }
+  }, [mapRef.current])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    const clusteredMode =
+      (activityMode !== 'sends' && !activeKpiFilter)
+      || (performanceSettings.clusterAggressiveness === 'high' && map.getZoom() < 12.5)
     const sellerVisible = buyerLayers.sellerThreads
     RAW_LAYER_IDS.forEach((layerId) => {
       if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', sellerVisible ? (clusteredMode ? 'none' : 'visible') : 'none')
@@ -3853,7 +4112,7 @@ export function InboxCommandMap({
     CLUSTER_LAYER_IDS.forEach((layerId) => {
       if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', sellerVisible ? (clusteredMode ? 'visible' : 'none') : 'none')
     })
-  }, [activeKpiFilter, activityMode, buyerLayers.sellerThreads])
+  }, [activeKpiFilter, activityMode, buyerLayers.sellerThreads, performanceSettings.clusterAggressiveness])
 
   useEffect(() => {
     const map = mapRef.current
@@ -3868,13 +4127,16 @@ export function InboxCommandMap({
     BUYER_PROFILE_LAYER_IDS.forEach((layerId) => {
       if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', buyerLayers.buyerProfiles ? 'visible' : 'none')
     })
+    BUYER_TRAIL_LAYER_IDS.forEach((layerId) => {
+      if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', selectedBuyerKey && buyerLayers.buyerFocusMode ? 'visible' : 'none')
+    })
     ALL_SOLD_COMPS_LAYER_IDS.forEach((layerId) => {
       if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', buyerLayers.recentSoldComps ? 'visible' : 'none')
     })
     if (map.getLayer(BUYER_HEATMAP_LAYER_ID)) {
-      map.setLayoutProperty(BUYER_HEATMAP_LAYER_ID, 'visibility', buyerLayers.buyerHeatmap ? 'visible' : 'none')
+      map.setLayoutProperty(BUYER_HEATMAP_LAYER_ID, 'visibility', buyerLayers.buyerHeatmap && performanceSettings.showHeatEffects ? 'visible' : 'none')
     }
-  }, [buyerLayers])
+  }, [buyerLayers, performanceSettings.showHeatEffects, selectedBuyerKey])
 
   // ── Census overlay loading (viewport + zoom aware) ─────────────────────────
   useEffect(() => {
@@ -4146,10 +4408,14 @@ export function InboxCommandMap({
         maxLat: bounds.getNorth(),
       }
       setSoldCompsLoading(true)
-      loadSoldCompsInBounds(queryBounds, { monthsBack: 6, limit: 1000 }).then((comps) => {
+      loadSoldCompsInBounds(queryBounds, {
+        monthsBack: 6,
+        limit: getPinRenderCap(map.getZoom(), performanceSettings, 'sold_comp'),
+        selectedMarket: filters.market || undefined,
+      }).then((comps) => {
         if (cancelled) return
         setSoldComps(comps)
-        const features = comps.map((comp) => {
+        const features = comps.slice(0, getPinRenderCap(map.getZoom(), performanceSettings, 'sold_comp')).map((comp) => {
           const price = comp.sale_price ?? comp.mls_sold_price ?? 0
           let sourceShort = ''
           if (comp.sale_source === 'MLS Sold') sourceShort = 'MLS '
@@ -4192,7 +4458,7 @@ export function InboxCommandMap({
       if (timeout) clearTimeout(timeout)
       map?.off('moveend', onMoveEnd)
     }
-  }, [buyerLayers.recentSoldComps])
+  }, [buyerLayers.recentSoldComps, filters.market, performanceSettings])
 
   // ── Push census + buyer demand GeoJSON to map sources ─────────────────────
   useEffect(() => {
@@ -4312,19 +4578,47 @@ export function InboxCommandMap({
     return 'No visible pins found.'
   }, [allPins.length, filteredPins.length, pinPipeline.unmapped.length, visiblePins.length])
 
-  const handleTickerSelect = (item: LiveTickerItem) => {
-    setSelectedPinId(item.threadId)
-    onSelectThreadId?.(item.threadId)
-    setActiveThreadPopup({ id: item.threadId, coordinates: [item.lng, item.lat] })
-    mapRef.current?.easeTo({
-      center: [item.lng, item.lat],
-      zoom: Math.max(mapRef.current.getZoom(), 12.4),
-      duration: 620,
-    })
+  const handleActivitySelect = (event: CommandMapActivityEvent) => {
+    const center = centerMapOnActivity(event)
+    if (event.targetType === 'seller' && event.targetId) {
+      setSelectedPinId(event.targetId)
+      onSelectThreadId?.(event.targetId)
+      if (center) setActiveThreadPopup({ id: event.targetId, coordinates: center })
+    }
+    if (event.targetType === 'buyer' && event.targetId) {
+      const purchase = filteredBuyerPurchases.find((item) => item.buyerKey === event.targetId)
+      if (purchase) {
+        setSelectedBuyerPurchase(purchase)
+        onSelectBuyerKeyRef.current?.(purchase.buyerKey)
+      }
+    }
+    if (event.targetType === 'sold_comp' && event.targetId) {
+      const comp = soldComps.find((item) => String(item.property_id) === event.targetId)
+      if (comp) setSelectedSoldComp(comp)
+    }
+    if (center) {
+      mapRef.current?.easeTo({
+        center,
+        zoom: Math.max(mapRef.current?.getZoom() ?? 10.8, 12.4),
+        duration: 620,
+      })
+    }
   }
 
   return (
-    <div ref={rootRef} className={cls('nx-icm', `nx-icm--${dockTier}`, `is-layout-${layoutMode}`, filtersOpen && 'is-controls-open', fullHeight && 'nx-icm--full')}>
+    <div
+      ref={rootRef}
+      className={cls(
+        'nx-icm',
+        `nx-icm--${dockTier}`,
+        `is-layout-${layoutMode}`,
+        filtersOpen && 'is-controls-open',
+        fullHeight && 'nx-icm--full',
+        isUltrawide && 'is-ultrawide',
+        liveActivitySettings.displayMode === 'hidden' && 'is-live-activity-hidden',
+        liveActivitySettings.displayMode === 'docked' && 'is-live-activity-docked',
+      )}
+    >
       {!commandMode && <div ref={controlsRef} className="nx-icm__toolbar">
         <div className="nx-icm__header">
           <div className="nx-icm__header-badge">
@@ -4419,6 +4713,81 @@ export function InboxCommandMap({
                     </div>
                   </div>
                   <div className="nx-icm__controls-group">
+                    <span className="nx-icm__controls-label">Performance Mode</span>
+                    <div className="nx-icm__controls-segment">
+                      {(['auto', 'quality', 'balanced', 'speed'] as const).map((value) => (
+                        <button key={value} type="button" className={cls('nx-icm__mode-tab', performanceSettings.performanceMode === value && 'is-active')} onClick={() => patchPerformanceSettings({ performanceMode: value })}>
+                          {value}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="nx-icm__controls-grid">
+                    <div className="nx-icm__controls-group">
+                      <span className="nx-icm__controls-label">Marker Density</span>
+                      <div className="nx-icm__controls-segment">
+                        {(['low', 'medium', 'high'] as const).map((value) => (
+                          <button key={value} type="button" className={cls('nx-icm__mode-tab', performanceSettings.markerDensity === value && 'is-active')} onClick={() => patchPerformanceSettings({ markerDensity: value })}>
+                            {value}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="nx-icm__controls-group">
+                      <span className="nx-icm__controls-label">Animation</span>
+                      <div className="nx-icm__controls-segment">
+                        {(['full', 'reduced', 'off'] as const).map((value) => (
+                          <button key={value} type="button" className={cls('nx-icm__mode-tab', performanceSettings.animation === value && 'is-active')} onClick={() => patchPerformanceSettings({ animation: value })}>
+                            {value}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="nx-icm__controls-grid">
+                    <div className="nx-icm__controls-group">
+                      <span className="nx-icm__controls-label">Live Activity Mode</span>
+                      <div className="nx-icm__controls-segment">
+                        {(['hidden', 'minimal', 'compact', 'expanded', 'docked'] as const).map((value) => (
+                          <button
+                            key={value}
+                            type="button"
+                            className={cls('nx-icm__mode-tab', liveActivitySettings.displayMode === value && 'is-active')}
+                            onClick={() => {
+                              patchLiveActivitySettings({ visible: value !== 'hidden', displayMode: value })
+                              patchPerformanceSettings({ liveActivityMode: value })
+                            }}
+                          >
+                            {value}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="nx-icm__controls-group">
+                      <span className="nx-icm__controls-label">Cluster Aggressiveness</span>
+                      <div className="nx-icm__controls-segment">
+                        {(['low', 'medium', 'high'] as const).map((value) => (
+                          <button key={value} type="button" className={cls('nx-icm__mode-tab', performanceSettings.clusterAggressiveness === value && 'is-active')} onClick={() => patchPerformanceSettings({ clusterAggressiveness: value })}>
+                            {value}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="nx-icm__controls-group">
+                    <span className="nx-icm__controls-label">Performance Effects</span>
+                    <div className="nx-icm__controls-segment">
+                      <label className="nx-icm__checkbox">
+                        <input type="checkbox" checked={performanceSettings.showHeatEffects} onChange={(event) => patchPerformanceSettings({ showHeatEffects: event.target.checked })} />
+                        Show Heat Effects
+                      </label>
+                      <label className="nx-icm__checkbox">
+                        <input type="checkbox" checked={liveActivitySettings.onlyCurrentBounds} onChange={(event) => patchLiveActivitySettings({ onlyCurrentBounds: event.target.checked })} />
+                        Bounds-Locked Feed
+                      </label>
+                    </div>
+                  </div>
+                  <div className="nx-icm__controls-group">
                     <span className="nx-icm__controls-label">Map Legend</span>
                     <div className="nx-icm__legend-grid is-expanded">
                       {MAP_LEGEND_ITEMS.map((item) => (
@@ -4450,11 +4819,17 @@ export function InboxCommandMap({
                   <div className="nx-icm__controls-group">
                     <span className="nx-icm__controls-label">Buyer Intelligence Layers</span>
                     <div className="nx-icm__controls-segment">
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.buyerFocusMode} onChange={(e) => setBuyerLayers((current) => ({ ...current, buyerFocusMode: e.target.checked }))} />Buyer Focus Mode</label>
                       <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.buyerMatches} onChange={(e) => setBuyerLayers((current) => ({ ...current, buyerMatches: e.target.checked }))} />Buyer Matches</label>
-                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.buyerRecentPurchases} onChange={(e) => setBuyerLayers((current) => ({ ...current, buyerRecentPurchases: e.target.checked }))} />Recent Purchases</label>
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.buyerRecentPurchases} onChange={(e) => setBuyerLayers((current) => ({ ...current, buyerRecentPurchases: e.target.checked }))} />Buyer Activity</label>
                       <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.buyerHeatmap} onChange={(e) => setBuyerLayers((current) => ({ ...current, buyerHeatmap: e.target.checked }))} />Buyer Heatmap</label>
                       <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.buyerProfiles} onChange={(e) => setBuyerLayers((current) => ({ ...current, buyerProfiles: e.target.checked }))} />Buyer Profiles</label>
                       <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.recentSoldComps} onChange={(e) => setBuyerLayers((current) => ({ ...current, recentSoldComps: e.target.checked }))} />Sold Comps</label>
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.repeatBuyers} onChange={(e) => setBuyerLayers((current) => ({ ...current, repeatBuyers: e.target.checked }))} />Repeat Buyers</label>
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.corporateBuyers} onChange={(e) => setBuyerLayers((current) => ({ ...current, corporateBuyers: e.target.checked }))} />Corporate Buyers</label>
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.localInvestors} onChange={(e) => setBuyerLayers((current) => ({ ...current, localInvestors: e.target.checked }))} />Local Investors</label>
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.offMarketBuyers} onChange={(e) => setBuyerLayers((current) => ({ ...current, offMarketBuyers: e.target.checked }))} />Off-Market Buyers</label>
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.retailNoise} onChange={(e) => setBuyerLayers((current) => ({ ...current, retailNoise: e.target.checked }))} />Retail / Noise</label>
                       <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.institutional} onChange={(e) => setBuyerLayers((current) => ({ ...current, institutional: e.target.checked }))} />Institutional</label>
                       <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.landlords} onChange={(e) => setBuyerLayers((current) => ({ ...current, landlords: e.target.checked }))} />Landlords</label>
                       <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.flippers} onChange={(e) => setBuyerLayers((current) => ({ ...current, flippers: e.target.checked }))} />Flippers</label>
@@ -4482,6 +4857,20 @@ export function InboxCommandMap({
                         <div><span>Dispo Confidence</span><strong>{buyerCommandData.summary.dispoConfidence}%</strong></div>
                       </div>
                       <p className="nx-icm__buyer-summary-note">{buyerCommandData.summary.recommendedAction}</p>
+                      {buyerCommandData.summary.topMarkets.length > 0 && (
+                        <div className="nx-icm__controls-segment">
+                          {buyerCommandData.summary.topMarkets.slice(0, 5).map((market) => (
+                            <button
+                              key={market}
+                              type="button"
+                              className={cls('nx-icm__mode-tab', buyerFilters?.market === market && 'is-active')}
+                              onClick={() => onBuyerFiltersChange?.({ market })}
+                            >
+                              {market}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                   {buyerFilters && (
@@ -4630,7 +5019,7 @@ export function InboxCommandMap({
           <small>{buyerCommandData.summary.topBuyerMatch} • {buyerCommandData.summary.activeBuyerMatches} matches • {buyerCommandData.summary.recentPurchasesNearby} nearby purchases</small>
           <div className="nx-icm__buyer-demand-actions">
             <button type="button" className={cls('nx-icm__mode-tab', buyerLayers.buyerRecentPurchases && 'is-active')} onClick={() => setBuyerLayers((current) => ({ ...current, buyerRecentPurchases: !current.buyerRecentPurchases }))}>
-              Purchases
+              Buyer Activity
             </button>
             <button type="button" className={cls('nx-icm__mode-tab', buyerLayers.buyerMatches && 'is-active')} onClick={() => setBuyerLayers((current) => ({ ...current, buyerMatches: !current.buyerMatches }))}>
               Matches
@@ -4638,6 +5027,49 @@ export function InboxCommandMap({
             <button type="button" className={cls('nx-icm__mode-tab', buyerLayers.buyerHeatmap && 'is-active')} onClick={() => setBuyerLayers((current) => ({ ...current, buyerHeatmap: !current.buyerHeatmap }))}>
               Heatmap
             </button>
+            <button type="button" className={cls('nx-icm__mode-tab', buyerLayers.repeatBuyers && 'is-active')} onClick={() => setBuyerLayers((current) => ({ ...current, repeatBuyers: !current.repeatBuyers }))}>
+              Repeat
+            </button>
+            <button type="button" className={cls('nx-icm__mode-tab', buyerLayers.corporateBuyers && 'is-active')} onClick={() => setBuyerLayers((current) => ({ ...current, corporateBuyers: !current.corporateBuyers }))}>
+              Corporate
+            </button>
+          </div>
+          {buyerCommandData.summary.topMarkets.length > 0 && (
+            <div className="nx-icm__buyer-selection-shell">
+              <span className="nx-icm__buyer-demand-label">Top Buyer Markets</span>
+              <div className="nx-icm__buyer-demand-actions">
+                {buyerCommandData.summary.topMarkets.slice(0, 4).map((market) => (
+                  <button
+                    key={market}
+                    type="button"
+                    className={cls('nx-icm__mode-tab', buyerFilters?.market === market && 'is-active')}
+                    onClick={() => onBuyerFiltersChange?.({ market })}
+                  >
+                    {market}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="nx-icm__buyer-selection-shell">
+            <span className="nx-icm__buyer-demand-label">Top Buyers</span>
+            {buyerCommandData.profilePoints.slice(0, 4).map((profile) => (
+              <button
+                key={profile.buyerKey}
+                type="button"
+                className={cls('nx-icm-buyer-card', selectedBuyerKey === profile.buyerKey && 'is-selected')}
+                onClick={() => onSelectBuyerKey?.(profile.buyerKey)}
+              >
+                <div className="nx-icm-buyer-card__head">
+                  <strong>{profile.buyerName}</strong>
+                  <small>{profile.buyerGrade} • {profile.purchaseCount} buys</small>
+                </div>
+                <div className="nx-icm-buyer-card__summary">
+                  <span>{profile.market || 'Market Unknown'}</span>
+                  <strong>{formatCompactCurrency(profile.avgPurchasePrice)}</strong>
+                </div>
+              </button>
+            ))}
           </div>
         </aside>
       )}
@@ -4758,105 +5190,26 @@ export function InboxCommandMap({
         ))}
       </div>}
 
-      {layoutMode === 'full' && dockTier === 'full' && liveTickerItems.length > 0 && !commandMode && (
-        <div className={cls('nx-icm__ticker', `is-${mapStyleMode}`, `is-${tickerDensity}`)} style={cardThemeVars(mapStyleMode)} aria-label="Live activity ticker">
-          <div className="nx-icm__ticker-toolbar">
-            <div className="nx-icm__ticker-heading">
-              <span className="nx-icm__ticker-heading-dot" />
-              <strong>Live Activity</strong>
-            </div>
-            <div className="nx-icm__ticker-density" role="group" aria-label="Ticker density">
-              {(['minimal', 'compact', 'expanded'] as TickerDensity[]).map((density) => (
-                <button
-                  key={density}
-                  type="button"
-                  className={cls('nx-icm__ticker-density-btn', tickerDensity === density && 'is-active')}
-                  onClick={() => setTickerDensity(density)}
-                >
-                  {density}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="nx-icm__ticker-viewport">
-          <div className="nx-icm__ticker-track">
-            {[...liveTickerItems, ...liveTickerItems].map((item, index) => (
-              <article
-                key={`${item.id}:${index}`}
-                className={cls('nx-icm__ticker-item', `is-${item.tone}`)}
-                role="button"
-                tabIndex={0}
-                onClick={() => handleTickerSelect(item)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault()
-                    handleTickerSelect(item)
-                  }
-                }}
-              >
-                <div className="nx-icm__ticker-item-head">
-                  <span className="nx-icm__ticker-label">{item.badge}</span>
-                  <span className="nx-icm__ticker-meta">{item.timeAgo}</span>
-                </div>
-                <strong className="nx-icm__ticker-subject">{item.sellerName}</strong>
-                {item.preview && <p className="nx-icm__ticker-preview">{item.preview}</p>}
-                <span className="nx-icm__ticker-locale">{item.location}</span>
-                <div className="nx-icm__ticker-reveal">
-                  {item.preview && (
-                    <div className="nx-icm__ticker-detail-block">
-                      <span className="nx-icm__ticker-detail-label">{item.detailLabel || 'Detail'}</span>
-                      <p className="nx-icm__ticker-detail">{item.preview}</p>
-                    </div>
-                  )}
-                  {item.address && <p className="nx-icm__ticker-address">{item.address}</p>}
-                  <div className="nx-icm__ticker-pills">
-                    {item.stageLabel && <span className="nx-icm__ticker-pill">{item.stageLabel}</span>}
-                    {item.statusLabel && <span className="nx-icm__ticker-pill is-muted">{item.statusLabel}</span>}
-                  </div>
-                  {!item.disabledReply && (
-                    <div className="nx-icm__ticker-actions">
-                      <button
-                        type="button"
-                        className="nx-icm__ticker-action"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          handleTickerSelect(item)
-                        }}
-                      >
-                        Open Thread
-                      </button>
-                      <button
-                        type="button"
-                        className="nx-icm__ticker-action"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          onOpenDealIntelligenceRef.current?.(item.threadId)
-                        }}
-                      >
-                        Deal Intel
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </article>
-            ))}
-          </div>
-          </div>
-        </div>
-      )}
-
-      {layoutMode === 'compact' && liveTickerItems.length > 0 && !commandMode && (
-        <div className="nx-icm__ticker-compact">
-          <span>Live Activity</span>
-          <strong>{liveTickerItems[0]?.sellerName || `${liveTickerItems.length} active threads`}</strong>
-        </div>
+      {!commandMode && (
+        <CommandMapLiveActivityRail
+          events={liveActivityEvents}
+          settings={liveActivitySettings}
+          performanceSettings={performanceSettings}
+          isUltrawide={isUltrawide}
+          reducedMotion={prefersReducedMotion || performanceSettings.animation !== 'full'}
+          onSettingsChange={patchLiveActivitySettings}
+          onPerformanceChange={patchPerformanceSettings}
+          onSelectEvent={handleActivitySelect}
+        />
       )}
 
       {selectedBuyerPurchase && (
         <div className="nx-icm__buyer-selection-shell">
           <BuyerSelectionCard
             purchase={selectedBuyerPurchase}
+            purchases={selectedBuyerTrailPurchases}
             matches={buyerCommandData?.matches ?? []}
+            profile={selectedBuyerProfile}
             onSelectBuyer={(buyerKey) => onSelectBuyerKeyRef.current?.(buyerKey)}
           />
         </div>
@@ -4867,6 +5220,7 @@ export function InboxCommandMap({
           <SoldCompSelectionCard
             comp={selectedSoldComp}
             subject={selectedThread}
+            onCenterMap={(lng, lat) => mapRef.current?.easeTo({ center: [lng, lat], zoom: Math.max(mapRef.current?.getZoom() ?? 11.8, 11.8), duration: 560 })}
             onClose={() => setSelectedSoldComp(null)}
           />
         </div>
