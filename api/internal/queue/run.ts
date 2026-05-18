@@ -21,6 +21,14 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       ...DEFAULT_LIVE_CAPS,
       ...(req.body?.caps || {}),
     }
+
+    if (typeof req.body?.dry_run === 'boolean') {
+      caps.dry_run = req.body.dry_run;
+    }
+    if (typeof req.body?.limit === 'number') {
+      caps.sends_per_run = req.body.limit;
+    }
+
     const result = await runQueueBatch(caps)
     res.status(200).json(result)
   } catch (error) {

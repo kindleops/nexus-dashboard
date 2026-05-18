@@ -19,7 +19,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     return
   }
 
-  const supabase = getSupabaseClient()
+  const supabase = getSupabaseAdminClient()
   const results: any[] = []
 
   try {
@@ -157,5 +157,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   } catch (error) {
     console.error('[Build Followups Error]:', error)
     res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to build followups' })
+  }
+}
+ror ? error.message : 'Failed to build followups' })
   }
 }

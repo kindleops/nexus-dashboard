@@ -1,4 +1,5 @@
 import { getSupabaseClient } from '../../../src/lib/supabaseClient'
+import { getSupabaseAdminClient } from '../_lib/supabaseAdmin'
 import { checkSuppression, hydrateQueueRoutingContext, scheduleWithWindow } from './utils'
 import { asString, normalizeStatus } from '../../../src/lib/data/shared'
 import { resolveOutboundTextgridNumber } from '../../../src/lib/data/textgridRouting'
@@ -19,7 +20,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     return
   }
 
-  const supabase = getSupabaseClient()
+  const supabase = getSupabaseAdminClient()
   const now = new Date().toISOString()
   const targetIds = Array.isArray(req.body?.ids) ? req.body.ids.map((value: unknown) => asString(value)).filter(Boolean) : []
   const summary = {

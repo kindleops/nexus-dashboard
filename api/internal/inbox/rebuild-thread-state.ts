@@ -198,8 +198,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     payload = parsePayload(req.body)
     
     step = 'init_supabase'
-    const supabase = getSupabaseClient()
-    
+    const supabase = getSupabaseAdminClient()    
     const apply = payload.apply === true
     const dry_run = payload.dry_run !== false && !apply // default true unless apply=true
     const isDryRun = dry_run
@@ -423,6 +422,12 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         name: error.name,
         message: error.message,
         stack: error.stack,
+        cause: error.cause
+      }
+    })
+  }
+}
+ror.stack,
         cause: error.cause
       }
     })

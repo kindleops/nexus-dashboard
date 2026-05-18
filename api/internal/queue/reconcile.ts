@@ -1,4 +1,5 @@
 import { getSupabaseClient } from '../../../src/lib/supabaseClient'
+import { getSupabaseAdminClient } from '../_lib/supabaseAdmin'
 import { asString, normalizeStatus } from '../../../src/lib/data/shared'
 
 type ApiRequest = {
@@ -17,7 +18,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     return
   }
 
-  const supabase = getSupabaseClient()
+  const supabase = getSupabaseAdminClient()
   const results: any[] = []
   const now = new Date().toISOString()
 
@@ -67,6 +68,17 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
             failed_reason: failedReason,
             updated_at: now
           }).eq('id', item.id)
+
+          await supabase.from('message_events').update({
+            status: newStatus
+          }).eq('queue_id', item.id)
+
+          if (item.thread_key) {
+             await supabase.from('inbox_thread_state').update({
+               latest_delivery_status: newStatus,
+               updated_at: now
+             }).eq('thread_key', item.thread_key)
+          }
 
           // Mark webhook as processed
           await supabase.from('webhook_log').update({

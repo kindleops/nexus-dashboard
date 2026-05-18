@@ -1,4 +1,5 @@
 import { getSupabaseClient } from '../../../src/lib/supabaseClient'
+import { getSupabaseAdminClient } from '../_lib/supabaseAdmin'
 import { checkSuppression, generateDedupeKey, scheduleWithWindow, checkExistingQueue, renderMessage, checkRepeatContactAndBlacklist } from './utils'
 import { asString, normalizeStatus, asNumber } from '../../../src/lib/data/shared'
 import { selectWeightedTemplate } from './templateSelection'
@@ -78,7 +79,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     return
   }
 
-  const supabase = getSupabaseClient()
+  const supabase = getSupabaseAdminClient()
   const results: any[] = []
 
   try {

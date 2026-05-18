@@ -275,3 +275,61 @@ export const loadSoldCompsInBounds = async (
 
   return comps.map(enrichSoldComp)
 }
+
+export type CommandMapSellerPin = {
+  property_id: string
+  lat: number
+  lng: number
+  seller_name: string | null
+  property_address_full: string | null
+  owner_type: string | null
+  property_type: string | null
+  total_bedrooms: number | null
+  total_baths: number | null
+  building_square_feet: number | null
+  units_count: number | null
+  year_built: number | null
+  estimated_value: number | null
+  equity_percent: number | null
+  estimated_repair_cost: number | null
+  motivation_score: number | null
+  property_tags_text: string | null
+  property_tags_json: any | null
+  latest_message_at: string | null
+  latest_direction: string | null
+  seller_state: string | null
+  execution_state: string | null
+  queued_count: number | null
+  scheduled_count: number | null
+  ready_count: number | null
+  sent_count: number | null
+  delivered_count: number | null
+  next_scheduled_for: string | null
+  pin_color: string | null
+  pin_shape: string | null
+  pulse_style: string | null
+  execution_ring_color: string | null
+  render_priority: number | null
+}
+
+export const loadCommandMapSellerPins = async (
+  bounds: { minLat: number; minLng: number; maxLat: number; maxLng: number },
+  zoomLevel: number,
+  maxRows: number
+): Promise<CommandMapSellerPin[]> => {
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase.rpc('get_command_map_seller_pins', {
+    min_lat: bounds.minLat,
+    min_lng: bounds.minLng,
+    max_lat: bounds.maxLat,
+    max_lng: bounds.maxLng,
+    zoom_level: Math.floor(zoomLevel),
+    max_rows: maxRows
+  })
+  if (error || !data) {
+    console.error('Failed to load seller pins', error)
+    return []
+  }
+  return data as CommandMapSellerPin[]
+}
+

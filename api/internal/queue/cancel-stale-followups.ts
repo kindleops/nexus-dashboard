@@ -16,7 +16,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     return
   }
 
-  const supabase = getSupabaseClient()
+  const supabase = getSupabaseAdminClient()
   const now = new Date()
   const staleCutoffIso = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString()
 
@@ -38,5 +38,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   } catch (error) {
     console.error('[Cancel Stale Followups Error]:', error)
     res.status(500).json({ error: error instanceof Error ? error.message : 'Cancel stale follow-ups failed' })
+  }
+}
+ error.message : 'Cancel stale follow-ups failed' })
   }
 }

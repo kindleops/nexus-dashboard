@@ -1,4 +1,5 @@
 import { getSupabaseClient } from '../../../src/lib/supabaseClient'
+import { getSupabaseAdminClient, hasSupabaseAdminEnv } from '../_lib/supabaseAdmin'
 import { checkSuppression, hydrateQueueRoutingContext, classifyQueueFailureReason } from './utils'
 import { asString } from '../../../src/lib/data/shared'
 import { resolveOutboundTextgridNumber } from '../../../src/lib/data/textgridRouting'
@@ -11,17 +12,18 @@ export interface QueueRunCaps {
   first_touches_per_run: number
   max_per_number_per_day: number
   max_per_market_per_hour: number
+  dry_run?: boolean
 }
 
-export interface QueueRunSummary {
-  inspected: number
-  sent: number
-  blocked: number
-  failed: number
-  routing_blocked: number
-  suppression_blocked: number
-  duplicate_skipped: number
-  replied_before_send: number
+export interface SkippedCounts {
+  future_scheduled: number
+  suppression: number
+  invalid_phone: number
+  missing_body: number
+  locked: number
+  duplicate: number
+  global_lock: number
+  guard_failed: number
 }
 
 export const DEFAULT_SAFE_CAPS: QueueRunCaps = {
@@ -31,6 +33,7 @@ export const DEFAULT_SAFE_CAPS: QueueRunCaps = {
   first_touches_per_run: 25,
   max_per_number_per_day: 40,
   max_per_market_per_hour: 75,
+  dry_run: false,
 }
 
 export const DEFAULT_LIVE_CAPS: QueueRunCaps = {
@@ -40,6 +43,7 @@ export const DEFAULT_LIVE_CAPS: QueueRunCaps = {
   first_touches_per_run: 100,
   max_per_number_per_day: 150,
   max_per_market_per_hour: 250,
+  dry_run: false,
 }
 
 const toE164 = (value: string): string => {
@@ -49,59 +53,75 @@ const toE164 = (value: string): string => {
   return digits ? `+${digits}` : ''
 }
 
-export const runQueueBatch = async (caps: Partial<QueueRunCaps> = {}): Promise<{ ok: true; summary: QueueRunSummary; results: any[] }> => {
-  const supabase = getSupabaseClient()
+export const runQueueBatch = async (caps: Partial<QueueRunCaps> = {}): Promise<any> => {
   const now = new Date().toISOString()
   const resolvedCaps: QueueRunCaps = {
     ...DEFAULT_LIVE_CAPS,
     ...caps,
   }
-  const results: any[] = []
-  const summary: QueueRunSummary = {
-    inspected: 0,
-    sent: 0,
-    blocked: 0,
-    failed: 0,
-    routing_blocked: 0,
-    suppression_blocked: 0,
-    duplicate_skipped: 0,
-    replied_before_send: 0,
+  const isDryRun = !!resolvedCaps.dry_run
+
+  if (!isDryRun && !hasSupabaseAdminEnv) {
+    return {
+      ok: false,
+      error: 'Missing SUPABASE_SERVICE_ROLE_KEY. Live queue runs require server-side admin client because send_queue updates are protected by RLS.',
+      dry_run_available: true
+    }
   }
+
+  const supabase = isDryRun ? getSupabaseClient() : getSupabaseAdminClient()
+  const results: any[] = []
+  
+  let selected_count = 0
+  let processed_count = 0
+  let failed_count = 0
+  const skipped_counts: SkippedCounts = {
+    future_scheduled: 0,
+    suppression: 0,
+    invalid_phone: 0,
+    missing_body: 0,
+    locked: 0,
+    duplicate: 0,
+    global_lock: 0,
+    guard_failed: 0,
+  }
+
+  const orQuery = `queue_status.in.(queued,pending,approved,ready),and(queue_status.eq.scheduled,or(scheduled_for_utc.lte.${now},scheduled_for.lte.${now},and(scheduled_for_utc.is.null,scheduled_for.is.null,created_at.lte.${now})))`;
 
   const { data: queueItems, error: fetchError } = await supabase
     .from('send_queue')
     .select('*')
-    .in('queue_status', ['queued', 'scheduled'])
-    .lte('scheduled_for_utc', now)
+    .or(orQuery)
     .order('scheduled_for_utc', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: true })
     .limit(Math.max(resolvedCaps.sends_per_run * 4, resolvedCaps.sends_per_run))
 
   if (fetchError) throw fetchError
 
+  selected_count = queueItems?.length || 0
+
   const sentPerNumber = new Map<string, number>()
   const sentPerMarket = new Map<string, number>()
 
-    const updateWithTaxonomy = async (itemId: string, payload: any, currentMeta: any) => {
-      if (['blocked', 'cancelled', 'paused_invalid_queue_row', 'failed'].includes(payload.queue_status)) {
-        const tax = classifyQueueFailureReason({ ...payload, metadata: { ...currentMeta, ...(payload.metadata || {}) } })
-        payload.metadata = {
-          ...currentMeta,
-          ...(payload.metadata || {}),
-          failure_category: tax.category,
-          failure_reason_normalized: tax.reason_normalized,
-          failure_is_true_delivery_failure: tax.is_true_delivery_failure,
-          failure_is_data_hygiene: tax.is_data_hygiene,
-          failure_is_repeat_contact_risk: tax.is_repeat_contact_risk
-        }
+  const updateWithTaxonomy = async (itemId: string, payload: any, currentMeta: any) => {
+    if (isDryRun) return { data: [{ id: itemId }], error: null }
+    if (['blocked', 'cancelled', 'paused_invalid_queue_row', 'failed'].includes(payload.queue_status)) {
+      const tax = classifyQueueFailureReason({ ...payload, metadata: { ...currentMeta, ...(payload.metadata || {}) } })
+      payload.metadata = {
+        ...currentMeta,
+        ...(payload.metadata || {}),
+        failure_category: tax.category,
+        failure_reason_normalized: tax.reason_normalized,
+        failure_is_true_delivery_failure: tax.is_true_delivery_failure,
+        failure_is_data_hygiene: tax.is_data_hygiene,
+        failure_is_repeat_contact_risk: tax.is_repeat_contact_risk
       }
-      return supabase.from('send_queue').update(payload).eq('id', itemId)
     }
-
+    return supabase.from('send_queue').update(payload).eq('id', itemId).select()
+  }
 
   for (const item of queueItems || []) {
-    if (summary.sent >= resolvedCaps.sends_per_run) break
-    summary.inspected++
+    if (processed_count >= resolvedCaps.sends_per_run) break
 
     const itemId = item.id
     const threadKey = asString(item.thread_key)
@@ -116,14 +136,45 @@ export const runQueueBatch = async (caps: Partial<QueueRunCaps> = {}): Promise<{
       ? item.metadata
       : {}
 
+    const pushResult = (statusAfter: string, action: string, reason: string | null = null, from: string | null = null) => {
+      const result: any = {
+        id: itemId,
+        property_id: item.property_id,
+        to_phone_number_masked: phone.slice(-4).padStart(phone.length, '*'),
+        from_phone_number: from || item.from_phone_number,
+        queue_status_before: item.queue_status,
+        action,
+        error: reason
+      }
+      
+      if (isDryRun) {
+        result.simulated_status_after = statusAfter;
+      } else {
+        result.queue_status_after = statusAfter;
+      }
+      
+      results.push(result);
+    }
+
     if (!body) {
       await updateWithTaxonomy(itemId, {
         queue_status: 'blocked',
         blocked_reason: 'blank_message_body',
         updated_at: now,
       }, currentMetadata)
-      summary.blocked++
-      results.push({ itemId, status: 'blocked', reason: 'blank_message_body' })
+      skipped_counts.missing_body++
+      pushResult('blocked', 'skip', 'blank_message_body')
+      continue
+    }
+
+    if (!phone || !phoneE164) {
+      await updateWithTaxonomy(itemId, {
+        queue_status: 'blocked',
+        blocked_reason: 'invalid_phone',
+        updated_at: now,
+      }, currentMetadata)
+      skipped_counts.invalid_phone++
+      pushResult('blocked', 'skip', 'invalid_phone')
       continue
     }
 
@@ -140,9 +191,8 @@ export const runQueueBatch = async (caps: Partial<QueueRunCaps> = {}): Promise<{
           blocked_reason: 'duplicate_dedupe_key',
           updated_at: now,
         }, currentMetadata)
-        summary.blocked++
-        summary.duplicate_skipped++
-        results.push({ itemId, status: 'blocked', reason: 'duplicate_dedupe_key' })
+        skipped_counts.duplicate++
+        pushResult('blocked', 'skip', 'duplicate_dedupe_key')
         continue
       }
     }
@@ -163,8 +213,8 @@ export const runQueueBatch = async (caps: Partial<QueueRunCaps> = {}): Promise<{
           blocked_reason: 'max_per_number_per_day',
           updated_at: now,
         }, currentMetadata)
-        summary.blocked++
-        results.push({ itemId, status: 'blocked', reason: 'max_per_number_per_day' })
+        skipped_counts.guard_failed++
+        pushResult('blocked', 'skip', 'max_per_number_per_day')
         continue
       }
       sentPerNumber.set(phoneE164, existingCount)
@@ -185,8 +235,8 @@ export const runQueueBatch = async (caps: Partial<QueueRunCaps> = {}): Promise<{
         blocked_reason: 'max_per_market_per_hour',
         updated_at: now,
       }, currentMetadata)
-      summary.blocked++
-      results.push({ itemId, status: 'blocked', reason: 'max_per_market_per_hour' })
+      skipped_counts.guard_failed++
+      pushResult('blocked', 'skip', 'max_per_market_per_hour')
       continue
     }
     sentPerMarket.set(market, existingMarketCount)
@@ -204,9 +254,8 @@ export const runQueueBatch = async (caps: Partial<QueueRunCaps> = {}): Promise<{
         blocked_reason: suppression.reason,
         updated_at: now,
       }, currentMetadata)
-      summary.blocked++
-      summary.suppression_blocked++
-      results.push({ itemId, status: 'blocked', reason: suppression.reason })
+      skipped_counts.suppression++
+      pushResult('blocked', 'skip', suppression.reason)
       continue
     }
 
@@ -224,9 +273,8 @@ export const runQueueBatch = async (caps: Partial<QueueRunCaps> = {}): Promise<{
         paused_reason: 'replied_before_send',
         updated_at: now,
       }, currentMetadata)
-      summary.blocked++
-      summary.replied_before_send++
-      results.push({ itemId, status: 'cancelled', reason: 'replied_before_send' })
+      skipped_counts.guard_failed++
+      pushResult('cancelled', 'skip', 'replied_before_send')
       continue
     }
 
@@ -244,7 +292,7 @@ export const runQueueBatch = async (caps: Partial<QueueRunCaps> = {}): Promise<{
     if (!routingResult.ok) {
       await updateWithTaxonomy(itemId, {
         queue_status: 'paused_invalid_queue_row',
-        seller_name: asString(hydrated.seller_name || item.seller_name) || null,
+        seller_name: asString(hydrated.seller_name || item.seller_display_name || item.seller_first_name) || null,
         property_address: asString(hydrated.property_address || item.property_address) || null,
         property_id: asString(hydrated.property_id || item.property_id) || null,
         master_owner_id: asString(hydrated.master_owner_id || item.master_owner_id) || null,
@@ -257,7 +305,7 @@ export const runQueueBatch = async (caps: Partial<QueueRunCaps> = {}): Promise<{
         failed_reason: 'Routing blocked: no sender number',
         metadata: {
           ...currentMetadata,
-          seller_name: asString(hydrated.seller_name || item.seller_name) || null,
+          seller_name: asString(hydrated.seller_name || item.seller_display_name || item.seller_first_name) || null,
           property_address: asString(hydrated.property_address || item.property_address) || null,
           property_id: asString(hydrated.property_id || item.property_id) || null,
           market: asString(hydrated.market || item.market) || null,
@@ -271,16 +319,15 @@ export const runQueueBatch = async (caps: Partial<QueueRunCaps> = {}): Promise<{
         },
         updated_at: now,
       }, currentMetadata)
-      summary.blocked++
-      summary.routing_blocked++
-      results.push({ itemId, status: 'paused_invalid_queue_row', reason: 'NO_VALID_LOCAL_TEXTGRID_NUMBER' })
+      skipped_counts.invalid_phone++
+      pushResult('paused_invalid_queue_row', 'skip', 'NO_VALID_LOCAL_TEXTGRID_NUMBER')
       continue
     }
 
     const updatePayload: Record<string, unknown> = {
       queue_status: 'sent',
       sent_at: now,
-      seller_name: asString(hydrated.seller_name || item.seller_name) || null,
+      seller_display_name: asString(hydrated.seller_name || item.seller_display_name || item.seller_first_name) || null,
       property_address: asString(hydrated.property_address || item.property_address) || null,
       property_id: asString(hydrated.property_id || item.property_id) || null,
       master_owner_id: asString(hydrated.master_owner_id || item.master_owner_id) || null,
@@ -296,7 +343,7 @@ export const runQueueBatch = async (caps: Partial<QueueRunCaps> = {}): Promise<{
       guard_reason: null,
       metadata: {
         ...currentMetadata,
-        seller_name: asString(hydrated.seller_name || item.seller_name) || null,
+        seller_name: asString(hydrated.seller_name || item.seller_display_name || item.seller_first_name) || null,
         property_address: asString(hydrated.property_address || item.property_address) || null,
         property_id: asString(hydrated.property_id || item.property_id) || null,
         market: asString(hydrated.market || item.market) || null,
@@ -311,52 +358,74 @@ export const runQueueBatch = async (caps: Partial<QueueRunCaps> = {}): Promise<{
       updated_at: now,
     }
 
-    const { error: updateError } = await updateWithTaxonomy(itemId, updatePayload, currentMetadata)
-    if (updateError) {
-      summary.failed++
-      results.push({ itemId, status: 'failed', reason: updateError.message })
+    const { data: updateData, error: updateError } = await updateWithTaxonomy(itemId, updatePayload, currentMetadata)
+    if (updateError || !updateData || updateData.length === 0) {
+      failed_count++
+      pushResult('failed', 'error', updateError?.message || 'Update failed (possible RLS)', routingResult.from_phone_number)
       continue
     }
 
-    await logInboxActivity({
-      event_type: 'message_sent',
-      thread_key: threadKey,
-      actor: 'Queue Command Center',
-      title: 'Message Sent',
-      description: `Successfully sent ${item.type || 'queue'} touch #${item.touch_number || 1}`,
-      metadata: {
+    if (!isDryRun) {
+      await logInboxActivity({
+        event_type: 'message_sent',
+        thread_key: threadKey,
+        actor: 'Queue Command Center',
+        title: 'Message Sent',
+        description: `Successfully sent ${item.type || 'queue'} touch #${item.touch_number || 1}`,
+        metadata: {
+          queue_id: itemId,
+          to: phone,
+          from: routingResult.from_phone_number,
+          message_body: item.message_body,
+        },
+        undo_payload: null,
+      })
+
+      await supabase.from('message_events').insert({
+        thread_id: null,
+        direction: 'outbound',
+        phone: phoneE164,
+        from_phone_number: routingResult.from_phone_number,
+        to_phone_number: phoneE164,
+        body: item.message_body,
+        status: 'pending',
+        created_at: now,
+        master_owner_id: item.master_owner_id,
+        property_id: item.property_id,
+        prospect_id: item.prospect_id,
         queue_id: itemId,
-        to: phone,
-        from: routingResult.from_phone_number,
-        message_body: item.message_body,
-      },
-      undo_payload: null,
-    })
+        metadata: {
+          source: 'queue_command_center',
+          textgrid_number_id: routingResult.textgrid_number_id,
+        },
+      })
+    }
 
-    await supabase.from('message_events').insert({
-      thread_id: null,
-      direction: 'outbound',
-      phone: phoneE164,
-      from_phone_number: routingResult.from_phone_number,
-      to_phone_number: phoneE164,
-      body: item.message_body,
-      status: 'sent',
-      created_at: now,
-      master_owner_id: item.master_owner_id,
-      property_id: item.property_id,
-      prospect_id: item.prospect_id,
-      queue_id: itemId,
-      metadata: {
-        source: 'queue_command_center',
-        textgrid_number_id: routingResult.textgrid_number_id,
-      },
-    })
-
-    summary.sent++
+    processed_count++
     sentPerNumber.set(phoneE164, (sentPerNumber.get(phoneE164) ?? 0) + 1)
     sentPerMarket.set(market, (sentPerMarket.get(market) ?? 0) + 1)
-    results.push({ itemId, status: 'sent', to: phone, from: routingResult.from_phone_number })
+    pushResult('sent', 'send', null, routingResult.from_phone_number)
   }
 
-  return { ok: true, summary, results }
+  const response: any = { 
+    ok: true, 
+    dry_run: isDryRun,
+    selected_count,
+    due_scheduled_count: queueItems?.filter(i => i.queue_status === 'scheduled').length || 0,
+    skipped_future_scheduled_count: skipped_counts.future_scheduled,
+    skipped_guard_count: skipped_counts.guard_failed,
+    skipped_suppression_count: skipped_counts.suppression,
+    skipped_invalid_phone_count: skipped_counts.invalid_phone,
+    skipped_missing_body_count: skipped_counts.missing_body,
+    failed_count,
+    results 
+  }
+
+  if (isDryRun) {
+    response.would_send_count = processed_count;
+  } else {
+    response.sent_count = processed_count;
+  }
+
+  return response;
 }

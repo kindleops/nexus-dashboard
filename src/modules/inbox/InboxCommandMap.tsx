@@ -19,7 +19,7 @@ import type {
 } from '../buyer/buyerCommandData'
 import { loadBuyerDemandLayerPoints, type BuyerDemandMetric, type BuyerDemandLayerPoint, formatShortPrice } from '../../lib/data/buyerActivityMapData'
 import { loadCensusForProperty, calculateInvestorOpportunityScore, type CensusData } from '../../lib/data/censusData'
-import { loadSoldCompsInBounds, type RecentSoldComp } from '../../lib/data/commandMapData'
+import { loadSoldCompsInBounds, type RecentSoldComp, loadCommandMapSellerPins, type CommandMapSellerPin } from '../../lib/data/commandMapData'
 import {
   centerMapOnActivity,
   loadLiveActivityFeed,
@@ -116,6 +116,7 @@ const BUYER_TRAIL_LAYER_IDS = [
 const CENSUS_SOURCE_ID = 'census-geo-source'
 const BUYER_DEMAND_SOURCE_ID = 'buyer-demand-source'
 const SOLD_COMPS_SOURCE_ID = 'sold-comps-source'
+const SELLER_PINS_SOURCE_ID = 'seller-pins-source'
 const CENSUS_LAYER_IDS = {
   fill: 'census-overlay-fill',
   line: 'census-overlay-line',
@@ -140,6 +141,14 @@ const SOLD_COMPS_CLUSTER_LAYER_IDS = {
   count: 'sold-comps-cluster-count',
 } as const
 const ALL_SOLD_COMPS_LAYER_IDS = [...Object.values(SOLD_COMPS_LAYER_IDS), ...Object.values(SOLD_COMPS_CLUSTER_LAYER_IDS)]
+
+const SELLER_PINS_LAYER_IDS = {
+  glow: 'seller-pins-glow',
+  pulse: 'seller-pins-pulse',
+  ring: 'seller-pins-ring',
+  core: 'seller-pins-core',
+} as const
+const ALL_SELLER_PINS_LAYER_IDS = Object.values(SELLER_PINS_LAYER_IDS)
 
 export type MapStyleMode = 'dark' | 'satellite' | 'red'
 export type MapOverlayToggles = {
@@ -341,6 +350,44 @@ type CensusOverlaySelection = {
   mode: 'hover' | 'selected'
 }
 
+type SellerPinLayerToggles = {
+  sellerPins: boolean
+  notContacted: boolean
+  contacted: boolean
+  newReplies: boolean
+  positive: boolean
+  negotiating: boolean
+  hot: boolean
+  issues: boolean
+  blocked: boolean
+  queued: boolean
+  scheduled: boolean
+  ready: boolean
+  activeSending: boolean
+  sent: boolean
+  delivered: boolean
+  failedIssue: boolean
+}
+
+const defaultSellerPinLayers: SellerPinLayerToggles = {
+  sellerPins: false,
+  notContacted: true,
+  contacted: true,
+  newReplies: true,
+  positive: true,
+  negotiating: true,
+  hot: true,
+  issues: true,
+  blocked: true,
+  queued: true,
+  scheduled: true,
+  ready: true,
+  activeSending: true,
+  sent: true,
+  delivered: true,
+  failedIssue: true,
+}
+
 type BuyerLayerToggles = {
   sellerThreads: boolean
   buyerMatches: boolean
@@ -495,6 +542,20 @@ const MAP_LEGEND_ITEMS = [
   { label: 'MLS Sold', color: '#3b82f6' },
   { label: 'Public Record Sold', color: '#eab308' },
   { label: 'Off-Market Sold', color: '#facc15' },
+] as const
+
+const SELLER_PINS_LEGEND_ITEMS = [
+  { label: 'Not Contacted', color: '#97a3b6', isRing: false },
+  { label: 'Contacted', color: '#3b82f6', isRing: false },
+  { label: 'New Reply', color: '#06b6d4', isRing: false },
+  { label: 'Positive', color: '#22c55e', isRing: false },
+  { label: 'Negotiating', color: '#a855f7', isRing: false },
+  { label: 'Hot', color: '#eab308', isRing: false },
+  { label: 'Issue / Blocked', color: '#ef4444', isRing: false },
+  { label: 'Queued (Execution)', color: '#3b82f6', isRing: true },
+  { label: 'Scheduled (Execution)', color: '#0ea5e9', isRing: true },
+  { label: 'Ready/Active (Execution)', color: '#22d3ee', isRing: true },
+  { label: 'Delivered (Execution)', color: '#22c55e', isRing: true },
 ] as const
 
 const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
@@ -2306,6 +2367,22 @@ export function InboxCommandMap({
   const [selectedPinId, setSelectedPinId] = useState<string | null>(selectedThread?.id ?? null)
   const [showSelectedHidden, setShowSelectedHidden] = useState(false)
   const [buyerLayers, setBuyerLayers] = useState<BuyerLayerToggles>(defaultBuyerLayerToggles)
+  const [sellerPinLayers, setSellerPinLayers] = useState<SellerPinLayerToggles>(() => {
+    try {
+      const stored = localStorage.getItem('nexus.commandMap.sellerPinSettings')
+      return stored ? JSON.parse(stored) : defaultSellerPinLayers
+    } catch {
+      return defaultSellerPinLayers
+    }
+  })
+  
+  useEffect(() => {
+    localStorage.setItem('nexus.commandMap.sellerPinSettings', JSON.stringify(sellerPinLayers))
+  }, [sellerPinLayers])
+
+  const [sellerPinsGeojson, setSellerPinsGeojson] = useState<FeatureCollection<Point, Record<string, unknown>>>(EMPTY_GEOJSON)
+  const [sellerPins, setSellerPins] = useState<CommandMapSellerPin[]>([])
+  const [sellerPinsLoading, setSellerPinsLoading] = useState(false)
   const [censusLayers, setCensusLayers] = useState<CensusLayerToggles>(defaultCensusLayers)
   const [buyerDemandLayers, setBuyerDemandLayers] = useState<BuyerDemandLayerToggles>(defaultBuyerDemandLayers)
   const [censusGeojson, setCensusGeojson] = useState<FeatureCollection<Polygon, GeoJsonProperties>>({ type: 'FeatureCollection', features: [] })
@@ -2992,6 +3069,73 @@ export function InboxCommandMap({
         map.addSource(BUYER_DEMAND_SOURCE_ID, { type: 'geojson', data: EMPTY_GEOJSON })
       }
 
+      if (!map.getSource(SELLER_PINS_SOURCE_ID)) {
+        map.addSource(SELLER_PINS_SOURCE_ID, { type: 'geojson', data: EMPTY_GEOJSON })
+      }
+
+      if (!map.getLayer(SELLER_PINS_LAYER_IDS.glow)) {
+        map.addLayer({
+          id: SELLER_PINS_LAYER_IDS.glow,
+          type: 'circle',
+          source: SELLER_PINS_SOURCE_ID,
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, 8, 12, 14],
+            'circle-color': ['coalesce', ['get', 'pin_color'], '#97a3b6'],
+            'circle-opacity': 0.15,
+            'circle-blur': 0.8,
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+
+      if (!map.getLayer(SELLER_PINS_LAYER_IDS.ring)) {
+        map.addLayer({
+          id: SELLER_PINS_LAYER_IDS.ring,
+          type: 'circle',
+          source: SELLER_PINS_SOURCE_ID,
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, 6, 12, 9],
+            'circle-color': 'transparent',
+            'circle-stroke-color': ['coalesce', ['get', 'execution_ring_color'], 'transparent'],
+            'circle-stroke-width': 2,
+            'circle-opacity': 0.9,
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+
+      if (!map.getLayer(SELLER_PINS_LAYER_IDS.pulse)) {
+        map.addLayer({
+          id: SELLER_PINS_LAYER_IDS.pulse,
+          type: 'circle',
+          source: SELLER_PINS_SOURCE_ID,
+          filter: ['!=', ['get', 'pulse_style'], 'none'],
+          paint: {
+            'circle-radius': 14,
+            'circle-color': ['coalesce', ['get', 'pin_color'], '#ffffff'],
+            'circle-opacity': 0,
+            'circle-blur': 0.2,
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+
+      if (!map.getLayer(SELLER_PINS_LAYER_IDS.core)) {
+        map.addLayer({
+          id: SELLER_PINS_LAYER_IDS.core,
+          type: 'circle',
+          source: SELLER_PINS_SOURCE_ID,
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, 4, 12, 6],
+            'circle-color': ['coalesce', ['get', 'pin_color'], '#97a3b6'],
+            'circle-stroke-color': '#ffffff',
+            'circle-stroke-width': 1,
+            'circle-opacity': 0.9,
+          },
+          layout: { visibility: 'none' },
+        })
+      }
+
       if (!map.getLayer(BUYER_DEMAND_LAYER_IDS.activity6mo)) {
         map.addLayer({
           id: BUYER_DEMAND_LAYER_IDS.activity6mo, type: 'circle', source: BUYER_DEMAND_SOURCE_ID,
@@ -3628,6 +3772,41 @@ export function InboxCommandMap({
         setHoveredClusterSummary(null)
       }
 
+      const handleSellerPinHover = (event: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+        if (activeThreadPopupRef.current) return
+        setHoveredClusterSummary(null)
+        const feature = event.features?.[0]
+        if (!feature?.properties) return
+        const props = feature.properties as unknown as CommandMapSellerPin
+        const coordinates = (feature.geometry as Point).coordinates as [number, number]
+        const popup = hoverPopupRef.current ?? new maplibregl.Popup({
+          closeButton: false,
+          closeOnClick: false,
+          offset: 18,
+          className: 'nx-icm-hover-popup',
+          maxWidth: sellerCardMaxWidthForLayout(layoutMode),
+        })
+        popup
+          .setLngLat(coordinates)
+          .setHTML(buildHoverCardMarkup(props as Record<string, unknown>, layoutMode))
+          .addTo(map)
+        hoverPopupRef.current = popup
+      }
+
+      const handleSellerPinClick = (event: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+        const feature = event.features?.[0]
+        if (!feature) return
+        const id = String(feature.properties?.property_id || '')
+        if (!id) return
+        hoverPopupRef.current?.remove()
+        threadPopupRef.current?.remove()
+        setSelectedClusterSummary(null)
+        setSelectedCensusFeature(null)
+        // Just focus the map since there's no native "thread_id" bound to seller pins directly without conversation_id
+        const coordinates = (feature.geometry as Point).coordinates as [number, number]
+        map.easeTo({ center: coordinates, zoom: Math.max(map.getZoom(), 14), duration: 700 })
+      }
+
       const handleClusterHover = (event: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
         const feature = event.features?.[0]
         if (!feature) return
@@ -3809,9 +3988,10 @@ export function InboxCommandMap({
       map.on('click', SOLD_COMPS_LAYER_IDS.marker, handleSoldCompClick)
       map.on('click', SOLD_COMPS_LAYER_IDS.label, handleSoldCompClick)
       map.on('click', SOLD_COMPS_CLUSTER_LAYER_IDS.core, handleSoldCompClusterClick)
+      map.on('click', SELLER_PINS_LAYER_IDS.core, handleSellerPinClick)
       map.on('click', (event) => {
         const rendered = map.queryRenderedFeatures(event.point, {
-          layers: ['command-pin-core-raw', 'command-pin-core-clustered', 'command-pin-cluster-core', 'command-buyer-purchase-core', 'command-buyer-profile-core', 'command-buyer-cluster-core', SOLD_COMPS_LAYER_IDS.hit, SOLD_COMPS_LAYER_IDS.marker, SOLD_COMPS_LAYER_IDS.label, SOLD_COMPS_CLUSTER_LAYER_IDS.core],
+          layers: ['command-pin-core-raw', 'command-pin-core-clustered', 'command-pin-cluster-core', 'command-buyer-purchase-core', 'command-buyer-profile-core', 'command-buyer-cluster-core', SOLD_COMPS_LAYER_IDS.hit, SOLD_COMPS_LAYER_IDS.marker, SOLD_COMPS_LAYER_IDS.label, SOLD_COMPS_CLUSTER_LAYER_IDS.core, SELLER_PINS_LAYER_IDS.core],
         })
         if (rendered.length === 0) {
           setActiveThreadPopup(null)
@@ -3831,6 +4011,7 @@ export function InboxCommandMap({
       map.on('mouseenter', SOLD_COMPS_LAYER_IDS.hit, handleSoldCompHover)
       map.on('mouseenter', SOLD_COMPS_LAYER_IDS.marker, handleSoldCompHover)
       map.on('mouseenter', SOLD_COMPS_LAYER_IDS.label, handleSoldCompHover)
+      map.on('mouseenter', SELLER_PINS_LAYER_IDS.core, handleSellerPinHover)
       map.on('mouseleave', 'command-pin-core-raw', clearPinHover)
       map.on('mouseleave', 'command-pin-core-clustered', clearPinHover)
       map.on('mouseleave', 'command-pin-cluster-core', clearClusterHover)
@@ -3840,6 +4021,7 @@ export function InboxCommandMap({
       map.on('mouseleave', SOLD_COMPS_LAYER_IDS.hit, clearPinHover)
       map.on('mouseleave', SOLD_COMPS_LAYER_IDS.marker, clearPinHover)
       map.on('mouseleave', SOLD_COMPS_LAYER_IDS.label, clearPinHover)
+      map.on('mouseleave', SELLER_PINS_LAYER_IDS.core, clearPinHover)
 
       const pulseConfig: Record<PinFeatureProps['pulseTier'], { baseRadius: number; maxAdd: number; baseOpacity: number; speed: number }> = {
         fast: { baseRadius: 13, maxAdd: 8, baseOpacity: 0.26, speed: 1.65 },
@@ -3932,6 +4114,26 @@ export function InboxCommandMap({
               ['get', 'focusOpacity'],
             ])
           })
+
+          if (map.getLayer(SELLER_PINS_LAYER_IDS.pulse) && sellerPinLayers.sellerPins) {
+            map.setPaintProperty(SELLER_PINS_LAYER_IDS.pulse, 'circle-radius', [
+              'match', ['coalesce', ['get', 'pulse_style'], 'none'],
+              'pulse_strong', makeRadiusExpr('fast', 'continuous'),
+              'pulse_soft', makeRadiusExpr('slow', 'continuous'),
+              'pulse_warning', makeRadiusExpr('medium_fast', 'ripple'),
+              'pulse_rotating', makeRadiusExpr('medium', 'triple'),
+              makeRadiusExpr('none', 'continuous')
+            ])
+            map.setPaintProperty(SELLER_PINS_LAYER_IDS.pulse, 'circle-opacity', [
+              'match', ['coalesce', ['get', 'pulse_style'], 'none'],
+              'pulse_strong', makeOpacityExpr('fast', 'continuous'),
+              'pulse_soft', makeOpacityExpr('slow', 'continuous'),
+              'pulse_warning', makeOpacityExpr('medium_fast', 'ripple'),
+              'pulse_rotating', makeOpacityExpr('medium', 'triple'),
+              0
+            ])
+          }
+
         } catch {
           return
         }
@@ -3939,7 +4141,7 @@ export function InboxCommandMap({
       }
       animationRef.current = requestAnimationFrame(animate)
 
-      ;(['command-pin-core-raw', 'command-pin-core-clustered', 'command-pin-cluster-core', 'command-buyer-purchase-core', 'command-buyer-profile-core', 'command-buyer-cluster-core', SOLD_COMPS_LAYER_IDS.marker, SOLD_COMPS_LAYER_IDS.label, SOLD_COMPS_CLUSTER_LAYER_IDS.core] as const).forEach((layerId) => {
+      ;(['command-pin-core-raw', 'command-pin-core-clustered', 'command-pin-cluster-core', 'command-buyer-purchase-core', 'command-buyer-profile-core', 'command-buyer-cluster-core', SOLD_COMPS_LAYER_IDS.marker, SOLD_COMPS_LAYER_IDS.label, SOLD_COMPS_CLUSTER_LAYER_IDS.core, SELLER_PINS_LAYER_IDS.core] as const).forEach((layerId) => {
         map.on('mouseenter', layerId, () => { map.getCanvas().style.cursor = 'pointer' })
         map.on('mouseleave', layerId, () => { map.getCanvas().style.cursor = '' })
       })
@@ -4395,6 +4597,100 @@ export function InboxCommandMap({
     }
   }, [buyerLayers.recentSoldComps, filters.market, performanceSettings])
 
+  // ── Seller Pins data loading ──────────────────────────────────────────────
+  useEffect(() => {
+    if (!sellerPinLayers.sellerPins) {
+      setSellerPinsGeojson(EMPTY_GEOJSON)
+      setSellerPins([])
+      return
+    }
+
+    let cancelled = false
+    let timeout: ReturnType<typeof setTimeout> | null = null
+
+    const loadPins = () => {
+      const map = mapRef.current
+      if (!map) return
+      
+      const zoom = map.getZoom()
+      const bounds = map.getBounds()
+      const queryBounds = {
+        minLng: bounds.getWest(),
+        minLat: bounds.getSouth(),
+        maxLng: bounds.getEast(),
+        maxLat: bounds.getNorth(),
+      }
+      
+      let maxRows = 500
+      if (zoom >= 8 && zoom < 11) maxRows = 1000
+      if (zoom >= 11) maxRows = 2500
+
+      setSellerPinsLoading(true)
+      loadCommandMapSellerPins(queryBounds, zoom, maxRows).then((pins) => {
+        if (cancelled) return
+        
+        const filteredPins = pins.filter(pin => {
+          // Seller State Filter
+          if (!sellerPinLayers.notContacted && pin.seller_state === 'not_contacted') return false
+          if (!sellerPinLayers.contacted && pin.seller_state === 'contacted') return false
+          if (!sellerPinLayers.newReplies && pin.seller_state === 'new_reply') return false
+          if (!sellerPinLayers.positive && pin.seller_state === 'positive_intent') return false
+          if (!sellerPinLayers.negotiating && pin.seller_state === 'negotiating') return false
+          if (!sellerPinLayers.hot && pin.seller_state === 'hot') return false
+          if (!sellerPinLayers.issues && pin.seller_state === 'issue') return false
+          if (!sellerPinLayers.blocked && pin.seller_state === 'blocked') return false
+          
+          // Execution State Filter
+          if (!sellerPinLayers.queued && pin.execution_state === 'queued') return false
+          if (!sellerPinLayers.scheduled && pin.execution_state === 'scheduled') return false
+          if (!sellerPinLayers.ready && pin.execution_state === 'ready') return false
+          if (!sellerPinLayers.activeSending && pin.execution_state === 'active') return false
+          if (!sellerPinLayers.sent && pin.execution_state === 'sent') return false
+          if (!sellerPinLayers.delivered && pin.execution_state === 'delivered') return false
+          if (!sellerPinLayers.failedIssue && pin.execution_state === 'issue') return false
+
+          return true
+        })
+
+        setSellerPins(filteredPins)
+        
+        const features = filteredPins.map((pin) => {
+          return {
+            type: 'Feature' as const,
+            geometry: { type: 'Point' as const, coordinates: [pin.lng, pin.lat] as [number, number] },
+            properties: {
+              ...pin,
+              id: `seller-pin-${pin.property_id}`,
+              layer: 'seller_pin'
+            },
+          }
+        })
+        setSellerPinsGeojson({ type: 'FeatureCollection', features })
+        setSellerPinsLoading(false)
+      }).catch(() => {
+        if (cancelled) return
+        setSellerPinsGeojson(EMPTY_GEOJSON)
+        setSellerPins([])
+        setSellerPinsLoading(false)
+      })
+    }
+
+    loadPins()
+
+    const map = mapRef.current
+    const onMoveEnd = () => {
+      if (timeout) clearTimeout(timeout)
+      timeout = setTimeout(loadPins, 300)
+    }
+    map?.on('moveend', onMoveEnd)
+
+    return () => {
+      cancelled = true
+      if (timeout) clearTimeout(timeout)
+      map?.off('moveend', onMoveEnd)
+    }
+  }, [sellerPinLayers, performanceSettings])
+
   // ── Push census + buyer demand GeoJSON to map sources ─────────────────────
   useEffect(() => {
     const censusSource = mapRef.current?.getSource(CENSUS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined
@@ -4410,6 +4706,22 @@ export function InboxCommandMap({
     const scSource = mapRef.current?.getSource(SOLD_COMPS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined
     scSource?.setData(soldCompsGeojson as Parameters<maplibregl.GeoJSONSource['setData']>[0])
   }, [soldCompsGeojson])
+
+  useEffect(() => {
+    const spSource = mapRef.current?.getSource(SELLER_PINS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined
+    spSource?.setData(sellerPinsGeojson as Parameters<maplibregl.GeoJSONSource['setData']>[0])
+  }, [sellerPinsGeojson])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    const visible = sellerPinLayers.sellerPins
+    ALL_SELLER_PINS_LAYER_IDS.forEach((layerId) => {
+      if (map.getLayer(layerId)) {
+        map.setLayoutProperty(layerId, 'visibility', visible ? 'visible' : 'none')
+      }
+    })
+  }, [sellerPinLayers.sellerPins])
 
   // ── Census layer visibility + hovered outline ─────────────────────────────
   useEffect(() => {
@@ -4501,6 +4813,7 @@ export function InboxCommandMap({
   )
   const emptyStateMessage = useMemo(() => {
     if (visiblePins.length > 0) return null
+    if (sellerPinLayers.sellerPins && sellerPins.length > 0) return null
     if (filteredPins.length === 0 && allPins.length > 0) {
       return `No mapped pins match the current filters.${pinPipeline.unmapped.length > 0 ? ` ${pinPipeline.unmapped.length} conversations are missing coordinates.` : ''}`
     }
@@ -4511,7 +4824,7 @@ export function InboxCommandMap({
       return 'No mapped pins found for the current inbox mode.'
     }
     return 'No visible pins found.'
-  }, [allPins.length, filteredPins.length, pinPipeline.unmapped.length, visiblePins.length])
+  }, [allPins.length, filteredPins.length, pinPipeline.unmapped.length, visiblePins.length, sellerPins.length, sellerPinLayers.sellerPins])
 
   const handleActivitySelect = (event: CommandMapActivityEvent) => {
     const center = centerMapOnActivity(event)
@@ -4725,9 +5038,15 @@ export function InboxCommandMap({
                   <div className="nx-icm__controls-group">
                     <span className="nx-icm__controls-label">Map Legend</span>
                     <div className="nx-icm__legend-grid is-expanded">
-                      {MAP_LEGEND_ITEMS.map((item) => (
+                      {(sellerPinLayers.sellerPins ? SELLER_PINS_LEGEND_ITEMS : MAP_LEGEND_ITEMS).map((item) => (
                         <div key={item.label} className="nx-icm__legend-row">
-                          <span className="nx-icm__legend-chip" style={{ backgroundColor: item.color }} />
+                          <span
+                            className="nx-icm__legend-chip"
+                            style={{
+                              backgroundColor: 'isRing' in item && item.isRing ? 'transparent' : item.color,
+                              border: 'isRing' in item && item.isRing ? `2px solid ${item.color}` : 'none'
+                            }}
+                          />
                           <span className="nx-icm__legend-label">{item.label}</span>
                         </div>
                       ))}
@@ -4740,13 +5059,43 @@ export function InboxCommandMap({
                   <div className="nx-icm__controls-group">
                     <span className="nx-icm__controls-label">Seller Thread Layers</span>
                     <div className="nx-icm__controls-segment">
-                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.sellerThreads} onChange={(e) => setBuyerLayers((current) => ({ ...current, sellerThreads: e.target.checked }))} />Seller Threads</label>
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={sellerPinLayers.sellerPins} onChange={(e) => setSellerPinLayers((current) => ({ ...current, sellerPins: e.target.checked }))} />Live Seller Pins</label>
+                      <label className="nx-icm__checkbox"><input type="checkbox" checked={buyerLayers.sellerThreads} onChange={(e) => setBuyerLayers((current) => ({ ...current, sellerThreads: e.target.checked }))} />Inbox Threads</label>
                       <label className="nx-icm__checkbox"><input type="checkbox" checked={mapOverlays.roads} onChange={(e) => setMapOverlays((current) => ({ ...current, roads: e.target.checked }))} />Roads</label>
                       <label className="nx-icm__checkbox"><input type="checkbox" checked={mapOverlays.cities} onChange={(e) => setMapOverlays((current) => ({ ...current, cities: e.target.checked }))} />Cities</label>
                       <label className="nx-icm__checkbox"><input type="checkbox" checked={mapOverlays.poi} onChange={(e) => setMapOverlays((current) => ({ ...current, poi: e.target.checked }))} />POI</label>
                       <label className="nx-icm__checkbox"><input type="checkbox" checked={mapOverlays.zip} onChange={(e) => setMapOverlays((current) => ({ ...current, zip: e.target.checked }))} />ZIP</label>
                     </div>
                   </div>
+                  {sellerPinLayers.sellerPins && (
+                    <>
+                      <div className="nx-icm__controls-group">
+                        <span className="nx-icm__controls-label">Seller State Filters</span>
+                        <div className="nx-icm__controls-segment">
+                          <label className="nx-icm__checkbox"><input type="checkbox" checked={sellerPinLayers.notContacted} onChange={(e) => setSellerPinLayers((c) => ({ ...c, notContacted: e.target.checked }))} />Not Contacted</label>
+                          <label className="nx-icm__checkbox"><input type="checkbox" checked={sellerPinLayers.contacted} onChange={(e) => setSellerPinLayers((c) => ({ ...c, contacted: e.target.checked }))} />Contacted</label>
+                          <label className="nx-icm__checkbox"><input type="checkbox" checked={sellerPinLayers.newReplies} onChange={(e) => setSellerPinLayers((c) => ({ ...c, newReplies: e.target.checked }))} />New Replies</label>
+                          <label className="nx-icm__checkbox"><input type="checkbox" checked={sellerPinLayers.positive} onChange={(e) => setSellerPinLayers((c) => ({ ...c, positive: e.target.checked }))} />Positive</label>
+                          <label className="nx-icm__checkbox"><input type="checkbox" checked={sellerPinLayers.negotiating} onChange={(e) => setSellerPinLayers((c) => ({ ...c, negotiating: e.target.checked }))} />Negotiating</label>
+                          <label className="nx-icm__checkbox"><input type="checkbox" checked={sellerPinLayers.hot} onChange={(e) => setSellerPinLayers((c) => ({ ...c, hot: e.target.checked }))} />Hot</label>
+                          <label className="nx-icm__checkbox"><input type="checkbox" checked={sellerPinLayers.issues} onChange={(e) => setSellerPinLayers((c) => ({ ...c, issues: e.target.checked }))} />Issues</label>
+                          <label className="nx-icm__checkbox"><input type="checkbox" checked={sellerPinLayers.blocked} onChange={(e) => setSellerPinLayers((c) => ({ ...c, blocked: e.target.checked }))} />Blocked</label>
+                        </div>
+                      </div>
+                      <div className="nx-icm__controls-group">
+                        <span className="nx-icm__controls-label">Execution Filters</span>
+                        <div className="nx-icm__controls-segment">
+                          <label className="nx-icm__checkbox"><input type="checkbox" checked={sellerPinLayers.queued} onChange={(e) => setSellerPinLayers((c) => ({ ...c, queued: e.target.checked }))} />Queued</label>
+                          <label className="nx-icm__checkbox"><input type="checkbox" checked={sellerPinLayers.scheduled} onChange={(e) => setSellerPinLayers((c) => ({ ...c, scheduled: e.target.checked }))} />Scheduled</label>
+                          <label className="nx-icm__checkbox"><input type="checkbox" checked={sellerPinLayers.ready} onChange={(e) => setSellerPinLayers((c) => ({ ...c, ready: e.target.checked }))} />Ready</label>
+                          <label className="nx-icm__checkbox"><input type="checkbox" checked={sellerPinLayers.activeSending} onChange={(e) => setSellerPinLayers((c) => ({ ...c, activeSending: e.target.checked }))} />Active/Sending</label>
+                          <label className="nx-icm__checkbox"><input type="checkbox" checked={sellerPinLayers.sent} onChange={(e) => setSellerPinLayers((c) => ({ ...c, sent: e.target.checked }))} />Sent</label>
+                          <label className="nx-icm__checkbox"><input type="checkbox" checked={sellerPinLayers.delivered} onChange={(e) => setSellerPinLayers((c) => ({ ...c, delivered: e.target.checked }))} />Delivered</label>
+                          <label className="nx-icm__checkbox"><input type="checkbox" checked={sellerPinLayers.failedIssue} onChange={(e) => setSellerPinLayers((c) => ({ ...c, failedIssue: e.target.checked }))} />Failed/Issue</label>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </>
               )}
               {activeControlsTab === 'buyer_layers' && (
@@ -5070,10 +5419,25 @@ export function InboxCommandMap({
               )}
             </div>
           ) : null}
+          {sellerPinLayers.sellerPins && (
+            <div className="nx-icm__census-legend-card" style={{ marginBottom: 12 }}>
+              <strong>Seller Pins: {sellerPins.length.toLocaleString()} shown</strong>
+              <div className="nx-icm__census-legend-scale" style={{ flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
+                <span style={{ opacity: 0.8 }}>Bounds loaded · Zoom {mapRef.current?.getZoom().toFixed(1) || '--'}</span>
+                {sellerPinsLoading && <span style={{ color: '#38bdf8' }}>Loading new area...</span>}
+              </div>
+            </div>
+          )}
           <div className="nx-icm__legend-grid">
-            {MAP_LEGEND_ITEMS.map((item) => (
+            {(sellerPinLayers.sellerPins ? SELLER_PINS_LEGEND_ITEMS : MAP_LEGEND_ITEMS).map((item) => (
               <div key={item.label} className="nx-icm__legend-row">
-                <span className="nx-icm__legend-chip" style={{ backgroundColor: item.color }} />
+                <span
+                  className="nx-icm__legend-chip"
+                  style={{
+                    backgroundColor: 'isRing' in item && item.isRing ? 'transparent' : item.color,
+                    border: 'isRing' in item && item.isRing ? `2px solid ${item.color}` : 'none'
+                  }}
+                />
                 <span className="nx-icm__legend-label">{item.label}</span>
               </div>
             ))}
@@ -5082,7 +5446,7 @@ export function InboxCommandMap({
       )}
 
       {emptyStateMessage && (
-        <div className="nx-icm__empty" style={{ pointerEvents: 'auto' }}>
+        <div className="nx-icm__empty">
           <div className="nx-icm__empty-title">No Visible Pins</div>
           <p className="nx-icm__empty-sub">{emptyStateMessage}</p>
           {selectedHiddenByFilters && selectedBasePin && (
@@ -5094,14 +5458,14 @@ export function InboxCommandMap({
       )}
 
       {selectedUnmapped && (
-        <div className="nx-icm__empty" style={{ top: '56px', left: '50%', transform: 'translateX(-50%)', padding: '12px 16px', pointerEvents: 'auto' }}>
+        <div className="nx-icm__empty" style={{ top: '56px', left: '50%', transform: 'translateX(-50%)', padding: '12px 16px' }}>
           <div className="nx-icm__empty-title">Selected Conversation Is Unmapped</div>
           <p className="nx-icm__empty-sub">No coordinates are available for {selectedUnmapped.seller_name || 'this conversation'}.</p>
         </div>
       )}
 
       {selectedHiddenByFilters && selectedBasePin && !showSelectedHidden && (
-        <div className="nx-icm__empty" style={{ top: '56px', left: '50%', transform: 'translateX(-50%)', padding: '12px 16px', pointerEvents: 'auto' }}>
+        <div className="nx-icm__empty" style={{ top: '56px', left: '50%', transform: 'translateX(-50%)', padding: '12px 16px' }}>
           <div className="nx-icm__empty-title">Selected Hidden By Filters</div>
           <p className="nx-icm__empty-sub">The selected conversation has coordinates but is excluded by the current filters.</p>
           <button type="button" className="nx-icm__mode-tab is-active" onClick={() => setShowSelectedHidden(true)}>

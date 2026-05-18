@@ -26,8 +26,7 @@ export async function selectWeightedTemplate(params: {
   language?: string,
   assetClass?: string
 }): Promise<SelectedTemplate | null> {
-  const supabase = getSupabaseClient()
-  
+  const supabase = hasSupabaseAdminEnv ? getSupabaseAdminClient() : getSupabaseClient()
   const reqLang = params.language || 'English'
 
   // TODO(Analytics): Do not count safety_hold/manual_cancel/data_hygiene as copy failures in future template scoring.
@@ -157,5 +156,8 @@ export async function selectWeightedTemplate(params: {
     reason: `Selected via ${selectedBucket} bucket (roll: ${roll.toFixed(1)}) weight: ${template.traffic_weight}`,
     language: template.language || 'English',
     paired_with_agent_type: template.agent_persona
+  }
+}
+_type: template.agent_persona
   }
 }

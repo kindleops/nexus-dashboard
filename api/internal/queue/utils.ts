@@ -1,5 +1,8 @@
 import { getSupabaseClient } from '../../../src/lib/supabaseClient'
+import { getSupabaseAdminClient, hasSupabaseAdminEnv } from '../_lib/supabaseAdmin'
 import { asBoolean, asString, normalizeStatus } from '../../../src/lib/data/shared'
+
+const getInternalSupabase = () => hasSupabaseAdminEnv ? getSupabaseAdminClient() : getSupabaseClient()
 
 export interface FailureTaxonomy {
   category: string
@@ -91,7 +94,7 @@ export async function checkSuppression(params: {
   masterOwnerId?: string
   prospectId?: string
 }): Promise<SuppressionResult> {
-  const supabase = getSupabaseClient()
+  const supabase = getInternalSupabase()
   const codes: string[] = []
   const phone = params.phone.replace(/\D/g, '')
 
@@ -162,7 +165,7 @@ export async function checkRepeatContactAndBlacklist(params: {
   masterOwnerId: string
   stageCode: string
 }): Promise<{ safe: boolean, reason: string | null }> {
-  const supabase = getSupabaseClient()
+  const supabase = getInternalSupabase()
   const phoneE164 = params.phone.replace(/\D/g, '')
   const formattedPhone = phoneE164.length === 10 ? `+1${phoneE164}` : `+${phoneE164}`
 
@@ -240,7 +243,7 @@ export function getNaturalDelay(intent: string): number {
  * Checks for existing active queue items with the same dedupe key.
  */
 export async function checkExistingQueue(dedupeKey: string): Promise<boolean> {
-  const supabase = getSupabaseClient()
+  const supabase = getInternalSupabase()
   const { data, error } = await supabase
     .from('send_queue')
     .select('id')
@@ -303,7 +306,7 @@ export function renderMessage(template: SmsTemplate, context: Record<string, str
  * Cleans up existing active blank queue rows.
  */
 export async function cleanupBlankQueueRows(): Promise<number> {
-  const supabase = getSupabaseClient()
+  const supabase = getInternalSupabase()
   const { data, error } = await supabase
     .from('send_queue')
     .update({ 
@@ -335,7 +338,7 @@ const normalizeState = (value: unknown): string => {
 }
 
 export async function hydrateQueueRoutingContext(row: Record<string, any>): Promise<Record<string, unknown>> {
-  const supabase = getSupabaseClient()
+  const supabase = getInternalSupabase()
   const metadata = toAnyRecord(row.metadata)
   const hydrated: Record<string, unknown> = {
     seller_name: asString(row.seller_name || metadata['seller_name'], ''),

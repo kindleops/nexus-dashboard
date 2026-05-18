@@ -1,4 +1,5 @@
 import { getSupabaseClient } from '../../../src/lib/supabaseClient'
+import { getSupabaseAdminClient } from '../_lib/supabaseAdmin'
 import { checkSuppression, generateDedupeKey, getNaturalDelay, scheduleWithWindow, checkExistingQueue, renderMessage } from './utils'
 import { asString, normalizeStatus, asNumber } from '../../../src/lib/data/shared'
 import { fetchSmsTemplates, buildTemplateContextFromThread } from '../../../src/lib/data/templateData'
@@ -19,7 +20,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     return
   }
 
-  const supabase = getSupabaseClient()
+  const supabase = getSupabaseAdminClient()
   const results: any[] = []
 
   try {

@@ -1,4 +1,5 @@
 import { getSupabaseClient } from '../../../../src/lib/supabaseClient'
+import { getSupabaseAdminClient, hasSupabaseAdminEnv } from '../../_lib/supabaseAdmin'
 import { asString, asNumber } from '../../../../src/lib/data/shared'
 
 type ApiRequest = {

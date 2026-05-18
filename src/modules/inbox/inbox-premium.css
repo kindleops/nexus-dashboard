@@ -5319,11 +5319,25 @@
 .nx-icm__toolbar,
 .nx-icm__ticker,
 .nx-icm__buyer-demand-dock,
+.nx-icm__census-dock,
 .nx-icm__buyer-selection-shell,
 .nx-icm__legend-panel,
 .nx-icm__empty {
+  pointer-events: none;
+}
+
+.nx-icm__header,
+.nx-icm__controls-popover,
+.nx-icm__ticker > *,
+.nx-icm__buyer-demand-dock > *,
+.nx-icm__census-dock > *,
+.nx-icm__buyer-selection-shell > *,
+.nx-icm__legend-panel > *,
+.nx-icm__empty > * {
   pointer-events: auto;
 }
+
+
 
 .nx-icm__toolbar {
   position: absolute;
@@ -5801,7 +5815,13 @@
     linear-gradient(180deg, rgba(8, 13, 24, 0.9), rgba(5, 9, 17, 0.84));
   box-shadow: 0 26px 80px rgba(0, 0, 0, 0.32);
   backdrop-filter: blur(22px);
+  pointer-events: none;
 }
+
+.nx-icm-activity > * {
+  pointer-events: auto;
+}
+
 
 .nx-icm-activity.is-docked {
   top: 92px;
