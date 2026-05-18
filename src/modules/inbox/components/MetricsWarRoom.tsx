@@ -7,7 +7,7 @@
  *   100% → MetricsWarRoom100 (full war room)
  */
 
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { useState, useCallback, useEffect, useRef, useMemo, useId } from 'react'
 import type { ViewLayoutMode, ViewWidthPercent } from '../view-layout'
 import {
   loadKpiDashboardSummary,
@@ -88,6 +88,10 @@ function WrMiniLine({
   w?: number
   h?: number
 }) {
+  // useId MUST be called before any early returns
+  const uid = useId()
+  const gId = `wrl-${uid.replace(/:/g, '')}`
+
   if (!data.length || data.every(v => v === 0)) {
     return <span style={{ display: 'block', width: w, height: h, opacity: 0.08, background: 'rgba(255,255,255,0.06)', borderRadius: 2 }} />
   }
@@ -101,9 +105,9 @@ function WrMiniLine({
     return [x, y] as [number, number]
   })
   const pStr = pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ')
-  const first = pts[0], last = pts[pts.length - 1]
+  const first = pts[0]
+  const last = pts[pts.length - 1]
   const fillD = `M${first[0].toFixed(1)},${h} ${pts.map(([x, y]) => `L${x.toFixed(1)},${y.toFixed(1)}`).join(' ')} L${last[0].toFixed(1)},${h} Z`
-  const gId = `wrl-${Math.random().toString(36).slice(2, 9)}`
   return (
     <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ display: 'block', overflow: 'visible' }}>
       <defs>
@@ -136,29 +140,28 @@ function WrTrend({ current, prev, invert = false }: { current: number; prev: num
 // ── Choropleth helpers ────────────────────────────────────────────────────────
 
 function choroFill(d: StatePerformance | undefined): string {
-  if (!d || d.sent === 0 || d.status === 'quiet') return 'rgba(255,255,255,0.04)'
+  if (!d || d.sent === 0 || d.status === 'quiet') return 'rgba(15,30,85,0.85)'
   switch (d.status) {
-    case 'strong':      return 'rgba(14,212,138,0.28)'
-    case 'active':      return 'rgba(14,207,206,0.24)'
-    case 'contracting': return 'rgba(168,85,247,0.28)'
-    case 'warning':     return 'rgba(245,166,35,0.28)'
-    case 'blocked':     return 'rgba(224,82,82,0.28)'
-    default:            return 'rgba(255,255,255,0.04)'
+    case 'strong':      return 'rgba(14,212,138,0.32)'
+    case 'active':      return 'rgba(14,207,206,0.28)'
+    case 'contracting': return 'rgba(168,85,247,0.32)'
+    case 'warning':     return 'rgba(245,166,35,0.32)'
+    case 'blocked':     return 'rgba(224,82,82,0.32)'
+    default:            return 'rgba(15,30,85,0.85)'
   }
 }
 
 function choroStroke(d: StatePerformance | undefined, sel: boolean, hov: boolean): string {
   if (sel) return 'rgba(255,255,255,0.95)'
-  if (hov) return 'rgba(255,255,255,0.65)'
-  // Always show visible state borders, even with no data
-  if (!d || d.sent === 0 || d.status === 'quiet') return 'rgba(255,255,255,0.22)'
+  if (hov) return 'rgba(255,255,255,0.75)'
+  if (!d || d.sent === 0 || d.status === 'quiet') return 'rgba(80,140,220,0.5)'
   switch (d.status) {
-    case 'strong':      return 'rgba(14,212,138,0.75)'
-    case 'active':      return 'rgba(14,207,206,0.70)'
-    case 'contracting': return 'rgba(168,85,247,0.75)'
-    case 'warning':     return 'rgba(245,166,35,0.70)'
-    case 'blocked':     return 'rgba(224,82,82,0.75)'
-    default:            return 'rgba(255,255,255,0.22)'
+    case 'strong':      return 'rgba(14,212,138,0.85)'
+    case 'active':      return 'rgba(14,207,206,0.80)'
+    case 'contracting': return 'rgba(168,85,247,0.85)'
+    case 'warning':     return 'rgba(245,166,35,0.80)'
+    case 'blocked':     return 'rgba(224,82,82,0.85)'
+    default:            return 'rgba(80,140,220,0.5)'
   }
 }
 
@@ -233,17 +236,17 @@ interface KpiCardDef {
 
 function buildKpiCards(summary: KpiSummary, sentSeries: number[], repliedSeries: number[], posSeries: number[]): KpiCardDef[] {
   return [
-    { label: 'Sent',          value: fmt.int(summary.sentCount),          sub: null,                        color: 'var(--wr-teal)',   tone: 'teal',  series: sentSeries,    trendCurrent: summary.sentCount,       trendPrev: summary.prevSentCount },
+    { label: 'Sent',          value: fmt.int(summary.sentCount),          sub: null,                          color: 'var(--wr-teal)',   tone: 'teal',  series: sentSeries,    trendCurrent: summary.sentCount,       trendPrev: summary.prevSentCount },
     { label: 'Delivered',     value: fmt.int(summary.deliveredCount),      sub: fmt.pct(summary.deliveryRate), color: 'var(--wr-blue)',   tone: '',      series: sentSeries,    trendCurrent: 0, trendPrev: 0 },
-    { label: 'Replies',       value: fmt.int(summary.repliedCount),        sub: null,                        color: 'var(--wr-teal)',   tone: '',      series: repliedSeries, trendCurrent: summary.repliedCount,    trendPrev: summary.prevRepliedCount },
+    { label: 'Replies',       value: fmt.int(summary.repliedCount),        sub: null,                          color: 'var(--wr-teal)',   tone: '',      series: repliedSeries, trendCurrent: summary.repliedCount,    trendPrev: summary.prevRepliedCount },
     { label: 'Positive',      value: fmt.int(summary.positiveReplies),     sub: fmt.pct(summary.positiveRate), color: 'var(--wr-green)',  tone: 'green', series: posSeries,     trendCurrent: summary.positiveReplies, trendPrev: summary.prevPositiveReplies },
-    { label: 'Opt-Out Rate',  value: fmt.pct(summary.optOutRate),          sub: fmt.int(summary.optOutCount), color: summary.optOutRate > 2 ? 'var(--wr-amber)' : 'var(--wr-muted)', tone: summary.optOutRate > 2 ? 'amber' : '', series: [], trendCurrent: 0, trendPrev: 0 },
-    { label: 'Delivery Rate', value: fmt.pct(summary.deliveryRate),        sub: null,                        color: 'var(--wr-blue)',   tone: '',      series: [],            trendCurrent: 0, trendPrev: 0 },
-    { label: 'Cost / Period', value: fmt.usd(summary.spendPeriod),         sub: null,                        color: 'var(--wr-muted)',  tone: '',      series: [],            trendCurrent: 0, trendPrev: 0 },
-    { label: 'Cost / Reply',  value: fmt.usd(summary.costPerReply),        sub: null,                        color: 'var(--wr-amber)',  tone: '',      series: [],            trendCurrent: 0, trendPrev: 0 },
-    { label: 'Cost / Pos.',   value: fmt.usd(summary.costPerPositive),     sub: null,                        color: 'var(--wr-amber)',  tone: '',      series: [],            trendCurrent: 0, trendPrev: 0 },
+    { label: 'Opt-Out Rate',  value: fmt.pct(summary.optOutRate),          sub: fmt.int(summary.optOutCount),  color: summary.optOutRate > 2 ? 'var(--wr-amber)' : 'var(--wr-muted)', tone: summary.optOutRate > 2 ? 'amber' : '', series: [], trendCurrent: 0, trendPrev: 0 },
+    { label: 'Delivery Rate', value: fmt.pct(summary.deliveryRate),        sub: null,                          color: 'var(--wr-blue)',   tone: '',      series: [],            trendCurrent: 0, trendPrev: 0 },
+    { label: 'Cost / Period', value: fmt.usd(summary.spendPeriod),         sub: null,                          color: 'var(--wr-muted)',  tone: '',      series: [],            trendCurrent: 0, trendPrev: 0 },
+    { label: 'Cost / Reply',  value: fmt.usd(summary.costPerReply),        sub: null,                          color: 'var(--wr-amber)',  tone: '',      series: [],            trendCurrent: 0, trendPrev: 0 },
+    { label: 'Cost / Pos.',   value: fmt.usd(summary.costPerPositive),     sub: null,                          color: 'var(--wr-amber)',  tone: '',      series: [],            trendCurrent: 0, trendPrev: 0 },
     { label: 'Queue Health',  value: summary.queueHealth === 'good' ? 'Good' : summary.queueHealth === 'warning' ? 'Warn' : 'Crit', sub: null, color: summary.queueHealth === 'good' ? 'var(--wr-green)' : summary.queueHealth === 'warning' ? 'var(--wr-amber)' : 'var(--wr-red)', tone: summary.queueHealth === 'critical' ? 'red' : summary.queueHealth === 'warning' ? 'amber' : 'green', series: [], trendCurrent: 0, trendPrev: 0 },
-    { label: 'Auto Health',   value: String(summary.automationHealthScore), sub: '/100',                     color: 'var(--wr-teal)',   tone: '',      series: [],            trendCurrent: 0, trendPrev: 0 },
+    { label: 'Auto Health',   value: String(summary.automationHealthScore), sub: '/100',                        color: 'var(--wr-teal)',   tone: '',      series: [],            trendCurrent: 0, trendPrev: 0 },
     { label: 'Buyer Demand',  value: summary.buyerDemandScore > 0 ? String(summary.buyerDemandScore) : '—', sub: null, color: 'var(--wr-purple)', tone: '', series: [], trendCurrent: 0, trendPrev: 0 },
   ]
 }
@@ -340,81 +343,83 @@ function WrUsaMap({
         )}
       </div>
       <div className="wr-panel__body wr-map-body">
-      <div className="wr-map__svg-wrap">
-        <svg
-          viewBox="0 0 960 600"
-          className="wr-map__svg"
-          onMouseMove={handleMouseMove}
-          onMouseLeave={() => { setHovered(null); setTip(null) }}
-        >
-          <defs>
-            <pattern id="wr-map-grid" x="0" y="0" width="24" height="24" patternUnits="userSpaceOnUse">
-              <circle cx="0.5" cy="0.5" r="0.5" fill="rgba(14,207,206,0.03)" />
-            </pattern>
-          </defs>
-          <rect width="960" height="600" fill="url(#wr-map-grid)" />
-          {Object.entries(USA_STATE_PATHS).map(([abbr, sp]) => {
-            const d = stateMap.get(abbr)
-            const isSel = selectedState === abbr
-            const isHov = hovered === abbr
-            return (
-              <g key={abbr}>
-                <path
-                  d={sp.path}
-                  fill={choroFill(d)}
-                  className="wr-map__state"
-                  style={{
-                    opacity: isHov ? 0.85 : 1,
-                    stroke: choroStroke(d, isSel, isHov),
-                    strokeWidth: isSel ? 2.5 : isHov ? 1.5 : 0.7,
-                  }}
-                  onClick={() => onStateClick(isSel ? '' : abbr)}
-                  onMouseEnter={() => setHovered(abbr)}
-                />
-                {abbr !== 'HI' && (
-                  <text x={sp.cx} y={sp.cy} className="wr-map__state-label" style={{ fontSize: abbr === 'DC' ? 5 : 7 }}>
-                    {abbr}
-                  </text>
-                )}
-              </g>
-            )
-          })}
-        </svg>
-        {hovData && tip && (
-          <div
-            className="wr-map__tooltip"
-            style={{ left: Math.min(tip.x + 12, 560), top: Math.max(tip.y - 80, 8) }}
+        <div className="wr-map__svg-wrap">
+          <svg
+            viewBox="0 0 960 600"
+            className="wr-map__svg"
+            onMouseMove={handleMouseMove}
+            onMouseLeave={() => { setHovered(null); setTip(null) }}
           >
-            <strong>{STATE_NAMES[hovData.state] ?? hovData.state}</strong>
-            {[
-              ['Sent', fmt.int(hovData.sent)],
-              ['Replies', fmt.int(hovData.replied)],
-              ['Positive', String(hovData.positive)],
-              ['Opt-Out', fmt.pct(hovData.optOutRate)],
-              ['Top Market', hovData.topMarket],
-              ['Action', hovData.recommendation],
-            ].map(([k, v]) => (
-              <div key={k} className="wr-map__tooltip-row">
-                <span>{k}</span><span>{v}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-      <div className="wr-map__legend">
-        {[
-          ['#0ed48a', 'Strong'],
-          ['#0ecfce', 'Active'],
-          ['#a855f7', 'Contracting'],
-          ['#f5a623', 'Warning'],
-          ['#e05252', 'Blocked'],
-          ['rgba(255,255,255,0.22)', 'Quiet'],
-        ].map(([c, label]) => (
-          <span key={label} className="wr-map__legend-item">
-            <i style={{ background: `${c}`, border: `1px solid ${c}` }} /> {label}
-          </span>
-        ))}
-      </div>
+            <defs>
+              <pattern id="wr-map-grid" x="0" y="0" width="24" height="24" patternUnits="userSpaceOnUse">
+                <circle cx="0.5" cy="0.5" r="0.8" fill="rgba(14,207,206,0.06)" />
+              </pattern>
+            </defs>
+            <rect width="960" height="600" fill="#020814" />
+            <rect width="960" height="600" fill="url(#wr-map-grid)" />
+            {Object.entries(USA_STATE_PATHS).map(([abbr, sp]) => {
+              const d = stateMap.get(abbr)
+              const isSel = selectedState === abbr
+              const isHov = hovered === abbr
+              return (
+                <g key={abbr}>
+                  <path
+                    d={sp.path}
+                    fill={choroFill(d)}
+                    className="wr-map__state"
+                    vectorEffect="non-scaling-stroke"
+                    style={{
+                      opacity: isHov ? 0.85 : 1,
+                      stroke: choroStroke(d, isSel, isHov),
+                      strokeWidth: isSel ? 2.5 : isHov ? 1.8 : 1,
+                    }}
+                    onClick={() => onStateClick(isSel ? '' : abbr)}
+                    onMouseEnter={() => setHovered(abbr)}
+                  />
+                  {abbr !== 'HI' && (
+                    <text x={sp.cx} y={sp.cy} className="wr-map__state-label" style={{ fontSize: abbr === 'DC' ? 6 : 9 }}>
+                      {abbr}
+                    </text>
+                  )}
+                </g>
+              )
+            })}
+          </svg>
+          {hovData && tip && (
+            <div
+              className="wr-map__tooltip"
+              style={{ left: Math.min(tip.x + 12, 560), top: Math.max(tip.y - 80, 8) }}
+            >
+              <strong>{STATE_NAMES[hovData.state] ?? hovData.state}</strong>
+              {[
+                ['Sent', fmt.int(hovData.sent)],
+                ['Replies', fmt.int(hovData.replied)],
+                ['Positive', String(hovData.positive)],
+                ['Opt-Out', fmt.pct(hovData.optOutRate)],
+                ['Top Market', hovData.topMarket],
+                ['Action', hovData.recommendation],
+              ].map(([k, v]) => (
+                <div key={k} className="wr-map__tooltip-row">
+                  <span>{k}</span><span>{v}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="wr-map__legend">
+          {[
+            ['#0ed48a', 'Strong'],
+            ['#0ecfce', 'Active'],
+            ['#a855f7', 'Contracting'],
+            ['#f5a623', 'Warning'],
+            ['#e05252', 'Blocked'],
+            ['rgba(80,140,220,0.5)', 'Quiet'],
+          ].map(([c, label]) => (
+            <span key={label} className="wr-map__legend-item">
+              <i style={{ background: `${c}`, border: `1px solid ${c}` }} /> {label}
+            </span>
+          ))}
+        </div>
       </div>
     </div>
   )
@@ -556,54 +561,162 @@ function WrAlerts({ alerts, loading }: { alerts: KpiAlert[]; loading: boolean })
   )
 }
 
-// ── WrTimeSeries ──────────────────────────────────────────────────────────────
+// ── WrLineChart ───────────────────────────────────────────────────────────────
+// Full multi-line SVG area chart for messaging volume over time
 
-function WrTimeSeries({ timeSeries, loading }: { timeSeries: TimeSeriesPoint[]; loading: boolean }) {
-  const lines = [
-    { key: 'sent' as const,    label: 'Sent',    color: 'rgba(14,207,206,0.85)' },
-    { key: 'replied' as const, label: 'Replies', color: 'rgba(14,212,138,0.85)' },
-    { key: 'positive' as const, label: 'Positive', color: 'rgba(168,85,247,0.85)' },
-    { key: 'optOut' as const,  label: 'Opt-Out', color: 'rgba(224,82,82,0.82)' },
+function WrLineChart({ timeSeries, loading }: { timeSeries: TimeSeriesPoint[]; loading: boolean }) {
+  const chartId = useId()
+  const lineKeys: Array<{ key: keyof TimeSeriesPoint; label: string; color: string; gradId: string }> = [
+    { key: 'sent',    label: 'Sent',     color: 'rgba(14,207,206,0.9)',  gradId: `wrlc-sent-${chartId.replace(/:/g,'')}` },
+    { key: 'replied', label: 'Replies',  color: 'rgba(14,212,138,0.9)',  gradId: `wrlc-rep-${chartId.replace(/:/g,'')}` },
+    { key: 'positive',label: 'Positive', color: 'rgba(168,85,247,0.9)',  gradId: `wrlc-pos-${chartId.replace(/:/g,'')}` },
+    { key: 'optOut',  label: 'Opt-Out',  color: 'rgba(224,82,82,0.85)', gradId: `wrlc-opt-${chartId.replace(/:/g,'')}` },
   ]
 
   if (loading) {
     return (
       <div className="wr-panel">
         <div className="wr-panel__header"><span className="wr-panel__title">Messaging Volume Over Time</span></div>
-        <div className="wr-panel__body"><WrSkeleton h={80} /></div>
+        <div className="wr-panel__body"><WrSkeleton h={140} /></div>
       </div>
     )
+  }
+
+  const hasData = timeSeries.length > 1
+
+  // Build paths
+  const W = 800, H = 160
+  const padL = 38, padR = 12, padT = 8, padB = 24
+  const plotW = W - padL - padR
+  const plotH = H - padT - padB
+
+  const allVals = hasData
+    ? timeSeries.flatMap(p => lineKeys.map(lk => p[lk.key] as number))
+    : [0]
+  const maxVal = Math.max(...allVals, 1)
+
+  const xOf = (i: number) => padL + (i / Math.max(timeSeries.length - 1, 1)) * plotW
+  const yOf = (v: number) => padT + plotH - (v / maxVal) * plotH
+
+  const buildPath = (key: keyof TimeSeriesPoint) => {
+    if (!hasData) return ''
+    return timeSeries
+      .map((p, i) => `${i === 0 ? 'M' : 'L'}${xOf(i).toFixed(1)},${yOf(p[key] as number).toFixed(1)}`)
+      .join(' ')
+  }
+
+  const buildFill = (key: keyof TimeSeriesPoint) => {
+    if (!hasData) return ''
+    const lastI = timeSeries.length - 1
+    return (
+      `M${padL.toFixed(1)},${(padT + plotH).toFixed(1)} ` +
+      timeSeries.map((p, i) => `L${xOf(i).toFixed(1)},${yOf(p[key] as number).toFixed(1)}`).join(' ') +
+      ` L${xOf(lastI).toFixed(1)},${(padT + plotH).toFixed(1)} Z`
+    )
+  }
+
+  // Y axis ticks
+  const yTicks = [0, 0.25, 0.5, 0.75, 1].map(f => ({
+    y: padT + plotH - f * plotH,
+    label: f === 0 ? '0' : f === 1 ? fmt.int(Math.round(maxVal)) : fmt.int(Math.round(maxVal * f)),
+  }))
+
+  // X axis dates (show up to 6 labels)
+  const xTickIndices: number[] = []
+  if (hasData) {
+    const step = Math.max(1, Math.floor(timeSeries.length / 6))
+    for (let i = 0; i < timeSeries.length; i += step) xTickIndices.push(i)
+    if (xTickIndices[xTickIndices.length - 1] !== timeSeries.length - 1)
+      xTickIndices.push(timeSeries.length - 1)
   }
 
   return (
     <div className="wr-panel">
       <div className="wr-panel__header">
         <span className="wr-panel__title">Messaging Volume Over Time</span>
-        {timeSeries.length > 0 && (
+        <div className="wr-linechart-legend">
+          {lineKeys.map(lk => (
+            <span key={lk.key} className="wr-linechart-legend__item">
+              <i style={{ background: lk.color }} />
+              {lk.label}
+            </span>
+          ))}
+        </div>
+        {hasData && (
           <span className="wr-panel__badge">
             {timeSeries[0]?.date?.slice(5)} – {timeSeries[timeSeries.length - 1]?.date?.slice(5)}
           </span>
         )}
       </div>
-      <div className="wr-panel__body">
-        {!timeSeries.length ? (
+      <div className="wr-panel__body wr-linechart-body">
+        {!hasData ? (
           <div className="wr-empty">No time-series data for this period.</div>
         ) : (
-          <div className="wr-timeseries-grid">
-            {lines.map(c => {
-              const values = timeSeries.map(p => p[c.key] as number)
-              const total = values.reduce((a, b) => a + b, 0)
+          <svg viewBox={`0 0 ${W} ${H}`} className="wr-linechart-svg" preserveAspectRatio="none">
+            <defs>
+              {lineKeys.map(lk => (
+                <linearGradient key={lk.gradId} id={lk.gradId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={lk.color} stopOpacity={0.18} />
+                  <stop offset="100%" stopColor={lk.color} stopOpacity={0} />
+                </linearGradient>
+              ))}
+            </defs>
+
+            {/* Grid lines */}
+            {yTicks.map(t => (
+              <line key={t.y} x1={padL} y1={t.y} x2={W - padR} y2={t.y}
+                stroke="rgba(255,255,255,0.05)" strokeWidth="1" />
+            ))}
+
+            {/* Y axis labels */}
+            {yTicks.map(t => (
+              <text key={t.y} x={padL - 4} y={t.y + 3} textAnchor="end"
+                fill="rgba(160,190,240,0.45)" fontSize="8" fontFamily="inherit">{t.label}</text>
+            ))}
+
+            {/* X axis labels */}
+            {xTickIndices.map(i => (
+              <text key={i} x={xOf(i)} y={H - 4} textAnchor="middle"
+                fill="rgba(160,190,240,0.45)" fontSize="8" fontFamily="inherit">
+                {timeSeries[i]?.date?.slice(5) ?? ''}
+              </text>
+            ))}
+
+            {/* Area fills (rendered first, behind lines) */}
+            {lineKeys.map(lk => (
+              <path key={`fill-${String(lk.key)}`} d={buildFill(lk.key)} fill={`url(#${lk.gradId})`} stroke="none" />
+            ))}
+
+            {/* Lines */}
+            {lineKeys.map(lk => (
+              <path
+                key={`line-${String(lk.key)}`}
+                d={buildPath(lk.key)}
+                fill="none"
+                stroke={lk.color}
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{ filter: `drop-shadow(0 0 3px ${lk.color}66)` }}
+              />
+            ))}
+
+            {/* Dot on last point */}
+            {lineKeys.map(lk => {
+              const last = timeSeries[timeSeries.length - 1]
               return (
-                <div key={c.key} className="wr-ts-card">
-                  <div className="wr-ts-card__head">
-                    <span className="wr-ts-card__label">{c.label}</span>
-                    <strong className="wr-ts-card__total" style={{ color: c.color }}>{fmt.int(total)}</strong>
-                  </div>
-                  <WrMiniLine data={values} color={c.color} w={180} h={44} />
-                </div>
+                <circle
+                  key={`dot-${String(lk.key)}`}
+                  cx={xOf(timeSeries.length - 1)}
+                  cy={yOf(last[lk.key] as number)}
+                  r="2.5"
+                  fill="#fff"
+                  stroke={lk.color}
+                  strokeWidth="1.2"
+                />
               )
             })}
-          </div>
+          </svg>
         )}
       </div>
     </div>
@@ -1047,17 +1160,6 @@ function useMetricsData(filters: KpiFilters) {
   }
 }
 
-// ── Dev badge ─────────────────────────────────────────────────────────────────
-
-function WrDevBadge({ widthMode }: { widthMode: ViewWidthPercent }) {
-  if (!import.meta.env.DEV) return null
-  return (
-    <div className="wr-dev-badge">
-      NEW METRICS WAR ROOM ACTIVE · {widthMode}%
-    </div>
-  )
-}
-
 // ════════════════════════════════════════════════════════════════════════════
 // MetricsRail25 — 25% compact KPI command rail
 // ════════════════════════════════════════════════════════════════════════════
@@ -1119,7 +1221,7 @@ export function MetricsRail25({
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// MetricsCockpit50 — 50% compact cockpit
+// MetricsCockpit50 — 50% compact cockpit, no map
 // ════════════════════════════════════════════════════════════════════════════
 
 export function MetricsCockpit50({
@@ -1161,26 +1263,34 @@ export function MetricsCockpit50({
   return (
     <div className="wr wr--cockpit">
       <WrFilterBar filters={filters} onChange={onFilterChange} loading={loading} selectedState={null} onClearState={() => {}} widthMode="50" />
+      <WrKpiStrip summary={summary} timeSeries={timeSeries} loading={loading} maxCards={8} />
       <div className="wr-scroll">
-        <WrKpiStrip summary={summary} timeSeries={timeSeries} loading={loading} maxCards={8} />
         <div className="wr-cockpit-grid">
           <WrFunnel stages={funnel} loading={loading} compact />
           <WrRevenue spend={spend} offerMetrics={offerMetrics} loading={loading} />
         </div>
-        <WrTimeSeries timeSeries={timeSeries} loading={loading} />
+        <div style={{ padding: '0 18px 4px' }}>
+          <WrLineChart timeSeries={timeSeries} loading={loading} />
+        </div>
         <div className="wr-cockpit-grid">
           <WrLeaderboard title="Template Leaderboard" rows={templateLbRows} loading={loading} maxRows={5} />
           <WrLeaderboard title="State Leaderboard" rows={stateLbRows} loading={loading} maxRows={5} />
         </div>
-        {alerts.length > 0 && <WrAlerts alerts={alerts} loading={loading} />}
-        <WrDataQuality quality={dataQuality} loading={loading} />
+        {alerts.length > 0 && (
+          <div style={{ padding: '0 18px 4px' }}>
+            <WrAlerts alerts={alerts} loading={loading} />
+          </div>
+        )}
+        <div style={{ padding: '0 18px 4px' }}>
+          <WrDataQuality quality={dataQuality} loading={loading} />
+        </div>
       </div>
     </div>
   )
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// MetricsCommand75 — 75% two-column performance command
+// MetricsCommand75 — 75% command dashboard with map
 // ════════════════════════════════════════════════════════════════════════════
 
 export function MetricsCommand75({
@@ -1223,25 +1333,33 @@ export function MetricsCommand75({
   return (
     <div className="wr wr--command">
       <WrFilterBar filters={filters} onChange={onFilterChange} loading={loading} selectedState={selectedState} onClearState={() => onStateClick('')} widthMode="75" />
+      <WrKpiStrip summary={summary} timeSeries={timeSeries} loading={loading} />
       <div className="wr-scroll">
-        <WrKpiStrip summary={summary} timeSeries={timeSeries} loading={loading} />
         <div className="wr-command-above">
           <WrUsaMap states={statePerf} selectedState={selectedState} onStateClick={onStateClick} loading={loading} />
           <WrFunnel stages={funnel} loading={loading} />
         </div>
-        <WrTimeSeries timeSeries={timeSeries} loading={loading} />
+        <div style={{ padding: '0 18px 4px' }}>
+          <WrLineChart timeSeries={timeSeries} loading={loading} />
+        </div>
         <div className="wr-command-lbs">
           <WrLeaderboard title="State" rows={stateLbRows} loading={loading} maxRows={6} />
           <WrLeaderboard title="Market" rows={marketLbRows} loading={loading} maxRows={6} />
           <WrLeaderboard title="Agent" rows={agentLbRows} loading={loading} maxRows={6} />
           <WrLeaderboard title="Template" rows={templateLbRows} loading={loading} maxRows={6} />
         </div>
-        <WrChannelPerf channels={channelPerf} loading={loading} />
+        <div style={{ padding: '0 18px 4px' }}>
+          <WrChannelPerf channels={channelPerf} loading={loading} />
+        </div>
         <div className="wr-command-bottom">
           <WrCarrierIntel carriers={carrierPerf} loading={loading} />
           <WrNumbersHealth numbers={numberHealth} loading={loading} />
         </div>
-        {alerts.length > 0 && <WrAlerts alerts={alerts} loading={loading} />}
+        {alerts.length > 0 && (
+          <div style={{ padding: '0 18px 4px' }}>
+            <WrAlerts alerts={alerts} loading={loading} />
+          </div>
+        )}
       </div>
     </div>
   )
@@ -1299,10 +1417,9 @@ export function MetricsWarRoom100({
   return (
     <div className="wr wr--warroom">
       <WrFilterBar filters={filters} onChange={onFilterChange} loading={loading} selectedState={selectedState} onClearState={() => onStateClick('')} widthMode="100" />
+      <WrKpiStrip summary={summary} timeSeries={timeSeries} loading={loading} />
       <div className="wr-scroll">
-        <WrKpiStrip summary={summary} timeSeries={timeSeries} loading={loading} />
-
-        {/* Row 1: Map + Funnel + Alerts/Spend */}
+        {/* Row 1: Map 40% + Funnel+Revenue 35% + Alerts+Spend 25% */}
         <div className="wr-section-label">PERFORMANCE OVERVIEW</div>
         <div className="wr-warroom-row1">
           <WrUsaMap states={statePerf} selectedState={selectedState} onStateClick={onStateClick} loading={loading} />
@@ -1313,29 +1430,30 @@ export function MetricsWarRoom100({
           </div>
         </div>
 
-        {/* Row 2: Time Series + Channel Perf */}
+        {/* Row 2: Line Chart 5fr + Channel Perf 4fr + Offers/Contracts 3fr */}
         <div className="wr-section-label">MESSAGING INTELLIGENCE</div>
         <div className="wr-warroom-row2">
-          <WrTimeSeries timeSeries={timeSeries} loading={loading} />
+          <WrLineChart timeSeries={timeSeries} loading={loading} />
           <WrChannelPerf channels={channelPerf} loading={loading} />
+          <WrRevenue spend={spend} offerMetrics={offerMetrics} loading={loading} />
         </div>
 
-        {/* Row 3: Leaderboards */}
+        {/* Row 3: Leaderboards + Buyer Demand */}
         <div className="wr-section-label">LEADERBOARDS</div>
         <div className="wr-warroom-lbs">
           <WrLeaderboard title="State" rows={stateLbRows} loading={loading} />
           <WrLeaderboard title="Market" rows={marketLbRows} loading={loading} />
           <WrLeaderboard title="Agent" rows={agentLbRows} loading={loading} />
           <WrLeaderboard title="Template" rows={templateLbRows} loading={loading} />
+          <WrBuyerDemand metrics={buyerMetrics} loading={loading} />
         </div>
 
-        {/* Row 4: Carrier + Numbers + Quality + Buyer */}
+        {/* Row 4: Carrier + Numbers + Quality */}
         <div className="wr-section-label">INFRASTRUCTURE + DEMAND</div>
         <div className="wr-warroom-row4">
           <WrCarrierIntel carriers={carrierPerf} loading={loading} />
           <WrNumbersHealth numbers={numberHealth} loading={loading} />
           <WrDataQuality quality={dataQuality} loading={loading} />
-          <WrBuyerDemand metrics={buyerMetrics} loading={loading} />
         </div>
       </div>
     </div>
@@ -1351,7 +1469,7 @@ interface MetricsWarRoomProps {
   paneWidth: ViewWidthPercent
 }
 
-export function MetricsWarRoom({ layoutMode, paneWidth }: MetricsWarRoomProps) {
+export function MetricsWarRoom({ layoutMode }: MetricsWarRoomProps) {
   const [filters, setFilters] = useState<KpiFilters>({ timeRange: 'last_7_days', channel: 'all' })
   const [selectedState, setSelectedState] = useState<string | null>(null)
 
@@ -1370,22 +1488,8 @@ export function MetricsWarRoom({ layoutMode, paneWidth }: MetricsWarRoomProps) {
     setSelectedState(abbr || null)
   }, [])
 
-  if (import.meta.env.DEV) {
-    console.log('[metrics-war-room]', {
-      widthMode: paneWidth,
-      workspaceWidth: paneWidth,
-      summary: data.summary,
-      stateCount: data.statePerf.length,
-      templateCount: data.templatePerf.length,
-      agentCount: data.agentPerf.length,
-      carrierCount: data.carrierPerf.length,
-    })
-  }
-
   return (
     <div style={{ position: 'relative', flex: '1 1 0', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-      <WrDevBadge widthMode={paneWidth} />
-
       {layoutMode === 'compact' && (
         <MetricsRail25
           summary={data.summary}

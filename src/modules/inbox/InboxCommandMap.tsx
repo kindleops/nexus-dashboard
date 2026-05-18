@@ -39,7 +39,6 @@ import {
   type CensusOverlayLegend,
   type CensusOverlayMetric,
 } from '../../lib/map/censusOverlayUtils'
-import './seller-intelligence-card.css'
 
 const DARK_MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
 const CARTO_GLYPHS_URL = 'https://basemaps.cartocdn.com/gl/positron-gl-style/fonts/{fontstack}/{range}.pbf'
@@ -1360,10 +1359,10 @@ const mapCardThemeVariants: Record<MapStyleMode, Record<string, string>> = {
 const cardThemeStyleAttr = (styleMode: MapStyleMode): string => Object.entries(mapCardThemeVariants[styleMode]).map(([key, value]) => `${key}:${value}`).join(';')
 
 const sellerCardMaxWidthForLayout = (layoutMode: ViewLayoutMode): string => {
-  if (layoutMode === 'compact') return '304px'
-  if (layoutMode === 'medium') return '336px'
-  if (layoutMode === 'expanded') return '360px'
-  return '380px'
+  if (layoutMode === 'compact') return '360px'
+  if (layoutMode === 'medium') return '392px'
+  if (layoutMode === 'expanded') return '420px'
+  return '440px'
 }
 
 const buildHoverCardMarkup = (record: Record<string, unknown>, layoutMode: ViewLayoutMode): string =>
@@ -2173,85 +2172,21 @@ const MiniThreadPopup = ({
   onOpenDealIntelligence?: () => void
   layoutMode: ViewLayoutMode
 }) => (
-  <article
-    className={cls('nx-icm-thread', `is-layout-${layoutMode}`)}
-    onClick={(event) => event.stopPropagation()}
-  >
-    <div className="nx-icm-thread__flip-shell">
-      <header className="nx-icm-thread__header">
-        <div className="nx-icm-thread__header-main">
-          <p className="nx-icm-thread__eyebrow"><span className="nx-icm-thread__live-dot" />Live SMS</p>
-          <div className="nx-icm-thread__identity">
-            <div className="nx-icm-thread__thumb">
-              {thread?.propertyAddress ? <img src={buildStreetViewUrl(thread.propertyAddress) || ''} alt={thread.propertyAddress} loading="lazy" /> : <span>SMS</span>}
-            </div>
-            <div className="nx-icm-thread__identity-copy">
-              <h4>{thread?.ownerName || 'Unknown Seller'}</h4>
-              <span>{thread?.propertyAddress || thread?.subject || 'Property Unknown'}</span>
-            </div>
-          </div>
-        </div>
-        <div className="nx-icm-thread__header-actions">
-          {onOpenDealIntelligence ? (
-            <button type="button" onClick={onOpenDealIntelligence} aria-label="Open deal intelligence">
-              Brief
-            </button>
-          ) : null}
-          <button type="button" onClick={onClose} aria-label="Close mini SMS view">
-            ×
-          </button>
-        </div>
-      </header>
-      <div className="nx-icm-thread__meta">
-        <small>{String(thread?.conversationStage || '').replace(/_/g, ' ') || 'Unknown stage'}</small>
-      </div>
-      <div className="nx-icm-thread__messages">
-        {loading && <div className="nx-icm-thread__empty">Syncing conversation…</div>}
-        {!loading && messages.length === 0 && <div className="nx-icm-thread__empty">No messages yet.</div>}
-        {messages.map((message, index) => {
-          const currentDate = new Date(message.createdAt || message.timelineAt || '')
-          const previous = messages[index - 1]
-          const previousDate = previous ? new Date(previous.createdAt || previous.timelineAt || '') : null
-          const showTodayDivider = index === 0 || !previousDate || currentDate.toDateString() !== previousDate.toDateString()
-          const isToday = currentDate.toDateString() === new Date().toDateString()
-          return (
-            <div key={message.id} className="nx-icm-thread__message-group">
-              {showTodayDivider && (
-                <div className="nx-icm-thread__day-divider">
-                  <span>{isToday ? 'Today' : currentDate.toLocaleDateString()}</span>
-                </div>
-              )}
-              <article className={cls('nx-icm-thread__bubble', message.direction === 'outbound' && 'is-outbound')}>
-                <p>{message.body || 'Not available'}</p>
-                <small>
-                  {message.createdAt || message.timelineAt || ''}
-                  {message.direction === 'outbound' && message.deliveryStatus ? ` · ${message.deliveryStatus}` : ''}
-                </small>
-              </article>
-            </div>
-          )
-        })}
-      </div>
-      <form
-        className="nx-icm-thread__composer"
-        onSubmit={(event) => {
-          event.preventDefault()
-          if (!draftText.trim() || disabled) return
-          onSend()
-        }}
-      >
-        <input
-          value={draftText}
-          onChange={(event) => onDraftChange(event.target.value)}
-          placeholder={disabled ? 'Messaging disabled' : 'Type your message…'}
-          disabled={disabled}
-        />
-        <button type="submit" disabled={!draftText.trim() || disabled} aria-label="Send quick reply">
-          Send
-        </button>
-      </form>
-    </div>
-  </article>
+  <div onClick={(event) => event.stopPropagation()}>
+    <SellerIntelligenceCard
+      record={thread as Record<string, unknown> | null}
+      layoutMode={layoutMode}
+      variant="selected"
+      messages={messages}
+      loading={loading}
+      draftText={draftText}
+      disabled={disabled}
+      onDraftChange={onDraftChange}
+      onSend={onSend}
+      onClose={onClose}
+      onOpenDealIntelligence={onOpenDealIntelligence}
+    />
+  </div>
 )
 
 interface Props {
