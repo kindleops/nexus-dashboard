@@ -297,7 +297,7 @@ export default function InboxPage() {
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null)
   const [activeContext, setActiveContextState] = useState<ActiveInboxContext>({ sourceView: 'inbox' })
   const [stageFilter, setStageFilter] = useState<InboxStageSelectValue>('all_stages')
-  const [viewFilter, setViewFilter] = useState<InboxViewSelectValue>('priority')
+  const [viewFilter, setViewFilter] = useState<InboxViewSelectValue>('all_messages' as any)
   const [savedPreset, setSavedPreset] = useState<InboxSavedFilterPreset>('my_priority')
   const [advancedFilters, setAdvancedFilters] = useState<InboxAdvancedFilters>({ outOfStateOwner: 'all' })
   const [rightViewFilter, setRightViewFilter] = useState<InboxViewSelectValue>('new_replies')

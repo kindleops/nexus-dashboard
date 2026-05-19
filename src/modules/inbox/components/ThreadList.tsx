@@ -59,10 +59,18 @@ export const ThreadList = memo(({
 
   const filtered = useMemo(() => {
     return threads.filter(t => {
-      const matchTab = workflowTab === 'all' || (t.inboxStatus as any) === workflowTab
+      let matchTab = false
+      if (workflowTab === 'all') matchTab = true
+      else if (workflowTab === 'priority') matchTab = Boolean(t.priority === 'urgent' || t.priority === 'high' || t.inboxStatus === 'new_reply' || t.isHotLead)
+      else if (workflowTab === 'needs_response') matchTab = t.inboxStatus === 'new_reply' || t.inboxStatus === 'needs_review' || t.unreadCount > 0 || (t.unread as unknown as boolean)
+      else if (workflowTab === 'sent') matchTab = t.inboxStatus === 'waiting' || t.latestDirection === 'outbound' || t.lastDirection === 'outbound'
+      else matchTab = (t.inboxStatus as any) === workflowTab
+
       const matchSearch = !searchQuery || 
-        t.ownerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        t.subject.toLowerCase().includes(searchQuery.toLowerCase())
+        t.ownerName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        t.subject?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        t.preview?.toLowerCase().includes(searchQuery.toLowerCase())
+      
       return matchTab && matchSearch
     })
   }, [threads, workflowTab, searchQuery])

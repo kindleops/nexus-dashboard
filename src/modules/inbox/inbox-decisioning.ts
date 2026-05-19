@@ -303,7 +303,8 @@ const inferConversationStatus = (
   if (lastMessageDirection === 'inbound' && unread) return 'new_reply'
   if (nextFollowUpAt && new Date(nextFollowUpAt).getTime() <= now.getTime()) return 'follow_up_due'
   if (lower(get(thread, 'status', 'thread_status')) === 'waiting_on_seller') return 'waiting_on_seller'
-  if (lastMessageDirection === 'outbound' && nextFollowUpAt && new Date(nextFollowUpAt).getTime() > now.getTime()) return 'waiting_on_seller'
+  if (lastMessageDirection === 'outbound') return 'waiting_on_seller' // Default all outbound without responses to waiting_on_seller
+  if (lastMessageDirection === 'inbound' && !unread) return 'active'
   return 'active'
 }
 
@@ -469,17 +470,12 @@ export const isHotLeadDecision = (decision: ConversationDecision): boolean =>
 
 export const sortThreadsByDecision = (
   threads: InboxWorkflowThread[],
-  decisions: Map<string, ConversationDecision>,
+  _decisions: Map<string, ConversationDecision>,
 ): InboxWorkflowThread[] => {
   return [...threads].sort((a, b) => {
-    const da = decisions.get(a.id)
-    const db = decisions.get(b.id)
-    const unreadDelta = Number(Boolean(db?.unread)) - Number(Boolean(da?.unread))
-    if (unreadDelta !== 0) return unreadDelta
-    const priorityDelta = (db?.priority_score ?? 0) - (da?.priority_score ?? 0)
-    if (priorityDelta !== 0) return priorityDelta
-    const timeA = new Date(a.lastMessageAt || a.lastMessageIso || 0).getTime()
-    const timeB = new Date(b.lastMessageAt || b.lastMessageIso || 0).getTime()
+    // Strict chronological sorting as per requirements
+    const timeA = new Date(a.lastMessageAt || (a as any).lastMessageIso || a.updatedAt || 0).getTime()
+    const timeB = new Date(b.lastMessageAt || (b as any).lastMessageIso || b.updatedAt || 0).getTime()
     return timeB - timeA
   })
 }

@@ -151,7 +151,7 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
       .limit(3000),
     supabase
       .from('message_events')
-      .select('id,queue_id,property_id,thread_key,provider_message_sid,textgrid_message_id,created_at,delivered_at,delivery_status,event_type')
+      .select('id,queue_id,property_id,thread_key,provider_message_sid,created_at,delivered_at,delivery_status,event_type')
       .order('created_at', { ascending: false })
       .limit(5000),
   ])
@@ -222,7 +222,7 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
     const textgridMessageId =
       asString(getFirst(row, ['textgrid_message_id']), '') ||
       asString(getFirst(metadata, ['textgrid_message_id']), '') ||
-      asString(getFirst(linkedEvent ?? {}, ['textgrid_message_id']), '') ||
+      asString(getFirst(linkedEvent ?? {}, ['provider_message_sid', 'provider_message_id']), '') ||
       null
 
     // Tactical Intelligence Extraction
