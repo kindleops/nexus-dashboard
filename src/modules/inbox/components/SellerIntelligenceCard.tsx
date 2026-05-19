@@ -392,7 +392,7 @@ export function SellerIntelligenceCard({
     'displayName',
     'prospect_name',
     'contact_name',
-  ])) || 'Owner not resolved'
+  ])) || 'Unknown Seller'
   const address = normalize(firstDefined(record, [
     'property_address_full',
     'propertyAddressFull',
@@ -400,7 +400,7 @@ export function SellerIntelligenceCard({
     'propertyAddress',
     'address',
     'situs_address',
-  ])) || 'Address not resolved'
+  ])) || 'Property Unknown'
   const ownerType = deriveOwnerType(record)
   const propertyType = titleize(normalize(firstDefined(record, ['property_type', 'propertyType', 'property_class', 'propertyClass'])) || '—')
   const imageUrl = getBestPropertyImage(record)

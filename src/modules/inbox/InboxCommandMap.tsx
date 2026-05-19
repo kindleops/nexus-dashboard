@@ -646,21 +646,25 @@ const resolveSellerPinDisplayName = (record: Partial<CommandMapSellerPin>): stri
   text(record.seller_display_name)
   || text(record.owner_display_name)
   || text(record.owner_name)
+  || text((record as Record<string, unknown>).prospect_name as string)
+  || text((record as Record<string, unknown>).contact_name as string)
   || text(record.entity_name)
   || joinName((record as Record<string, unknown>).first_name as string | null | undefined, (record as Record<string, unknown>).last_name as string | null | undefined)
   || text(record.seller_name)
-  || 'Owner not resolved'
+  || 'Unknown Seller'
 )
 
 const resolveSellerPinAddress = (record: Partial<CommandMapSellerPin>): string => (
   text(record.property_address_full)
   || text(record.property_address)
+  || text((record as Record<string, unknown>).address as string)
+  || text((record as Record<string, unknown>).situs_address as string)
   || [
     text(record.property_address_city),
     text(record.property_address_state),
     text(record.property_address_zip),
   ].filter(Boolean).join(', ').trim()
-  || 'Address not resolved'
+  || 'Property Unknown'
 )
 
 const needsSellerPinHydration = (pin: Partial<CommandMapSellerPin>): boolean => {

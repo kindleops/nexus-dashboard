@@ -99,7 +99,7 @@ async function fetchAllPins() {
     if (error) throw error
     if (!data || data.length === 0) break
     rows.push(...data)
-    if (data.length < pageSize) break
+    if (data.length < pageSize || from >= 10000) break
     from += pageSize
   }
 
