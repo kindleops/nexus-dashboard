@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
 import { WatchBell } from '../../../shared/WatchBell'
@@ -81,6 +81,7 @@ const BUCKETS: BucketConfig[] = [
   { bucket: 'dnc_suppressed', view: 'suppressed', label: 'SUPPRESSED', icon: '🚫', description: 'Opt-out, wrong number, DNC, or legal suppression', accentClass: 'is-dnc', countKey: 'suppressed' },
   { bucket: 'dnc_suppressed', view: 'archived', label: 'DEAD', icon: '☠️', description: 'Threads archived, closed, or removed from active acquisition motion.', accentClass: 'is-cold', countKey: 'archived' },
   { bucket: 'needs_review', view: 'failed', label: 'FAILED SENDS', icon: '❌', description: 'Delivery failures, blocked sends, and queue exceptions.', accentClass: 'is-review', countKey: 'failed' },
+  { bucket: 'all_conversations', view: 'all_messages', label: 'ALL MESSAGES', icon: '📥', description: 'All active and historic conversations', accentClass: 'is-neutral', countKey: 'all' },
 ]
 
 const KPI_STRIP = [
@@ -279,6 +280,22 @@ export const InboxSidebar = ({
   const groupsRef = useRef<HTMLDivElement | null>(null)
   const loadingErrorMessage = formatLoadingError(loadingError)
 
+  const activeBucketConfig = useMemo(
+    () => BUCKETS.find((bucket) => bucket.view === activeViewFilter) ?? BUCKETS.find((bucket) => bucket.bucket === 'priority') ?? BUCKETS[0],
+    [activeViewFilter],
+  )
+
+  const [expandedViews, setExpandedViews] = useState<Set<string>>(new Set([activeBucketConfig.view]))
+
+  useEffect(() => {
+    setExpandedViews((prev) => {
+      if (prev.has(activeBucketConfig.view)) return prev
+      const next = new Set(prev)
+      next.add(activeBucketConfig.view)
+      return next
+    })
+  }, [activeBucketConfig.view])
+
   const searchableThreads = useMemo(
     () => threads.filter((thread) => !recentlyUpdatedThreadIds.has(`hidden:${thread.id}`) && matchesSearch(thread, searchQuery)),
     [threads, recentlyUpdatedThreadIds, searchQuery],
@@ -293,24 +310,25 @@ export const InboxSidebar = ({
   }, [searchableThreads])
 
   const bucketedThreads = useMemo(() => {
-    const grouped = Object.fromEntries(BUCKETS.map((bucket) => [bucket.bucket, [] as InboxWorkflowThread[]])) as Record<InboxBucket, InboxWorkflowThread[]>
+    const uniqueBuckets = Array.from(new Set(BUCKETS.map(b => b.bucket)))
+    const grouped = Object.fromEntries(uniqueBuckets.map((bucket) => [bucket, [] as InboxWorkflowThread[]])) as Record<InboxBucket, InboxWorkflowThread[]>
+    
     searchableThreads.forEach((thread) => {
       const decision = decisionMap.get(thread.id)
       if (!decision) return
-      BUCKETS.forEach((bucket) => {
-        if (matchesInboxBucket(thread, bucket.bucket, decision)) grouped[bucket.bucket].push(thread)
+      uniqueBuckets.forEach((bucket) => {
+        if (matchesInboxBucket(thread, bucket, decision)) grouped[bucket].push(thread)
       })
     })
-    BUCKETS.forEach((bucket) => {
-      grouped[bucket.bucket] = sortThreadsByDecision(grouped[bucket.bucket], decisionMap).slice(0, visibleThreadCount)
+    
+    uniqueBuckets.forEach((bucket) => {
+      grouped[bucket] = sortThreadsByDecision(grouped[bucket], decisionMap).slice(0, visibleThreadCount)
     })
+    
     return grouped
   }, [decisionMap, searchableThreads, visibleThreadCount])
 
-  const activeBucketConfig = useMemo(
-    () => BUCKETS.find((bucket) => bucket.view === activeViewFilter) ?? BUCKETS.find((bucket) => bucket.bucket === 'priority') ?? BUCKETS[0],
-    [activeViewFilter],
-  )
+
 
   const kpiValues = useMemo(() => ({
     new_replies: viewCounts.new_replies ?? viewCounts.needs_reply ?? bucketedThreads.new_replies.length,
@@ -448,24 +466,37 @@ export const InboxSidebar = ({
 
       <div className="nx-queue-groups" ref={groupsRef}>
         {BUCKETS.map((bucket) => {
-          const groupThreads = bucketedThreads[bucket.bucket]
+          const groupThreads = bucketedThreads[bucket.bucket] || []
           const count = numberOrNull(viewCounts[bucket.countKey]) ?? groupThreads.length
-          const expanded = activeBucketConfig.bucket === bucket.bucket
+          const isExpanded = expandedViews.has(bucket.view)
+          const isSelected = activeBucketConfig.view === bucket.view
+          
           return (
-            <section key={bucket.bucket} className={cls('nx-queue-group', bucket.accentClass, expanded && 'is-expanded')}>
+            <section key={bucket.view} className={cls('nx-queue-group', bucket.accentClass, isExpanded && 'is-expanded')}>
               <button
                 type="button"
-                className={cls('nx-queue-group__header', expanded && 'is-selected')}
-                onClick={() => onApplySavedPreset(viewToPreset(bucket.view))}
+                className={cls('nx-queue-group__header', isSelected && 'is-selected')}
+                onClick={() => {
+                  setExpandedViews((prev) => {
+                    const next = new Set(prev)
+                    if (next.has(bucket.view)) {
+                      next.delete(bucket.view)
+                    } else {
+                      next.add(bucket.view)
+                      onApplySavedPreset(viewToPreset(bucket.view))
+                    }
+                    return next
+                  })
+                }}
               >
                 <span className="nx-queue-group__accent" />
                 <span className="nx-queue-group__icon">{bucket.icon}</span>
                 <span className="nx-queue-group__label">{bucket.label}</span>
                 <span className="nx-queue-group__count">{formatCount(count)}</span>
-                <Icon name={expanded ? 'chevron-down' : 'chevron-right'} />
+                <Icon name={isExpanded ? 'chevron-down' : 'chevron-right'} />
               </button>
 
-              {expanded && (
+              {isExpanded && (
                 <div className="nx-queue-group__threads">
                   {groupThreads.length > 0 ? groupThreads.map((thread) => {
                     const decision = decisionMap.get(thread.id)

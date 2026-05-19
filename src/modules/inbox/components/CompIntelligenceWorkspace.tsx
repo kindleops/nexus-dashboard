@@ -50,7 +50,8 @@ interface CompCandidate {
   buyerName?: string | null
   buyerType?: string | null
   isCorporateBuyer?: boolean
-  isHedgeFundBuyer?: boolean
+  isInstitutionalBuyer?: boolean | null
+  institutionalMatchName?: string | null
 
   imageUrl?: string | null
   zillowUrl: string
@@ -293,11 +294,13 @@ export function CompIntelligenceWorkspace({ thread }: { thread: InboxWorkflowThr
     const zip = String(t?.zip || t?.property_zip || '')
 
     if (!propertyId) {
+      console.log('[CompIntelligenceWorkspace] No propertyId, returning early.', { subject, t });
       setComps([])
       return
     }
     
     setLoading(true)
+    console.log('[CompIntelligenceWorkspace] Loading comps for:', { propertyId, market, zip, hasCoords, radius, monthsBack, assetClass });
     
     const fetchPromise = hasCoords
       ? loadSubjectComps(propertyId, radius, monthsBack, 100, { assetClass })
@@ -343,6 +346,9 @@ export function CompIntelligenceWorkspace({ thread }: { thread: InboxWorkflowThr
           bedsPerUnit: (d as any).beds_per_unit || (d.total_bedrooms && d.units_count ? Math.round(d.total_bedrooms / d.units_count * 10) / 10 : null),
           imageUrl: d.streetview_image || d.satellite_image || null,
           zillowUrl: buildZillowUrl(d.property_address_full),
+          buyerType: d.buyer_type_label || null,
+          isInstitutionalBuyer: d.is_institutional_buyer || false,
+          institutionalMatchName: d.institutional_match_name || null,
           excluded: false,
           excludeReason: null,
           arvWeight: 0,
@@ -461,7 +467,7 @@ export function CompIntelligenceWorkspace({ thread }: { thread: InboxWorkflowThr
         <div className="ci-empty-state">
           <div className="ci-empty-state__icon">⌖</div>
           <strong>No Subject Selected</strong>
-          <p>Select a thread with an associated property to generate comp intelligence for that location.</p>
+          <p>Select a seller/property to load comp intelligence</p>
         </div>
       </div>
     )
@@ -570,7 +576,7 @@ export function CompIntelligenceWorkspace({ thread }: { thread: InboxWorkflowThr
           </div>
           <div className="ci-list">
             {finalComps.length === 0 && !loading && (
-              <div className="ci-list-status is-empty"><strong>No comps found</strong><p>Adjust filters to expand search.</p></div>
+              <div className="ci-list-status is-empty"><strong>No comps found for this property yet</strong><p>Adjust filters to expand search.</p></div>
             )}
             {sortedComps.map(comp => (
               <SoldCompRow
@@ -713,7 +719,7 @@ function SoldCompRow({ comp, isHovered, isOpen, onEnter, onLeave, onClick, onTog
             <div className="ci-metric"><strong>{comp.beds || '—'}/{comp.baths || '—'}</strong><span>Beds/Ba</span></div>
             <div className="ci-metric"><strong>{comp.sqft?.toLocaleString() || '—'}</strong><span>Sqft</span></div>
             <div className="ci-metric"><strong>{fmtPpsf(comp.ppsf)}</strong><span>PPSF</span></div>
-            <div className="ci-metric"><strong>{comp.yearBuilt || '—'}</strong><span>Built</span></div>
+            <div className="ci-metric"><strong>{comp.ppbd ? fmtK(comp.ppbd) : '—'}</strong><span>PPBD</span></div>
           </>
         )}
       </div>
@@ -723,6 +729,7 @@ function SoldCompRow({ comp, isHovered, isOpen, onEnter, onLeave, onClick, onTog
         {comp.percentOff !== null && <span className="ci-intel-badge is-discount">{Math.round(comp.percentOff * 100)}% Off Value</span>}
         {comp.dealGrade && <span className="ci-intel-badge is-grade">Grade {comp.dealGrade}</span>}
         {comp.condition && <span className="ci-intel-badge">Cond: {comp.condition}</span>}
+        {comp.isInstitutionalBuyer && <span className="ci-intel-badge is-institutional">Inst. Buyer: {comp.institutionalMatchName || comp.buyerType}</span>}
       </div>
 
       <div className="ci-comp-row__actions" onClick={e => e.stopPropagation()}>

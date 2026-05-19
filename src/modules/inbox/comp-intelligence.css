@@ -338,6 +338,7 @@
 .ci-intel-badge { font-size: 9px; font-weight: 800; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); padding: 3px 8px; border-radius: 99px; color: rgba(130, 155, 200, 0.7); }
 .ci-intel-badge.is-weight { border-color: rgba(72, 138, 236, 0.3); color: #488ae0; }
 .ci-intel-badge.is-discount { background: rgba(52, 211, 153, 0.08); color: #34d399; }
+.ci-intel-badge.is-institutional { background: rgba(167, 139, 250, 0.08); color: #c084fc; border-color: rgba(167, 139, 250, 0.2); }
 
 .ci-comp-row__actions { display: flex; gap: 8px; margin-top: 18px; }
 .ci-action-btn { flex: 1; padding: 8px; border-radius: 8px; font-size: 11px; font-weight: 800; cursor: pointer; transition: all 0.15s; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.03); color: rgba(130, 155, 200, 0.7); }

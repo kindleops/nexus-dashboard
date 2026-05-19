@@ -258,7 +258,21 @@ export const loadSubjectComps = async (
     return []
   }
   
-  let results = (data as RecentSoldComp[]).map(enrichSoldComp)
+  const mappedData = (data as any[]).map(d => ({
+    ...d,
+    property_address_full: d.property_address_full || d.address,
+    property_address_city: d.property_address_city || d.city,
+    property_address_state: d.property_address_state || d.state,
+    property_address_zip: d.property_address_zip || d.zip,
+    building_square_feet: d.building_square_feet || d.sqft,
+    total_bedrooms: d.total_bedrooms || d.beds,
+    total_baths: d.total_baths || d.baths,
+    normalized_asset_class: d.normalized_asset_class || d.asset_class,
+    streetview_image: d.streetview_image || null,
+    satellite_image: d.satellite_image || null,
+  })) as RecentSoldComp[]
+
+  let results = mappedData.map(enrichSoldComp)
   
   // Apply additional frontend filters if they are not handled by the RPC yet
   if (filters?.assetClass) {
