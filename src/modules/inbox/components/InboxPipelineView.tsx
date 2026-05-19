@@ -262,7 +262,7 @@ export function InboxPipelineView({
 }: InboxPipelineViewProps) {
   const [query,          setQuery]          = useState('')
   const [groupBy,        setGroupBy]        = useState<GroupByMode>('stage')
-  const [sortMode,       setSortMode]       = useState<SortMode>('priority')
+  const [sortMode,       setSortMode]       = useState<SortMode>('recent')
   const [hotOnly,        setHotOnly]        = useState(false)
   const [followUpOnly,   setFollowUpOnly]   = useState(false)
   const [automationOnly, setAutomationOnly] = useState(false)
