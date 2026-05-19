@@ -121,6 +121,8 @@ export interface QueueModel {
   safeCapacityRemaining: number
   optOutRiskCount: number
   apiPressureLevel: 'low' | 'medium' | 'high'
+  sendEngine: string
+  engineMode: 'proxy' | 'disabled' | 'dry-run only'
 }
 
 export interface QueueFilters {

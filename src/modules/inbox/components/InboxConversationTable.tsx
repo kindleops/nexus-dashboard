@@ -28,6 +28,7 @@ interface InboxConversationTableProps {
 
 type LocalStatusFilter = 'all' | 'unread' | 'hot' | 'suppressed'
 type LocalReplyFilter = 'all' | 'needs_reply' | 'waiting' | 'follow_up_due'
+type LocalContactFilter = 'all' | 'uncontacted' | 'contacted' | 'has_conversation' | 'has_queue' | 'has_message'
 
 const sorters: Record<ConversationTableSort, (a: RowModel, b: RowModel) => number> = {
   last_activity_desc: (a, b) => b.lastActivityMs - a.lastActivityMs,
@@ -81,6 +82,7 @@ export const InboxConversationTable = memo(({
   const [statusFilter, setStatusFilter] = useState<LocalStatusFilter>('all')
   const [replyFilter, setReplyFilter] = useState<LocalReplyFilter>('all')
   const [marketFilter, setMarketFilter] = useState<string>('all')
+  const [contactFilter, setContactFilter] = useState<LocalContactFilter>('all')
 
   const rows = useMemo(() => {
     return threads
@@ -137,10 +139,17 @@ export const InboxConversationTable = memo(({
         if (replyFilter === 'waiting' && row.thread.inboxStatus !== 'waiting') return false
         if (replyFilter === 'follow_up_due' && !row.decision.next_follow_up_at) return false
         if (marketFilter !== 'all' && row.market !== marketFilter) return false
+        
+        if (contactFilter === 'uncontacted' && !(row.thread as any).is_uncontacted) return false
+        if (contactFilter === 'contacted' && (row.thread as any).is_uncontacted) return false
+        if (contactFilter === 'has_conversation' && !(row.thread as any).has_conversation) return false
+        if (contactFilter === 'has_queue' && !(row.thread as any).has_queue) return false
+        if (contactFilter === 'has_message' && !(row.thread as any).has_message_event) return false
+        
         return true
       })
       .sort(sorters[sort])
-  }, [marketFilter, query, replyFilter, sort, statusFilter, threads])
+  }, [marketFilter, query, replyFilter, sort, statusFilter, threads, contactFilter])
 
   const markets = useMemo(
     () => Array.from(new Set(threads.map((thread) => resolveThreadMarketBadge(thread) || 'Market Unknown'))).sort(),
@@ -155,6 +164,7 @@ export const InboxConversationTable = memo(({
       <span className="nx-table-pill is-auto">{row.thread.inboxStatus.replace(/_/g, ' ')}</span>
       <span className="nx-table-pill is-temp">{row.priorityLabel}</span>
       {row.isHot && <span className="nx-table-pill is-hot">Hot</span>}
+      {(row.thread as any).is_uncontacted && <span className="nx-table-pill is-cold">Uncontacted</span>}
       {row.isSuppressed && <span className="nx-table-pill is-suppressed">Suppressed</span>}
       {row.isUnread && <span className="nx-table-pill is-unread">Unread</span>}
     </div>
@@ -169,6 +179,14 @@ export const InboxConversationTable = memo(({
         className="nx-inbox-list-toolbar__search"
         placeholder="Search seller, phone, address, message, market…"
       />
+      <select value={contactFilter} onChange={(event) => setContactFilter(event.target.value as LocalContactFilter)}>
+        <option value="all">Contact Level</option>
+        <option value="uncontacted">Uncontacted Only</option>
+        <option value="contacted">Contacted Only</option>
+        <option value="has_conversation">Has Conversation</option>
+        <option value="has_queue">In Queue</option>
+        <option value="has_message">Has Events</option>
+      </select>
       <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as LocalStatusFilter)}>
         <option value="all">All Status</option>
         <option value="unread">Unread</option>
@@ -200,6 +218,7 @@ export const InboxConversationTable = memo(({
           setStatusFilter('all')
           setReplyFilter('all')
           setMarketFilter('all')
+          setContactFilter('all')
         }}>
           Clear
         </button>

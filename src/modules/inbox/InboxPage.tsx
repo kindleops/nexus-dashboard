@@ -1,7 +1,8 @@
-import { useState, useMemo, useEffect, useCallback, useRef, useDeferredValue } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { pushRoutePath } from '../../app/router'
 import { useInboxData, toWorkflowThread } from './inbox.adapter'
+import './inbox-universal.css'
 import {
   updateThreadStage,
   updateThreadStatus,
@@ -67,7 +68,7 @@ import { InboxCalendarView } from './components/InboxCalendarView'
 import { MetricsWarRoom } from './components/MetricsWarRoom'
 import type { TemplateActionPayload } from './components/TemplatePopover'
 import { InboxActivityPanel } from './components/InboxActivityPanel'
-import { InboxCommandMap } from './InboxCommandMap'
+import { InboxCommandMap, type MapStyleMode } from './InboxCommandMap'
 import { InboxUtilityDrawer, MapDossierDrawer } from './components/InboxUtilityDrawer'
 import { LiveCopilotChat } from '../copilot/components/LiveCopilotChat'
 import { AdvancedFiltersPopover } from './components/AdvancedFiltersPopover'
@@ -126,6 +127,8 @@ import './inbox-rebuild.css'
 import './inbox-polish.css'
 import './buyer-intel-upgrade.css'
 import './copilot/copilot.css'
+import { GLOBAL_COMMAND_ACTION_EVENT, GLOBAL_COMMAND_CONTEXT_EVENT, GLOBAL_COMMAND_OPEN_EVENT, type CommandResult } from '../command-center/command.types'
+import { useInboxTopSearch } from '../command-center/useInboxTopSearch'
 
 const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
@@ -280,7 +283,15 @@ const computeWorkspaceWidths = (
 }
 
 export default function InboxPage() {
-  const { data, loading: dataLoading, refresh: refreshInbox, loadMore, recentlyUpdatedThreadIds } = useInboxData()
+  const { 
+    data, 
+    loading: dataLoading, 
+    refresh: refreshInbox, 
+    loadMore, 
+    recentlyUpdatedThreadIds,
+    sourceMode,
+    setSourceMode
+  } = useInboxData()
   const DEV = Boolean(import.meta.env.DEV)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null)
@@ -296,6 +307,7 @@ export default function InboxPage() {
   const [tableSort, setTableSort] = useState<ConversationTableSort>('last_activity_desc')
   const [tableDensity, setTableDensity] = useState<TableDensityMode>('compact')
   const [searchQuery, setSearchQuery] = useState('')
+  const [topSearchQuery, setTopSearchQuery] = useState('')
   const [buyerFilters, setBuyerFilters] = useState<BuyerMapFilters>(defaultBuyerMapFilters)
   const [selectedBuyerKey, setSelectedBuyerKey] = useState<string | null>(null)
   const [draftText, setDraftText] = useState('')
@@ -303,6 +315,8 @@ export default function InboxPage() {
   const [pendingMessagesByThread, setPendingMessagesByThread] = useState<Record<string, ThreadMessage[]>>({})
   const [visibleThreadCount, setVisibleThreadCount] = useState(1000)
   const [mapSourceMode, setMapSourceMode] = useState<MapSourceMode>(defaultMapSourceMode)
+  const [commandMapTheme, setCommandMapTheme] = useState<MapStyleMode>('dark_ops')
+  const [commandMapMarket, setCommandMapMarket] = useState('')
 
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [threadContext, setThreadContext] = useState<ThreadContext | null>(null)
@@ -337,8 +351,6 @@ export default function InboxPage() {
   const [activityFeed, setActivityFeed] = useState<InboxActivityEvent[]>([])
   const [autonomyControls, setAutonomyControls] = useState<AutonomyControlState>(defaultAutonomyControlState)
   const messageCacheRef = useRef<Record<string, ThreadMessage[]>>({})
-  const deferredSearchQuery = useDeferredValue(searchQuery)
-
   const rawThreads = useMemo(() => (data.threads ?? []).map(toWorkflowThread), [data.threads])
   const threads = useMemo(() => {
     return rawThreads.map(t => optimisticPatches[t.id] ? { ...t, ...optimisticPatches[t.id] } : t)
@@ -442,28 +454,45 @@ export default function InboxPage() {
       return Number.isFinite(ts) && ts >= startOfDay && String(thread.deliveryStatus || '').toLowerCase() === 'delivered'
     }).length
 
+    // Prefer server-side counts from inbox_category_counts view (full DB totals) over
+    // local counts (which only reflect the 200 loaded threads).
+    const srv = data.counts ?? {}
+    const sv = (key: string, fallback: number) => {
+      const v = srv[key]
+      return (typeof v === 'number' && v >= 0) ? v : fallback
+    }
+    const newReplies = sv('new_inbound', sv('needs_reply', local.new_replies))
+    const hotLeads   = sv('hot_leads',   sv('positive_hot', local.hot_leads))
+    const needsReview = sv('needs_review', sv('manual_review', local.needs_review))
+    const automated  = sv('automated',   sv('auto_replied', local.automated))
+    const coldNoResp = sv('cold_no_response', sv('missing_context', local.cold_no_response))
+    const suppressed = sv('dnc_opt_out', sv('suppressed', local.suppressed))
+    const allCount   = sv('all', data.allInboxCount ?? local.all)
+    const priorityCount = sv('priority', hotLeads + needsReview + newReplies)
+    const activeCount   = sv('active', automated + sv('outbound_active', local.active))
+
     return {
       ...local,
-      new_replies: local.new_replies,
-      priority: local.priority,
+      new_replies: newReplies,
+      priority: priorityCount,
       negotiating: local.negotiating,
       follow_up_due: local.follow_up_due,
       waiting_on_seller: local.waiting_on_seller,
-      automated: local.automated,
-      hot_leads: local.hot_leads,
-      needs_review: local.needs_review,
-      cold_no_response: local.cold_no_response,
-      suppressed: local.suppressed,
+      automated,
+      hot_leads: hotLeads,
+      needs_review: needsReview,
+      cold_no_response: coldNoResp,
+      suppressed,
       failed: local.failed,
-      all: local.all,
-      active: local.active,
-      my_priority: local.priority,
-      new_inbounds: local.new_replies,
+      all: allCount,
+      active: activeCount,
+      my_priority: priorityCount,
+      new_inbounds: newReplies,
       offer_needed: local.follow_up_due,
-      review_required: local.needs_review,
-      active_conversations: local.active,
+      review_required: needsReview,
+      active_conversations: activeCount,
       waiting_for_reply: local.waiting_on_seller,
-      all_threads: local.all,
+      all_threads: allCount,
       archived_leads: local.archived,
       wrong_numbers: local.wrong_number,
       sent_today: sentToday,
@@ -473,7 +502,7 @@ export default function InboxPage() {
       delivery_rate: safeRate(deliveredThreadsToday, outboundThreadsToday),
       queue_health: local.automated > 0 ? 'Healthy' : 'Watch',
     }
-  }, [decisions, threads])
+  }, [data.allInboxCount, data.counts, decisions, threads])
 
   const listStatCounts = useMemo(() => ([
     { label: 'New Replies', value: viewCounts.new_replies },
@@ -497,21 +526,22 @@ export default function InboxPage() {
     }, serverFilterOptions)
   ), [advancedFilters, searchQuery, serverFilterOptions, stageFilter, threads, viewFilter])
 
+  // Pipeline view shows all loaded threads (not just priority-filtered ones).
+  // Search and advanced filters still apply; view filter is intentionally skipped
+  // so the kanban represents the full seller universe, not just unread/high-score threads.
+  const pipelineThreads = useMemo(() => (
+    applyInboxFilters(threads, {
+      search: searchQuery,
+      stage: 'all_stages',
+      view: 'all_conversations',
+      advanced: advancedFilters,
+    }, { skipViewFilter: false, skipStageFilter: false })
+  ), [advancedFilters, searchQuery, threads])
+
   const handleLoadMore = useCallback(async () => {
     await loadMore()
     setVisibleThreadCount(prev => prev + 200)
   }, [loadMore])
-
-  const searchResults = useMemo(() => (
-    deferredSearchQuery.trim()
-      ? applyInboxFilters(threads, {
-          search: deferredSearchQuery,
-          stage: 'all_stages',
-          view: 'all',
-          advanced: {},
-        })
-      : []
-  ), [threads, deferredSearchQuery])
 
   const selected = useMemo(() => {
     if (selectedId) {
@@ -651,6 +681,22 @@ export default function InboxPage() {
     }
     return `${selectedWorkspaceViews.length} Views Active`
   }, [activeWorkspaceView, selectedWorkspaceViews])
+  const topSearchContext = useMemo(() => ({
+    routePath: '/inbox',
+    currentView: activeWorkspaceView,
+    selectedMarket: commandMapMarket || advancedFilters.market || selected?.market || null,
+    activeMapTheme: commandMapTheme,
+    activeFilters: {
+      market: advancedFilters.market || commandMapMarket || '',
+      sourceMode,
+      stageFilter,
+      viewFilter,
+    },
+  }), [activeWorkspaceView, advancedFilters.market, commandMapMarket, commandMapTheme, selected?.market, sourceMode, stageFilter, viewFilter])
+  const {
+    loading: topSearchLoading,
+    groupedResults: topSearchGroups,
+  } = useInboxTopSearch(topSearchQuery, topSearchContext)
 
   const autonomyModel = useMemo(
     () => buildAutonomousEngineModel({
@@ -801,6 +847,48 @@ export default function InboxPage() {
   const focusWorkspaceView = useCallback((view: InboxWorkspaceView) => {
     handleFocusWorkspaceView(view)
   }, [handleFocusWorkspaceView])
+
+  const openGlobalCommand = useCallback((initialQuery = '') => {
+    window.dispatchEvent(new CustomEvent(GLOBAL_COMMAND_OPEN_EVENT, { detail: { initialQuery } }))
+  }, [])
+
+  const handleExecuteTopSearchResult = useCallback((result: CommandResult) => {
+    if (result.route && result.route !== window.location.pathname) {
+      pushRoutePath(result.route)
+    }
+
+    const eventName = result.action?.eventName || GLOBAL_COMMAND_ACTION_EVENT
+    if (result.payload || result.action?.eventName) {
+      window.dispatchEvent(new CustomEvent(eventName, {
+        detail: {
+          ...result.payload,
+          route: result.route,
+          resultId: result.id,
+          resultType: result.type,
+        },
+      }))
+    }
+
+    setTopSearchQuery('')
+  }, [])
+
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent(GLOBAL_COMMAND_CONTEXT_EVENT, {
+      detail: {
+        routePath: '/inbox',
+        currentView: activeWorkspaceView,
+        selectedMarket: commandMapMarket || advancedFilters.market || selected?.market || null,
+        activeMapTheme: commandMapTheme,
+        activeFilters: {
+          searchQuery,
+          stageFilter,
+          viewFilter,
+          sourceMode,
+          market: advancedFilters.market || commandMapMarket || '',
+        },
+      },
+    }))
+  }, [activeWorkspaceView, advancedFilters.market, commandMapMarket, commandMapTheme, searchQuery, selected?.market, sourceMode, stageFilter, viewFilter])
 
   const setActiveContext = useCallback((nextContext: ActiveInboxContext, options?: SetActiveContextOptions) => {
     setActiveContextState((current) => ({ ...current, ...nextContext }))
@@ -1402,7 +1490,7 @@ export default function InboxPage() {
 
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault()
-        setCommandOpen(true)
+        openGlobalCommand()
         return
       }
 
@@ -1498,7 +1586,7 @@ export default function InboxPage() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [announceLayout, applySavedPreset, filtered, layoutState.activeOverlay, layoutState.mapMode, layoutState.leftPanelMode, layoutState.inboxMode, selected, setActiveOverlay])
+  }, [announceLayout, applySavedPreset, filtered, layoutState.activeOverlay, layoutState.mapMode, layoutState.leftPanelMode, layoutState.inboxMode, openGlobalCommand, selected, setActiveOverlay])
 
   const handleWorkflowMutation = useCallback(async (label: string, mutation: () => Promise<any>, options?: { action?: { label: string, onClick: () => void }, skipRefresh?: boolean }) => {
     try {
@@ -1553,6 +1641,15 @@ export default function InboxPage() {
       mutation = () => cancelQueueItem(queueId!, thread)
       optimistic = { inboxStatus: 'waiting' }
       // Additional logic to focus composer could go here
+    } else if (action === 'open_map') {
+      setSelectedWorkspaceViews(['command_map'])
+      return
+    } else if (action === 'open_property') {
+      handleOpenDealIntelligence(thread.id)
+      return
+    } else if (action === 'open_queue') {
+      setSelectedWorkspaceViews(['queue'])
+      return
     } else {
       switch (action) {
         case 'archive':
@@ -1696,6 +1793,95 @@ export default function InboxPage() {
     setSelectedThreadKey(thread?.threadKey || thread?.id || null)
     setLayoutState((current) => ({ ...current, selectedThreadId: id }))
   }, [setActiveContext, threads])
+
+  useEffect(() => {
+    const handleCommandAction = (event: Event) => {
+      const detail = (event as CustomEvent<Record<string, unknown>>).detail ?? {}
+      const kind = String(detail.kind || '')
+      const threadId = typeof detail.threadId === 'string' ? detail.threadId : null
+      const view = typeof detail.view === 'string' ? detail.view as InboxWorkspaceView : null
+      const sourceModeFromEvent = typeof detail.sourceMode === 'string' ? detail.sourceMode as 'all_sellers' | 'conversations' : null
+
+      if (kind === 'focus_workspace_view' && view) {
+        handleFocusWorkspaceView(view)
+        return
+      }
+      if (kind === 'focus_buyer') {
+        const buyerKey = typeof detail.buyerKey === 'string' ? detail.buyerKey : ''
+        if (!buyerKey) return
+        setSelectedBuyerKey(buyerKey)
+        handleFocusWorkspaceView('buyer_match')
+        return
+      }
+      if (kind === 'focus_queue_row') {
+        const queueId = typeof detail.queueId === 'string' ? detail.queueId : ''
+        if (!queueId) return
+        const queueItem = queueModel?.items.find((item) => item.queueId === queueId || item.id === queueId) ?? null
+        if (queueItem) {
+          setActiveContext(buildContextFromQueueItem(queueItem, 'queue'), { preserveCurrentViews: true })
+        } else {
+          setActiveContext({
+            queueId,
+            sourceView: 'queue',
+            intent: 'open_queue',
+          }, {
+            preserveCurrentViews: true,
+            focusView: 'queue',
+            addViewIfMissing: true,
+          })
+        }
+        handleFocusWorkspaceView('queue')
+        return
+      }
+      if (kind === 'focus_market') {
+        const market = typeof detail.market === 'string' ? detail.market : ''
+        if (!market) return
+        setAdvancedFilters((current) => ({ ...current, market }))
+        setCommandMapMarket(market)
+        handleFocusWorkspaceView('command_map')
+        return
+      }
+      if (kind === 'focus_thread' && threadId) {
+        if (view) handleFocusWorkspaceView(view)
+        handleSelect(threadId)
+        return
+      }
+      if (kind === 'set_inbox_source_mode' && sourceModeFromEvent) {
+        setSourceMode(sourceModeFromEvent)
+        return
+      }
+      if (kind === 'apply_inbox_view') {
+        const nextView = typeof detail.view === 'string' ? detail.view as InboxViewSelectValue : 'priority'
+        setViewFilter(nextView)
+        if (sourceModeFromEvent === 'all_sellers' || nextView === 'not_contacted') {
+          setSourceMode('all_sellers')
+        }
+        handleFocusWorkspaceView('thread')
+        return
+      }
+      if (kind === 'clear_inbox_filters') {
+        handleResetFilters()
+        return
+      }
+      if (kind === 'set_map_theme') {
+        const theme = typeof detail.theme === 'string' ? detail.theme as MapStyleMode : null
+        if (!theme) return
+        setCommandMapTheme(theme)
+        handleFocusWorkspaceView('command_map')
+        return
+      }
+      if (kind === 'queue_dry_run') {
+        handleFocusWorkspaceView('queue')
+        return
+      }
+      if (import.meta.env.DEV) {
+        console.warn('[InboxPage GlobalCommand] No local handler for action', detail)
+      }
+    }
+
+    window.addEventListener(GLOBAL_COMMAND_ACTION_EVENT, handleCommandAction as EventListener)
+    return () => window.removeEventListener(GLOBAL_COMMAND_ACTION_EVENT, handleCommandAction as EventListener)
+  }, [handleFocusWorkspaceView, handleResetFilters, handleSelect, queueModel?.items, setSourceMode, setActiveContext])
 
   const handleMapSellerContext = useCallback((context: {
     propertyId?: string
@@ -2297,6 +2483,8 @@ export default function InboxPage() {
         recentlyUpdatedThreadIds={recentlyUpdatedThreadIds}
         searchQuery={searchQuery}
         onSearchQueryChange={setSearchQuery}
+        sourceMode={sourceMode}
+        onSourceModeChange={setSourceMode}
         visibleThreadCount={visibleThreadCount}
         loadingError={data.liveFetchError}
         densityMode={paneMode === 'single' || paneWidth === '75' || paneWidth === '100' ? 'full' : 'compact'}
@@ -2362,6 +2550,11 @@ export default function InboxPage() {
               onBuyerFiltersChange={(patch) => setBuyerFilters((current) => ({ ...current, ...patch }))}
               selectedBuyerKey={selectedBuyerKey}
               onSelectBuyerKey={setSelectedBuyerKey}
+              initialMapStyleMode={commandMapTheme}
+              onStateChange={(state) => {
+                setCommandMapTheme(state.mapStyleMode)
+                setCommandMapMarket(state.filters.market || '')
+              }}
               fullHeight={paneMode === 'single'}
               layoutMode={layoutMode}
             />
@@ -2391,7 +2584,7 @@ export default function InboxPage() {
     if (view === 'pipeline') {
       return (
         <InboxPipelineView
-          threads={filtered}
+          threads={pipelineThreads}
           selectedId={selected?.id ?? null}
           selectedThread={selected}
           layoutMode={layoutMode}
@@ -2488,10 +2681,12 @@ export default function InboxPage() {
       )}
     >
       <NexusTopBar
-        searchQuery={searchQuery}
-        onSearchQueryChange={setSearchQuery}
-        searchResults={searchResults}
         onSelectSearchResult={handleSelect}
+        topSearchQuery={topSearchQuery}
+        onTopSearchQueryChange={setTopSearchQuery}
+        topSearchGroups={topSearchGroups}
+        topSearchLoading={topSearchLoading}
+        onExecuteTopSearchResult={handleExecuteTopSearchResult}
         selectedThread={selected}
         isSuppressed={selectedSuppressed}
         notificationCount={data.unreadCount}
@@ -2572,6 +2767,8 @@ export default function InboxPage() {
             recentlyUpdatedThreadIds={recentlyUpdatedThreadIds}
             searchQuery={searchQuery}
             onSearchQueryChange={setSearchQuery}
+            sourceMode={sourceMode}
+            onSourceModeChange={setSourceMode}
             visibleThreadCount={visibleThreadCount}
             loadingError={data.liveFetchError}
             densityMode={leftPanelMode === 'full' ? 'full' : 'compact'}
@@ -2595,6 +2792,8 @@ export default function InboxPage() {
             recentlyUpdatedThreadIds={recentlyUpdatedThreadIds}
             searchQuery={searchQuery}
             onSearchQueryChange={setSearchQuery}
+            sourceMode={sourceMode}
+            onSourceModeChange={setSourceMode}
             visibleThreadCount={visibleThreadCount}
             loadingError={data.liveFetchError}
             densityMode="compact"
@@ -2716,6 +2915,11 @@ export default function InboxPage() {
               onBuyerFiltersChange={(patch) => setBuyerFilters((current) => ({ ...current, ...patch }))}
               selectedBuyerKey={selectedBuyerKey}
               onSelectBuyerKey={setSelectedBuyerKey}
+              initialMapStyleMode={commandMapTheme}
+              onStateChange={(state) => {
+                setCommandMapTheme(state.mapStyleMode)
+                setCommandMapMarket(state.filters.market || '')
+              }}
             />
           </div>
         </aside>

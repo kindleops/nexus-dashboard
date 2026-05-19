@@ -170,6 +170,8 @@ export const adaptQueueModel = (): QueueModel => {
     safeCapacityRemaining: Math.floor(Math.random() * 500) + 200,
     optOutRiskCount: Math.floor(Math.random() * 8) + 2,
     apiPressureLevel: ['low', 'medium', 'high'][Math.floor(Math.random() * 3)] as any,
+    sendEngine: 'real-estate-automation',
+    engineMode: 'proxy',
   }
 }
 

@@ -10,6 +10,7 @@ import {
   type InboxSavedFilterPreset,
   type InboxViewSelectValue,
 } from '../inbox-ui-helpers'
+import type { InboxSourceMode } from '../../../lib/data/inboxData'
 import {
   buildConversationDecision,
   isHotLeadDecision,
@@ -52,11 +53,13 @@ interface InboxSidebarProps {
   visibleThreadCount?: number
   loadingError?: string | null
   densityMode?: 'full' | 'compact'
+  sourceMode?: InboxSourceMode
+  onSourceModeChange?: (mode: InboxSourceMode) => void
 }
 
 type BucketConfig = {
   bucket: InboxBucket
-  view: InboxViewSelectValue
+  view: InboxViewSelectValue | string
   label: string
   icon: string
   description: string
@@ -68,6 +71,9 @@ const BUCKETS: BucketConfig[] = [
   { bucket: 'new_replies', view: 'new_replies', label: 'NEW REPLIES', icon: '📨', description: 'Unread inbound replies that need attention now', accentClass: 'is-inbound', countKey: 'new_replies' },
   { bucket: 'priority', view: 'priority', label: 'PRIORITY', icon: '⚡', description: 'Unread, high-priority conversations', accentClass: 'is-hot', countKey: 'priority' },
   { bucket: 'priority', view: 'hot_leads', label: 'HOT LEADS', icon: '🔥', description: 'The warmest opportunities based on live signals and score.', accentClass: 'is-hot', countKey: 'hot_leads' },
+  { bucket: 'waiting_on_seller', view: 'not_contacted', label: 'NOT CONTACTED', icon: '🆕', description: 'Leads that have not been contacted yet', accentClass: 'is-cold', countKey: 'not_contacted' },
+  { bucket: 'waiting_on_seller', view: 'scheduled', label: 'SCHEDULED', icon: '📅', description: 'Messages scheduled for future delivery', accentClass: 'is-outbound', countKey: 'scheduled' },
+  { bucket: 'waiting_on_seller', view: 'queued', label: 'QUEUED', icon: '⏳', description: 'Messages in the active delivery queue', accentClass: 'is-outbound', countKey: 'queued' },
   { bucket: 'waiting_on_seller', view: 'waiting_on_seller', label: 'WAITING', icon: '⌛', description: 'Outbound sent, waiting for seller response', accentClass: 'is-inbound-all', countKey: 'waiting_on_seller' },
   { bucket: 'follow_up_due', view: 'follow_up_due', label: 'FOLLOW-UPS DUE', icon: '⏰', description: 'System-owned follow-ups due now', accentClass: 'is-outbound', countKey: 'follow_up_due' },
   { bucket: 'needs_review', view: 'needs_review', label: 'NEEDS REVIEW', icon: '🛡', description: 'Ambiguous, legal, hostile, or low-confidence threads', accentClass: 'is-review', countKey: 'needs_review' },
@@ -267,6 +273,8 @@ export const InboxSidebar = ({
   visibleThreadCount = 1000,
   loadingError,
   densityMode = 'compact',
+  sourceMode = 'conversations',
+  onSourceModeChange,
 }: InboxSidebarProps) => {
   const groupsRef = useRef<HTMLDivElement | null>(null)
   const loadingErrorMessage = formatLoadingError(loadingError)
@@ -330,6 +338,23 @@ export const InboxSidebar = ({
       <div className="nx-sidebar__top">
         <div className="nx-sidebar__title-row">
           <span className="nx-sidebar__app-title">ACQUISITIONS COMMAND CENTER</span>
+        </div>
+
+        <div className="nx-sidebar__source-toggle-row">
+          <button
+            type="button"
+            className={cls('nx-source-mode-btn', sourceMode === 'conversations' && 'is-active')}
+            onClick={() => onSourceModeChange?.('conversations')}
+          >
+            Conversations
+          </button>
+          <button
+            type="button"
+            className={cls('nx-source-mode-btn', sourceMode === 'all_sellers' && 'is-active')}
+            onClick={() => onSourceModeChange?.('all_sellers')}
+          >
+            All Sellers
+          </button>
         </div>
 
         <div className="nx-sidebar__label-row">
@@ -475,7 +500,7 @@ export const InboxSidebar = ({
   )
 }
 
-const viewToPreset = (view: InboxViewSelectValue): InboxSavedFilterPreset => {
+const viewToPreset = (view: InboxViewSelectValue | string): InboxSavedFilterPreset => {
   if (view === 'new_replies') return 'new_inbounds'
   if (view === 'priority') return 'my_priority'
   if (view === 'negotiating') return 'offer_needed'

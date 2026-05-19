@@ -376,10 +376,33 @@ export function SellerIntelligenceCard({
   if (!record) return null
 
   const densityMode = variant === 'hover' ? 'compact' : resolveDensityMode(layoutMode)
-  const sellerName = normalize(firstDefined(record, ['owner_display_name', 'ownerDisplayName', 'owner_full_name', 'owner_name', 'ownerName', 'seller_name', 'sellerName', 'display_name', 'displayName', 'prospect_name', 'contact_name'])) || 'Unknown Seller'
-  const address = normalize(firstDefined(record, ['property_address_full', 'propertyAddressFull', 'property_address', 'propertyAddress', 'address', 'situs_address'])) || 'Property Unknown'
+  const sellerName = normalize(firstDefined(record, [
+    'seller_display_name',
+    'sellerDisplayName',
+    'owner_display_name',
+    'ownerDisplayName',
+    'owner_full_name',
+    'owner_name',
+    'ownerName',
+    'entity_name',
+    'entityName',
+    'seller_name',
+    'sellerName',
+    'display_name',
+    'displayName',
+    'prospect_name',
+    'contact_name',
+  ])) || 'Owner not resolved'
+  const address = normalize(firstDefined(record, [
+    'property_address_full',
+    'propertyAddressFull',
+    'property_address',
+    'propertyAddress',
+    'address',
+    'situs_address',
+  ])) || 'Address not resolved'
   const ownerType = deriveOwnerType(record)
-  const propertyType = titleize(normalize(firstDefined(record, ['property_type', 'propertyType', 'property_class', 'propertyClass'])) || 'Residential')
+  const propertyType = titleize(normalize(firstDefined(record, ['property_type', 'propertyType', 'property_class', 'propertyClass'])) || '—')
   const imageUrl = getBestPropertyImage(record)
   const pills = deriveSellerStatusPills(record, messages)
   const physicalSummary = buildCompactPhysicalSummary(record)

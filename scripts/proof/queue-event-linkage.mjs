@@ -49,8 +49,8 @@ function loadEnv() {
 }
 
 const env = loadEnv();
-const SUPABASE_URL = env.VITE_SUPABASE_URL || env.SUPABASE_URL;
-const SUPABASE_KEY = env.SUPABASE_SERVICE_ROLE_KEY || env.VITE_SUPABASE_ANON_KEY;
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || env.VITE_SUPABASE_URL || env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || env.SUPABASE_SERVICE_ROLE_KEY || env.VITE_SUPABASE_ANON_KEY;
 
 if (!SUPABASE_URL || !SUPABASE_KEY) {
   console.error('ERROR: Missing SUPABASE_URL / SUPABASE_KEY');
@@ -86,7 +86,8 @@ async function run() {
   const allQueueIds = sentRows.map(r => r.id);
 
   // Supabase .in() has a 1000-item limit per call — batch it
-  const BATCH = 500;
+  // Using smaller batch size (100) to avoid "URL too long" errors
+  const BATCH = 100;
   const linkedQueueIds = new Set();
   for (let i = 0; i < allQueueIds.length; i += BATCH) {
     const batch = allQueueIds.slice(i, i + BATCH);

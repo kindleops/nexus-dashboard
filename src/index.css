@@ -113,7 +113,7 @@
   --rail-width: 380px;
 
   color: var(--text-0);
-  background: var(--bg-0);
+  background: #000;
   font-family: var(--font-sans);
 }
 
@@ -135,7 +135,7 @@ html {
 
 body {
   margin: 0;
-  background: var(--bg-0);
+  background: #000;
   height: 100%;
   overflow: hidden;
   line-height: 1.5;

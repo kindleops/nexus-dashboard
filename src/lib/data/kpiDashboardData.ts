@@ -939,9 +939,9 @@ const REVENUE_ASSUMPTIONS = {
   aggressive: { contracts: 10, avgRevenue: 35000 },
 }
 
-export const loadSpendPerformance = async (filters: KpiFilters): Promise<SpendPerformance> => {
+export const loadSpendPerformance = async (filters: KpiFilters, preloadedSummary?: KpiSummary): Promise<SpendPerformance> => {
   try {
-    const summary = await loadKpiDashboardSummary(filters)
+    const summary = preloadedSummary ?? await loadKpiDashboardSummary(filters)
     const spend = summary.spendPeriod
     return {
       periodLabel: filters.timeRange,
@@ -1323,14 +1323,28 @@ export const loadNumberHealthAlerts = async (filters: KpiFilters): Promise<Numbe
 // loadKpiAlerts — derives AI-style recommendations from real data thresholds
 // ══════════════════════════════════════════════════════════════════════════════
 
-export const loadKpiAlerts = async (filters: KpiFilters): Promise<KpiAlert[]> => {
+export interface KpiAlertsInput {
+  states?: StatePerformance[]
+  templates?: TemplatePerformance[]
+  numbers?: TextgridNumberHealth[]
+  quality?: DataQualityMetrics
+}
+
+export const loadKpiAlerts = async (filters: KpiFilters, prefetched?: KpiAlertsInput): Promise<KpiAlert[]> => {
   try {
-    const [states, templates, numbers, quality] = await Promise.all([
-      loadStatePerformance(filters),
-      loadTemplatePerformance(filters),
-      loadTextgridNumberHealth(filters),
-      loadDataQualityMetrics(filters),
-    ])
+    const [states, templates, numbers, quality] = prefetched
+      ? [
+          prefetched.states  ?? await loadStatePerformance(filters),
+          prefetched.templates ?? await loadTemplatePerformance(filters),
+          prefetched.numbers ?? await loadTextgridNumberHealth(filters),
+          prefetched.quality ?? await loadDataQualityMetrics(filters),
+        ]
+      : await Promise.all([
+          loadStatePerformance(filters),
+          loadTemplatePerformance(filters),
+          loadTextgridNumberHealth(filters),
+          loadDataQualityMetrics(filters),
+        ])
 
     const alerts: KpiAlert[] = []
     let id = 0

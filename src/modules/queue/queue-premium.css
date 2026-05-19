@@ -1,21 +1,21 @@
 .nx-premium-queue {
-  --bg-main: #06080d;
-  --bg-panel: rgba(10, 14, 23, 0.82);
-  --bg-panel-solid: #0a0e17;
-  --bg-panel-elevated: #111827;
-  --border-subtle: rgba(255,255,255,0.06);
-  --border-strong: rgba(255,255,255,0.12);
-  --accent-blue: #007aff;
-  --accent-blue-2: #0051ff;
-  --accent-blue-soft: rgba(0, 122, 255, 0.12);
-  --accent-cyan-soft: rgba(91, 182, 255, 0.1);
-  --text-primary: #ffffff;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
-  --danger: #ff3b30;
-  --danger-soft: rgba(255,59,48,0.12);
-  --warning: #ffcc00;
-  --success: #34c759;
+  --bg-main:          var(--nx-bg,            #06080d);
+  --bg-panel:         var(--nx-panel-bg,      rgba(10, 14, 23, 0.82));
+  --bg-panel-solid:   var(--nx-card-bg,       #0a0e17);
+  --bg-panel-elevated: var(--nx-card-bg,      #111827);
+  --border-subtle:    var(--nx-border,        rgba(255,255,255,0.06));
+  --border-strong:    var(--nx-border-strong, rgba(255,255,255,0.12));
+  --accent-blue:      var(--nx-accent,        #007aff);
+  --accent-blue-2:    var(--nx-accent,        #0051ff);
+  --accent-blue-soft: var(--nx-accent-soft,   rgba(0, 122, 255, 0.12));
+  --accent-cyan-soft: var(--nx-accent-soft,   rgba(91, 182, 255, 0.1));
+  --text-primary:     var(--nx-text,          #ffffff);
+  --text-secondary:   var(--nx-text-muted,    #94a3b8);
+  --text-muted:       var(--nx-text-muted,    #64748b);
+  --danger:           var(--nx-danger,        #ff3b30);
+  --danger-soft:      rgba(255,59,48,0.12);
+  --warning:          var(--nx-warning,       #ffcc00);
+  --success:          var(--nx-success,       #34c759);
 
   width: 100%;
   height: 100vh;

@@ -18,7 +18,11 @@ export type CopilotInitiative = 'proactive' | 'balanced' | 'on-demand'
 export type CopilotVerbosity = 'concise' | 'detailed'
 export type CopilotReasoningDepth = 'minimal' | 'standard' | 'deep'
 export type CopilotVoiceMode = 'off' | 'text' | 'full'
-export type NexusTheme = 'dark-matter' | 'midnight-glass' | 'tactical-blue' | 'carbon-gold' | 'monochrome-ops' | 'infrared' | 'arctic-signal' | 'operator-black'
+export type NexusTheme =
+  // System-wide themes (aligned with map/global theme engine)
+  | 'dark' | 'satellite' | 'terrain' | 'red_ops' | 'matrix' | 'blueprint' | 'executive' | 'night_vision' | 'monochrome'
+  // Legacy themes kept for localStorage backward compatibility
+  | 'dark-matter' | 'midnight-glass' | 'tactical-blue' | 'carbon-gold' | 'monochrome-ops' | 'infrared' | 'arctic-signal' | 'operator-black'
 export type AccentPalette = 'cyan' | 'emerald' | 'amber' | 'violet' | 'rose' | 'ice'
 
 export interface NexusSettings {
@@ -119,6 +123,8 @@ export interface NexusSettings {
   // Theme
   nexusTheme: NexusTheme
   accentPalette: AccentPalette
+  // Resolved global theme attribute (set by applyThemeToDOM, matches data-nexus-theme)
+  resolvedThemeId?: string
 
   // Map advanced
   mapBrightness: number           // 0.5–1.5
@@ -205,7 +211,7 @@ export const DEFAULT_SETTINGS: NexusSettings = {
   copilotReasoningDepth: 'standard',
 
   // Theme
-  nexusTheme: 'dark-matter',
+  nexusTheme: 'dark',
   accentPalette: 'cyan',
 
   // Map advanced
@@ -297,6 +303,62 @@ export interface ThemeTokens {
 }
 
 export const THEME_PRESETS: Record<NexusTheme, ThemeTokens> = {
+  // ── New system-wide themes ─────────────────────────────────────────────
+  dark: {
+    id: 'dark', label: 'Dark',
+    bg: '#07101a', surface: '#0c1828', elevated: '#111f34',
+    border: 'rgba(98,215,255,0.10)', accent: '#63d7ff', accentGlow: 'rgba(99,215,255,0.22)',
+    textPrimary: '#eaf7ff', textSecondary: 'rgba(186,213,240,0.65)', textMuted: 'rgba(186,213,240,0.40)',
+  },
+  satellite: {
+    id: 'satellite', label: 'Satellite',
+    bg: '#0a0d11', surface: '#0e1316', elevated: '#14191e',
+    border: 'rgba(214,229,248,0.10)', accent: '#c8dcf2', accentGlow: 'rgba(229,237,248,0.18)',
+    textPrimary: '#f4f7fb', textSecondary: 'rgba(196,212,232,0.65)', textMuted: 'rgba(196,212,232,0.40)',
+  },
+  terrain: {
+    id: 'terrain', label: 'Terrain',
+    bg: '#0d1009', surface: '#131709', elevated: '#1b2010',
+    border: 'rgba(183,216,108,0.12)', accent: '#b7d86c', accentGlow: 'rgba(183,216,108,0.22)',
+    textPrimary: '#f6fee7', textSecondary: 'rgba(204,228,145,0.65)', textMuted: 'rgba(204,228,145,0.40)',
+  },
+  red_ops: {
+    id: 'red_ops', label: 'Red Ops',
+    bg: '#0e0608', surface: '#160a0d', elevated: '#200e12',
+    border: 'rgba(255,107,99,0.14)', accent: '#ff6b63', accentGlow: 'rgba(191,29,29,0.32)',
+    textPrimary: '#fff2ee', textSecondary: 'rgba(255,210,205,0.65)', textMuted: 'rgba(255,210,205,0.40)',
+  },
+  matrix: {
+    id: 'matrix', label: 'Matrix',
+    bg: '#020805', surface: '#040e09', elevated: '#071510',
+    border: 'rgba(0,255,136,0.12)', accent: '#00ff88', accentGlow: 'rgba(0,255,136,0.20)',
+    textPrimary: '#d8ffe8', textSecondary: 'rgba(114,255,178,0.65)', textMuted: 'rgba(114,255,178,0.40)',
+  },
+  blueprint: {
+    id: 'blueprint', label: 'Blueprint',
+    bg: '#061420', surface: '#091e2e', elevated: '#0e2a40',
+    border: 'rgba(105,215,255,0.12)', accent: '#69d7ff', accentGlow: 'rgba(29,120,170,0.26)',
+    textPrimary: '#dff8ff', textSecondary: 'rgba(154,234,255,0.65)', textMuted: 'rgba(154,234,255,0.40)',
+  },
+  executive: {
+    id: 'executive', label: 'Executive',
+    bg: '#0a0a06', surface: '#121009', elevated: '#1c180c',
+    border: 'rgba(216,180,80,0.10)', accent: '#d8b450', accentGlow: 'rgba(216,180,80,0.22)',
+    textPrimary: '#f0e8d8', textSecondary: 'rgba(240,220,180,0.65)', textMuted: 'rgba(240,220,180,0.40)',
+  },
+  night_vision: {
+    id: 'night_vision', label: 'Night Vision',
+    bg: '#06130f', surface: '#0a1c17', elevated: '#0f2820',
+    border: 'rgba(114,255,178,0.12)', accent: '#72ffb2', accentGlow: 'rgba(41,163,110,0.24)',
+    textPrimary: '#e8fff2', textSecondary: 'rgba(160,255,205,0.65)', textMuted: 'rgba(160,255,205,0.40)',
+  },
+  monochrome: {
+    id: 'monochrome', label: 'Monochrome',
+    bg: '#060708', surface: '#0c0d0f', elevated: '#141618',
+    border: 'rgba(148,163,184,0.10)', accent: '#d3dde8', accentGlow: 'rgba(148,163,184,0.16)',
+    textPrimary: '#f8fafc', textSecondary: 'rgba(171,184,199,0.65)', textMuted: 'rgba(171,184,199,0.40)',
+  },
+  // ── Legacy themes (preserved for localStorage backward compat) ─────────
   'dark-matter': {
     id: 'dark-matter', label: 'Dark Matter',
     bg: '#0a0c12', surface: '#10131c', elevated: '#181c28',
@@ -361,11 +423,32 @@ export function getActiveTheme(): ThemeTokens {
   return THEME_PRESETS[s.nexusTheme] ?? THEME_PRESETS['dark-matter']
 }
 
+// Maps legacy/old NexusTheme IDs to the new global data-nexus-theme attribute values
+const LEGACY_THEME_MAP: Partial<Record<NexusTheme, string>> = {
+  'dark-matter':     'dark',
+  'midnight-glass':  'executive',
+  'tactical-blue':   'blueprint',
+  'carbon-gold':     'executive',
+  'monochrome-ops':  'monochrome',
+  'infrared':        'red_ops',
+  'arctic-signal':   'night_vision',
+  'operator-black':  'dark',
+}
+
+export function resolveDataThemeAttr(nexusTheme: NexusTheme): string {
+  return LEGACY_THEME_MAP[nexusTheme] ?? nexusTheme
+}
+
 export function applyThemeToDOM(): void {
   const theme = getActiveTheme()
   const settings = loadSettings()
   const accent = ACCENT_PALETTES[settings.accentPalette] ?? ACCENT_PALETTES.cyan
   const root = document.documentElement
+
+  // Set the theme attribute — nexus-theme.css variables cascade from here
+  root.setAttribute('data-nexus-theme', resolveDataThemeAttr(settings.nexusTheme))
+
+  // Legacy vars still used by components not yet on --nx-* variables
   root.style.setProperty('--nx-bg', theme.bg)
   root.style.setProperty('--nx-surface', theme.surface)
   root.style.setProperty('--nx-elevated', theme.elevated)

@@ -43,6 +43,7 @@ import {
   type TextgridNumberHealth,
   type CarrierPerformance,
   type KpiAlert,
+  type KpiAlertsInput,
 } from '../../../lib/data/kpiDashboardData'
 import { USA_STATE_PATHS } from '../../../lib/data/usaStatePaths'
 import './metrics-war-room.css'
@@ -428,14 +429,26 @@ function WrUsaMap({
 // ── WrFunnel ──────────────────────────────────────────────────────────────────
 
 function WrFunnel({ stages, loading, compact = false }: { stages: FunnelStage[]; loading: boolean; compact?: boolean }) {
-  const maxCount = useMemo(() => Math.max(...stages.map(s => s.count), 1), [stages])
+  // Split wired stages (have real data) from unwired pipeline stages (count=0, not an estimate).
+  // Find the last stage index that has count > 0 or is an estimate derived from real data.
+  const lastWiredIdx = useMemo(() => {
+    let idx = -1
+    stages.forEach((s, i) => { if (s.count > 0 || s.isEstimate) idx = i })
+    return idx
+  }, [stages])
+
+  const wiredStages = lastWiredIdx >= 0 ? stages.slice(0, lastWiredIdx + 1) : stages
+  const hasPendingStages = lastWiredIdx < stages.length - 1 && stages.length > 0
+
+  const visibleWired = compact ? wiredStages.slice(0, 7) : wiredStages
+  const maxCount = useMemo(() => Math.max(...wiredStages.map(s => s.count), 1), [wiredStages])
 
   if (loading) {
     return (
       <div className="wr-panel">
         <div className="wr-panel__header"><span className="wr-panel__title">Acquisition Funnel</span></div>
         <div className="wr-panel__body wr-funnel">
-          {Array.from({ length: compact ? 6 : 12 }).map((_, i) => (
+          {Array.from({ length: compact ? 6 : 8 }).map((_, i) => (
             <div key={i} className="wr-funnel__stage">
               <WrSkeleton h={9} w={90} /><WrSkeleton h={4} />
             </div>
@@ -445,23 +458,20 @@ function WrFunnel({ stages, loading, compact = false }: { stages: FunnelStage[];
     )
   }
 
-  const visible = compact ? stages.slice(0, 7) : stages
-
   return (
     <div className="wr-panel">
       <div className="wr-panel__header">
         <span className="wr-panel__title">Acquisition Funnel</span>
-        <span className="wr-panel__badge">{stages.find(s => s.label === 'Closed')?.count ?? 0} closed</span>
       </div>
       <div className="wr-panel__body wr-funnel">
-        {visible.map((stage, i) => {
+        {visibleWired.map((stage, i) => {
           const widthPct = maxCount > 0 ? Math.max(2, Math.round((stage.count / maxCount) * 100)) : 2
-          const barColor = i < 4 ? 'rgba(14,207,206,0.55)' : i < 7 ? 'rgba(14,212,138,0.55)' : 'rgba(168,85,247,0.55)'
+          const barColor = i < 4 ? 'rgba(14,207,206,0.55)' : 'rgba(14,212,138,0.55)'
           return (
             <div key={stage.id} className="wr-funnel__stage">
               <div className="wr-funnel__stage-head">
                 <span className="wr-funnel__label">{stage.label}</span>
-                <span className="wr-funnel__count">{stage.count.toLocaleString()}{stage.isEstimate && <em>~</em>}</span>
+                <span className="wr-funnel__count">{stage.count.toLocaleString()}{stage.isEstimate && <em> ~</em>}</span>
                 {stage.conversionRate !== null && i > 0 && (
                   <span className={cls('wr-funnel__rate', stage.conversionRate < 50 && 'is-amber')}>{stage.conversionRate}%</span>
                 )}
@@ -472,6 +482,11 @@ function WrFunnel({ stages, loading, compact = false }: { stages: FunnelStage[];
             </div>
           )
         })}
+        {hasPendingStages && (
+          <div className="wr-funnel__pending-note">
+            Offer / contract stages not yet wired.
+          </div>
+        )}
       </div>
     </div>
   )
@@ -504,8 +519,10 @@ function WrRevenue({ spend, offerMetrics, loading }: {
       <div className="wr-panel__body">
         {loading ? (
           Array.from({ length: 6 }).map((_, i) => <WrSkeleton key={i} h={14} />)
+        ) : !offerMetrics || !offerMetrics.isWired ? (
+          <div className="wr-empty">Offer &amp; contract pipeline not wired yet.<br /><span style={{ fontSize: 9, opacity: 0.6 }}>Connect offers / contracts / closings tables.</span></div>
         ) : rows.length === 0 ? (
-          <div className="wr-empty">No offer/contract data yet.</div>
+          <div className="wr-empty">No offer/contract activity in this period.</div>
         ) : (
           <div className="wr-revenue-rows">
             {rows.map(r => (
@@ -768,11 +785,13 @@ function WrLeaderboard({
   rows,
   loading,
   maxRows = 8,
+  emptyMessage,
 }: {
   title: string
   rows: LbRow[]
   loading: boolean
   maxRows?: number
+  emptyMessage?: string
 }) {
   return (
     <div className="wr-panel">
@@ -786,7 +805,7 @@ function WrLeaderboard({
             {Array.from({ length: 4 }).map((_, i) => <WrSkeleton key={i} h={14} />)}
           </div>
         ) : !rows.length ? (
-          <div className="wr-lb__empty">No data for this period.</div>
+          <div className="wr-lb__empty">{emptyMessage ?? 'No data for this period.'}</div>
         ) : (
           rows.slice(0, maxRows).map((r, i) => (
             <div key={r.key} className="wr-lb__row">
@@ -812,7 +831,9 @@ function WrCarrierIntel({ carriers, loading }: { carriers: CarrierPerformance[];
         {loading ? (
           Array.from({ length: 4 }).map((_, i) => <WrSkeleton key={i} h={18} />)
         ) : !carriers.length ? (
-          <div className="wr-empty">No carrier data.</div>
+          <div className="wr-empty">Carrier data not available.<br />
+            <span style={{ fontSize: 9, opacity: 0.6 }}>Populate <code>carrier_name</code> in <code>message_events</code> to enable.</span>
+          </div>
         ) : (
           carriers.map(c => (
             <div key={c.carrier} className="wr-carrier-row">
@@ -861,7 +882,9 @@ function WrNumbersHealth({ numbers, loading }: { numbers: TextgridNumberHealth[]
         {loading ? (
           Array.from({ length: 4 }).map((_, i) => <WrSkeleton key={i} h={16} />)
         ) : !numbers.length ? (
-          <div className="wr-empty">No number health data.</div>
+          <div className="wr-empty">No TextGrid numbers configured.<br />
+            <span style={{ fontSize: 9, opacity: 0.6 }}>Check the <code>textgrid_numbers</code> table.</span>
+          </div>
         ) : (
           <>
             <div className="wr-numbers-summary">
@@ -988,7 +1011,9 @@ function WrBuyerDemand({ metrics, loading }: { metrics: BuyerDemandMetrics | nul
         {loading ? (
           <WrSkeleton h={80} />
         ) : !metrics || !metrics.isWired ? (
-          <div className="wr-empty">No buyer demand data yet.</div>
+          <div className="wr-empty">Buyer match data not wired yet.<br />
+            <span style={{ fontSize: 9, opacity: 0.6 }}>Connect buyer_matches / buyer_criteria tables.</span>
+          </div>
         ) : (
           <div className="wr-buyer-layout">
             <div className="wr-gauge-cluster">
@@ -1045,7 +1070,7 @@ function WrBuyerDemand({ metrics, loading }: { metrics: BuyerDemandMetrics | nul
 
 // ── useMetricsData hook ───────────────────────────────────────────────────────
 
-function useMetricsData(filters: KpiFilters) {
+function useMetricsData(filters: KpiFilters, layoutMode: ViewLayoutMode) {
   const [summary,      setSummary]      = useState<KpiSummary | null>(null)
   const [timeSeries,   setTimeSeries]   = useState<TimeSeriesPoint[]>([])
   const [statePerf,    setStatePerf]    = useState<StatePerformance[]>([])
@@ -1064,9 +1089,22 @@ function useMetricsData(filters: KpiFilters) {
   const [loading,      setLoading]      = useState(true)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const load = useCallback(async (f: KpiFilters) => {
+  // mode is passed as an argument so the callback stays stable (no dep re-creation).
+  const load = useCallback(async (f: KpiFilters, mode: ViewLayoutMode) => {
     setLoading(true)
     try {
+      if (mode === 'compact') {
+        // Compact rail only renders: summary, timeSeries. Skip statePerf and all of Batch 2.
+        const [sumRes, tsRes] = await Promise.all([
+          loadKpiDashboardSummary(f),
+          loadKpiTimeSeries(f),
+        ])
+        setSummary(sumRes)
+        setTimeSeries(tsRes)
+        setLoading(false)
+        return
+      }
+
       const [sumRes, tsRes, stateRes] = await Promise.all([
         loadKpiDashboardSummary(f),
         loadKpiTimeSeries(f),
@@ -1077,21 +1115,28 @@ function useMetricsData(filters: KpiFilters) {
       setStatePerf(stateRes)
       setLoading(false)
 
-      const [mktRes, agentRes, tplRes, chRes, spendRes, funnelRes, qualRes, buyerRes, offerRes, numRes, carrierRes, alertRes] =
+      const [mktRes, agentRes, tplRes, chRes, spendRes, funnelRes, qualRes, buyerRes, offerRes, numRes, carrierRes] =
         await Promise.all([
           loadMarketPerformance(f),
           loadAgentPerformance(f),
           loadTemplatePerformance(f),
           loadChannelPerformance(f),
-          loadSpendPerformance(f),
+          loadSpendPerformance(f, sumRes),
           loadFunnelPerformance(f),
           loadDataQualityMetrics(f),
           loadBuyerDemandMetrics(f),
           loadOfferContractMetrics(f),
           loadTextgridNumberHealth(f),
           loadCarrierPerformance(f),
-          loadKpiAlerts(f),
         ])
+
+      const alertPrefetch: KpiAlertsInput = {
+        states: stateRes,
+        templates: tplRes,
+        numbers: numRes,
+        quality: qualRes,
+      }
+      const alertRes = await loadKpiAlerts(f, alertPrefetch)
       setMarketPerf(mktRes)
       setAgentPerf(agentRes)
       setTemplatePerf(tplRes)
@@ -1111,10 +1156,10 @@ function useMetricsData(filters: KpiFilters) {
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => load(filters), 300)
+    debounceRef.current = setTimeout(() => load(filters, layoutMode), 300)
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters.timeRange, filters.state, filters.market])
+  }, [filters.timeRange, filters.state, filters.market, layoutMode])
 
   const stateLbRows: LbRow[] = statePerf.map(s => ({
     key: s.state,
@@ -1273,8 +1318,8 @@ export function MetricsCockpit50({
           <WrLineChart timeSeries={timeSeries} loading={loading} />
         </div>
         <div className="wr-cockpit-grid">
-          <WrLeaderboard title="Template Leaderboard" rows={templateLbRows} loading={loading} maxRows={5} />
-          <WrLeaderboard title="State Leaderboard" rows={stateLbRows} loading={loading} maxRows={5} />
+          <WrLeaderboard title="Template Leaderboard" rows={templateLbRows} loading={loading} maxRows={5} emptyMessage="No template sends in this period." />
+          <WrLeaderboard title="State Leaderboard" rows={stateLbRows} loading={loading} maxRows={5} emptyMessage="No state-level data in this period." />
         </div>
         {alerts.length > 0 && (
           <div style={{ padding: '0 18px 4px' }}>
@@ -1343,10 +1388,10 @@ export function MetricsCommand75({
           <WrLineChart timeSeries={timeSeries} loading={loading} />
         </div>
         <div className="wr-command-lbs">
-          <WrLeaderboard title="State" rows={stateLbRows} loading={loading} maxRows={6} />
-          <WrLeaderboard title="Market" rows={marketLbRows} loading={loading} maxRows={6} />
-          <WrLeaderboard title="Agent" rows={agentLbRows} loading={loading} maxRows={6} />
-          <WrLeaderboard title="Template" rows={templateLbRows} loading={loading} maxRows={6} />
+          <WrLeaderboard title="State" rows={stateLbRows} loading={loading} maxRows={6} emptyMessage="No state-level data in this period." />
+          <WrLeaderboard title="Market" rows={marketLbRows} loading={loading} maxRows={6} emptyMessage="No market data in this period." />
+          <WrLeaderboard title="Agent" rows={agentLbRows} loading={loading} maxRows={6} emptyMessage="No agent activity in this period." />
+          <WrLeaderboard title="Template" rows={templateLbRows} loading={loading} maxRows={6} emptyMessage="No template sends in this period." />
         </div>
         <div style={{ padding: '0 18px 4px' }}>
           <WrChannelPerf channels={channelPerf} loading={loading} />
@@ -1430,21 +1475,20 @@ export function MetricsWarRoom100({
           </div>
         </div>
 
-        {/* Row 2: Line Chart 5fr + Channel Perf 4fr + Offers/Contracts 3fr */}
+        {/* Row 2: Line Chart + Channel Perf */}
         <div className="wr-section-label">MESSAGING INTELLIGENCE</div>
         <div className="wr-warroom-row2">
           <WrLineChart timeSeries={timeSeries} loading={loading} />
           <WrChannelPerf channels={channelPerf} loading={loading} />
-          <WrRevenue spend={spend} offerMetrics={offerMetrics} loading={loading} />
         </div>
 
         {/* Row 3: Leaderboards + Buyer Demand */}
         <div className="wr-section-label">LEADERBOARDS</div>
         <div className="wr-warroom-lbs">
-          <WrLeaderboard title="State" rows={stateLbRows} loading={loading} />
-          <WrLeaderboard title="Market" rows={marketLbRows} loading={loading} />
-          <WrLeaderboard title="Agent" rows={agentLbRows} loading={loading} />
-          <WrLeaderboard title="Template" rows={templateLbRows} loading={loading} />
+          <WrLeaderboard title="State" rows={stateLbRows} loading={loading} emptyMessage="No state-level data in this period." />
+          <WrLeaderboard title="Market" rows={marketLbRows} loading={loading} emptyMessage="No market data in this period." />
+          <WrLeaderboard title="Agent" rows={agentLbRows} loading={loading} emptyMessage="No agent activity in this period." />
+          <WrLeaderboard title="Template" rows={templateLbRows} loading={loading} emptyMessage="No template sends in this period." />
           <WrBuyerDemand metrics={buyerMetrics} loading={loading} />
         </div>
 
@@ -1478,7 +1522,7 @@ export function MetricsWarRoom({ layoutMode }: MetricsWarRoomProps) {
     [filters, selectedState]
   )
 
-  const data = useMetricsData(activeFilters)
+  const data = useMetricsData(activeFilters, layoutMode)
 
   const handleFilterChange = useCallback((patch: Partial<KpiFilters>) => {
     setFilters(prev => ({ ...prev, ...patch }))

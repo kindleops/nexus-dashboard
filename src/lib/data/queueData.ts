@@ -98,7 +98,7 @@ const statusLabelFor = (status: QueueItemStatus): string => status.replace(/_/g,
 export const fetchQueueModel = async (): Promise<QueueModel> => {
   const supabase = getSupabaseClient()
 
-  const [queueResult, ownerResult, propertyResult, phoneResult, marketResult, messageEventResult] = await Promise.all([
+  const [queueResult, propertyResult, messageEventResult] = await Promise.all([
     supabase
       .from('send_queue')
       .select(`
@@ -146,65 +146,28 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
       .order('created_at', { ascending: false })
       .limit(1200),
     supabase
-      .from('owners')
-      .select('owner_id,master_owner_id,full_name,first_name,last_name,entity_name,market')
-      .limit(2000),
-    supabase
       .from('properties')
       .select('property_id,owner_id,master_owner_id,property_address,property_address_city,property_address_state,market')
       .limit(3000),
     supabase
-      .from('phone_numbers')
-      .select('phone_id,owner_id,master_owner_id,phone,phone_number,status')
-      .limit(3000),
-    supabase
-      .from('markets')
-      .select('id,name')
-      .limit(100),
-    supabase
       .from('message_events')
-      .select('id,queue_id,property_id,thread_key,provider_message_sid,textgrid_message_id,created_at,delivered_at,status,event_type')
+      .select('id,queue_id,property_id,thread_key,provider_message_sid,textgrid_message_id,created_at,delivered_at,delivery_status,event_type')
       .order('created_at', { ascending: false })
       .limit(5000),
   ])
 
   if (queueResult.error) throw new Error(mapErrorMessage(queueResult.error))
-  if (ownerResult.error) throw new Error(mapErrorMessage(ownerResult.error))
   if (propertyResult.error) throw new Error(mapErrorMessage(propertyResult.error))
-  if (phoneResult.error) throw new Error(mapErrorMessage(phoneResult.error))
-  if (marketResult.error) throw new Error(mapErrorMessage(marketResult.error))
   if (messageEventResult.error) throw new Error(mapErrorMessage(messageEventResult.error))
 
   const queueRows = safeArray(queueResult.data as AnyRecord[])
-  const ownerRows = safeArray(ownerResult.data as AnyRecord[])
   const propertyRows = safeArray(propertyResult.data as AnyRecord[])
-  const phoneRows = safeArray(phoneResult.data as AnyRecord[])
-  const marketRows = safeArray(marketResult.data as AnyRecord[])
   const messageEventRows = safeArray(messageEventResult.data as AnyRecord[])
-
-  const ownerById = new Map<string, AnyRecord>()
-  for (const row of ownerRows) {
-    const ownerId = asString(getFirst(row, ['owner_id', 'master_owner_id']), '')
-    if (ownerId) ownerById.set(ownerId, row)
-  }
 
   const propertyById = new Map<string, AnyRecord>()
   for (const row of propertyRows) {
     const propertyId = asString(getFirst(row, ['property_id']), '')
     if (propertyId) propertyById.set(propertyId, row)
-  }
-
-  const marketById = new Map<string, string>()
-  for (const row of marketRows) {
-    const id = asString(row['id'], '')
-    if (id) marketById.set(id, asString(row['name'], ''))
-  }
-
-  const phonesByOwner = new Map<string, string>()
-  for (const row of phoneRows) {
-    const ownerId = asString(getFirst(row, ['owner_id', 'master_owner_id']), '')
-    if (!ownerId || phonesByOwner.has(ownerId)) continue
-    phonesByOwner.set(ownerId, asString(getFirst(row, ['phone', 'phone_number']), ''))
   }
 
   const messageEventByQueueId = new Map<string, AnyRecord>()
@@ -219,7 +182,6 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
     const queueId = asString(row['queue_id'] || row['id'], id)
     const ownerId = asString(getFirst(row, ['owner_id', 'master_owner_id']), '')
     const propertyId = asString(getFirst(row, ['property_id']), '')
-    const owner = ownerById.get(ownerId)
     const property = propertyById.get(propertyId)
 
     const status = toQueueStatus(getFirst(row, ['queue_status', 'status']))
@@ -228,7 +190,7 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
     const localScheduledIso = asIso(getFirst(row, ['scheduled_for_local'])) || scheduledIso
 
     const sellerName = asString(
-      getFirst(owner ?? row, ['full_name', 'entity_name', 'seller_name', 'first_name']),
+      getFirst(row, ['full_name', 'entity_name', 'seller_name', 'first_name']),
       'Unknown seller',
     )
 
@@ -238,17 +200,12 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
     )
 
     const market = asString(
-      marketById.get(asString(row['market_id'], '')) ??
       getFirst(row, ['market']) ?? 
-      getFirst(owner ?? row, ['market']) ?? 
       getFirst(property ?? row, ['market']),
       'Market unknown',
     )
 
-    const phone =
-      asString(getFirst(row, ['to_phone_number', 'phone']), '') ||
-      phonesByOwner.get(ownerId) ||
-      'No phone'
+    const phone = asString(getFirst(row, ['to_phone_number', 'phone']), '') || 'No phone'
 
     const retryCount = asNumber(getFirst(row, ['retry_count']), 0)
     const maxRetries = Math.max(asNumber(getFirst(row, ['max_retries']), 3), retryCount || 0)
@@ -384,6 +341,11 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
         ? 'medium'
         : 'low'
 
+  const hasProxyUrl = Boolean(import.meta.env.VITE_REAL_ESTATE_AUTOMATION_BASE_URL)
+  const engineMode: QueueModel['engineMode'] = hasProxyUrl 
+    ? 'proxy' 
+    : (import.meta.env.VITE_TEXTGRID_API_KEY ? 'disabled' : 'dry-run only')
+
   return {
     items,
     readyCount,
@@ -397,6 +359,8 @@ export const fetchQueueModel = async (): Promise<QueueModel> => {
     safeCapacityRemaining: Math.max(1200 - sentTodayCount, 0),
     optOutRiskCount: items.filter((item) => item.riskLevel === 'high').length,
     apiPressureLevel,
+    sendEngine: 'real-estate-automation',
+    engineMode,
   }
 }
 

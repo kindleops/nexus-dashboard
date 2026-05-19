@@ -10,7 +10,10 @@ import { Icon } from '../../../shared/icons'
 import { InboxCommandMap } from '../InboxCommandMap'
 import { InboxSidebar } from './InboxSidebar'
 import { InboxConversationTable, type ConversationTableSort } from './InboxConversationTable'
-import type { InboxMapActivityMode, MapFilterState, MapOverlayToggles, MapStyleMode } from '../InboxCommandMap'
+import type { InboxMapActivityMode, MapFilterState, MapOverlayToggles } from '../InboxCommandMap'
+import { COMMAND_MAP_THEME_OPTIONS, type MapStyleMode } from '../commandMapThemes'
+import { updateSetting, applyThemeToDOM } from '../../../shared/settings'
+import { MAP_THEME_TO_NEXUS_GLOBAL } from '../../theme/nexusThemes'
 
 const cls = (...tokens: Array<string | false | null | undefined>) => tokens.filter(Boolean).join(' ')
 
@@ -138,9 +141,18 @@ export function CommandView({
   const [voiceTranscript, setVoiceTranscript] = useState('')
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [mapActivityMode, setMapActivityMode] = useState<InboxMapActivityMode>('threads')
-  const [mapTheme, setMapTheme] = useState<MapStyleMode>('dark')
+  const [mapTheme, setMapTheme] = useState<MapStyleMode>('dark_ops')
   const [mapFilters, setMapFilters] = useState<Partial<MapFilterState>>({})
   const [mapOverlays, setMapOverlays] = useState<Partial<MapOverlayToggles>>({})
+
+  const handleMapThemeChange = (themeId: MapStyleMode) => {
+    setMapTheme(themeId)
+    const nexusTheme = MAP_THEME_TO_NEXUS_GLOBAL[themeId]
+    if (nexusTheme) {
+      updateSetting('nexusTheme', nexusTheme)
+      applyThemeToDOM()
+    }
+  }
   const threadCardRef = useRef<HTMLElement | null>(null)
 
   const tickerItems = useMemo(() => {
@@ -333,8 +345,8 @@ export function CommandView({
           <div className="nx-command-settings-panel__section">
             <span>Map Theme</span>
             <div className="nx-command-settings-panel__seg">
-              {(['dark', 'red', 'satellite'] as MapStyleMode[]).map((theme) => (
-                <button key={theme} type="button" className={cls(mapTheme === theme && 'is-active')} onClick={() => setMapTheme(theme)}>{theme}</button>
+              {COMMAND_MAP_THEME_OPTIONS.map((theme) => (
+                <button key={theme.id} type="button" className={cls(mapTheme === theme.id && 'is-active')} onClick={() => handleMapThemeChange(theme.id)}>{theme.label}</button>
               ))}
             </div>
           </div>
@@ -442,7 +454,7 @@ export function CommandView({
             initialMapOverlays={mapOverlays}
             onStateChange={(state) => {
               setMapActivityMode(state.activityMode)
-              setMapTheme(state.mapStyleMode)
+              handleMapThemeChange(state.mapStyleMode)
               setMapFilters(state.filters)
               setMapOverlays(state.mapOverlays)
             }}

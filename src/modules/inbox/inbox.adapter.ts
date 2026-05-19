@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { CommandCenterStore } from '../../domain/types'
 import { formatRelativeTime } from '../../shared/formatters'
-import { fetchInboxModel, type InboxFetchOptions, type LiveInboxMapPin, type LiveInboxPagination } from '../../lib/data/inboxData'
+import { fetchInboxModel, type InboxFetchOptions, type LiveInboxMapPin, type LiveInboxPagination, type InboxSourceMode } from '../../lib/data/inboxData'
 import { isDev, shouldUseSupabase } from '../../lib/data/shared'
 import type { InboxWorkflowThread, InboxStatus, SellerStage, AutomationState } from '../../lib/data/inboxWorkflowData'
 import { hasSupabaseEnv, supabaseAnonKeyPresent, supabaseUrlPresent } from '../../lib/supabaseClient'
@@ -157,6 +157,16 @@ export interface InboxThread {
   estimatedRepairCost?: number
   estimatedValue?: number | null
   contactLanguage?: string
+
+  // UNIVERSAL SELLER WORK ITEM FIELDS
+  is_uncontacted?: boolean
+  has_conversation?: boolean
+  has_queue?: boolean
+  has_message_event?: boolean
+  seller_state?: string
+  seller_status?: string
+  execution_state?: string
+  pipeline_stage?: string
 
   // PROSPECT
   canonical_prospect_id?: string
@@ -553,12 +563,13 @@ const mergeInboxModels = (prev: InboxModel, next: InboxModel, mode: 'refresh' | 
   }
 }
 
-export const useInboxData = () => {
+export const useInboxData = (initialSourceMode: InboxSourceMode = 'conversations') => {
+  const [sourceMode, setSourceMode] = useState<InboxSourceMode>(initialSourceMode)
   const [data, setData] = useState<InboxModel>(EMPTY_MODEL)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<unknown>(null)
   const [recentlyUpdatedThreadIds, setRecentlyUpdatedThreadIds] = useState<Set<string>>(new Set())
-  const lastFetchRef = useRef<InboxFetchOptions>({})
+  const lastFetchRef = useRef<InboxFetchOptions>({ sourceMode: initialSourceMode })
   const dataRef = useRef<InboxModel>(EMPTY_MODEL)
   const abortRef = useRef<AbortController | null>(null)
   const requestSeqRef = useRef(0)
@@ -578,12 +589,13 @@ export const useInboxData = () => {
   useEffect(() => {
     if (isDev) {
       console.log('[useInboxData] initialized', {
+        sourceMode,
         realtimeEnabled,
         dataSource: shouldUseSupabase() ? 'live' : 'mock',
         hasEnvVars: hasSupabaseEnv,
       })
     }
-  }, [realtimeEnabled])
+  }, [realtimeEnabled, sourceMode])
 
   useEffect(() => {
     dataRef.current = data
@@ -613,6 +625,7 @@ export const useInboxData = () => {
       if (isDev) {
         console.log('[useInboxData] refresh complete', {
           refreshReason: 'manual',
+          sourceMode: options.sourceMode,
           lastRefreshAt: lastRefreshAtRef.current,
           rowCount: model?.threads?.length ?? 0,
           totalCount: model?.totalCount ?? 0,
@@ -650,6 +663,7 @@ export const useInboxData = () => {
     lastFetchRef.current = {
       ...lastFetchRef.current,
       ...options,
+      sourceMode,
       filters: options.filters !== undefined ? options.filters : lastFetchRef.current.filters,
       cursor: options.cursor ?? null,
       maxRows: options.maxRows ?? lastFetchRef.current.maxRows ?? 1000,
@@ -664,7 +678,7 @@ export const useInboxData = () => {
         void runLoad(lastFetchRef.current, 'refresh').then(resolve)
       }, delay)
     })
-  }, [runLoad])
+  }, [runLoad, sourceMode])
 
   const loadMore = useCallback(async (options: InboxFetchOptions = {}) => {
     if (loading) return dataRef.current
@@ -672,6 +686,7 @@ export const useInboxData = () => {
     const moreOptions = {
       ...lastFetchRef.current,
       ...options,
+      sourceMode,
       filters: lastFetchRef.current.filters,
       cursor,
       offset: cursor ? undefined : dataRef.current.threads.length,
@@ -679,7 +694,7 @@ export const useInboxData = () => {
       limit: options.limit ?? options.maxRows ?? 1000,
     }
     return runLoad(moreOptions, 'append')
-  }, [loading, runLoad])
+  }, [loading, runLoad, sourceMode])
 
   useEffect(() => {
     let cancelled = false
@@ -813,5 +828,11 @@ export const useInboxData = () => {
     }
   }, [refresh, realtimeEnabled])
 
-  return { data, loading, error, refresh, loadMore, recentlyUpdatedThreadIds }
+  const setMode = useCallback((mode: InboxSourceMode) => {
+    setSourceMode(mode)
+    setData(EMPTY_MODEL) // Clear existing data when switching modes
+  }, [])
+
+  return { data, loading, error, refresh, loadMore, recentlyUpdatedThreadIds, sourceMode, setSourceMode: setMode }
 }
+

@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { QueueProcessorHealth } from '../../../lib/data/inboxData'
 import type { InboxWorkflowThread } from '../../../lib/data/inboxWorkflowData'
 import { Icon } from '../../../shared/icons'
+import type { CommandResult } from '../../command-center/command.types'
 import type { ActiveOverlay, NexusTheme } from '../inbox-layout-state'
 import { buildInboxNotifications, NexusNotificationCenter, type NexusNotification } from './NexusNotificationCenter'
 import type { AutonomousEngineModel } from '../autonomy-engine'
@@ -12,10 +13,12 @@ const cls = (...tokens: Array<string | false | null | undefined>) =>
   tokens.filter(Boolean).join(' ')
 
 interface NexusTopBarProps {
-  searchQuery: string
-  onSearchQueryChange: (value: string) => void
-  searchResults: InboxWorkflowThread[]
   onSelectSearchResult: (id: string) => void
+  topSearchQuery: string
+  onTopSearchQueryChange: (value: string) => void
+  topSearchGroups: Array<{ key: string; label: string; items: CommandResult[] }>
+  topSearchLoading: boolean
+  onExecuteTopSearchResult: (result: CommandResult) => void
   selectedThread: InboxWorkflowThread | null
   isSuppressed: boolean
   notificationCount: number
@@ -61,15 +64,7 @@ interface NexusTopBarProps {
   onToggleDryRun: () => void
 }
 
-const fallback = (value: unknown, placeholder = 'Unknown') => {
-  const text = String(value ?? '').trim()
-  return text || placeholder
-}
-
 export const NexusTopBar = ({
-  searchQuery,
-  onSearchQueryChange,
-  searchResults,
   onSelectSearchResult,
   selectedThread,
   isSuppressed,
@@ -112,10 +107,17 @@ export const NexusTopBar = ({
   onResetLayout,
   dryRun,
   onToggleDryRun,
+  topSearchQuery,
+  onTopSearchQueryChange,
+  topSearchGroups,
+  topSearchLoading,
+  onExecuteTopSearchResult,
 }: NexusTopBarProps) => {
   const DEV = Boolean(import.meta.env.DEV)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const [openControlMenu, setOpenControlMenu] = useState<null | 'view'>(null)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchActiveIndex, setSearchActiveIndex] = useState(0)
   
   useEffect(() => {
     if (DEV && activeOverlay) {
@@ -126,7 +128,6 @@ export const NexusTopBar = ({
   useEffect(() => {
     const focusSearch = () => {
       searchInputRef.current?.focus()
-      searchInputRef.current?.select()
     }
     window.addEventListener('nexus:focus-search', focusSearch as EventListener)
     return () => window.removeEventListener('nexus:focus-search', focusSearch as EventListener)
@@ -138,7 +139,6 @@ export const NexusTopBar = ({
     return () => window.removeEventListener('click', handleWindowClick)
   }, [])
 
-  const showSearchResults = searchQuery.trim().length > 0
   const processorStatus = queueProcessorHealth?.status ?? 'unknown'
   const processorHealthLabel =
     processorStatus === 'healthy' ? 'Healthy'
@@ -148,10 +148,26 @@ export const NexusTopBar = ({
   
   const notifications = buildInboxNotifications({ unreadCount: notificationCount, selectedThread, queueProcessorHealth, autonomyModel })
   const unreadNotifications = notifications.filter((item) => item.status !== 'read').length
+  const topSearchItems = useMemo(
+    () => topSearchGroups.flatMap((group) => group.items),
+    [topSearchGroups],
+  )
+
+  useEffect(() => {
+    setSearchActiveIndex(0)
+  }, [topSearchQuery, topSearchGroups])
+
+  const showSearchPopover = searchOpen && (topSearchLoading || topSearchItems.length > 0 || topSearchQuery.trim().length >= 2)
 
   const handleNotificationAction = (notification: NexusNotification) => {
     if (notification.related_thread_id) onSelectSearchResult(notification.related_thread_id)
     onCloseOverlay()
+  }
+
+  const handleSearchSubmit = (result: CommandResult | undefined) => {
+    if (!result) return
+    onExecuteTopSearchResult(result)
+    setSearchOpen(false)
   }
 
   return (
@@ -251,39 +267,93 @@ export const NexusTopBar = ({
             <Icon name="search" />
             <input
               ref={searchInputRef}
-              aria-label="Search threads, sellers, addresses, or commands"
-              value={searchQuery}
-              onChange={(event) => onSearchQueryChange(event.target.value)}
-              placeholder="Search threads, sellers, addresses, or commands..."
+              aria-label="Search Inbox sellers, buyers, properties, conversations, and markets"
+              value={topSearchQuery}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => {
+                onTopSearchQueryChange(event.target.value)
+                setSearchOpen(true)
+              }}
+              onFocus={(event) => {
+                event.currentTarget.select()
+                setSearchOpen(true)
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'ArrowDown') {
+                  event.preventDefault()
+                  setSearchOpen(true)
+                  setSearchActiveIndex((current) => Math.min(current + 1, Math.max(topSearchItems.length - 1, 0)))
+                  return
+                }
+                if (event.key === 'ArrowUp') {
+                  event.preventDefault()
+                  setSearchActiveIndex((current) => Math.max(current - 1, 0))
+                  return
+                }
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  handleSearchSubmit(topSearchItems[searchActiveIndex])
+                  return
+                }
+                if (event.key === 'Escape') {
+                  setSearchOpen(false)
+                  return
+                }
+              }}
+              onBlur={() => {
+                window.setTimeout(() => setSearchOpen(false), 120)
+              }}
+              placeholder="Search sellers, buyers, properties, conversations, markets…"
             />
             <kbd>⌘K</kbd>
-            {showSearchResults && (
-              <div className="nx-search-results-popover nx-liquid-popover">
+            {showSearchPopover ? (
+              <div className="nx-search-results-popover" role="listbox" aria-label="Inbox search suggestions">
                 <div className="nx-search-results-popover__header">
-                  <span>Search Results</span>
-                  <b>{searchResults.length}</b>
+                  <span>Inbox Search</span>
+                  <b>{topSearchLoading ? 'Live' : `${topSearchItems.length} matches`}</b>
                 </div>
                 <div className="nx-search-results-list">
-                  {searchResults.length > 0 ? searchResults.map((thread) => (
-                    <button
-                      key={thread.id}
-                      type="button"
-                      className="nx-search-result-item"
-                      onMouseDown={(event) => {
-                        event.preventDefault()
-                        event.stopPropagation()
-                        onSelectSearchResult(thread.id)
-                      }}
-                    >
-                      <span>{fallback(thread.ownerName, 'Unknown Seller')}</span>
-                      <small>{fallback(thread.propertyAddress || thread.subject, 'Property Unknown')}</small>
-                    </button>
-                  )) : (
-                    <p>No matching sellers, phones, addresses, or commands.</p>
-                  )}
+                  {topSearchGroups.map((group) => {
+                    let runningIndex = -1
+                    return (
+                      <section key={group.key} className="nx-search-result-group">
+                        <header className="nx-search-result-group__label">{group.label}</header>
+                        {group.items.map((result) => {
+                          runningIndex = topSearchItems.findIndex((item) => item.id === result.id)
+                          const isActive = runningIndex === searchActiveIndex
+                          return (
+                            <button
+                              key={result.id}
+                              type="button"
+                              className={cls('nx-search-result-item', isActive && 'is-active')}
+                              onMouseEnter={() => setSearchActiveIndex(runningIndex)}
+                              onMouseDown={(event) => {
+                                event.preventDefault()
+                                handleSearchSubmit(result)
+                              }}
+                            >
+                              <span className="nx-search-result-item__row">
+                                <strong>{result.title}</strong>
+                                {result.badge ? <em>{result.badge}</em> : null}
+                              </span>
+                              <small>{result.subtitle}</small>
+                              {result.description ? <p>{result.description}</p> : null}
+                            </button>
+                          )
+                        })}
+                      </section>
+                    )
+                  })}
+                  {!topSearchLoading && topSearchItems.length === 0 ? (
+                    <div className="nx-search-results-empty">
+                      <strong>No inbox matches</strong>
+                      <span>Try a seller, buyer, address, market, phone, or queue status.</span>
+                    </div>
+                  ) : null}
                 </div>
               </div>
-            )}
+            ) : null}
           </div>
         </div>
       </div>

@@ -69,6 +69,21 @@ export const runQueueBatch = async (caps: Partial<QueueRunCaps> = {}): Promise<a
     }
   }
 
+  // Hard Guard: Real provider send path is not yet configured.
+  // This prevents the system from marking rows as 'sent' when no actual SMS is dispatched.
+  if (!isDryRun) {
+    const hasRealProvider = !!process.env.TEXTGRID_API_KEY || !!process.env.TEXTGRID_AUTH_TOKEN
+    if (!hasRealProvider) {
+      console.error('[QueueRunner] ABORTING LIVE RUN: REAL_PROVIDER_SEND_NOT_CONFIGURED')
+      return {
+        ok: false,
+        error: 'REAL_PROVIDER_SEND_NOT_CONFIGURED',
+        message: 'No real TextGrid send implementation is configured. Live sends are disabled to prevent database state drift and orphan "sent" rows.',
+        dry_run_available: true
+      }
+    }
+  }
+
   const supabase = isDryRun ? getSupabaseClient() : getSupabaseAdminClient()
   const results: any[] = []
   
@@ -456,7 +471,11 @@ export const runQueueBatch = async (caps: Partial<QueueRunCaps> = {}): Promise<a
           canonical_e164: phoneE164,
           our_number: routingResult.from_phone_number,
           market: marketName,
-          seller_display_name: sellerDisplayName,
+          metadata: {
+            seller_name: sellerDisplayName,
+            property_address: asString(hydrated.property_address || item.property_address) || null,
+            market: marketName,
+          }
         }, { onConflict: 'thread_key' })
 
         if (stateError) {

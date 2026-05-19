@@ -96,17 +96,28 @@ async function run() {
   console.log('='.repeat(66));
 
   // ── Load all state rows and event thread_keys ────────────────────────────
-  console.log('\n[0] Loading base data ...');
+  console.log('\n[0] Loading base data (with pagination) ...');
 
-  const { data: stateRows, error: stateErr } = await supabase
-    .from('inbox_thread_state')
-    .select('*');
-  if (stateErr) { console.error('FATAL: inbox_thread_state fetch:', stateErr.message); process.exit(1); }
+  const fetchAll = async (table, select = '*') => {
+    let allData = [];
+    let from = 0;
+    const PAGE_SIZE = 1000;
+    while (true) {
+      const { data, error } = await supabase
+        .from(table)
+        .select(select)
+        .range(from, from + PAGE_SIZE - 1);
+      if (error) throw error;
+      allData = allData.concat(data);
+      if (data.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+    }
+    return allData;
+  };
 
-  const { data: evtRows, error: evtErr } = await supabase
-    .from('message_events')
-    .select('thread_key,direction,delivery_status,master_owner_id,property_id,prospect_id,market,to_phone_number,from_phone_number,created_at,event_timestamp');
-  if (evtErr) { console.error('FATAL: message_events fetch:', evtErr.message); process.exit(1); }
+  const stateRows = await fetchAll('inbox_thread_state');
+  const evtRows = await fetchAll('message_events', 'thread_key,direction,delivery_status,master_owner_id,property_id,prospect_id,market,to_phone_number,from_phone_number,created_at,event_timestamp');
+
 
   const stateByKey = new Map(stateRows.map(r => [r.thread_key, r]));
   const evtsByKey  = new Map();
@@ -206,16 +217,21 @@ async function run() {
         const inbound = evts.find(e => e.direction === 'inbound');
         const firstEvt = evts[evts.length - 1];
 
+        const isLegacyKey = threadKey.startsWith('phone:');
+        const phones = isLegacyKey ? [threadKey.replace('phone:', '')] : threadKey.split('|');
+        const sellerPhone = phones[0] || null;
+        const ourNumber   = phones[1] || null;
+
         const newState = {
           thread_key:      threadKey,
           master_owner_id: latest.master_owner_id || null,
           property_id:     latest.property_id || null,
           prospect_id:     latest.prospect_id || null,
           market:          latest.market || null,
-          // Derive phones from thread_key format to_phone|from_phone
-          canonical_e164:  threadKey.split('|')[0] || null,
-          our_number:      threadKey.split('|')[1] || null,
-          seller_phone:    threadKey.split('|')[0] || null,
+          // Derive phones correctly
+          canonical_e164:  sellerPhone,
+          our_number:      ourNumber,
+          seller_phone:    sellerPhone,
           // Default stage/status
           stage:           inbound ? 'needs_response' : 'needs_response',
           status:          inbound ? 'unread' : 'open',

@@ -99,7 +99,16 @@ const ageLabel = (days: number) => {
 }
 
 const deriveStageId = (thread: InboxWorkflowThread): string => {
+  // Use the canonical pipeline_stage from v_inbox_enriched if present (direct match to STAGE_GROUPS id)
+  const canonical = norm((thread as any).pipeline_stage).toLowerCase()
+  if (canonical && STAGE_GROUPS.some(s => s.id === canonical)) return canonical
+
+  // Fall back to string-matching on conversationStage / inboxStage
   const raw = norm(thread.conversationStage || thread.inboxStage).toLowerCase()
+  // Map inbox thread states that don't match STAGE_GROUPS.matches
+  if (raw === 'waiting' || raw === 'sent_waiting') return 'active_communication'
+  if (raw === 'needs_response') return 'active_communication'
+  if (raw === 'needs_review') return 'ownership_check'
   for (const s of STAGE_GROUPS) {
     if (s.matches.some(m => raw.includes(m))) return s.id
   }
@@ -165,7 +174,7 @@ const buildCard = (thread: InboxWorkflowThread): DealCard => {
     sellerName: first(thread.ownerDisplayName, thread.ownerName, thread.sellerName,
       (thread as any).prospect_name) || 'Unknown Seller',
     address: first(thread.propertyAddressFull, thread.propertyAddress, thread.subject) || 'Property Unknown',
-    market: first(thread.market, thread.marketName) || 'Market Unknown',
+    market: first(thread.displayMarket, thread.market, thread.marketName) || 'Market Unknown',
     propertyType: first((thread as any).propertyType, (thread as any).property_type) || 'Unknown',
     queueStatus: first((thread as any).queueStatus, (thread as any).queue_status, thread.autoReplyStatus) || 'Unknown',
     zip: first((thread as any).property_address_zip,
@@ -173,7 +182,7 @@ const buildCard = (thread: InboxWorkflowThread): DealCard => {
     county: first((thread as any).property_address_county_name,
       (thread as any).county) || '—',
     phone: first(thread.phoneNumber, thread.canonicalE164, thread.displayPhone) || '—',
-    status: first(thread.inboxStatus, thread.status) || 'needs_review',
+    status: first((thread as any).seller_status, thread.inboxStatus, thread.status) || 'needs_review',
     priority: first(thread.priority) || 'normal',
     automation: first(thread.automationState, thread.autoReplyStatus) || dec.automation_status,
     lastIntent: first((thread as any).last_intent, dec.seller_intent) || 'unknown',
@@ -267,6 +276,35 @@ export function InboxPipelineView({
 
   const allCards = useMemo(() => threads.map(buildCard), [threads])
 
+  // DEV-only pipeline proof — remove before prod
+  if (import.meta.env.DEV) {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    useEffect(() => {
+      if (allCards.length === 0) return
+      const stageDist: Record<string, number> = {}
+      const statusDist: Record<string, number> = {}
+      for (const c of allCards) {
+        const stage = (c.thread as any).pipeline_stage || deriveStageId(c.thread)
+        stageDist[stage] = (stageDist[stage] ?? 0) + 1
+        statusDist[c.status] = (statusDist[c.status] ?? 0) + 1
+      }
+      const sample = allCards.slice(0, 10).map(c => ({
+        sellerName: c.sellerName,
+        snippet: c.snippet?.slice(0, 40),
+        inbound_count: (c.thread as any).inbound_count ?? 0,
+        pipeline_stage: (c.thread as any).pipeline_stage,
+        seller_status: (c.thread as any).seller_status,
+        seller_state: (c.thread as any).seller_state,
+      }))
+      console.group('[InboxPipelineView] DEV proof')
+      console.log('Total cards rendered:', allCards.length)
+      console.log('Stage distribution:', stageDist)
+      console.log('Status distribution:', statusDist)
+      console.table(sample)
+      console.groupEnd()
+    }, [allCards])
+  }
+
   const visibleCards = useMemo(() => {
     const q = query.trim().toLowerCase()
     return allCards
@@ -306,7 +344,8 @@ export function InboxPipelineView({
   const groupKeyForCard = useCallback((card: DealCard): string => {
     if (groupBy === 'stage') return effectiveStageId(card.thread, stageOverrides)
     if (groupBy === 'status') {
-      const raw = `${card.status} ${(card.thread as any).status ?? ''}`.toLowerCase()
+      // seller_status from v_inbox_enriched uses snake_case ids that match STATUS_GROUPS directly
+      const raw = `${card.status} ${(card.thread as any).seller_status ?? ''} ${(card.thread as any).status ?? ''}`.toLowerCase()
       return STATUS_GROUPS.find((group) => group.matches.some((match) => raw.includes(match)))?.id ?? 'new'
     }
     if (groupBy === 'queue_status') {
@@ -331,7 +370,7 @@ export function InboxPipelineView({
     return {
       active:        active.length,
       hot:           visibleCards.filter(c => c.hot).length,
-      replies:       visibleCards.filter(c => c.status === 'new_reply' || c.unread).length,
+      replies:       visibleCards.filter(c => c.unread || (c.thread as any).seller_state === 'new_reply').length,
       negotiating:   stageModels.find(s => s.def.id === 'offer_sent')?.count ?? 0,
       contractSent:  stageModels.find(s => s.def.id === 'contract_sent')?.count ?? 0,
       closing:       stageModels.find(s => s.def.id === 'title_closing')?.count ?? 0,

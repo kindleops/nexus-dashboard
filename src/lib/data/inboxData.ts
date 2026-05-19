@@ -41,6 +41,8 @@ import {
  * Do NOT use provider_message_sid or message_event_key as thread key.
  */
 
+export type InboxSourceMode = 'conversations' | 'all_sellers'
+
 export interface InboxThreadFilters {
   status?: 'all' | 'unread' | 'read' | 'replied' | 'archived'
   priority?: 'all' | 'urgent' | 'high' | 'normal' | 'low'
@@ -58,6 +60,7 @@ export interface InboxFetchOptions {
   limit?: number
   map?: boolean
   filters?: InboxThreadFilters
+  sourceMode?: InboxSourceMode
   /** @internal */
   _automatic?: boolean
 }
@@ -239,9 +242,9 @@ export interface QueueProcessorHealth {
 const QUEUE_PROCESSOR_LAG_MINUTES = 10
 
 const DEV = Boolean(import.meta.env?.DEV)
-const MESSAGE_EVENTS_THREAD_PAGE_SIZE = 1000
+const MESSAGE_EVENTS_THREAD_PAGE_SIZE = 250
 export const HYDRATED_INBOX_PAGE_SIZE = 200
-export const HYDRATED_INBOX_THREADS_VIEW = 'inbox_command_center_v'
+export const HYDRATED_INBOX_THREADS_VIEW = 'v_inbox_enriched'
 export const HYDRATED_INBOX_COUNTS_VIEW = 'inbox_category_counts'
 
 const HYDRATED_INBOX_CATEGORIES = [
@@ -253,6 +256,7 @@ const HYDRATED_INBOX_CATEGORIES = [
   'cold_no_response',
   'dnc_opt_out',
   'all_inbound',
+  'not_contacted',
 ] as const
 
 type HydratedInboxCategory = (typeof HYDRATED_INBOX_CATEGORIES)[number]
@@ -270,6 +274,7 @@ const HYDRATED_CATEGORY_BY_VIEW: Partial<Record<string, HydratedInboxCategory | 
   priority: ['hot_leads', 'needs_review', 'new_inbound'],
   active: ['automated', 'outbound_active'],
   waiting: 'cold_no_response',
+  not_contacted: 'not_contacted',
 }
 
 const HYDRATED_PRIORITY_CATEGORIES = new Set<HydratedInboxCategory>(['hot_leads', 'needs_review', 'new_inbound'])
@@ -283,6 +288,7 @@ const EMPTY_HYDRATED_CATEGORY_COUNTS: Record<HydratedInboxCategory | 'all' | 'al
   cold_no_response: 0,
   dnc_opt_out: 0,
   all_inbound: 0,
+  not_contacted: 0,
   all: 0,
 }
 
@@ -1908,6 +1914,14 @@ export const normalizeInboxThread = (row: AnyRecord, offset = 0, index = 0): Inb
     isStarred: asBoolean(row.is_starred, false),
     isSuppressed: isDnc,
     isDnc,
+
+    // Universal Seller Work Item Fields
+    is_uncontacted: asBoolean(row.is_uncontacted, false),
+    has_conversation: asBoolean(row.has_conversation, asNumber(row.inbound_count, 0) > 0 || asNumber(row.outbound_count, 0) > 0),
+    has_queue: asBoolean(row.has_queue, false),
+    has_message_event: asBoolean(row.has_message_event, false),
+    seller_state: asString(row.seller_state, ''),
+    execution_state: asString(row.execution_state, ''),
   }
 }
 
@@ -1930,7 +1944,11 @@ export const getInboxRowsForView = async (
   const page_size = options.maxRows ?? HYDRATED_INBOX_PAGE_SIZE
   const offset = Number.parseInt(options.cursor ?? '0', 10) || (options.offset ?? 0)
 
-  let query: any = supabase.from(HYDRATED_INBOX_THREADS_VIEW).select('*', { count: 'exact' })
+  const viewName = options.sourceMode === 'all_sellers' 
+    ? 'v_seller_work_items' 
+    : HYDRATED_INBOX_THREADS_VIEW
+
+  let query: any = supabase.from(viewName).select('*', { count: 'exact' })
 
   // Apply Search/Advanced Filters
   query = applyInboxSearchServerFilter(query, options.filters?.query)
@@ -1941,6 +1959,10 @@ export const getInboxRowsForView = async (
     query = query.gt('inbound_count', 0)
   } else if (view === ('archived' as any)) {
     query = query.eq('is_archived', true)
+  } else if (view === ('scheduled' as any)) {
+    query = query.eq('execution_state', 'scheduled')
+  } else if (view === ('queued' as any)) {
+    query = query.in('execution_state', ['ready', 'active'])
   } else {
     const categories = getHydratedCategoriesForView(view)
     if (categories.length === 1) {
@@ -1951,18 +1973,43 @@ export const getInboxRowsForView = async (
   }
 
   // Canonical Ordering
-  query = query
-    .order('final_acquisition_score', { ascending: false, nullsFirst: false })
-    .order('priority_score', { ascending: false, nullsFirst: false })
-    .order('latest_message_at', { ascending: false, nullsFirst: false })
-    .range(offset, offset + page_size - 1)
+  if (options.sourceMode === 'all_sellers') {
+    // For All Sellers, sort hot/replied/scheduled/contacted above not_contacted by default
+    // We use the seller_state logic from the view which has implicit priority
+    query = query
+      .order('final_acquisition_score', { ascending: false, nullsFirst: false })
+      .order('priority_score', { ascending: false, nullsFirst: false })
+      .order('latest_message_at', { ascending: false, nullsFirst: false })
+  } else {
+    query = query
+      .order('final_acquisition_score', { ascending: false, nullsFirst: false })
+      .order('priority_score', { ascending: false, nullsFirst: false })
+      .order('latest_message_at', { ascending: false, nullsFirst: false })
+  }
+  
+  query = query.range(offset, offset + page_size - 1)
 
   if (options.signal) query = query.abortSignal(options.signal)
 
-  const { data, count, error } = await query
-  if (error) throw error
+  let data: AnyRecord[] = []
+  let count: number | null = null
+  try {
+    const result = await query
+    data = safeArray(result.data as AnyRecord[])
+    count = result.count ?? null
+  } catch (err) {
+    if (DEV) console.warn('[getInboxRowsForView] query failed, returning empty', mapErrorMessage(err))
+    return {
+      view_key: view,
+      backend_count: 0,
+      rows: [],
+      rendered_count: 0,
+      has_more: false,
+      next_cursor: null,
+    }
+  }
 
-  const rows = safeArray(data as AnyRecord[]).map((row, index) => normalizeInboxThread(row, offset, index))
+  const rows = data.map((row, index) => normalizeInboxThread(row, offset, index))
   
   return {
     view_key: view,
@@ -2011,10 +2058,12 @@ export const getInboxThreads = async (
 
   if (options.signal) countQuery = countQuery.abortSignal(options.signal)
 
-  const { count: totalAvailable, error: countError } = await countQuery
+  const { count: rawCount, error: countError } = await countQuery
   if (countError && DEV) {
     console.warn('[getInboxThreads] countQuery fallback:', mapErrorMessage(countError))
   }
+
+  const supressNullCount = (v: number | null | undefined): number => (v == null ? 0 : v)
 
   let query: any = supabase
     .from(HYDRATED_INBOX_THREADS_VIEW)
@@ -2037,10 +2086,20 @@ export const getInboxThreads = async (
   }
   if (options.signal) query = query.abortSignal(options.signal)
 
-  const { data, error } = await query
-  if (error) {
-    if (DEV) console.error('[getInboxThreads] query error:', mapErrorMessage(error))
-    throw new Error(mapErrorMessage(error))
+  let data: AnyRecord[] = []
+  let queryError: string | null = null
+  try {
+    const result = await query
+    data = safeArray(result.data as AnyRecord[])
+  } catch (err) {
+    queryError = mapErrorMessage(err)
+    if (DEV) console.error('[getInboxThreads] query error:', queryError)
+  }
+
+  const totalAvailable = countError ? supressNullCount(null) : supressNullCount(rawCount)
+
+  if (queryError) {
+    return { threads: [], totalAvailable }
   }
 
   const rows = safeArray(data as AnyRecord[])
@@ -2143,8 +2202,10 @@ export const getInboxThreads = async (
       asString(row.property_address, ''),
     ].find(v => v && v.trim()) || 'Unknown Property'
     
-    const market = asString(row.market, '')
-    const marketLabel = market || 'Unknown Market'
+    // filter_market comes from v_inbox_enriched (properties.market); fall back to
+    // the view's own market field which comes from message_events and is usually 'unknown'.
+    const market = asString(row.filter_market ?? (row.market !== 'unknown' ? row.market : null), '') || asString(row.market, '')
+    const marketLabel = (market && market !== 'unknown' && market !== 'Unknown') ? market : 'Unknown Market'
     
     const latestBody = asString(row.latest_message_body, '') || 'No recent message'
     const propertyType = asString(row.property_type, '')
@@ -2182,7 +2243,9 @@ export const getInboxThreads = async (
       threadKey,
       thread_id: threadKey,
       leadId: asString(row.property_id ?? row.master_owner_id ?? row.prospect_id, '') || threadKey,
+      market: marketLabel,
       marketId: marketLabel,
+      marketName: marketLabel,
       ownerName: ownerDisplayName,
       ownerDisplayName,
       subject: address,
@@ -2214,8 +2277,6 @@ export const getInboxThreads = async (
       sellerPhone: displayPhone || undefined,
       canonicalE164: canonicalE164 || undefined,
       bestPhone: bestPhone || undefined,
-      market: marketLabel,
-      marketName: marketLabel,
       propertyAddress: address,
       propertyAddressFull: address,
       propertyType: propertyType || undefined,
@@ -2260,15 +2321,25 @@ export const getInboxThreads = async (
       displayName: asString(row.display_name, ownerDisplayName),
       displayAddress: asString(row.display_address, address),
       displayPhone: asString(row.display_phone, displayPhone),
-      displayMarket: asString(row.display_market, marketLabel),
+      displayMarket: (row.filter_market && row.filter_market !== 'Unknown')
+        ? asString(row.filter_market, marketLabel)
+        : (row.display_market && row.display_market !== 'Unknown')
+          ? asString(row.display_market, marketLabel)
+          : marketLabel,
       displayStatus: asString(row.display_status, status),
       displayScore: asNumber(row.display_score, finalAcquisitionScore),
-      
+
+      // Canonical seller state fields (from v_inbox_enriched)
+      seller_state: asString(row.seller_state, ''),
+      seller_status: asString(row.seller_status, ''),
+      execution_state: asString(row.execution_state, ''),
+      pipeline_stage: asString(row.pipeline_stage, ''),
+
       // Filter Metadata
       filterState: row.filter_state,
       filterCity: row.filter_city,
       filterZip: row.filter_zip,
-      filterMarket: row.filter_market,
+      filterMarket: row.filter_market ?? row.market,
       filterPropertyType: row.filter_property_type,
       filterOwnerType: row.filter_owner_type,
       filterLanguage: row.filter_language,
@@ -2367,17 +2438,23 @@ export const fetchInboxModel = async (options: InboxFetchOptions = {}): Promise<
   const lastLiveFetchAt = new Date().toISOString()
   const filterState = options.filters || {}
   
-  const [viewResult, mapPins, allInboundCountResult] = await Promise.all([
+  const [viewResult, mapPins] = await Promise.all([
     getInboxRowsForView((filterState.view || 'priority') as InboxViewSelectValue, options),
     fetchInboxMapPins(filterState),
-    getSupabaseClient()
+  ])
+
+  let allInboundCount = 0
+  try {
+    const { count: allInboundRaw, error: allInboundError } = await getSupabaseClient()
       .from(HYDRATED_INBOX_THREADS_VIEW)
       .select('thread_key', { count: 'exact', head: true })
       .gt('inbound_count', 0)
-  ])
+    if (!allInboundError) allInboundCount = allInboundRaw ?? 0
+  } catch (err) {
+    if (DEV) console.warn('[fetchInboxModel] allInboundCount fetch failed', err)
+  }
 
   const { rows: threads, backend_count: totalAvailable } = viewResult
-  const allInboundCount = allInboundCountResult.count || 0
   let countsRows: AnyRecord[] = []
 
   try {

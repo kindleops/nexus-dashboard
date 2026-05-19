@@ -281,112 +281,144 @@ export const ChatThread = ({
 
 
       <div className="nx-message-list" ref={listRef} onScroll={handleScroll}>
-        {messages.map(msg => {
-          const isOutbound = msg.direction === 'outbound'
-          const deliveryBadge = normalizeDeliveryBadge(msg)
-          return (
-            <div key={msg.id} className={cls('nx-bubble-wrap', isOutbound ? 'is-outbound' : 'is-inbound')}>
-              <div className="nx-chat-bubble">
-                {highlightText(msg.body, matchedKeywords.length ? matchedKeywords : [searchQuery])}
-                
-                {/* Phase 3 Turn Intelligence */}
-                {(() => {
-                  const turn = phase3?.recentTurns?.find(t => 
-                    t.metadata?.inbound_message_id === msg.id || 
-                    t.metadata?.outbound_message_id === msg.id ||
-                    t.metadata?.message_event_id === msg.id
-                  )
-                  if (!turn || (!turn.intent_detected && !turn.confidence_score)) return null
+        {(() => {
+          const isUncontacted = !thread || (thread as any).is_uncontacted || thread.threadKey?.startsWith('property:') || (thread.inbound_count === 0 && thread.outbound_count === 0 && messages.length === 0)
+          
+          if (isUncontacted && !loading) {
+            return (
+              <div className="nx-uncontacted-state">
+                <div className="nx-uncontacted-state__card">
+                  <div className="nx-uncontacted-state__icon">
+                    <Icon name="message" />
+                  </div>
+                  <h3>No conversation yet</h3>
+                  <p>This seller has not been contacted or there is no SMS history for this property.</p>
                   
-                  return (
-                    <div className="nx-turn-intel">
-                      <div className="nx-turn-intel__row">
-                        {turn.intent_detected && (
-                          <span className="nx-turn-intent">
-                            {String(turn.intent_detected || '').replace(/_/g, ' ')}
-                          </span>
-                        )}
-                        {turn.confidence_score && (
-                          <span className="nx-turn-conf">
-                            {Math.round(turn.confidence_score * 100)}%
-                          </span>
-                        )}
-                        {typeof turn.metadata?.reasoning === 'string' && (
-                          <button type="button" className="nx-turn-intel__why" onClick={(e) => {
-                              const btn = e.currentTarget
-                              const intel = btn.closest('.nx-turn-intel')
-                              const reason = intel?.querySelector('.nx-turn-intel__reason') as HTMLElement
-                              if (reason) {
-                                reason.style.display = reason.style.display === 'none' ? 'block' : 'none'
-                              }
-                            }}
-                          >
-                            <Icon name="alert-circle" />
-                          </button>
-                        )}
-                      </div>
-                      {typeof turn.metadata?.reasoning === 'string' && (
-                        <div className="nx-turn-intel__reason" style={{ display: 'none' }}>
-                          {turn.metadata.reasoning}
-                        </div>
-                      )}
-                      {typeof turn.metadata?.reasoning === 'object' && turn.metadata.reasoning !== null && (
-                        <div className="nx-turn-intel__reason" style={{ display: 'none' }}>
-                          {JSON.stringify(turn.metadata.reasoning)}
-                        </div>
-                      )}
-                    </div>
-                  )
-                })()}
-              </div>
-
-              <div className="nx-bubble-footer">
-                <div className="nx-bubble-meta-badge">
-                  <time>{formatMessageTime(msg.createdAt)}</time>
-                  
-                  <div className="nx-dev-tooltip">
-                    <span>Source: <b>{msg.source}</b></span>
-                    <span>Event: <b>{msg.eventType}</b></span>
-                    {msg.deliveryStatus && (
-                      <span>Status: <b>{titleCase(msg.deliveryStatus)}</b></span>
+                  <div className="nx-uncontacted-state__actions">
+                    <button type="button" className="nx-btn nx-btn--secondary" onClick={() => onThreadAction?.(thread?.id || '', 'open_map')}>
+                      <Icon name="map" /> <span>Open Map</span>
+                    </button>
+                    <button type="button" className="nx-btn nx-btn--secondary" onClick={() => onThreadAction?.(thread?.id || '', 'open_property')}>
+                      <Icon name="home" /> <span>Open Property</span>
+                    </button>
+                    {((thread as any).has_queue || (thread as any).queueId) && (
+                      <button type="button" className="nx-btn nx-btn--primary" onClick={() => onThreadAction?.(thread?.id || '', 'open_queue')}>
+                        <Icon name="zap" /> <span>Open Queue</span>
+                      </button>
                     )}
                   </div>
                 </div>
-
-                {isOutbound && (
-                  <div className="nx-delivery-row">
-                    <span 
-                      className={cls('nx-delivery-pill', `is-${deliveryBadge}`)}
-                      style={getDeliveryPillStyle(deliveryBadge)}
-                    >
-                      {deliveryBadge === 'approval' ? 'Needs Approval' : titleCase(deliveryBadge)}
-                    </span>
-                    {deliveryBadge === 'approval' && (
-                      <div className="nx-approval-actions">
-                        <button type="button" className="nx-approve-btn" onClick={() => onThreadAction?.(thread.id, 'approve_queue:' + msg.id)} title="Approve & Send Now">
-                          <Icon name="check" />
-                        </button>
-                        <button type="button" className="nx-edit-btn" onClick={() => onThreadAction?.(thread.id, 'edit_queue:' + msg.id)} title="Edit Draft">
-                          <Icon name="file-text" />
-                        </button>
-                        <button type="button" className="nx-cancel-btn" onClick={() => onThreadAction?.(thread.id, 'cancel_queue:' + msg.id)} title="Cancel & Delete Draft">
-                          <Icon name="x" />
-                        </button>
-                      </div>
-                    )}
-                    {deliveryBadge === 'failed' && (
-                      <button type="button" className="nx-retry-btn" onClick={() => onThreadAction?.(thread.id, 'retry_send')} title="Retry sending">
-                        <Icon name="refresh-cw" />
-                      </button>
-                    )}
-
-                  </div>
-                )}
               </div>
-            </div>
-          )
-        })}
-        {messages.length === 0 && !loading && (
+            )
+          }
+
+          return messages.map(msg => {
+            const isOutbound = msg.direction === 'outbound'
+            const deliveryBadge = normalizeDeliveryBadge(msg)
+            return (
+              <div key={msg.id} className={cls('nx-bubble-wrap', isOutbound ? 'is-outbound' : 'is-inbound')}>
+                <div className="nx-chat-bubble">
+                  {highlightText(msg.body, matchedKeywords.length ? matchedKeywords : [searchQuery])}
+                  
+                  {/* Phase 3 Turn Intelligence */}
+                  {(() => {
+                    const turn = phase3?.recentTurns?.find(t => 
+                      t.metadata?.inbound_message_id === msg.id || 
+                      t.metadata?.outbound_message_id === msg.id ||
+                      t.metadata?.message_event_id === msg.id
+                    )
+                    if (!turn || (!turn.intent_detected && !turn.confidence_score)) return null
+                    
+                    return (
+                      <div className="nx-turn-intel">
+                        <div className="nx-turn-intel__row">
+                          {turn.intent_detected && (
+                            <span className="nx-turn-intent">
+                              {String(turn.intent_detected || '').replace(/_/g, ' ')}
+                            </span>
+                          )}
+                          {turn.confidence_score && (
+                            <span className="nx-turn-conf">
+                              {Math.round(turn.confidence_score * 100)}%
+                            </span>
+                          )}
+                          {typeof turn.metadata?.reasoning === 'string' && (
+                            <button type="button" className="nx-turn-intel__why" onClick={(e) => {
+                                const btn = e.currentTarget
+                                const intel = btn.closest('.nx-turn-intel')
+                                const reason = intel?.querySelector('.nx-turn-intel__reason') as HTMLElement
+                                if (reason) {
+                                  reason.style.display = reason.style.display === 'none' ? 'block' : 'none'
+                                }
+                              }}
+                            >
+                              <Icon name="alert-circle" />
+                            </button>
+                          )}
+                        </div>
+                        {typeof turn.metadata?.reasoning === 'string' && (
+                          <div className="nx-turn-intel__reason" style={{ display: 'none' }}>
+                            {turn.metadata.reasoning}
+                          </div>
+                        )}
+                        {typeof turn.metadata?.reasoning === 'object' && turn.metadata.reasoning !== null && (
+                          <div className="nx-turn-intel__reason" style={{ display: 'none' }}>
+                            {JSON.stringify(turn.metadata.reasoning)}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
+                </div>
+
+                <div className="nx-bubble-footer">
+                  <div className="nx-bubble-meta-badge">
+                    <time>{formatMessageTime(msg.createdAt)}</time>
+                    
+                    <div className="nx-dev-tooltip">
+                      <span>Source: <b>{msg.source}</b></span>
+                      <span>Event: <b>{msg.eventType}</b></span>
+                      {msg.deliveryStatus && (
+                        <span>Status: <b>{titleCase(msg.deliveryStatus)}</b></span>
+                      )}
+                    </div>
+                  </div>
+
+                  {isOutbound && (
+                    <div className="nx-delivery-row">
+                      <span 
+                        className={cls('nx-delivery-pill', `is-${deliveryBadge}`)}
+                        style={getDeliveryPillStyle(deliveryBadge)}
+                      >
+                        {deliveryBadge === 'approval' ? 'Needs Approval' : titleCase(deliveryBadge)}
+                      </span>
+                      {deliveryBadge === 'approval' && (
+                        <div className="nx-approval-actions">
+                          <button type="button" className="nx-approve-btn" onClick={() => onThreadAction?.(thread.id, 'approve_queue:' + msg.id)} title="Approve & Send Now">
+                            <Icon name="check" />
+                          </button>
+                          <button type="button" className="nx-edit-btn" onClick={() => onThreadAction?.(thread.id, 'edit_queue:' + msg.id)} title="Edit Draft">
+                            <Icon name="file-text" />
+                          </button>
+                          <button type="button" className="nx-cancel-btn" onClick={() => onThreadAction?.(thread.id, 'cancel_queue:' + msg.id)} title="Cancel & Delete Draft">
+                            <Icon name="x" />
+                          </button>
+                        </div>
+                      )}
+                      {deliveryBadge === 'failed' && (
+                        <button type="button" className="nx-retry-btn" onClick={() => onThreadAction?.(thread.id, 'retry_send')} title="Retry sending">
+                          <Icon name="refresh-cw" />
+                        </button>
+                      )}
+
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })
+        })()}
+        {messages.length === 0 && !loading && !(!thread || (thread as any).is_uncontacted || thread.threadKey?.startsWith('property:') || (thread.inbound_count === 0 && thread.outbound_count === 0)) && (
           <div className="nx-inbox__messages-empty">
             <Icon name="message" style={{ opacity: 0.1, width: 40, height: 40, marginBottom: 12 }} />
             <p>No messages loaded for this thread.</p>

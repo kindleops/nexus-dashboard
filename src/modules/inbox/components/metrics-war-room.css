@@ -189,7 +189,7 @@
   white-space: nowrap;
 }
 .wr-kpi-card__value {
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 800;
   line-height: 1;
   color: #e8f0ff;
@@ -431,6 +431,15 @@
   height: 100%;
   border-radius: 2px;
   transition: width 0.4s ease;
+}
+
+.wr-funnel__pending-note {
+  margin-top: 8px;
+  padding: 5px 8px;
+  font-size: 10px;
+  color: var(--wr-dimmer);
+  font-style: italic;
+  border-top: 1px solid var(--wr-border);
 }
 
 /* ── Line chart ──────────────────────────────────────────────────── */
@@ -781,6 +790,9 @@
 }
 .wr-rail__header {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 8px 10px 6px;
   border-bottom: 1px solid var(--wr-border);
   background: rgba(4,8,22,0.98);
@@ -860,11 +872,21 @@
   font-size: 12px;
   container-type: inline-size;
 }
-.wr-cockpit-grid {
+.wr-50-row1 {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--wr-gap);
-  padding: 0 16px 6px;
+  padding: 0 var(--wr-gap) var(--wr-gap);
+}
+.wr-50-chart,
+.wr-50-full {
+  padding: 0 var(--wr-gap) var(--wr-gap);
+}
+.wr-50-lbs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--wr-gap);
+  padding: 0 var(--wr-gap) var(--wr-gap);
 }
 
 /* ── Command (75%) ───────────────────────────────────────────────── */
@@ -879,25 +901,29 @@
   font-size: 12px;
   container-type: inline-size;
 }
-.wr-command-above {
+.wr-75-row1 {
   display: grid;
-  grid-template-columns: 3fr 2fr;
-  grid-template-rows: minmax(280px, auto);
+  grid-template-columns: 7fr 5fr;
+  grid-template-rows: minmax(280px, 330px);
   gap: var(--wr-gap);
-  padding: 0 16px 6px;
+  padding: 0 var(--wr-gap) var(--wr-gap);
   align-items: stretch;
 }
-.wr-command-lbs {
+.wr-75-chart,
+.wr-75-channel {
+  padding: 0 var(--wr-gap) var(--wr-gap);
+}
+.wr-75-lbs {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: var(--wr-gap);
-  padding: 0 16px 6px;
+  padding: 0 var(--wr-gap) var(--wr-gap);
 }
-.wr-command-bottom {
+.wr-75-infra {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--wr-gap);
-  padding: 0 16px 6px;
+  padding: 0 var(--wr-gap) var(--wr-gap);
 }
 
 /* ── War Room (100%) ─────────────────────────────────────────────── */
@@ -913,70 +939,74 @@
   container-type: inline-size;
 }
 
-/* Row 1: MAP 40% | FUNNEL 35% | ALERTS+SPEND 25% */
-.wr-warroom-row1 {
+/* Row 1: Map | Line Chart | Revenue+Alerts stack */
+.wr-100-row1 {
   display: grid;
-  grid-template-columns: 40fr 35fr 25fr;
-  grid-template-rows: minmax(320px, auto);
+  grid-template-columns: 5fr 5fr 3fr;
+  grid-template-rows: minmax(300px, 360px);
   gap: var(--wr-gap);
-  padding: 0 16px 6px;
+  padding: 0 var(--wr-gap) var(--wr-gap);
   align-items: stretch;
 }
-.wr-warroom-right-col {
+.wr-100-right-col {
   display: flex;
   flex-direction: column;
   gap: var(--wr-gap);
   min-height: 0;
+  overflow: hidden;
 }
-.wr-warroom-right-col > .wr-panel {
+.wr-100-right-col > .wr-panel {
   flex: 1 1 0;
   min-height: 0;
+  overflow: hidden;
 }
 
-/* Row 2: LINE CHART 5fr | CHANNEL PERF 4fr | OFFERS/CONTRACTS 3fr */
-.wr-warroom-row2 {
+/* Row 2: Funnel | Channel Performance */
+.wr-100-row2 {
   display: grid;
-  grid-template-columns: 5fr 4fr 3fr;
-  grid-template-rows: minmax(180px, auto);
+  grid-template-columns: 2fr 3fr;
+  grid-template-rows: minmax(170px, auto);
   gap: var(--wr-gap);
-  padding: 0 16px 6px;
+  padding: 0 var(--wr-gap) var(--wr-gap);
   align-items: stretch;
 }
 
-/* Row 3: Leaderboards + Buyer Demand (5 columns) */
-.wr-warroom-lbs {
+/* Row 3: 5-col Leaderboards + Buyer Demand */
+.wr-100-lbs {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   gap: var(--wr-gap);
-  padding: 0 16px 6px;
+  padding: 0 var(--wr-gap) var(--wr-gap);
 }
 
-/* Row 4: Carrier | Numbers | Quality (3 columns) */
-.wr-warroom-row4 {
+/* Row 4: 3-col Infrastructure */
+.wr-100-row4 {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: var(--wr-gap);
-  padding: 0 16px 16px;
+  padding: 0 var(--wr-gap) var(--wr-gap);
 }
 
 /* ── Responsive ──────────────────────────────────────────────────── */
 @container (max-width: 900px) {
-  .wr-warroom-row1  { grid-template-columns: 1fr; }
-  .wr-warroom-row2  { grid-template-columns: 1fr; }
-  .wr-warroom-lbs   { grid-template-columns: repeat(2, 1fr); }
-  .wr-warroom-row4  { grid-template-columns: repeat(2, 1fr); }
-  .wr-command-lbs   { grid-template-columns: repeat(2, 1fr); }
-  .wr-command-above { grid-template-columns: 1fr; }
+  .wr-100-row1 { grid-template-columns: 1fr; grid-template-rows: auto; }
+  .wr-100-row2 { grid-template-columns: 1fr; }
+  .wr-100-lbs  { grid-template-columns: repeat(2, 1fr); }
+  .wr-100-row4 { grid-template-columns: repeat(2, 1fr); }
+  .wr-75-row1  { grid-template-columns: 1fr; grid-template-rows: auto; }
+  .wr-75-lbs   { grid-template-columns: repeat(2, 1fr); }
+  .wr-75-infra { grid-template-columns: 1fr; }
 }
 @container (max-width: 600px) {
-  .wr-kpi-strip     { flex-wrap: wrap; overflow-x: visible; }
-  .wr-kpi-card      { flex: 1 0 90px; }
-  .wr-cockpit-grid  { grid-template-columns: 1fr; }
-  .wr-command-lbs   { grid-template-columns: 1fr; }
-  .wr-warroom-lbs   { grid-template-columns: 1fr; }
-  .wr-warroom-row4  { grid-template-columns: 1fr; }
-  .wr-channel-header { grid-template-columns: 2fr 1fr 1fr; }
-  .wr-channel-row    { grid-template-columns: 2fr 1fr 1fr; }
+  .wr-kpi-strip       { flex-wrap: wrap; overflow-x: visible; }
+  .wr-kpi-card        { flex: 1 0 90px; }
+  .wr-50-row1         { grid-template-columns: 1fr; }
+  .wr-50-lbs          { grid-template-columns: 1fr; }
+  .wr-75-lbs          { grid-template-columns: 1fr; }
+  .wr-100-lbs         { grid-template-columns: 1fr; }
+  .wr-100-row4        { grid-template-columns: 1fr; }
+  .wr-channel-header  { grid-template-columns: 2fr 1fr 1fr; }
+  .wr-channel-row     { grid-template-columns: 2fr 1fr 1fr; }
   .wr-channel-row > *:nth-child(n+4)    { display: none; }
   .wr-channel-header > *:nth-child(n+4) { display: none; }
 }

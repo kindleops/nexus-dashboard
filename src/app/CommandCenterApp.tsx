@@ -7,7 +7,13 @@ import { BriefingPanel, buildBriefingDigest, type BriefingDigest } from '../shar
 import { NotificationToasts, NotificationCenter } from '../shared/NotificationToast'
 import { playSound } from '../shared/sounds'
 import { applyThemeToDOM, subscribeSettings, updateSetting, type NexusTheme } from '../shared/settings'
-import { COMMAND_STORE_ITEMS, addStoreItemToSpace, getInstallSet, saveInstallSet } from '../modules/command-store/command-store.data'
+import { GlobalCommandOverlay } from '../modules/command-center/GlobalCommandOverlay'
+import {
+  GLOBAL_COMMAND_CONTEXT_EVENT,
+  GLOBAL_COMMAND_OPEN_EVENT,
+  type CommandResult,
+  type GlobalCommandSearchContext,
+} from '../modules/command-center/command.types'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -57,6 +63,21 @@ const navItems: NavItem[] = [
 ]
 
 const THEME_ALIASES: Record<string, NexusTheme> = {
+  // New global themes
+  dark: 'dark',
+  satellite: 'satellite',
+  terrain: 'terrain',
+  'red ops': 'red_ops',
+  'red-ops': 'red_ops',
+  red_ops: 'red_ops',
+  matrix: 'matrix',
+  blueprint: 'blueprint',
+  executive: 'executive',
+  'night vision': 'night_vision',
+  'night-vision': 'night_vision',
+  night_vision: 'night_vision',
+  monochrome: 'monochrome',
+  // Legacy aliases
   'dark-matter': 'dark-matter',
   'dark matter': 'dark-matter',
   'midnight-glass': 'midnight-glass',
@@ -74,16 +95,6 @@ const THEME_ALIASES: Record<string, NexusTheme> = {
   'operator black': 'operator-black',
 }
 
-// ── Global Command Palette ─────────────────────────────────────────────────
-
-interface GlobalCommand {
-  id: string
-  label: string
-  hint?: string
-  category: string
-  action: () => void
-}
-
 // ── Component ──────────────────────────────────────────────────────────────
 
 export const CommandCenterApp = () => {
@@ -94,9 +105,8 @@ export const CommandCenterApp = () => {
     path: route.path,
   })
   const [cmdOpen, setCmdOpen] = useState(false)
-  const [cmdQuery, setCmdQuery] = useState('')
-  const [cmdFocus, setCmdFocus] = useState(0)
-  const cmdInputRef = useRef<HTMLInputElement>(null)
+  const [cmdInitialQuery, setCmdInitialQuery] = useState('')
+  const [commandContext, setCommandContext] = useState<GlobalCommandSearchContext>({ routePath: route.path })
 
   // New Phase 4 systems
   const [copilotOpen, setCopilotOpen] = useState(false)
@@ -156,103 +166,83 @@ export const CommandCenterApp = () => {
     playSound('briefing-open')
   }, [])
 
-  const installStoreItemById = useCallback((itemId: string, destination: Parameters<typeof addStoreItemToSpace>[1] = 'acquisition') => {
-    const item = COMMAND_STORE_ITEMS.find((candidate) => candidate.id === itemId)
-    if (!item) return
-    const next = getInstallSet()
-    next.add(item.id)
-    saveInstallSet(next)
-    addStoreItemToSpace(item.id, destination)
-    pushRoutePath('/command-store')
-  }, [])
-
-  const addStoreItemById = useCallback((itemId: string, destination: Parameters<typeof addStoreItemToSpace>[1] = 'acquisition') => {
-    const item = COMMAND_STORE_ITEMS.find((candidate) => candidate.id === itemId)
-    if (!item) return
-    addStoreItemToSpace(item.id, destination)
-    pushRoutePath('/command-store')
-  }, [])
-
-  // Global commands for palette
-  const globalCommands = useMemo<GlobalCommand[]>(() => [
-    ...navItems.map((item) => ({
-      id: `go-${item.path}`,
-      label: `Go to ${item.label}`,
-      hint: item.shortcut,
-      category: 'Navigation',
-      action: () => pushRoutePath(item.path),
-    })),
-    { id: 'focus-dallas', label: 'Focus Dallas', category: 'Markets', action: () => pushRoutePath('/markets') },
-    { id: 'focus-houston', label: 'Focus Houston', category: 'Markets', action: () => pushRoutePath('/markets') },
-    { id: 'focus-phoenix', label: 'Focus Phoenix', category: 'Markets', action: () => pushRoutePath('/markets') },
-    { id: 'focus-minneapolis', label: 'Focus Minneapolis', category: 'Markets', action: () => pushRoutePath('/markets') },
-    { id: 'show-heatmap', label: 'Show Heatmap', category: 'Map Modes', action: () => pushRoutePath('/dashboard/live') },
-    { id: 'show-lead-temp', label: 'Show Lead Temperature', category: 'Map Modes', action: () => pushRoutePath('/dashboard/live') },
-    { id: 'show-pressure', label: 'Show Market Pressure', category: 'Map Modes', action: () => pushRoutePath('/dashboard/live') },
-    { id: 'show-buyer-demand', label: 'Show Buyer Demand', category: 'Map Modes', action: () => pushRoutePath('/dashboard/live') },
-    { id: 'enter-battlefield', label: 'Enter Battlefield', category: 'Views', action: () => pushRoutePath('/dashboard/live') },
-    { id: 'open-copilot', label: 'Open AI Copilot', hint: '⌘J', category: 'AI', action: () => setCopilotOpen(true) },
-    { id: 'open-agents', label: 'Open AI Agent Performance', category: 'Intelligence', action: () => pushRoutePath('/agents') },
-    { id: 'open-briefing', label: 'Operator Briefing', hint: '⌘.', category: 'AI', action: () => openBriefing() },
-    { id: 'open-notif-center', label: 'Notification Center', category: 'System', action: () => setNotifCenterOpen(true) },
-    { id: 'open-command-store', label: 'Open Command Store', hint: 'C', category: 'Command Store', action: () => pushRoutePath('/command-store') },
-    { id: 'open-acquisition-command', label: 'Open Acquisition Command', category: 'Acquisition', action: () => pushRoutePath('/acquisition') },
-    { id: 'open-hot-sellers', label: 'Open Hot Sellers', category: 'Acquisition', action: () => pushRoutePath('/acquisition') },
-    { id: 'open-ready-queue', label: 'Open Ready Queue', category: 'Acquisition', action: () => pushRoutePath('/queue') },
-    { id: 'open-failed-sends', label: 'Open Failed Sends', category: 'Acquisition', action: () => pushRoutePath('/queue') },
-    { id: 'open-owner-search', label: 'Open Owner Search', category: 'Acquisition', action: () => pushRoutePath('/acquisition') },
-    { id: 'open-property-intelligence', label: 'Open Property Intelligence', category: 'Acquisition', action: () => pushRoutePath('/properties') },
-    { id: 'open-property-search', label: 'Open Property Search', category: 'Acquisition', action: () => pushRoutePath('/properties') },
-    { id: 'generate-offer', label: 'Generate Offer', category: 'Acquisition', action: () => pushRoutePath('/acquisition') },
-    { id: 'open-acquisition-map', label: 'Open Acquisition Map', category: 'Acquisition', action: () => pushRoutePath('/acquisition') },
-    { id: 'review-ai-recommendations', label: 'Review AI Recommendations', category: 'Acquisition', action: () => pushRoutePath('/acquisition') },
-    { id: 'open-seller-dossier', label: 'Open Seller Dossier', category: 'Acquisition', action: () => pushRoutePath('/dossier') },
-    { id: 'open-contact-stack', label: 'Open Contact Stack', category: 'Acquisition', action: () => pushRoutePath('/acquisition') },
-    { id: 'search-store', label: 'Search Store', category: 'Command Store', action: () => pushRoutePath('/command-store') },
-    { id: 'show-installed-apps', label: 'Show Installed Apps', category: 'Command Store', action: () => pushRoutePath('/command-store') },
-    { id: 'open-integrations', label: 'Open Integrations', category: 'Command Store', action: () => pushRoutePath('/command-store') },
-    { id: 'install-seller-inbox', label: 'Install Seller Inbox', category: 'Command Store', action: () => installStoreItemById('app-seller-inbox', 'acquisition') },
-    { id: 'install-queue-agent', label: 'Install Queue Recovery Agent', category: 'Command Store', action: () => installStoreItemById('queue-recovery-agent', 'queue') },
-    { id: 'add-hot-replies-widget', label: 'Add Hot Replies Widget', category: 'Command Store', action: () => addStoreItemById('widget-hot-replies', 'acquisition') },
-    { id: 'add-market-heat-widget', label: 'Add Market Heat Widget', category: 'Command Store', action: () => addStoreItemById('widget-market-heat', 'market-intelligence') },
-    { id: 'add-revenue-forecast', label: 'Add Revenue Forecast Dashboard', category: 'Command Store', action: () => addStoreItemById('report-revenue-forecast', 'revenue') },
-    { id: 'add-acq-app-space', label: 'Add App to Acquisition Command', category: 'Command Store', action: () => addStoreItemById('real-estate-acquisitions-pack', 'acquisition') },
-    { id: 'add-map-layer', label: 'Add Map Layer', category: 'Command Store', action: () => addStoreItemById('layer-heat-map-layer', 'market-intelligence') },
-  ], [addStoreItemById, installStoreItemById, openBriefing])
-
-  const filteredCommands = cmdQuery.trim()
-    ? globalCommands.filter(
-        (c) =>
-          c.label.toLowerCase().includes(cmdQuery.toLowerCase()) ||
-          c.hint?.toLowerCase().includes(cmdQuery.toLowerCase()) ||
-          c.category.toLowerCase().includes(cmdQuery.toLowerCase()),
-      )
-    : globalCommands
-
-  const groupedCommands = useMemo(() => {
-    const map = new Map<string, GlobalCommand[]>()
-    for (const cmd of filteredCommands) {
-      const existing = map.get(cmd.category)
-      if (existing) existing.push(cmd)
-      else map.set(cmd.category, [cmd])
-    }
-    return Array.from(map.entries()).map(([category, items]) => ({ category, items }))
-  }, [filteredCommands])
-
-  const flatCommands = groupedCommands.flatMap((g) => g.items)
-
-  const openCmd = useCallback(() => {
+  const openCmd = useCallback((initialQuery = '') => {
     setCmdOpen(true)
-    setCmdQuery('')
-    setCmdFocus(0)
-    setTimeout(() => cmdInputRef.current?.focus(), 50)
+    setCmdInitialQuery(initialQuery)
   }, [])
 
   const closeCmd = useCallback(() => {
     setCmdOpen(false)
-    setCmdQuery('')
-    setCmdFocus(0)
+    setCmdInitialQuery('')
   }, [])
+
+  useEffect(() => {
+    setCommandContext((current) => ({ ...current, routePath: route.path }))
+  }, [route.path])
+
+  useEffect(() => {
+    const handleOpen = (event: Event) => {
+      const detail = (event as CustomEvent<{ initialQuery?: string }>).detail
+      openCmd(detail?.initialQuery || '')
+    }
+    const handleContext = (event: Event) => {
+      const detail = (event as CustomEvent<Partial<GlobalCommandSearchContext>>).detail
+      if (!detail) return
+      setCommandContext((current) => ({
+        ...current,
+        ...detail,
+        routePath: route.path,
+      }))
+    }
+    window.addEventListener(GLOBAL_COMMAND_OPEN_EVENT, handleOpen as EventListener)
+    window.addEventListener(GLOBAL_COMMAND_CONTEXT_EVENT, handleContext as EventListener)
+    return () => {
+      window.removeEventListener(GLOBAL_COMMAND_OPEN_EVENT, handleOpen as EventListener)
+      window.removeEventListener(GLOBAL_COMMAND_CONTEXT_EVENT, handleContext as EventListener)
+    }
+  }, [openCmd, route.path])
+
+  const executeGlobalCommand = useCallback((result: CommandResult) => {
+    if (result.meta?.confirmRequired && import.meta.env.DEV) {
+      console.warn('[GlobalCommand]', 'confirm-required result selected', result)
+    }
+
+    const shouldNavigate = Boolean(result.route && result.route !== route.path)
+    if (shouldNavigate && result.route) {
+      pushRoutePath(result.route)
+    }
+
+    if (result.action?.kind === 'dispatch_event' && result.action.eventName) {
+      const eventName = result.action.eventName
+      window.setTimeout(() => {
+        window.dispatchEvent(new CustomEvent(eventName, {
+          detail: {
+            ...result.payload,
+            route: result.route,
+            resultId: result.id,
+            resultType: result.type,
+          },
+        }))
+      }, shouldNavigate ? 80 : 0)
+    } else if (result.action?.kind === 'confirm_required' && result.action.eventName) {
+      const eventName = result.action.eventName
+      window.setTimeout(() => {
+        window.dispatchEvent(new CustomEvent(eventName, {
+          detail: {
+            ...result.payload,
+            route: result.route,
+            resultId: result.id,
+            resultType: result.type,
+            confirmRequired: true,
+          },
+        }))
+      }, shouldNavigate ? 80 : 0)
+    } else if (!result.route && import.meta.env.DEV) {
+      console.warn('[GlobalCommand]', 'No route or executable action registered for result', result)
+    }
+
+    closeCmd()
+  }, [closeCmd, route.path])
 
   // AI Copilot context — derived from current route
   const copilotContext = useMemo<CopilotContext>(() => ({
@@ -441,24 +431,6 @@ export const CommandCenterApp = () => {
   // Current active nav
   const activeNav = navItems.find((n) => n.path === route.path)
 
-  // Palette key nav
-  const onCmdKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      setCmdFocus((i) => Math.min(i + 1, flatCommands.length - 1))
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      setCmdFocus((i) => Math.max(i - 1, 0))
-    } else if (e.key === 'Enter' && flatCommands[cmdFocus]) {
-      e.preventDefault()
-      flatCommands[cmdFocus].action()
-      closeCmd()
-    }
-  }
-
-  // Reset focus on search
-  useEffect(() => { setCmdFocus(0) }, [cmdQuery])
-
   // ── Loading State ──────────────────────────────────────────────────────
 
   if (isRouteLoading) {
@@ -496,8 +468,6 @@ export const CommandCenterApp = () => {
 
   // ── Ready State — Command-First Layout ─────────────────────────────────
 
-  let cmdItemIdx = -1
-
   return (
     <div className={`nx-os ${route.path === '/' ? 'is-home-route' : ''}`}>
       {/* Room label — non-Home surfaces */}
@@ -512,59 +482,13 @@ export const CommandCenterApp = () => {
         {route.render(routeState.data)}
       </main>
 
-      {/* Command Palette */}
-      {cmdOpen && (
-        <div
-          className="nx-cmd-overlay"
-          role="dialog"
-          aria-modal
-          aria-label="Command palette"
-          onClick={(e) => { if (e.target === e.currentTarget) closeCmd() }}
-        >
-          <div className="nx-cmd" onKeyDown={onCmdKeyDown}>
-            <div className="nx-cmd__bar">
-              <span className="nx-cmd__prompt">&gt;</span>
-              <input
-                ref={cmdInputRef}
-                className="nx-cmd__input"
-                type="text"
-                placeholder="Type a command…"
-                value={cmdQuery}
-                onChange={(e) => setCmdQuery(e.target.value)}
-              />
-              <kbd className="nx-cmd__esc">ESC</kbd>
-            </div>
-            <div className="nx-cmd__results" role="listbox">
-              {groupedCommands.length === 0 ? (
-                <div className="nx-cmd__empty">No results for "{cmdQuery}"</div>
-              ) : (
-                groupedCommands.map(({ category, items }) => (
-                  <div key={category} className="nx-cmd__group">
-                    <span className="nx-cmd__group-label">{category}</span>
-                    {items.map((cmd) => {
-                      cmdItemIdx++
-                      const isFocused = cmdItemIdx === cmdFocus
-                      return (
-                        <button
-                          key={cmd.id}
-                          className={`nx-cmd__item ${isFocused ? 'is-focused' : ''}`}
-                          type="button"
-                          role="option"
-                          aria-selected={isFocused}
-                          onClick={() => { cmd.action(); closeCmd() }}
-                        >
-                          <span className="nx-cmd__item-label">{cmd.label}</span>
-                          {cmd.hint ? <span className="nx-cmd__item-hint">{cmd.hint}</span> : null}
-                        </button>
-                      )
-                    })}
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <GlobalCommandOverlay
+        open={cmdOpen}
+        initialQuery={cmdInitialQuery}
+        context={commandContext}
+        onClose={closeCmd}
+        onExecute={executeGlobalCommand}
+      />
 
       {/* Grammar pending indicator */}
       {grammarState.pending && (

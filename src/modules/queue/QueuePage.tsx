@@ -585,6 +585,22 @@ export const QueuePage = ({ data: initialData }: QueuePageProps = {}) => {
 
           <div className="nx-queue-sidebar-section">
             <div className="nx-sidebar-footer">
+              <div className="nx-engine-info" style={{ marginBottom: '12px', fontSize: '11px', opacity: 0.8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                  <span>Send Engine:</span>
+                  <span style={{ color: 'var(--success)' }}>{model?.sendEngine}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Mode:</span>
+                  <span className={cls('nx-engine-mode', model?.engineMode === 'proxy' ? 'is-proxy' : 'is-limited')} style={{ 
+                    color: model?.engineMode === 'proxy' ? 'var(--success)' : 'var(--warning)',
+                    textTransform: 'uppercase',
+                    fontWeight: 'bold'
+                  }}>
+                    {model?.engineMode}
+                  </span>
+                </div>
+              </div>
               <div className="nx-pressure-gauge">
                 <div className={cls('nx-gauge-dot', `is-pressure-${model?.apiPressureLevel || 'low'}`)} />
                 <span>API Pressure: {model?.apiPressureLevel.toUpperCase()}</span>

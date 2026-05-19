@@ -64,6 +64,14 @@ export type RecentSoldComp = {
   institutional_match_name?: string | null
   institutional_match_method?: string | null
   institutional_match_confidence?: string | null
+
+  estimated_value?: number | null
+  price_off_value?: number | null
+  percent_off?: number | null
+  ppu?: number | null
+  ppbd?: number | null
+  distance_miles?: number | null
+  similarity_score?: number | null
 }
 
 const INSTITUTIONAL_NAMES = [
@@ -93,15 +101,51 @@ const OPERATOR_KEYWORDS = [
   'VILLAS', 'MANOR', 'OPERATOR', 'REALTY'
 ];
 
+export function buildZillowUrl(address: string): string {
+  if (!address) return ''
+  const encoded = encodeURIComponent(address.replace(/\s+/g, '-'))
+  return `https://www.zillow.com/homes/${encoded}_rb/`
+}
+
+export function buildGoogleMapsUrl(address: string, lat?: number, lng?: number): string {
+  if (lat && lng) return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`
+  if (address) return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`
+  return ''
+}
+
 function enrichSoldComp(comp: RecentSoldComp): RecentSoldComp {
   // Compute sale source if not returned from DB
   if (!comp.sale_source) {
-    if (comp.mls_sold_price || comp.mls_sold_date) {
-      comp.sale_source = 'MLS Sold'
-    } else if (comp.sale_price || comp.sale_date) {
-      comp.sale_source = 'Public Record Sold'
+    if (comp.mls_sold_price && comp.mls_sold_price > 0) {
+      comp.sale_source = 'MLS SOLD'
+    } else if (comp.sale_price && comp.sale_price > 0) {
+      comp.sale_source = 'PUBLIC RECORD SOLD'
+    } else if (comp.mls_sold_date) {
+      comp.sale_source = 'MLS SOLD'
+    } else if (comp.sale_date) {
+      comp.sale_source = 'PUBLIC RECORD SOLD'
     } else {
-      comp.sale_source = 'Unknown'
+      comp.sale_source = 'RECORDED SALE'
+    }
+  }
+
+  // Ensure 0 values are treated as null for critical UI fields
+  if (comp.building_square_feet === 0) comp.building_square_feet = null
+  if (comp.total_bedrooms === 0) comp.total_bedrooms = null
+  if (comp.total_baths === 0) comp.total_baths = null
+  if (comp.units_count === 0) comp.units_count = null
+
+  // Compute metrics if missing
+  const price = comp.mls_sold_price ?? comp.sale_price ?? 0
+  if (price > 0) {
+    if (!comp.computed_ppsf && comp.building_square_feet) {
+      comp.computed_ppsf = Math.round(price / comp.building_square_feet)
+    }
+    if (!comp.ppu && comp.units_count && comp.units_count > 1) {
+      comp.ppu = Math.round(price / comp.units_count)
+    }
+    if (!comp.ppbd && comp.total_bedrooms) {
+      comp.ppbd = Math.round(price / comp.total_bedrooms)
     }
   }
 
@@ -330,27 +374,56 @@ export const loadSoldCompsInBounds = async (
 
 export type CommandMapSellerPin = {
   property_id: string
+  master_owner_id?: string | null
+  prospect_id?: string | null
+  thread_key?: string | null
   lat: number
   lng: number
+  latitude?: number | null
+  longitude?: number | null
   seller_name: string | null
+  seller_display_name?: string | null
   property_address_full: string | null
+  property_address?: string | null
+  property_address_city?: string | null
+  property_address_state?: string | null
+  property_address_zip?: string | null
+  market?: string | null
+  filter_market?: string | null
   owner_type: string | null
+  owner_display_name?: string | null
+  owner_name?: string | null
+  owner_full_name?: string | null
+  entity_name?: string | null
   property_type: string | null
+  asset_class?: string | null
   total_bedrooms: number | null
   total_baths: number | null
   building_square_feet: number | null
   units_count: number | null
   year_built: number | null
+  lot_square_feet?: number | null
+  lot_acreage?: number | null
   estimated_value: number | null
+  equity_amount?: number | null
   equity_percent: number | null
   estimated_repair_cost: number | null
   motivation_score: number | null
+  final_acquisition_score?: number | null
+  priority_score?: number | null
   property_tags_text: string | null
   property_tags_json: any | null
+  podio_tags?: unknown
+  property_flags_text?: string | null
+  property_flags_json?: unknown
   latest_message_at: string | null
   latest_direction: string | null
   seller_state: string | null
+  seller_status?: string | null
   execution_state: string | null
+  inbox_category?: string | null
+  inbound_count?: number | null
+  outbound_count?: number | null
   queued_count: number | null
   scheduled_count: number | null
   ready_count: number | null
@@ -364,20 +437,88 @@ export type CommandMapSellerPin = {
   render_priority: number | null
 }
 
+const COMMAND_MAP_SELLER_PIN_DETAIL_SELECT = [
+  'property_id',
+  'master_owner_id',
+  'prospect_id',
+  'thread_key',
+  'seller_display_name',
+  'seller_name',
+  'owner_display_name',
+  'owner_name',
+  'owner_full_name',
+  'entity_name',
+  'property_address',
+  'property_address_full',
+  'property_address_city',
+  'property_address_state',
+  'property_address_zip',
+  'market',
+  'filter_market',
+  'property_type',
+  'asset_class',
+  'total_bedrooms',
+  'total_baths',
+  'building_square_feet',
+  'units_count',
+  'year_built',
+  'lot_square_feet',
+  'lot_acreage',
+  'estimated_value',
+  'equity_amount',
+  'equity_percent',
+  'estimated_repair_cost',
+  'motivation_score',
+  'final_acquisition_score',
+  'priority_score',
+  'property_tags_text',
+  'property_tags_json',
+  'podio_tags',
+  'property_flags_text',
+  'property_flags_json',
+  'owner_type',
+  'seller_state',
+  'seller_status',
+  'execution_state',
+  'inbox_category',
+  'latest_message_at',
+  'latest_direction',
+  'inbound_count',
+  'outbound_count',
+  'queued_count',
+  'scheduled_count',
+  'ready_count',
+  'sent_count',
+  'delivered_count',
+  'next_scheduled_for',
+  'lat',
+  'lng',
+  'latitude',
+  'longitude',
+  'pin_color',
+  'pin_shape',
+  'pulse_style',
+  'execution_ring_color',
+  'render_priority',
+].join(',')
+
 export const loadCommandMapSellerPins = async (
   bounds: { minLat: number; minLng: number; maxLat: number; maxLng: number },
   zoomLevel: number,
-  maxRows: number
+  maxRows: number,
+  options: { signal?: AbortSignal } = {},
 ): Promise<CommandMapSellerPin[]> => {
   const supabase = getSupabaseClient()
-  const { data, error } = await supabase.rpc('get_command_map_seller_pins', {
+  let query = supabase.rpc('get_command_map_seller_pins', {
     min_lat: bounds.minLat,
     min_lng: bounds.minLng,
     max_lat: bounds.maxLat,
     max_lng: bounds.maxLng,
     zoom_level: Math.floor(zoomLevel),
-    max_rows: maxRows
+    max_rows: maxRows,
   })
+  if (options.signal) query = query.abortSignal(options.signal)
+  const { data, error } = await query
   if (error || !data) {
     console.error('Failed to load seller pins', error)
     return []
@@ -385,3 +526,41 @@ export const loadCommandMapSellerPins = async (
   return data as CommandMapSellerPin[]
 }
 
+export const loadCommandMapSellerPinDetail = async (
+  propertyId: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<Partial<CommandMapSellerPin> | null> => {
+  const supabase = getSupabaseClient()
+  const readSingle = async (view: 'v_command_map_seller_pin_feed' | 'v_inbox_enriched') => {
+    let query: {
+      abortSignal?: (signal: AbortSignal) => unknown
+      then: PromiseLike<{
+        data: unknown
+        error: unknown
+      }>['then']
+    } & PromiseLike<{
+      data: unknown
+      error: unknown
+    }> = supabase
+      .from(view)
+      .select(COMMAND_MAP_SELLER_PIN_DETAIL_SELECT)
+      .eq('property_id', propertyId)
+      .limit(1)
+      .maybeSingle()
+    if (options.signal && typeof query.abortSignal === 'function') query = query.abortSignal(options.signal) as typeof query
+    const { data, error } = await query
+    if (error) return null
+    return data as Partial<CommandMapSellerPin> | null
+  }
+
+  const [sellerWorkItem, inboxEnriched] = await Promise.all([
+    readSingle('v_command_map_seller_pin_feed'),
+    readSingle('v_inbox_enriched'),
+  ])
+
+  if (!sellerWorkItem && !inboxEnriched) return null
+  return {
+    ...(sellerWorkItem ?? {}),
+    ...(inboxEnriched ?? {}),
+  }
+}

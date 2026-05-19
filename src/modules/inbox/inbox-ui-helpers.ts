@@ -38,6 +38,7 @@ export type InboxViewSelectValue =
   | 'missing_context'
   | 'new_inbound'
   | 'suppressed'
+  | 'not_contacted'
   | 'outbound_only'
   | 'inbound'
   | 'outbound'
@@ -265,8 +266,11 @@ export const resolveThreadAddressLine = (thread: InboxWorkflowThread): string =>
 
 export const resolveThreadMarketBadge = (thread: InboxWorkflowThread): string => {
   const row = thread as unknown as Record<string, unknown>
-  const market = String(thread.market ?? thread.marketId ?? row.market ?? '').trim()
-  if (market) return market
+  // Prefer the enriched market fields (from v_inbox_enriched / properties.market)
+  for (const key of ['displayMarket', 'filterMarket', 'market', 'marketId', 'marketName']) {
+    const v = String(row[key] ?? '').trim()
+    if (v && v !== 'unknown' && v !== 'Unknown' && v !== 'Unknown Market') return v
+  }
   const city = String(row.property_city ?? row.property_address_city ?? '').trim()
   const st = String(row.property_state ?? row.property_address_state ?? row.state ?? '').trim()
   if (city && st) return `${city}, ${st}`

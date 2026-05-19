@@ -2,18 +2,116 @@ import { useEffect, useMemo, useState } from 'react'
 import type { InboxWorkflowThread } from '../../lib/data/inboxWorkflowData'
 import { getSupabaseClient } from '../../lib/supabaseClient'
 
+export type BuyerNumericFilter = number | ''
+
 export type BuyerMapFilters = {
   buyerType: string
   buyerTier: string
   activityWindowDays: 30 | 90 | 180 | 365
   radiusMiles: 1 | 3 | 5 | 10
+  buyerSourceTypes: string[]
+  buyerRoles: string[]
+  buyerIdentityTags: string[]
+  assetTypes: string[]
+  dealTypes: string[]
+  locationTags: string[]
+  matchTags: string[]
+  buyerName: string
+  entityName: string
+  mailingName: string
+  companyName: string
+  buyerPhone: string
+  buyerEmail: string
+  buyerMarket: string
+  buyerState: string
+  buyerZip: string
   market: string
+  submarket: string
+  county: string
+  city: string
   state: string
   zip: string
+  neighborhood: string
+  schoolDistrict: string
+  censusTract: string
+  opportunityZone: string
   propertyType: string
+  assetClass: string
+  condition: string
+  renovationLevel: string
+  occupancy: string
+  vacancy: string
   minPurchaseCount: number
+  maxPurchaseCount: BuyerNumericFilter
   minMatchScore: number
+  maxMatchScore: BuyerNumericFilter
   minDispoPriorityScore: number
+  maxDispoPriorityScore: BuyerNumericFilter
+  lastPurchaseDateFrom: string
+  lastPurchaseDateTo: string
+  firstPurchaseDateFrom: string
+  firstPurchaseDateTo: string
+  minVelocityScore: BuyerNumericFilter
+  maxVelocityScore: BuyerNumericFilter
+  minAveragePurchasePrice: BuyerNumericFilter
+  maxAveragePurchasePrice: BuyerNumericFilter
+  minMedianPurchasePrice: BuyerNumericFilter
+  maxMedianPurchasePrice: BuyerNumericFilter
+  minHighestPurchasePrice: BuyerNumericFilter
+  maxHighestPurchasePrice: BuyerNumericFilter
+  minLowestPurchasePrice: BuyerNumericFilter
+  maxLowestPurchasePrice: BuyerNumericFilter
+  minTotalSpend: BuyerNumericFilter
+  maxTotalSpend: BuyerNumericFilter
+  minCashPurchasePercent: BuyerNumericFilter
+  maxCashPurchasePercent: BuyerNumericFilter
+  minDaysSinceLastBuy: BuyerNumericFilter
+  maxDaysSinceLastBuy: BuyerNumericFilter
+  minBeds: BuyerNumericFilter
+  maxBeds: BuyerNumericFilter
+  minBaths: BuyerNumericFilter
+  maxBaths: BuyerNumericFilter
+  minUnits: BuyerNumericFilter
+  maxUnits: BuyerNumericFilter
+  minSqft: BuyerNumericFilter
+  maxSqft: BuyerNumericFilter
+  minLotSqft: BuyerNumericFilter
+  maxLotSqft: BuyerNumericFilter
+  minAcreage: BuyerNumericFilter
+  maxAcreage: BuyerNumericFilter
+  yearBuiltMin: BuyerNumericFilter
+  yearBuiltMax: BuyerNumericFilter
+  effectiveYearBuiltMin: BuyerNumericFilter
+  effectiveYearBuiltMax: BuyerNumericFilter
+  minStories: BuyerNumericFilter
+  maxStories: BuyerNumericFilter
+  minSalePrice: BuyerNumericFilter
+  maxSalePrice: BuyerNumericFilter
+  minPricePerSqft: BuyerNumericFilter
+  maxPricePerSqft: BuyerNumericFilter
+  minPricePerUnit: BuyerNumericFilter
+  maxPricePerUnit: BuyerNumericFilter
+  minArv: BuyerNumericFilter
+  maxArv: BuyerNumericFilter
+  minDiscountPercent: BuyerNumericFilter
+  maxDiscountPercent: BuyerNumericFilter
+  minSpreadPotential: BuyerNumericFilter
+  maxSpreadPotential: BuyerNumericFilter
+  minEstimatedRehab: BuyerNumericFilter
+  maxEstimatedRehab: BuyerNumericFilter
+  minEquityPercent: BuyerNumericFilter
+  maxEquityPercent: BuyerNumericFilter
+  soldDateFrom: string
+  soldDateTo: string
+  recordingDateFrom: string
+  recordingDateTo: string
+  minDistanceFromSubject: BuyerNumericFilter
+  maxDistanceFromSubject: BuyerNumericFilter
+  minConfidenceScore: BuyerNumericFilter
+  maxConfidenceScore: BuyerNumericFilter
+  minDemandScore: BuyerNumericFilter
+  maxDemandScore: BuyerNumericFilter
+  exitStrategyMatch: string
 }
 
 export const defaultBuyerMapFilters: BuyerMapFilters = {
@@ -21,13 +119,109 @@ export const defaultBuyerMapFilters: BuyerMapFilters = {
   buyerTier: '',
   activityWindowDays: 180,
   radiusMiles: 5,
+  buyerSourceTypes: [],
+  buyerRoles: [],
+  buyerIdentityTags: [],
+  assetTypes: [],
+  dealTypes: [],
+  locationTags: [],
+  matchTags: [],
+  buyerName: '',
+  entityName: '',
+  mailingName: '',
+  companyName: '',
+  buyerPhone: '',
+  buyerEmail: '',
+  buyerMarket: '',
+  buyerState: '',
+  buyerZip: '',
   market: '',
+  submarket: '',
+  county: '',
+  city: '',
   state: '',
   zip: '',
+  neighborhood: '',
+  schoolDistrict: '',
+  censusTract: '',
+  opportunityZone: '',
   propertyType: '',
+  assetClass: '',
+  condition: '',
+  renovationLevel: '',
+  occupancy: '',
+  vacancy: '',
   minPurchaseCount: 0,
+  maxPurchaseCount: '',
   minMatchScore: 60,
+  maxMatchScore: '',
   minDispoPriorityScore: 0,
+  maxDispoPriorityScore: '',
+  lastPurchaseDateFrom: '',
+  lastPurchaseDateTo: '',
+  firstPurchaseDateFrom: '',
+  firstPurchaseDateTo: '',
+  minVelocityScore: '',
+  maxVelocityScore: '',
+  minAveragePurchasePrice: '',
+  maxAveragePurchasePrice: '',
+  minMedianPurchasePrice: '',
+  maxMedianPurchasePrice: '',
+  minHighestPurchasePrice: '',
+  maxHighestPurchasePrice: '',
+  minLowestPurchasePrice: '',
+  maxLowestPurchasePrice: '',
+  minTotalSpend: '',
+  maxTotalSpend: '',
+  minCashPurchasePercent: '',
+  maxCashPurchasePercent: '',
+  minDaysSinceLastBuy: '',
+  maxDaysSinceLastBuy: '',
+  minBeds: '',
+  maxBeds: '',
+  minBaths: '',
+  maxBaths: '',
+  minUnits: '',
+  maxUnits: '',
+  minSqft: '',
+  maxSqft: '',
+  minLotSqft: '',
+  maxLotSqft: '',
+  minAcreage: '',
+  maxAcreage: '',
+  yearBuiltMin: '',
+  yearBuiltMax: '',
+  effectiveYearBuiltMin: '',
+  effectiveYearBuiltMax: '',
+  minStories: '',
+  maxStories: '',
+  minSalePrice: '',
+  maxSalePrice: '',
+  minPricePerSqft: '',
+  maxPricePerSqft: '',
+  minPricePerUnit: '',
+  maxPricePerUnit: '',
+  minArv: '',
+  maxArv: '',
+  minDiscountPercent: '',
+  maxDiscountPercent: '',
+  minSpreadPotential: '',
+  maxSpreadPotential: '',
+  minEstimatedRehab: '',
+  maxEstimatedRehab: '',
+  minEquityPercent: '',
+  maxEquityPercent: '',
+  soldDateFrom: '',
+  soldDateTo: '',
+  recordingDateFrom: '',
+  recordingDateTo: '',
+  minDistanceFromSubject: '',
+  maxDistanceFromSubject: '',
+  minConfidenceScore: '',
+  maxConfidenceScore: '',
+  minDemandScore: '',
+  maxDemandScore: '',
+  exitStrategyMatch: '',
 }
 
 export type BuyerCategory = 'institutional' | 'landlord' | 'flipper' | 'builder' | 'general'
@@ -613,6 +807,58 @@ const computeDemandSummary = (
   }
 }
 
+const hasTextMatch = (haystack: unknown, needle: string): boolean =>
+  !needle || lower(haystack).includes(lower(needle))
+
+const passesNumericRange = (value: number | null | undefined, min?: BuyerNumericFilter, max?: BuyerNumericFilter): boolean => {
+  if (min !== '' && min != null && (value == null || value < min)) return false
+  if (max !== '' && max != null && (value == null || value > max)) return false
+  return true
+}
+
+const passesDateRange = (value: string | null | undefined, from?: string, to?: string): boolean => {
+  const ts = value ? new Date(value).getTime() : NaN
+  if (from) {
+    const fromTs = new Date(from).getTime()
+    if (!Number.isFinite(ts) || ts < fromTs) return false
+  }
+  if (to) {
+    const toTs = new Date(to).getTime()
+    if (!Number.isFinite(ts) || ts > toTs) return false
+  }
+  return true
+}
+
+const daysSince = (value: string | null | undefined): number | null => {
+  const ts = value ? new Date(value).getTime() : NaN
+  if (!Number.isFinite(ts)) return null
+  return Math.max(0, Math.floor((Date.now() - ts) / 86400_000))
+}
+
+const includesAny = (active: string[], candidates: Array<string | null | undefined>): boolean =>
+  active.length === 0 || active.some((item) => candidates.some((candidate) => lower(candidate) === lower(item)))
+
+const deriveProfileRoleTags = (profile: BuyerProfileSummary): string[] => {
+  const tags = new Set<string>()
+  tags.add(profile.isOffMarketBuyer ? 'off_market_buyer' : 'mls_buyer')
+  if (profile.isRepeatBuyer) tags.add('repeat_buyer')
+  if (profile.isCorporateBuyer) tags.add('corporate_buyer')
+  if (profile.isLocalBuyer) tags.add('local_investor')
+  if (!profile.isLocalBuyer) tags.add('out_of_state_buyer')
+  if (profile.isRetailOrNoise) tags.add('retail_noise')
+  if (profile.category === 'institutional') tags.add('institutional_buyer')
+  if (profile.category === 'builder') tags.add('builder')
+  if (profile.category === 'landlord') tags.add('landlord')
+  if (profile.category === 'flipper') tags.add('flipper')
+  if (!profile.isCorporateBuyer) tags.add('individual_buyer')
+  if (profile.cashBuyerScore != null && profile.cashBuyerScore >= 65) tags.add('cash_buyer')
+  if (profile.cashBuyerScore != null && profile.cashBuyerScore < 65) tags.add('financed_purchase')
+  if (lower(profile.buyerSummary).includes('wholesale')) tags.add('wholesaler')
+  if (lower(profile.buyerSummary).includes('hard money')) tags.add('hard_money_buyer')
+  if (profile.isOffMarketBuyer) tags.add('public_record_buyer')
+  return Array.from(tags)
+}
+
 export const useBuyerCommandData = (
   selectedThread: InboxWorkflowThread | null,
   filters: BuyerMapFilters,
@@ -708,14 +954,34 @@ export const useBuyerCommandData = (
         const state = filters.state || context.state
         const zip = filters.zip || context.zip
         const propertyType = filters.propertyType || context.propertyType
+        const roleTags = deriveProfileRoleTags(profile)
         if (filters.buyerType && lower(profile.buyerType) !== lower(filters.buyerType)) return false
         if (filters.buyerTier && lower(profile.buyerTier) !== lower(filters.buyerTier)) return false
-        if ((profile.purchaseCount12mo ?? 0) < filters.minPurchaseCount) return false
-        if ((profile.dispoPriorityScore ?? 0) < filters.minDispoPriorityScore) return false
+        if (!hasTextMatch(profile.buyerName, filters.buyerName)) return false
+        if (!hasTextMatch(profile.buyerName, filters.companyName)) return false
+        if (!hasTextMatch(profile.buyerName, filters.entityName)) return false
+        if (!hasTextMatch(profile.buyerName, filters.mailingName)) return false
+        if (filters.buyerIdentityTags.includes('llc_corp') && !/llc|inc|corp|company|holdings|lp|l\.p\./i.test(profile.buyerName)) return false
+        if (filters.buyerIdentityTags.includes('individual_buyer') && profile.isCorporateBuyer) return false
+        if (filters.buyerRoles.length > 0 && !filters.buyerRoles.every((role) => roleTags.includes(role))) return false
+        if (!passesNumericRange(profile.purchaseCount12mo, filters.minPurchaseCount, filters.maxPurchaseCount)) return false
+        if (!passesNumericRange(profile.dispoPriorityScore, filters.minDispoPriorityScore, filters.maxDispoPriorityScore)) return false
+        if (!passesNumericRange(profile.confidenceScore, filters.minConfidenceScore, filters.maxConfidenceScore)) return false
+        if (!passesNumericRange(profile.velocityScore, filters.minVelocityScore, filters.maxVelocityScore)) return false
+        if (!passesNumericRange(profile.avgPurchasePrice, filters.minAveragePurchasePrice, filters.maxAveragePurchasePrice)) return false
+        if (!passesNumericRange(profile.medianPurchasePrice, filters.minMedianPurchasePrice, filters.maxMedianPurchasePrice)) return false
+        if (!passesNumericRange(profile.cashBuyerScore, filters.minCashPurchasePercent, filters.maxCashPurchasePercent)) return false
+        if (!passesNumericRange(daysSince(profile.lastPurchaseDate), filters.minDaysSinceLastBuy, filters.maxDaysSinceLastBuy)) return false
+        if (!passesDateRange(profile.lastPurchaseDate, filters.lastPurchaseDateFrom, filters.lastPurchaseDateTo)) return false
         if (market && profile.topMarkets.length > 0 && !profile.topMarkets.some((value) => lower(value) === lower(market))) return false
         if (!market && state && profile.topStates.length > 0 && !profile.topStates.some((value) => lower(value) === lower(state))) return false
         if (zip && profile.topZips.length > 0 && !profile.topZips.includes(zip)) return false
         if (propertyType && profile.propertyTypeFocus.length > 0 && !profile.propertyTypeFocus.some((value) => lower(value) === lower(propertyType))) return false
+        if (filters.assetClass && profile.assetClassesBought.length > 0 && !profile.assetClassesBought.some((value) => lower(value) === lower(filters.assetClass))) return false
+        if (filters.assetTypes.length > 0 && !includesAny(filters.assetTypes, [...profile.propertyTypeFocus, ...profile.assetClassesBought])) return false
+        if (filters.buyerMarket && profile.topMarkets.length > 0 && !profile.topMarkets.some((value) => lower(value) === lower(filters.buyerMarket))) return false
+        if (filters.buyerState && profile.topStates.length > 0 && !profile.topStates.some((value) => lower(value) === lower(filters.buyerState))) return false
+        if (filters.buyerZip && profile.topZips.length > 0 && !profile.topZips.includes(filters.buyerZip)) return false
         return true
       })
 
@@ -723,9 +989,15 @@ export const useBuyerCommandData = (
       const matches = matchRows
         .map((row) => toBuyerMatch(row, context))
         .filter((match) => {
-          if ((match.matchScore ?? 0) < filters.minMatchScore) return false
+          if (!passesNumericRange(match.matchScore, filters.minMatchScore, filters.maxMatchScore)) return false
+          if (!passesNumericRange(match.confidence, filters.minConfidenceScore, filters.maxConfidenceScore)) return false
+          if (filters.exitStrategyMatch && lower(match.dispositionStrategy) !== lower(filters.exitStrategyMatch)) return false
           const profile = profilesByKey.get(match.buyerKey)
           if (profile && (profile.dispoPriorityScore ?? 0) < filters.minDispoPriorityScore) return false
+          if (filters.matchTags.includes('price_match') && (match.priceFitScore ?? 0) <= 0) return false
+          if (filters.matchTags.includes('asset_match') && (match.assetFitScore ?? 0) <= 0) return false
+          if (filters.matchTags.includes('location_match') && (match.marketFitScore ?? 0) <= 0) return false
+          if (filters.matchTags.includes('velocity_match') && (match.velocityScore ?? 0) <= 0) return false
           return true
         })
 
@@ -745,6 +1017,22 @@ export const useBuyerCommandData = (
           if (!market && state && purchase.propertyAddressState && lower(purchase.propertyAddressState) !== lower(state)) return false
           if (propertyType && purchase.propertyType && lower(purchase.propertyType) !== lower(propertyType)) return false
           if (context.lat != null && context.lng != null && purchase.distanceMiles != null && purchase.distanceMiles > filters.radiusMiles) return false
+          if (!hasTextMatch(purchase.buyerName, filters.buyerName)) return false
+          if (!hasTextMatch(purchase.buyerName, filters.companyName)) return false
+          if (filters.assetTypes.length > 0 && !includesAny(filters.assetTypes, [purchase.propertyType])) return false
+          if (!passesNumericRange(purchase.salePrice, filters.minSalePrice, filters.maxSalePrice)) return false
+          if (!passesNumericRange(purchase.pricePerSqft, filters.minPricePerSqft, filters.maxPricePerSqft)) return false
+          if (!passesNumericRange(purchase.pricePerUnit, filters.minPricePerUnit, filters.maxPricePerUnit)) return false
+          if (!passesNumericRange(purchase.totalBedrooms, filters.minBeds, filters.maxBeds)) return false
+          if (!passesNumericRange(purchase.totalBaths, filters.minBaths, filters.maxBaths)) return false
+          if (!passesNumericRange(purchase.unitsCount, filters.minUnits, filters.maxUnits)) return false
+          if (!passesNumericRange(purchase.buildingSquareFeet, filters.minSqft, filters.maxSqft)) return false
+          if (!passesNumericRange(purchase.yearBuilt, filters.yearBuiltMin, filters.yearBuiltMax)) return false
+          if (!passesNumericRange(purchase.distanceMiles, filters.minDistanceFromSubject, filters.maxDistanceFromSubject)) return false
+          if (!passesDateRange(purchase.saleDate, filters.soldDateFrom || filters.lastPurchaseDateFrom, filters.soldDateTo || filters.lastPurchaseDateTo)) return false
+          if (filters.dealTypes.includes('off_market') && !purchase.isOffMarketPurchase) return false
+          if (filters.dealTypes.includes('mls') && purchase.isOffMarketPurchase) return false
+          if (filters.dealTypes.includes('corporate_buyer') && !purchase.isCorporateBuyer) return false
           return true
         })
 
